@@ -1,0 +1,122 @@
+{
+  "client": {
+    "name": "La Granja Distribuidora C.A.",
+    "contact": "Gerente General",
+    "industry": "wholesale_food_distribution",
+    "size": "medium-large",
+    "location": "Valencia, Venezuela",
+    "notes": "Cliente estratégico - Distribuidor mayorista de alimentos con 20+ años en el mercado"
+  },
+  "demo": {
+    "type": "executive",
+    "duration": "20min",
+    "focus": [
+      "stockout_prevention",
+      "seasonal_insights",
+      "multi_store_optimization",
+      "roi_dashboard",
+      "whatsapp_integration"
+    ],
+    "language": "es-VE",
+    "currency": "Bs",
+    "timezone": "America/Caracas",
+    "scheduledDate": "2024-10-27"
+  },
+  "customization": {
+    "logo": "assets/la-granja-logo.png",
+    "primaryColor": "#2B7A3B",
+    "secondaryColor": "#FDB913",
+    "companyMetrics": {
+      "warehouses": 1,
+      "stores": 3,
+      "skus": 1850,
+      "monthlyRevenue": 12300000000,
+      "clients": 542,
+      "employees": 45,
+      "trucks": 8,
+      "dailyOrders": 65
+    }
+  },
+  "features": {
+    "showWhatsApp": true,
+    "showPOSIntegration": true,
+    "showMLForecasting": true,
+    "showROIDashboard": true,
+    "showMultiWarehouse": true,
+    "showB2BPortal": false,
+    "showMobileApp": true,
+    "showTransferOptimization": true
+  },
+  "scenarios": [
+    "stockout_savoy_chocolate",
+    "halloween_opportunity",
+    "client_risk_zulia",
+    "transfer_harina_pan",
+    "container_timing_optimization"
+  ],
+  "currentChallenges": [
+    "Pérdidas frecuentes por stockouts en productos clave",
+    "Gestión manual de pedidos vía WhatsApp",
+    "Falta de visibilidad en tiempo real del inventario",
+    "Decisiones reactivas vs proactivas",
+    "Desbalance de inventario entre tiendas"
+  ],
+  "integrations": {
+    "currentPOS": "Stellar",
+    "currentERP": "Manual/Excel",
+    "whatsappBusiness": true,
+    "emailSystem": "gmail",
+    "accounting": "Saint"
+  },
+  "painPoints": [
+    "Stockouts en productos de alta rotación (Harina PAN, Aceite)",
+    "Pérdida de ventas por falta de stock (Bs 45M/mes)",
+    "Exceso de inventario en productos de baja rotación",
+    "Clientes VIP insatisfechos por falta de producto",
+    "Decisiones de compra basadas en intuición"
+  ],
+  "successMetrics": [
+    "Reducción 40% en stockouts",
+    "Aumento 20% en satisfacción de clientes VIP",
+    "ROI demostrable en 4-6 semanas",
+    "Reducción 30% en capital inmovilizado",
+    "Ahorro 15% en costos logísticos"
+  ],
+  "competitiveContext": {
+    "mainCompetitors": [
+      "Distribuidora Valencia",
+      "Mayorista El Centro",
+      "Grupo Distribución 2000"
+    ],
+    "differentiators": [
+      "Ser el primero con IA en la región",
+      "Ventaja competitiva en servicio al cliente",
+      "Optimización de márgenes",
+      "Predicción de demanda precisa"
+    ]
+  },
+  "demoFlow": {
+    "opening": "Problema actual con Savoy Chocolate - 15 clientes pidiendo, solo 2 cajas",
+    "development": [
+      "Mostrar alerta en tiempo real",
+      "WhatsApp notification al gerente",
+      "Acción recomendada con ROI",
+      "Predicción Halloween",
+      "Dashboard ejecutivo"
+    ],
+    "closing": "Cálculo de ROI específico para La Granja"
+  },
+  "followUp": {
+    "materials": [
+      "one-pager-la-granja.pdf",
+      "roi-calculator-la-granja.xlsx",
+      "video-demo-personalizado.mp4"
+    ],
+    "nextSteps": [
+      "Reunión con equipo técnico",
+      "Prueba piloto 30 días",
+      "Integración con Stellar POS"
+    ],
+    "timeline": "Implementación en 2 semanas"
+  }
+}

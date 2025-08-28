@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # =============================================
+  # Database Services
+  # =============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: fluxion-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: fluxion
+      POSTGRES_USER: fluxion
+      POSTGRES_PASSWORD: fluxion123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fluxion"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fluxion-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================
+  # Application Services
+  # =============================================
+  backend:
+    build:
+      context: ./services/backend
+      dockerfile: Dockerfile
+    container_name: fluxion-backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./services/backend:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://fluxion:fluxion123@postgres:5432/fluxion
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: fluxion-dev-secret
+      CORS_ORIGIN: http://localhost:3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: npm run dev
+
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    container_name: fluxion-frontend
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./services/frontend:/app
+      - /app/node_modules
+    environment:
+      REACT_APP_API_URL: http://localhost:3000
+      REACT_APP_WS_URL: ws://localhost:3000
+    depends_on:
+      - backend
+    command: npm run dev
+
+  ai-engine:
+    build:
+      context: ./services/ai-engine
+      dockerfile: Dockerfile
+    container_name: fluxion-ai-engine
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/ai-engine:/app
+    environment:
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql://fluxion:fluxion123@postgres:5432/fluxion
+      REDIS_URL: redis://redis:6379
+      MODEL_CACHE_DIR: /app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: fluxion-network

@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # =============================================
+  # Lightweight Demo Services
+  # =============================================
+  
+  demo-backend:
+    image: node:18-alpine
+    container_name: fluxion-demo-backend
+    working_dir: /app
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./services/backend:/app
+      - ./demos/clients/${CLIENT:-la-granja}:/data
+    environment:
+      PORT: 3001
+      DEMO_MODE: "true"
+      CLIENT_CONFIG: /data/config.json
+      CLIENT_DATA: /data/data.json
+    command: sh -c "npm install && node src/demo-api-server.cjs"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  demo-dashboard:
+    image: nginx:alpine
+    container_name: fluxion-demo-dashboard
+    ports:
+      - "8080:80"
+    volumes:
+      - ./demos/templates/dashboard-standalone:/usr/share/nginx/html:ro
+      - ./demos/clients/${CLIENT:-la-granja}/assets:/usr/share/nginx/html/assets:ro
+    depends_on:
+      - demo-backend
+
+  # Optional: WhatsApp Bot Simulator
+  whatsapp-simulator:
+    image: node:18-alpine
+    container_name: fluxion-whatsapp-sim
+    working_dir: /app
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./services/backend:/app
+    environment:
+      PORT: 3002
+      SERVICE: whatsapp-simulator
+      BACKEND_URL: http://demo-backend:3001
+    command: sh -c "npm install && node src/whatsapp-simulator.js"
+    profiles:
+      - whatsapp
+
+networks:
+  default:
+    name: fluxion-demo-network

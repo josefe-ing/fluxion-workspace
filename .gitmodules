@@ -1,0 +1,12 @@
+[submodule "services/backend"]
+	path = services/backend
+	url = git@github.com:josefe-ing/fluxion-ai-backend.git
+[submodule "services/frontend"]
+	path = services/frontend
+	url = git@github.com:josefe-ing/fluxion-ai-frontend.git
+[submodule "services/ai-engine"]
+	path = services/ai-engine
+	url = git@github.com:josefe-ing/fluxion-ai-ai-engine.git
+[submodule "services/infrastructure"]
+	path = services/infrastructure
+	url = git@github.com:josefe-ing/fluxion-ai-infrastructure.git

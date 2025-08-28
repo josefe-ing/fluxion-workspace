@@ -1,0 +1,70 @@
+{
+  "client": {
+    "name": "[NOMBRE_CLIENTE]",
+    "contact": "[NOMBRE_CONTACTO]",
+    "industry": "wholesale_distribution",
+    "size": "medium",
+    "location": "Venezuela",
+    "notes": ""
+  },
+  "demo": {
+    "type": "executive",
+    "duration": "20min",
+    "focus": [
+      "inventory_alerts",
+      "seasonal_insights", 
+      "roi_tracking"
+    ],
+    "language": "es-VE",
+    "currency": "Bs",
+    "timezone": "America/Caracas",
+    "scheduledDate": null
+  },
+  "customization": {
+    "logo": null,
+    "primaryColor": "#1E3A8A",
+    "secondaryColor": "#059669",
+    "companyMetrics": {
+      "warehouses": 1,
+      "stores": 2,
+      "skus": 1500,
+      "monthlyRevenue": 1000000000,
+      "clients": 500,
+      "employees": 25
+    }
+  },
+  "features": {
+    "showWhatsApp": true,
+    "showPOSIntegration": true,
+    "showMLForecasting": true,
+    "showROIDashboard": true,
+    "showMultiWarehouse": false,
+    "showB2BPortal": false,
+    "showMobileApp": false
+  },
+  "scenarios": [
+    "stockout_crisis",
+    "seasonal_opportunity",
+    "client_churn_risk",
+    "price_optimization",
+    "transfer_recommendation"
+  ],
+  "integrations": {
+    "currentPOS": "none",
+    "currentERP": "none", 
+    "whatsappBusiness": false,
+    "emailSystem": "gmail"
+  },
+  "painPoints": [
+    "Gestión reactiva de inventario",
+    "Pérdidas por stockouts",
+    "Exceso de inventario",
+    "Falta de visibilidad multi-tienda"
+  ],
+  "successMetrics": [
+    "Reducción 30% en stockouts",
+    "Aumento 15% en rotación de inventario",
+    "ROI en 6 semanas",
+    "Reducción 25% en capital inmovilizado"
+  ]
+}
