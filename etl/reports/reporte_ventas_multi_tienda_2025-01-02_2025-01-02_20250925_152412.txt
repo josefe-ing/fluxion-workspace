@@ -1,0 +1,33 @@
+🏪 REPORTE ETL VENTAS MULTI-TIENDA
+======================================================================
+📅 Período: 2025-01-02 a 2025-01-02
+🕒 Generado: 2025-09-25 15:24:12
+
+📊 RESUMEN GENERAL:
+   ✅ Tiendas exitosas: 12/17
+   ❌ Tiendas fallidas: 5/17
+
+🎯 DETALLE TIENDAS EXITOSAS:
+----------------------------------------------------------------------
+• PERIFERICO                | 📥  16,382 | 💾  15,948 | ⏱️    0.9s
+• AV. BOLIVAR               | 📥   9,672 | 💾   9,426 | ⏱️    0.6s
+• VIVIENDA                  | 📥  10,148 | 💾   9,949 | ⏱️    0.6s
+• NAGUANAGUA                | 📥   8,377 | 💾   8,264 | ⏱️    0.5s
+• CENTRO                    | 📥   8,668 | 💾   8,476 | ⏱️    0.5s
+• BOSQUE                    | 📥   9,869 | 💾   9,764 | ⏱️    0.6s
+• GUACARA                   | 📥   9,882 | 💾   9,679 | ⏱️    0.6s
+• FLOR AMARILLO             | 📥  16,863 | 💾  16,595 | ⏱️    0.9s
+• PARAPARAL                 | 📥  13,658 | 💾  13,322 | ⏱️    0.8s
+• NAGUANAGUA III            | 📥   6,510 | 💾   6,393 | ⏱️    0.4s
+• ISABELICA                 | 📥   9,133 | 💾   9,031 | ⏱️    0.6s
+• PERIFERICO Mayorista      | 📥  16,382 | 💾  15,948 | ⏱️    0.9s
+----------------------------------------------------------------------
+  TOTALES:                   | 📥 135,544 | 💾 132,795
+
+❌ TIENDAS CON ERRORES:
+----------------------------------------------------------------------
+• MAÑONGO                   | ❌ Error creando tablas
+• SAN DIEGO                 | ❌ Error creando tablas
+• FERIAS                    | ❌ Sin datos de ventas extraídos
+• TOCUYITO                  | ❌ Sin datos de ventas extraídos
+• GUIGUE                    | ❌ Sin datos de ventas extraídos

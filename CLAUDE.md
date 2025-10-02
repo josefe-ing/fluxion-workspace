@@ -4,212 +4,353 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Fluxion AI** is an inventory management system with proactive AI intelligence for B2B wholesale distributors in Venezuela. The workspace uses git submodules for microservices architecture.
+**Fluxion AI** is an inventory management system with proactive AI intelligence for B2B wholesale distributors in Venezuela, specifically for **La Granja Mercado**.
 
 ## Architecture
 
-The system consists of four main services managed as git submodules:
+### Current Stack
 
-1. **Backend** (`services/backend/`) - Node.js + Express API with multi-tenant PostgreSQL
-2. **Frontend** (`services/frontend/`) - React + TypeScript + Vite dashboard  
-3. **AI Engine** (`services/ai-engine/`) - Python FastAPI ML service (planned)
-4. **Infrastructure** (`services/infrastructure/`) - Docker + IaC configuration
+```
+fluxion-workspace/
+├── backend/                    # Python FastAPI + DuckDB
+│   ├── main.py                # Main API server
+│   ├── simple_api.py          # Simplified API version
+│   ├── start.py               # Startup script
+│   └── requirements.txt       # Python dependencies
+│
+├── frontend/                   # React + TypeScript + Vite
+│   ├── src/
+│   │   ├── components/        # React components
+│   │   ├── services/          # API services
+│   │   └── App.tsx
+│   └── package.json
+│
+├── database/                   # DuckDB schemas
+│   ├── schema.sql             # Base schema
+│   ├── schema_extended.sql    # Extended schema
+│   ├── init_db.py             # Database initialization
+│   └── setup_extended_config.py
+│
+├── etl/                        # Data extraction/migration
+│   ├── core/                  # Main ETL scripts
+│   ├── docs/                  # ETL documentation
+│   ├── scripts/               # Support scripts
+│   └── extract_gaps.sh        # Gap extraction wrapper
+│
+├── data/                       # DuckDB databases (GITIGNORED)
+│   ├── fluxion_production.db  # Main DB (16GB)
+│   └── granja_analytics.db    # Analytics DB (1GB)
+│
+└── archive/                    # Reference materials
+    ├── migration-scripts/     # One-time analysis/fix scripts
+    └── docs/                  # Legacy documentation
+```
+
+### Tech Stack
+
+- **Backend:** Python 3.x + FastAPI + DuckDB
+- **Frontend:** React + TypeScript + Vite
+- **Database:** DuckDB (embedded, file-based OLAP database)
+- **ETL:** Python scripts for data extraction
 
 ## Common Development Commands
 
 ### Quick Start
 ```bash
-make dev           # Start native development environment
-make dev-docker    # Start with Docker containers
-make stop          # Stop all services
-make logs          # View service logs
+./start_dev.sh     # Start development environment
+./stop.sh          # Stop all services
 ```
 
-### Demo System
+### Backend (Python + FastAPI)
 ```bash
-make demo CLIENT=la-granja TYPE=executive  # Run client demo
-make new-demo CLIENT=name                  # Create new demo
-make demo-save CLIENT=name                 # Save demo state
-make demo-reset CLIENT=name                # Reset to defaults
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python3 start.py   # Starts on port 8001
 ```
 
-### Git Workflow
+### Frontend (React + Vite)
 ```bash
-make sync          # Sync all submodules with GitHub
-make status        # Check git status across all repos
-make pull          # Pull latest from all repositories
-```
-
-### Testing & Quality
-```bash
-make test          # Run all tests
-make test-api      # Test API endpoints
-```
-
-### Database Commands (Frontend)
-```bash
-cd services/frontend
-npm run db:setup   # Initialize database
-npm run db:reset   # Reset database
-npm run db:stats   # Show database statistics
-```
-
-### Frontend-specific
-```bash
-cd services/frontend
-npm run dev        # Start development server (port 3001)
+cd frontend
+npm install
+npm run dev        # Port 3001
 npm run build      # Production build to dist/
-npm run build-single # Single HTML file to demo/index.html
 npm run preview    # Preview production build
 npm run lint       # ESLint check
 npm run type-check # TypeScript validation
 ```
 
-### Backend-specific  
+### Database (DuckDB)
 ```bash
-cd services/backend
-npm run start      # Start server (default port 3000)
-npm run dev        # Start with custom port/user (DB_USER=jose BACKEND_PORT=3004)
-npm run setup-db   # Initialize database schema
-npm run test       # Run tests (when implemented)
+# Initialize database
+cd database
+python3 init_db.py
+
+# Setup extended configuration
+python3 setup_extended_config.py
+
+# Query database directly
+duckdb data/fluxion_production.db
+```
+
+### ETL System
+```bash
+cd etl
+
+# Extract data gaps
+./extract_gaps.sh
+
+# Run ETL for historical sales
+python3 core/etl_ventas_historico.py
+
+# Check connectivity
+python3 core/verificar_conectividad.py
+
+# View logs
+tail -f logs/ventas_historico_*.log
 ```
 
 ## Architecture Patterns
 
-### Multi-Service Communication
-- **Backend API**: Port 3000 - REST API, multi-tenant management
-- **Frontend**: Port 3001 - React dashboard with Vite HMR
-- **AI Engine**: Port 8000 - FastAPI Python service (planned)
-- **PostgreSQL**: Port 5432 - Main database + TimescaleDB
-- **Redis**: Port 6379 - Cache and pub/sub
+### API Server
+- **Backend API**: Port 8001 - FastAPI REST API
+- **Frontend Dev**: Port 3001 - React dashboard with Vite HMR
+- **Database**: DuckDB file-based (`data/fluxion_production.db`)
 
-### Event-Driven Architecture
-Key events flow through the system:
-- `inventory.stock.low` - Low stock detection
-- `inventory.updated` - Inventory changes
-- `sales.transaction` - New sales
-- `forecast.generated` - AI predictions
-- `alert.triggered` - Proactive alerts
-
-### Multi-Tenancy Strategy
-- Database schema separation per tenant (tenant-base-schema.sql)
-- Tenant ID in all queries via middleware (tenantMiddleware.cjs)
-- Per-tenant business rules and thresholds
-
-### Backend Structure
+### Data Flow
 ```
-services/backend/
-├── server-multitenant.cjs  # Main entry point
-├── routes/                 # API endpoints (*.cjs)
-├── models/                 # Data models (*.cjs)
-├── middleware/            # Express middleware
-├── database/              # SQL schemas and migrations
-└── services/              # Business logic (TenantService.cjs)
+Source Systems → ETL Scripts → DuckDB → Backend API → Frontend Dashboard
 ```
 
-## AI Agent System (Planned)
+### Database Schema
 
-The AI Engine will coordinate specialized agents:
-- **Alert Agent**: Anomaly detection, stockout warnings
-- **Forecast Agent**: Demand prediction using Prophet/ARIMA
-- **Optimizer Agent**: Inventory optimization, transfer recommendations
-- **Chat Agent**: Conversational interface with business context
+DuckDB tables:
+- **ventas**: Sales transactions (81M+ records)
+- **productos**: Product catalog
+- **ubicaciones**: Store locations (16 stores)
+- **stock_actual**: Current inventory levels
 
-## Demo System Structure
+See `DATA_MODEL_DOCUMENTATION.md` for detailed schema.
 
-Demos simulate real Venezuelan wholesale distributors with:
-- Client configurations in `demos/clients/{name}/config.json`
-- Templates in `demos/templates/`
-- Quick (5min), Executive (20min), and Full (45min) demo types
-- Real Venezuelan products (Harina PAN, Savoy, etc.) and international brands
+## Important Notes
+
+1. **DuckDB Architecture**: System uses DuckDB for fast OLAP queries (NOT PostgreSQL)
+2. **Single Tenant**: Designed for La Granja Mercado (not multi-tenant)
+3. **Venezuelan Context**: All data reflects real Venezuelan B2B wholesale distribution
+4. **Data Files Gitignored**: DuckDB files in `/data/` are 16GB+ and excluded from git
+5. **ETL Active**: Ongoing data migration from legacy systems
+6. **Archive Directory**: Scripts in `/archive/` are one-time migration tools for reference only
 
 ## Development Workflow
 
 ### Daily Development
 ```bash
-make dev           # Start morning
-# Code changes auto-reload
-make sync          # End of day sync
+# Morning - Start environment
+./start_dev.sh
+
+# During day - Changes auto-reload
+# - Backend: FastAPI auto-reload enabled
+# - Frontend: Vite HMR (Hot Module Replacement)
+
+# End of day - Stop services
+./stop.sh
 ```
 
-### Preparing Client Demos
+### Working with Data
 ```bash
-make new-demo CLIENT=farmacia-central
-vim demos/clients/farmacia-central/config.json
-make demo CLIENT=farmacia-central TYPE=executive
-make demo-save CLIENT=farmacia-central
+# Check database stats
+duckdb data/fluxion_production.db "SELECT COUNT(*) as total_ventas FROM ventas"
+
+# Check data for specific store
+duckdb data/fluxion_production.db "SELECT * FROM ventas WHERE tienda_id = 1 LIMIT 10"
+
+# Run ETL for missing data
+cd etl
+python3 core/etl_ventas_historico.py
+
+# Monitor ETL logs
+tail -f etl/logs/ventas_historico_*.log
 ```
+
+### Adding New Features
+
+When adding features, update:
+1. **Backend**: Add endpoints in `backend/main.py`
+2. **Frontend**: Add components in `frontend/src/components/`
+3. **Database**: Update schema in `database/schema_extended.sql`
+4. **Documentation**: Update this file and README.md
 
 ## Service URLs
 
 ### Development
-- Backend API: http://localhost:3000
-- Frontend: http://localhost:3001  
-- PostgreSQL: postgresql://localhost:5432/fluxion
-- Redis: redis://localhost:6379
+- **Backend API**: http://localhost:8001
+- **Frontend**: http://localhost:3001
+- **API Docs**: http://localhost:8001/docs (Swagger UI)
+- **DuckDB**: `file://data/fluxion_production.db`
 
-### Demo Mode
-- Dashboard: http://localhost:8080
-- Mock API: http://localhost:3001
+## API Endpoints
 
-## Code Organization Patterns
+Backend REST API (`backend/main.py`):
 
-### Frontend Components (`services/frontend/src/components/`)
-- **AIAgentPanel.tsx**: Core proactive alerts panel
+```
+GET  /                 # Health check
+GET  /ventas           # Sales data with filters
+GET  /estadisticas     # Business statistics
+GET  /tendencias       # Sales trends
+GET  /productos        # Product catalog
+GET  /ubicaciones      # Store locations
+POST /query            # Custom DuckDB query
+```
+
+## Frontend Components
+
+Key React components (`frontend/src/components/`):
+
+- **AIAgentPanel.tsx**: Proactive alerts and insights
 - **PurchaseIntelligence.tsx**: Container optimization recommendations
 - **ClientIntelligence.tsx**: Customer behavior predictions
 - **MainDashboard.tsx**: Executive KPI cards
 - **ProactiveInsightsPanel.tsx**: AI-driven business insights
 - **DailyActionCenter.tsx**: Priority actions for today
 
-### API Routes (`services/backend/routes/`)
-- `/api/tenants` - Multi-tenant management
-- `/api/inventory` - Stock management
-- `/api/products` - Product catalog
-- `/api/sales` - Transaction data
-- `/api/clients` - Customer management
-- `/api/insights` - AI predictions and alerts
-- `/api/dashboard` - Executive metrics
+## ETL System
 
-## Important Notes
+ETL scripts (`etl/core/`):
 
-1. **Git Submodules**: Each service is a separate repository. Always use `make sync` to coordinate changes
-2. **Venezuelan Context**: All mock data and demos reflect real Venezuelan B2B wholesale distribution (Harina PAN, Savoy, etc.)
-3. **Multi-Tenant**: System designed for multiple distributors from single deployment
-4. **Proactive AI**: Focus on preventing problems, not just reacting to them
-5. **CommonJS Modules**: Backend uses `.cjs` extension for explicit CommonJS
-6. **Postman Collection**: Use `Fluxion_AI_Multi-Tenant_API.postman_collection.json` for API testing
+- **etl_ventas_historico.py**: Historical sales data extraction (main ETL)
+- **config.py**: ETL configuration
+- **tiendas_config.py**: Store/location configuration
+- **verificar_conectividad.py**: Connectivity checks
+
+ETL extracts data from:
+- 16 stores (tiendas)
+- 13 months of historical data (Sep 2024 - Sep 2025)
+- 81.8M sales records total
+
+## Troubleshooting
+
+### Port in use
+```bash
+# Check what's using the port
+lsof -i :8001  # Backend
+lsof -i :3001  # Frontend
+
+# Kill process
+kill -9 <PID>
+```
+
+### Database locked
+```bash
+# DuckDB might be locked by another process
+lsof | grep fluxion_production.db
+
+# Kill the locking process
+kill -9 <PID>
+```
+
+### ETL errors
+```bash
+# Check logs
+tail -100 etl/logs/ventas_historico_*.log
+
+# Check connectivity to source
+cd etl
+python3 core/verificar_conectividad.py
+
+# Check ETL configuration
+cat etl/core/config.py
+```
+
+### Missing dependencies
+```bash
+# Backend
+cd backend
+pip install -r requirements.txt
+
+# Frontend
+cd frontend
+npm install
+```
+
+## Performance Considerations
+
+1. **DuckDB is fast**: Optimized for OLAP queries, can handle 80M+ rows easily
+2. **ETL runs**: Best run during off-hours for large data loads
+3. **Frontend caching**: API responses cached where appropriate
+4. **Database indexes**: See `archive/migration-scripts/create_indexes.sql`
+
+## Data Model
+
+### Main Tables
+
+**ventas** (Sales transactions):
+- fecha_venta: Transaction date
+- tienda_id: Store identifier
+- producto_id: Product identifier
+- cantidad: Quantity sold
+- precio_unitario: Unit price
+- monto_total: Total amount
+
+**productos** (Product catalog):
+- producto_id: Unique identifier
+- nombre: Product name
+- categoria: Category
+- unidad: Unit of measure
+
+**ubicaciones** (Store locations):
+- tienda_id: Unique identifier
+- nombre: Store name
+- ciudad: City
+- estado: State
+
+See `DATA_MODEL_DOCUMENTATION.md` for full schema documentation.
+
+## Archived Scripts
+
+Scripts in `/archive/migration-scripts/` are one-time tools used during:
+- Data migration from legacy systems
+- Data quality analysis
+- Duplicate detection
+- Schema fixes
+- Performance optimization
+
+These are kept for reference but not part of active development. See `/archive/migration-scripts/README.md` for details.
 
 ## Testing & Quality
 
 ### Run tests
 ```bash
-make test          # All tests across services
-make test-api      # API endpoint testing
+# Backend tests
+cd backend
+python3 -m pytest
+
+# Frontend tests
+cd frontend
+npm run test
 ```
 
-### Linting and type checking
+### Linting
 ```bash
-cd services/frontend && npm run lint && npm run type-check
+# Frontend
+cd frontend
+npm run lint
+npm run type-check
 ```
 
-## Troubleshooting
+## Production Deployment
 
-```bash
-make kill-ports    # Clear blocked ports (3000, 3001, 8080)
-make clean         # Full cleanup (containers, volumes, node_modules)
-make help          # Show all available commands
-make ports         # Show which ports are in use
-```
+For production deployment:
 
-## Database Management
+1. Build frontend: `cd frontend && npm run build`
+2. Backend runs with: `cd backend && uvicorn main:app --host 0.0.0.0 --port 8001`
+3. Serve frontend `dist/` with nginx or similar
+4. Ensure `data/` directory is backed up regularly
+5. Monitor ETL jobs and logs
 
-### PostgreSQL Access
-```bash
-psql -h localhost -U fluxion -d fluxion  # Default database
-```
+## Additional Resources
 
-### Multi-tenant Schema
-- Base schema: `database/tenant-base-schema.sql`
-- Per-tenant schema: `database/tenant-schema.sql`
-- Initialize: `cd services/backend && npm run setup-db`
+- **Architecture**: See `docs/` directory
+- **ETL Documentation**: See `etl/docs/`
+- **Data Model**: See `DATA_MODEL_DOCUMENTATION.md`
+- **API Documentation**: http://localhost:8001/docs (when backend running)

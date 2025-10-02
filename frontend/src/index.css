@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: #f8fafc;
+    color: #334155;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6;
+  }
+  
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-md hover:border-gray-300;
+  }
+  
+  .btn-primary {
+    @apply bg-navy-900 text-white px-4 py-2 rounded-md font-medium hover:bg-navy-800 transition-colors duration-200;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-100 text-gray-700 px-4 py-2 rounded-md font-medium hover:bg-gray-200 transition-colors duration-200;
+  }
+  
+  .btn-success {
+    @apply bg-success-600 text-white px-4 py-2 rounded-md font-medium hover:bg-success-700 transition-colors duration-200;
+  }
+  
+  .btn-danger {
+    @apply bg-danger-600 text-white px-4 py-2 rounded-md font-medium hover:bg-danger-700 transition-colors duration-200;
+  }
+  
+  .alert-critical {
+    @apply border-l-4 border-danger-600 bg-danger-50 p-4 rounded-r-md;
+  }
+  
+  .alert-opportunity {
+    @apply border-l-4 border-amber-600 bg-amber-50 p-4 rounded-r-md;
+  }
+  
+  .alert-insight {
+    @apply border-l-4 border-blue-600 bg-blue-50 p-4 rounded-r-md;
+  }
+  
+  .text-critical {
+    @apply text-danger-600;
+  }
+  
+  .text-opportunity {
+    @apply text-amber-600;
+  }
+  
+  .text-insight {
+    @apply text-blue-600;
+  }
+  
+  .text-success {
+    @apply text-success-600;
+  }
+}

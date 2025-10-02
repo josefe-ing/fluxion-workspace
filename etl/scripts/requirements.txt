@@ -1,0 +1,24 @@
+# Dependencias para ETL de La Granja Mercado
+
+# Base de datos
+pyodbc==5.0.1           # SQL Server connectivity
+duckdb==0.9.2           # DuckDB local database
+
+# Procesamiento de datos
+pandas==2.1.4           # Data manipulation
+numpy==1.24.4           # Numerical operations
+
+# Configuración y logging
+python-dotenv==1.0.0    # Environment variables management
+pydantic==2.5.0         # Data validation
+
+# Utilidades
+pathlib2==2.3.7        # Path utilities (Python < 3.4 compatibility)
+python-dateutil==2.8.2 # Date manipulation
+
+# Scheduling (opcional para cron jobs)
+schedule==1.2.0         # Job scheduling
+APScheduler==3.10.4     # Advanced scheduling
+
+# Monitoring y alertas (opcional)
+requests==2.31.0        # HTTP requests for notifications

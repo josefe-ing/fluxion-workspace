@@ -1,0 +1,170 @@
+
+================================================================================
+🏪 REPORTE COMPLETO ETL - LA GRANJA MERCADO
+================================================================================
+⏰ Inicio: 2025-09-25 12:17:24
+⏰ Fin: 2025-09-25 12:21:14
+⏱️ Duración total: 0:03:50.384388
+
+📊 RESUMEN GENERAL:
+   • Total tiendas procesadas: 17
+   • ✅ Exitosas (validación completa): 0 (0.0%)
+   • ❌ Fallidas: 17 (100.0%)
+   • 📦 Total registros guardados: 0
+
+================================================================================
+✅ TIENDAS EXITOSAS - VALIDACIÓN COMPLETA:
+================================================================================
+
+================================================================================
+❌ TIENDAS FALLIDAS:
+================================================================================
+
+🏪 TIENDA_01 - PERIFERICO
+   📡 Conexión: 192.168.20.12:14348
+   📦 Depósito: 0102
+   📊 Extraídos: 3,161 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3161, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_02 - AV. BOLIVAR
+   📡 Conexión: 192.168.30.52:14348
+   📦 Depósito: 0202
+   📊 Extraídos: 3,146 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3146, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_03 - MAÑONGO
+   📡 Conexión: 192.168.50.20:14348
+   📦 Depósito: 0302
+   📊 Extraídos: 3,295 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3295, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_04 - SAN DIEGO
+   📡 Conexión: 192.168.140.10:14348
+   📦 Depósito: 0402
+   📊 Extraídos: 3,221 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3221, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_05 - VIVIENDA
+   📡 Conexión: 192.168.80.10:14348
+   📦 Depósito: 0502
+   📊 Extraídos: 3,076 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3076, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_06 - NAGUANAGUA
+   📡 Conexión: 192.168.40.53:14348
+   📦 Depósito: 0602
+   📊 Extraídos: 2,898 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 2898, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_07 - CENTRO
+   📡 Conexión: 192.168.130.10:14348
+   📦 Depósito: 0702
+   📊 Extraídos: 3,086 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3086, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_08 - BOSQUE
+   📡 Conexión: 192.168.150.10:14348
+   📦 Depósito: 0802
+   📊 Extraídos: 3,423 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3423, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_09 - GUACARA
+   📡 Conexión: 192.168.120.10:14348
+   📦 Depósito: 0902
+   📊 Extraídos: 3,119 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3119, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_10 - FERIAS
+   📡 Conexión: 192.168.70.10:14348
+   📦 Depósito: 1002
+   📊 Extraídos: 0 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Extracción completada pero sin registros encontrados
+   🔍 Problema: Conexión/Extracción
+
+🏪 TIENDA_11 - FLOR AMARILLO
+   📡 Conexión: 192.168.160.10:1433
+   📦 Depósito: 1102
+   📊 Extraídos: 3,012 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3012, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_12 - PARAPARAL
+   📡 Conexión: 192.168.170.10:1433
+   📦 Depósito: 1202
+   📊 Extraídos: 2,969 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 2969, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_13 - NAGUANAGUA III
+   📡 Conexión: 192.168.190.10:14348
+   📦 Depósito: 1302
+   📊 Extraídos: 2,961 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 2961, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_15 - ISABELICA
+   📡 Conexión: 192.168.180.10:1433
+   📦 Depósito: 1502
+   📊 Extraídos: 2,677 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 2677, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_16 - TOCUYITO
+   📡 Conexión: 192.168.110.10:1433
+   📦 Depósito: 1602
+   📊 Extraídos: 2,490 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 2490, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 TIENDA_19 - GUIGUE
+   📡 Conexión: 192.168.210.10:1433
+   📦 Depósito: 1902
+   📊 Extraídos: 1,895 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 1895, guardados 0
+   🔍 Problema: Guardado en BD
+
+🏪 MAYORISTA_01 - PERIFERICO Mayorista
+   📡 Conexión: 192.168.20.12:14348
+   📦 Depósito: 0102
+   📊 Extraídos: 3,161 registros
+   💾 Guardados: 0 registros
+   ❌ Error: Discrepancia: extraídos 3161, guardados 0
+   🔍 Problema: Guardado en BD
+
+================================================================================
+📈 ESTADÍSTICAS DETALLADAS:
+================================================================================
+
+• Problemas de conexión/extracción: 1
+• Problemas de guardado en BD: 16
+• Promedio registros por tienda exitosa: 0
+
+🎯 SIGUIENTE ACCIÓN RECOMENDADA:
+   🔧 Revisar configuración de red y conectividad de las tiendas fallidas.
+
+================================================================================
