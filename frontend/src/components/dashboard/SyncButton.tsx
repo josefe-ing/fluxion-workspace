@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import http from '../../services/http';
 import SyncResultsModal from './SyncResultsModal';
-import ConnectivityCheckModal from './ConnectivityCheckModal';
+// import ConnectivityCheckModal from './ConnectivityCheckModal'; // Disabled for production
 
 interface SyncButtonProps {
   ubicacionId?: string;  // Si no se especifica, sincroniza todas
@@ -16,15 +16,16 @@ interface UbicacionResultado {
   success: boolean;
 }
 
-interface TiendaStatus {
-  id: string;
-  nombre: string;
-  ip: string;
-  puerto: string;
-  conectado: boolean;
-  ip_alcanzable: boolean;
-  tiempo_ms: number;
-}
+// Disabled for production - connectivity check not available
+// interface TiendaStatus {
+//   id: string;
+//   nombre: string;
+//   ip: string;
+//   puerto: string;
+//   conectado: boolean;
+//   ip_alcanzable: boolean;
+//   tiempo_ms: number;
+// }
 
 export default function SyncButton({ ubicacionId, onSyncComplete }: SyncButtonProps) {
   const [syncing, setSyncing] = useState(false);
@@ -42,13 +43,13 @@ export default function SyncButton({ ubicacionId, onSyncComplete }: SyncButtonPr
     errores: string[];
   } | null>(null);
 
-  // Connectivity check modal state
-  const [showConnectivityModal, setShowConnectivityModal] = useState(false);
-  const [checkingConnectivity, setCheckingConnectivity] = useState(false);
-  const [connectivityData, setConnectivityData] = useState<{
-    tiendas: TiendaStatus[];
-    resumen: { total: number; conectadas: number; porcentaje: number };
-  } | null>(null);
+  // Connectivity check modal state - Disabled for production
+  // const [showConnectivityModal, setShowConnectivityModal] = useState(false);
+  // const [checkingConnectivity, setCheckingConnectivity] = useState(false);
+  // const [connectivityData, setConnectivityData] = useState<{
+  //   tiendas: TiendaStatus[];
+  //   resumen: { total: number; conectadas: number; porcentaje: number };
+  // } | null>(null);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -136,35 +137,36 @@ export default function SyncButton({ ubicacionId, onSyncComplete }: SyncButtonPr
     }
   };
 
-  const checkConnectivity = async () => {
-    try {
-      setCheckingConnectivity(true);
-      const response = await http.get('/api/etl/check-connectivity');
+  // Disabled for production - connectivity check not available in AWS deployment
+  // const checkConnectivity = async () => {
+  //   try {
+  //     setCheckingConnectivity(true);
+  //     const response = await http.get('/api/etl/check-connectivity');
 
-      if (response.data.success) {
-        setConnectivityData({
-          tiendas: response.data.tiendas,
-          resumen: response.data.resumen
-        });
-        setShowConnectivityModal(true);
-      } else {
-        setMessage({
-          type: 'error',
-          text: `❌ Error verificando conectividad: ${response.data.error}`
-        });
-        setTimeout(() => setMessage(null), 5000);
-      }
-    } catch (error: any) {
-      console.error('Error verificando conectividad:', error);
-      setMessage({
-        type: 'error',
-        text: `❌ Error: ${error.response?.data?.detail || 'No se pudo verificar conectividad'}`
-      });
-      setTimeout(() => setMessage(null), 5000);
-    } finally {
-      setCheckingConnectivity(false);
-    }
-  };
+  //     if (response.data.success) {
+  //       setConnectivityData({
+  //         tiendas: response.data.tiendas,
+  //         resumen: response.data.resumen
+  //       });
+  //       setShowConnectivityModal(true);
+  //     } else {
+  //       setMessage({
+  //         type: 'error',
+  //         text: `❌ Error verificando conectividad: ${response.data.error}`
+  //       });
+  //       setTimeout(() => setMessage(null), 5000);
+  //     }
+  //   } catch (error: any) {
+  //     console.error('Error verificando conectividad:', error);
+  //     setMessage({
+  //       type: 'error',
+  //       text: `❌ Error: ${error.response?.data?.detail || 'No se pudo verificar conectividad'}`
+  //     });
+  //     setTimeout(() => setMessage(null), 5000);
+  //   } finally {
+  //     setCheckingConnectivity(false);
+  //   }
+  // };
 
   const startSync = async () => {
     try {
@@ -209,32 +211,25 @@ export default function SyncButton({ ubicacionId, onSyncComplete }: SyncButtonPr
     // }
   };
 
-  const handleContinueAfterCheck = () => {
-    setShowConnectivityModal(false);
-    startSync();
-  };
+  // Disabled for production
+  // const handleContinueAfterCheck = () => {
+  //   setShowConnectivityModal(false);
+  //   startSync();
+  // };
 
   return (
     <>
       <div className="space-y-3">
         <button
           onClick={handleSync}
-          disabled={syncing || checkingConnectivity}
+          disabled={syncing}
           className={`flex items-center px-4 py-2 rounded-md font-medium transition-colors ${
-            syncing || checkingConnectivity
+            syncing
               ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
               : 'bg-blue-600 text-white hover:bg-blue-700'
           }`}
         >
-          {checkingConnectivity ? (
-            <>
-              <svg className="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Verificando...
-            </>
-          ) : syncing ? (
+          {syncing ? (
             <>
               <svg className="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -297,8 +292,8 @@ export default function SyncButton({ ubicacionId, onSyncComplete }: SyncButtonPr
         )}
       </div>
 
-      {/* Modal de verificación de conectividad */}
-      {connectivityData && (
+      {/* Modal de verificación de conectividad - Disabled for production */}
+      {/* {connectivityData && (
         <ConnectivityCheckModal
           isOpen={showConnectivityModal}
           onClose={() => setShowConnectivityModal(false)}
@@ -306,7 +301,7 @@ export default function SyncButton({ ubicacionId, onSyncComplete }: SyncButtonPr
           tiendas={connectivityData.tiendas}
           resumen={connectivityData.resumen}
         />
-      )}
+      )} */}
 
       {/* Modal de resultados */}
       {(() => {

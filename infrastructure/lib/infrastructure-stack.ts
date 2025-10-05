@@ -10,6 +10,7 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 
 export class InfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -38,7 +39,7 @@ export class InfrastructureStack extends cdk.Stack {
       vpcName: 'fluxion-vpc',
       maxAzs: 2,
       natGateways: 1, // Save costs - use 1 NAT Gateway
-      vpnGateway: true, // For Site-to-Site VPN to on-premise
+      // vpnGateway: true, // Disabled for now - will enable when we have La Granja IP
       subnetConfiguration: [
         {
           name: 'Public',
@@ -54,9 +55,9 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     // ========================================
-    // 1b. Site-to-Site VPN Configuration
+    // 1b. Site-to-Site VPN Configuration (TEMPORARILY DISABLED)
     // ========================================
-
+    /* COMMENTED OUT - Need actual public IP from La Granja
     // Customer Gateway - La Granja WireGuard Server
     // TODO: Replace with actual public IP from La Granja
     const laGranjaPublicIP = process.env.LA_GRANJA_PUBLIC_IP || '0.0.0.0';
@@ -98,6 +99,7 @@ export class InfrastructureStack extends cdk.Stack {
         vpnGatewayId: vpc.vpnGatewayId!,
       });
     });
+    */ // END VPN COMMENT
 
     // ========================================
     // 2. EFS for DuckDB Persistence
@@ -105,7 +107,7 @@ export class InfrastructureStack extends cdk.Stack {
     const fileSystem = new efs.FileSystem(this, 'FluxionEFS', {
       vpc,
       fileSystemName: 'fluxion-data',
-      encrypted: true,
+      encrypted: false, // Disabled for now - can enable later with specific KMS key
       lifecyclePolicy: efs.LifecyclePolicy.AFTER_14_DAYS,
       performanceMode: efs.PerformanceMode.GENERAL_PURPOSE,
       throughputMode: efs.ThroughputMode.BURSTING,
@@ -229,7 +231,9 @@ export class InfrastructureStack extends cdk.Stack {
     fileSystem.grantRootAccess(backendTask.taskRole);
 
     const backendContainer = backendTask.addContainer('backend', {
-      image: ecs.ContainerImage.fromAsset('../backend'),
+      image: ecs.ContainerImage.fromAsset('../backend', {
+        platform: Platform.LINUX_AMD64, // Force AMD64 for Fargate
+      }),
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'fluxion-backend',
         logRetention: logs.RetentionDays.ONE_WEEK,
@@ -282,8 +286,9 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     // ========================================
-    // 8. ETL Task Definition
+    // 8. ETL Task Definition (TEMPORARILY DISABLED)
     // ========================================
+    /* COMMENTED OUT - Will enable after VPN is configured
     const etlTask = new ecs.FargateTaskDefinition(this, 'FluxionETLTask', {
       memoryLimitMiB: 4096,
       cpu: 2048,
@@ -347,10 +352,12 @@ export class InfrastructureStack extends cdk.Stack {
         taskCount: 1,
       })
     );
+    */ // END ETL COMMENT
 
     // ========================================
-    // 10. Backup Task Definition
+    // 10. Backup Task Definition (TEMPORARILY DISABLED)
     // ========================================
+    /* COMMENTED OUT - Will enable after initial deployment
     const backupTask = new ecs.FargateTaskDefinition(
       this,
       'FluxionBackupTask',
@@ -415,6 +422,7 @@ export class InfrastructureStack extends cdk.Stack {
         taskCount: 1,
       })
     );
+    */ // END BACKUP COMMENT
 
     // ========================================
     // 11. Outputs
@@ -432,6 +440,13 @@ export class InfrastructureStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'FrontendBucket', {
       value: frontendBucket.bucketName,
       description: 'Frontend S3 bucket name',
+      exportName: 'FluxionFrontendBucketName',
+    });
+
+    new cdk.CfnOutput(this, 'CloudFrontDistributionId', {
+      value: distribution.distributionId,
+      description: 'CloudFront Distribution ID for cache invalidation',
+      exportName: 'FluxionCloudFrontDistributionId',
     });
 
     new cdk.CfnOutput(this, 'BackupBucket', {
@@ -444,6 +459,7 @@ export class InfrastructureStack extends cdk.Stack {
       description: 'VPC ID for VPN configuration',
     });
 
+    /* VPN Outputs - Commented out until VPN is configured
     new cdk.CfnOutput(this, 'VPNGatewayId', {
       value: vpc.vpnGatewayId || 'N/A',
       description: 'VPN Gateway ID',
@@ -464,5 +480,6 @@ export class InfrastructureStack extends cdk.Stack {
       value: `aws ec2 describe-vpn-connections --vpn-connection-ids ${vpnConnection.ref} --query 'VpnConnections[0].CustomerGatewayConfiguration' --output text`,
       description: 'Command to download VPN configuration',
     });
+    */
   }
 }

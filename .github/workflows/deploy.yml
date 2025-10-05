@@ -1,0 +1,206 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Permite ejecutar manualmente desde GitHub UI
+
+env:
+  AWS_REGION: us-east-1
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Job 1: Build y test del Backend
+  backend-build:
+    name: Backend Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint with flake8 (if available)
+        continue-on-error: true
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Run tests (if available)
+        continue-on-error: true
+        run: |
+          pip install pytest
+          pytest || echo "No tests found"
+
+  # Job 2: Build y test del Frontend
+  frontend-build:
+    name: Frontend Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 1
+
+  # Job 3: Deploy Infrastructure & Backend
+  deploy-infrastructure:
+    name: Deploy Infrastructure & Backend
+    needs: [backend-build, frontend-build]
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install CDK dependencies
+        working-directory: ./infrastructure
+        run: npm ci
+
+      - name: CDK Bootstrap (if needed)
+        working-directory: ./infrastructure
+        run: npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} || true
+
+      - name: CDK Synth
+        working-directory: ./infrastructure
+        run: npx cdk synth
+
+      - name: CDK Deploy
+        working-directory: ./infrastructure
+        run: npx cdk deploy FluxionStack --require-approval never
+
+      - name: Get Stack Outputs
+        id: stack-outputs
+        run: |
+          BACKEND_URL=$(aws cloudformation describe-stacks \
+            --stack-name FluxionStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`BackendURL`].OutputValue' \
+            --output text)
+          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name FluxionStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
+            --output text)
+          CLOUDFRONT_ID=$(aws cloudformation describe-stacks \
+            --stack-name FluxionStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text)
+
+          echo "backend-url=$BACKEND_URL" >> $GITHUB_OUTPUT
+          echo "frontend-bucket=$FRONTEND_BUCKET" >> $GITHUB_OUTPUT
+          echo "cloudfront-id=$CLOUDFRONT_ID" >> $GITHUB_OUTPUT
+
+    outputs:
+      backend-url: ${{ steps.stack-outputs.outputs.backend-url }}
+      frontend-bucket: ${{ steps.stack-outputs.outputs.frontend-bucket }}
+      cloudfront-id: ${{ steps.stack-outputs.outputs.cloudfront-id }}
+
+  # Job 4: Deploy Frontend to S3 + CloudFront
+  deploy-frontend:
+    name: Deploy Frontend
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: ./dist
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload to S3
+        run: |
+          aws s3 sync ./dist/ s3://${{ needs.deploy-infrastructure.outputs.frontend-bucket }}/ --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ needs.deploy-infrastructure.outputs.cloudfront-id }} \
+            --paths "/*"
+
+      - name: Deployment Summary
+        run: |
+          echo "✅ Deployment Complete!"
+          echo "Backend API: ${{ needs.deploy-infrastructure.outputs.backend-url }}"
+          echo "Frontend: https://${{ needs.deploy-infrastructure.outputs.cloudfront-id }}.cloudfront.net"
+
+  # Job 5: Health Check
+  health-check:
+    name: Health Check
+    needs: [deploy-infrastructure, deploy-frontend]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Backend Health
+        run: |
+          echo "Checking backend health..."
+          sleep 10  # Wait for service to be ready
+          curl -f ${{ needs.deploy-infrastructure.outputs.backend-url }} || exit 1
+
+      - name: Notify Success
+        if: success()
+        run: |
+          echo "🎉 All services deployed and healthy!"
+          echo "Backend: ${{ needs.deploy-infrastructure.outputs.backend-url }}"

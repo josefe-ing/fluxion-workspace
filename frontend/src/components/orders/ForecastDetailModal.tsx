@@ -16,7 +16,7 @@ interface ForecastDetailModalProps {
   codigoProducto: string;
   descripcionProducto: string;
   forecasts: ForecastDiario[];
-  cantidadBultos: number;
+  cantidadBultos?: number; // Optional - for future use
 }
 
 export default function ForecastDetailModal({
@@ -24,8 +24,7 @@ export default function ForecastDetailModal({
   onClose,
   codigoProducto,
   descripcionProducto,
-  forecasts,
-  cantidadBultos
+  forecasts
 }: ForecastDetailModalProps) {
   const totalUnidades = forecasts.reduce((sum, f) => sum + f.forecast_unidades, 0);
   const totalBultos = forecasts.reduce((sum, f) => sum + f.forecast_bultos, 0);
