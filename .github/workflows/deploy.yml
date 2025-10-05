@@ -70,7 +70,7 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npm run lint
+        run: npx eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 50
 
       - name: Type check
         run: npm run type-check
