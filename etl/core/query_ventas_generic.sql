@@ -31,6 +31,7 @@ SELECT
 
     -- Cantidades y medidas
     t.Cantidad AS cantidad_vendida,
+    p.n_CantiBul AS cantidad_bultos,
     p.n_Peso AS peso_unitario,
     p.n_Volumen AS volumen_unitario,
     p.n_TipoPeso AS tipo_peso,

@@ -3,13 +3,19 @@
 # ==========================================
 
 # ============ DATABASES ============
-# DuckDB files (16GB+)
+# DuckDB databases (PRODUCTION DATA - DO NOT COMMIT)
 data/
 *.db
+*.duckdb
 *.db-journal
 *.db-wal
 *.db.tmp/
-*.duckdb
+data/*.db.tmp/
+data/*_temp.db
+
+# NOTA IMPORTANTE: Las bases de datos NO se suben a GitHub
+# Son demasiado grandes (16GB+) y contienen datos de producción
+# En producción, las DBs se crean vacías y se llenan con ETL
 
 # ============ ETL ============
 etl/logs/
@@ -67,8 +73,15 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.env.production
+credentials.json
+**/credentials/
 
 # ============ TEMPORARY ============
 temp/
 tmp/
 *.tmp/
+
+# Development logs
+/tmp/fluxion_*.log
+/tmp/fluxion_*.pid

@@ -22,6 +22,18 @@ class TiendaConfig:
     activo: bool = True
     tipo: str = "tienda"
     codigo_deposito: str = "0102"  # Código específico del depósito para esta tienda
+    # Parámetros de stock mínimo por clasificación ABC
+    stock_min_mult_a: float = 2.0
+    stock_min_mult_ab: float = 2.0
+    stock_min_mult_b: float = 3.0
+    stock_min_mult_bc: float = 9.0
+    stock_min_mult_c: float = 15.0
+    # Parámetros de stock de seguridad por clasificación ABC
+    stock_seg_mult_a: float = 1.0
+    stock_seg_mult_ab: float = 2.5
+    stock_seg_mult_b: float = 2.0
+    stock_seg_mult_bc: float = 3.0
+    stock_seg_mult_c: float = 7.0
 
 # Configuración de tiendas disponibles
 TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
@@ -35,7 +47,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         username=os.getenv("SQL_USER", "beliveryApp"),
         password=os.getenv("SQL_PASS", "AxPG_25!"),
         port=14348,
-        activo=True,
+        activo=False,
         codigo_deposito="0102"
     ),
 
@@ -47,7 +59,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         username=os.getenv("SQL_USER", "beliveryApp"),
         password=os.getenv("SQL_PASS", "AxPG_25!"),
         port=14348,
-        activo=True,
+        activo=False,
         codigo_deposito="0202"
     ),
 
@@ -59,7 +71,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         username=os.getenv("SQL_USER", "beliveryApp"),
         password=os.getenv("SQL_PASS", "AxPG_25!"),
         port=14348,
-        activo=True,
+        activo=False,
         codigo_deposito="0302"
     ),
 
@@ -83,7 +95,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         username=os.getenv("SQL_USER", "beliveryApp"),
         password=os.getenv("SQL_PASS", "AxPG_25!"),
         port=14348,
-        activo=True,
+        activo=False,
         codigo_deposito="0502"
     ),
 
@@ -95,7 +107,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         username=os.getenv("SQL_USER", "beliveryApp"),
         password=os.getenv("SQL_PASS", "AxPG_25!"),
         port=14348,
-        activo=True,
+        activo=False,
         codigo_deposito="0602"
     ),
 
@@ -143,7 +155,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         username=os.getenv("SQL_USER", "beliveryApp"),
         password=os.getenv("SQL_PASS", "AxPG_25!"),
         port=14348,
-        activo=True,
+        activo=False,
         codigo_deposito="1002"
     ),
 
