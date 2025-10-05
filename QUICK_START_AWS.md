@@ -27,21 +27,44 @@ Internet → CloudFront (Frontend) → ALB → ECS Fargate (Backend)
 # ✓ Dependencias
 ```
 
-### 2️⃣ Configurar Secrets (5 min)
+### 2️⃣ Configurar VPN Site-to-Site (15-20 min)
+
+**⚠️ IMPORTANTE**: Este paso es crítico para que ETL pueda acceder a SQL Servers en red `192.168.x.x`
 
 ```bash
-# Crear secret para SQL Server (credenciales ETL)
+# 1. Obtener IP pública de La Granja
+# Desde servidor WireGuard o contactar ISP
+curl ifconfig.me
+
+# 2. Configurar variable de entorno
+export LA_GRANJA_PUBLIC_IP="203.0.113.45"  # Reemplazar con IP real
+
+# 3. Guardar en infrastructure/.env
+echo "LA_GRANJA_PUBLIC_IP=203.0.113.45" > infrastructure/.env
+```
+
+**📖 Guía completa VPN**: Ver [SITE_TO_SITE_VPN_SETUP.md](SITE_TO_SITE_VPN_SETUP.md)
+
+### 3️⃣ Configurar Secrets (5 min)
+
+```bash
+# SQL Server credentials (para ETL)
 aws secretsmanager create-secret \
-  --name fluxion/sql-server \
+  --name fluxion/sql-credentials \
   --secret-string '{
-    "host": "sql-server.lagranja.local",
-    "user": "etl_user",
-    "password": "TU_PASSWORD_AQUI"
+    "user": "beliveryApp",
+    "password": "AxPG_25!"
   }' \
+  --tags Key=Project,Value=fluxion-ai
+
+# Opcional: Sentry DSN
+aws secretsmanager create-secret \
+  --name fluxion/sentry-dsn \
+  --secret-string "https://xxxxx@sentry.io/yyyyy" \
   --tags Key=Project,Value=fluxion-ai
 ```
 
-### 3️⃣ Deploy Infraestructura (20-30 min)
+### 4️⃣ Deploy Infraestructura (20-30 min)
 
 ```bash
 cd infrastructure
@@ -58,7 +81,31 @@ cdk deploy FluxionStack
 # - BackupBucket: Nombre del bucket de backups
 ```
 
-### 4️⃣ Deploy Frontend (5 min)
+### 5️⃣ Configurar VPN en La Granja (30 min)
+
+Después del deploy CDK, configurar el lado de La Granja:
+
+```bash
+# 1. Descargar config VPN de AWS
+VPN_CONN_ID=$(aws cloudformation describe-stacks \
+  --stack-name InfrastructureStack \
+  --query 'Stacks[0].Outputs[?OutputKey==`VPNConnectionId`].OutputValue' \
+  --output text)
+
+aws ec2 describe-vpn-connections \
+  --vpn-connection-ids $VPN_CONN_ID \
+  --query 'VpnConnections[0].CustomerGatewayConfiguration' \
+  --output text > aws-vpn-config.xml
+
+# 2. Ver instrucciones detalladas
+cat SITE_TO_SITE_VPN_SETUP.md
+```
+
+**Opciones de configuración**:
+- **strongSwan** (Linux) - Recomendado
+- **pfSense/OPNsense** - Si tienes router dedicado
+
+### 6️⃣ Deploy Frontend (5 min)
 
 ```bash
 cd frontend

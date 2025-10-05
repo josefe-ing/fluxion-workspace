@@ -54,6 +54,52 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     // ========================================
+    // 1b. Site-to-Site VPN Configuration
+    // ========================================
+
+    // Customer Gateway - La Granja WireGuard Server
+    // TODO: Replace with actual public IP from La Granja
+    const laGranjaPublicIP = process.env.LA_GRANJA_PUBLIC_IP || '0.0.0.0';
+
+    const customerGateway = new ec2.CfnCustomerGateway(this, 'LaGranjaCustomerGateway', {
+      bgpAsn: 65000, // Default BGP ASN
+      ipAddress: laGranjaPublicIP,
+      type: 'ipsec.1',
+      tags: [
+        { key: 'Name', value: 'la-granja-customer-gateway' },
+        { key: 'Project', value: 'fluxion-ai' },
+      ],
+    });
+
+    // VPN Connection
+    const vpnConnection = new ec2.CfnVPNConnection(this, 'LaGranjaVPNConnection', {
+      type: 'ipsec.1',
+      customerGatewayId: customerGateway.ref,
+      vpnGatewayId: vpc.vpnGatewayId!,
+      staticRoutesOnly: true,
+      tags: [
+        { key: 'Name', value: 'la-granja-vpn-connection' },
+        { key: 'Project', value: 'fluxion-ai' },
+      ],
+    });
+
+    // Static Routes to La Granja Network
+    // Route to 192.168.0.0/16 (covers all 192.168.x.x addresses)
+    new ec2.CfnVPNConnectionRoute(this, 'LaGranjaNetworkRoute', {
+      destinationCidrBlock: '192.168.0.0/16',
+      vpnConnectionId: vpnConnection.ref,
+    });
+
+    // Propagate VPN routes to VPC route tables
+    vpc.privateSubnets.forEach((subnet, index) => {
+      const routeTable = subnet.routeTable;
+      new ec2.CfnVPNGatewayRoutePropagation(this, `VPNRoutePropagation${index}`, {
+        routeTableIds: [routeTable.routeTableId],
+        vpnGatewayId: vpc.vpnGatewayId!,
+      });
+    });
+
+    // ========================================
     // 2. EFS for DuckDB Persistence
     // ========================================
     const fileSystem = new efs.FileSystem(this, 'FluxionEFS', {
@@ -401,6 +447,22 @@ export class InfrastructureStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'VPNGatewayId', {
       value: vpc.vpnGatewayId || 'N/A',
       description: 'VPN Gateway ID',
+    });
+
+    new cdk.CfnOutput(this, 'CustomerGatewayId', {
+      value: customerGateway.ref,
+      description: 'Customer Gateway ID (La Granja)',
+    });
+
+    new cdk.CfnOutput(this, 'VPNConnectionId', {
+      value: vpnConnection.ref,
+      description: 'VPN Connection ID - Use to download VPN config',
+      exportName: 'FluxionVPNConnectionId',
+    });
+
+    new cdk.CfnOutput(this, 'VPNConfigDownloadCommand', {
+      value: `aws ec2 describe-vpn-connections --vpn-connection-ids ${vpnConnection.ref} --query 'VpnConnections[0].CustomerGatewayConfiguration' --output text`,
+      description: 'Command to download VPN configuration',
     });
   }
 }
