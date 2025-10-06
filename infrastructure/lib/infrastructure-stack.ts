@@ -230,6 +230,9 @@ export class InfrastructureStack extends cdk.Stack {
     // Grant EFS access to task role
     fileSystem.grantRootAccess(backendTask.taskRole);
 
+    // Grant S3 read access to download database
+    backupBucket.grantRead(backendTask.taskRole);
+
     const backendContainer = backendTask.addContainer('backend', {
       image: ecs.ContainerImage.fromAsset('../backend', {
         platform: Platform.LINUX_AMD64, // Force AMD64 for Fargate
