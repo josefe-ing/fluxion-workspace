@@ -43,6 +43,7 @@ export interface ProductoPedido {
   stock_cedi_verde: number;
   stock_cedi_origen: number;
   clasificacion_abc: string | null;
+  cuadrante_producto: string | null;
   stock_minimo: number;
   stock_maximo: number;
   stock_seguridad: number;

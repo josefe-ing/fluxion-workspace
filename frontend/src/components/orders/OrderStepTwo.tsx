@@ -37,6 +37,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [forecastModalOpen, setForecastModalOpen] = useState(false);
   const [selectedProductoForecast, setSelectedProductoForecast] = useState<ProductoPedido | null>(null);
   const [forecastsDiarios, setForecastsDiarios] = useState<any[]>([]);
+  const [cuadranteActivo, setCuadranteActivo] = useState<string>('CUADRANTE I');
 
   useEffect(() => {
     cargarStockParams();
@@ -47,6 +48,21 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       cargarProductosSugeridos();
     }
   }, []);
+
+  // Ajustar cuadrante activo si no existe en los productos cargados
+  useEffect(() => {
+    if (productos.length > 0) {
+      const cuadrantes = Array.from(new Set(productos.map(p => p.cuadrante_producto).filter(Boolean)));
+      if (!cuadrantes.includes(cuadranteActivo) && cuadranteActivo !== 'Todos') {
+        // Si CUADRANTE I existe, seleccionarlo, sino usar el primero disponible
+        if (cuadrantes.includes('CUADRANTE I')) {
+          setCuadranteActivo('CUADRANTE I');
+        } else if (cuadrantes.length > 0) {
+          setCuadranteActivo(cuadrantes[0] as string);
+        }
+      }
+    }
+  }, [productos]);
 
   const cargarForecast = async () => {
     try {
@@ -163,8 +179,17 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     }
   };
 
-  // Filtrar productos por búsqueda
+  // Obtener cuadrantes únicos de los productos
+  const cuadrantesDisponibles = ['Todos', ...Array.from(new Set(productos.map(p => p.cuadrante_producto).filter((c): c is string => c !== null)))].sort();
+
+  // Filtrar productos por búsqueda y cuadrante
   const productosFiltrados = productos.filter(p => {
+    // Filtro por cuadrante
+    if (cuadranteActivo !== 'Todos' && p.cuadrante_producto !== cuadranteActivo) {
+      return false;
+    }
+
+    // Filtro por búsqueda
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return (
@@ -321,6 +346,43 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
               Mostrando {productosFiltrados.length} de {productos.length} productos
             </p>
           )}
+        </div>
+
+        {/* Filtro de Cuadrantes */}
+        <div className="mt-6">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-sm font-medium text-gray-700">Filtrar por Cuadrante:</span>
+            <span className="text-xs text-gray-500">({productosFiltrados.length} productos)</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {cuadrantesDisponibles.map((cuadrante) => {
+              const count = productos.filter(p => cuadrante === 'Todos' || p.cuadrante_producto === cuadrante).length;
+              const isActive = cuadranteActivo === cuadrante;
+
+              return (
+                <button
+                  key={cuadrante}
+                  onClick={() => setCuadranteActivo(cuadrante)}
+                  className={`
+                    px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200
+                    flex items-center gap-2 border-2
+                    ${isActive
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-lg transform scale-105'
+                      : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+                    }
+                  `}
+                >
+                  <span>{cuadrante}</span>
+                  <span className={`
+                    px-2 py-0.5 rounded-full text-xs font-bold
+                    ${isActive ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600'}
+                  `}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
