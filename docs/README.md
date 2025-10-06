@@ -134,22 +134,47 @@ Después del setup, estos endpoints deben estar disponibles:
 
 ## 📖 Documentación
 
-### 📚 **Documentos Principales**
-- [`/docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - Arquitectura completa del sistema
-- [`/docs/CODING-STANDARDS.md`](docs/CODING-STANDARDS.md) - Estándares de código
-- [`/docs/DESIGN-PATTERNS.md`](docs/DESIGN-PATTERNS.md) - Patrones y filosofía
-- [`/docs/DEVELOPMENT-ROADMAP.md`](docs/DEVELOPMENT-ROADMAP.md) - Plan de desarrollo
+### 📚 **Setup y Configuración**
+- [Quick Start](setup/quick-start.md) - Guía rápida de inicio en AWS
+- [Configuración General](setup/configuracion.md) - Configuración del sistema
+- [GitHub Secrets](setup/github-secrets.md) - Configuración de secrets para CI/CD
+- [CI/CD Setup](setup/ci-cd-setup.md) - Pipeline de deployment automatizado
 
-### 🎓 **Guías de Desarrollo**
-- [Configurar Entorno Local](docs/guides/local-setup.md)
-- [Crear Nuevos Módulos](docs/guides/new-modules.md)
-- [Integrar POS Systems](docs/guides/pos-integration.md)
-- [Deploy a Google Cloud](docs/guides/gcp-deployment.md)
+### 🚀 **Deployment**
+- [AWS Deployment](deployment/aws-deployment.md) - Deployment en AWS con CDK
+- [CDK Deployment](deployment/cdk-deployment.md) - Deployment usando AWS CDK
+- [Database Transfer](deployment/db-transfer.md) - Transferencia de base de datos a AWS
 
-### 🔧 **API Reference**
-- [Backend API Docs](http://localhost:3000/docs) (Swagger UI)
-- [AI Engine API Docs](http://localhost:8000/docs) (FastAPI Docs)
-- [WebHook Specifications](docs/api/webhooks.md)
+### 🏗️ **Infraestructura**
+- [Backup Strategy](infrastructure/backup-strategy.md) - Estrategia de backups
+- [VPN WireGuard](infrastructure/vpn-wireguard.md) - Configuración VPN WireGuard
+- [Site-to-Site VPN](infrastructure/vpn-site-to-site.md) - VPN site-to-site con AWS
+
+### 🏛️ **Arquitectura y Diseño**
+- [Architecture Overview](ARCHITECTURE.md) - Visión general de la arquitectura
+- [Data Model](architecture/data-model.md) - Modelo de datos completo
+- [Database Diagram](architecture/database-diagram.md) - Diagrama de base de datos
+- [Parametrización](architecture/parametrizacion.md) - Arquitectura de parametrización
+- [Design Patterns](DESIGN-PATTERNS.md) - Patrones de diseño utilizados
+- [Coding Standards](CODING-STANDARDS.md) - Estándares de código
+
+### 💼 **Business Logic**
+- [Business Case](BUSINESS-CASE.md) - Caso de negocio y valor
+- [Forecast de Ventas](business/forecast-ventas.md) - Lógica de pronóstico
+- [Lógica de Pedidos](business/logica-pedidos.md) - Sugerencias de pedidos
+- [Plan de Parametrización](business/plan-parametrizacion.md) - Parametrización de productos
+- [POS Integration Strategy](POS_INTEGRATION_STRATEGY.md) - Integración con POS
+
+### ⚙️ **Operaciones**
+- [Auditoría](operations/auditoria.md) - Proyecto de auditoría del sistema
+- [Limpieza de DB](operations/limpieza-db.md) - Mantenimiento de DuckDB
+
+### 👨‍💻 **Desarrollo**
+- [Development Plan](DEVELOPMENT-PLAN.md) - Plan de desarrollo
+- [Development Roadmap](DEVELOPMENT-ROADMAP.md) - Roadmap del proyecto
+- [Organization Plan](ORGANIZATION-PLAN.md) - Plan de organización
+- [MVP Definition](MVPDefinition.md) - Definición del MVP
+- [Product Design Document](PDD.md) - Documento de diseño
 
 ---
 
