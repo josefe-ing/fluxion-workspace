@@ -13,10 +13,15 @@ LABEL component="backend"
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including AWS CLI
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    unzip \
+    && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm -rf aws awscliv2.zip \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
@@ -42,5 +47,5 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:8001/ || exit 1
 
-# Run application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "4"]
+# Run application with startup script
+CMD ["/bin/bash", "startup.sh"]
