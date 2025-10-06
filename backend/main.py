@@ -439,8 +439,6 @@ async def get_ubicaciones_summary():
 async def get_stock_params(ubicacion_id: str):
     """Obtiene los parámetros de stock para una tienda específica"""
     try:
-        import sys
-        sys.path.append(str(Path(__file__).parent.parent / "etl" / "core"))
         from tiendas_config import TIENDAS_CONFIG
 
         # Buscar configuración de la tienda
@@ -1589,31 +1587,37 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
 def get_forecast_productos(
     ubicacion_id: str,
     productos: Optional[str] = None,
-    dias_adelante: int = 7
+    dias_adelante: int = 7,
+    limit: int = 20
 ):
     """
     Calcula forecast para productos de una ubicación
 
     Args:
         ubicacion_id: ID de la ubicación (e.g., 'tienda_01')
-        productos: Códigos de productos separados por coma (opcional, default: top 100)
+        productos: Códigos de productos separados por coma (opcional, default: top N)
         dias_adelante: Días hacia el futuro para predecir (default: 7)
+        limit: Número máximo de productos (default: 20)
 
     Returns:
         Lista de forecasts por producto
     """
     try:
+        logger.info(f"🔮 Iniciando forecast para {ubicacion_id}, dias={dias_adelante}, limit={limit}")
         from forecast_pmp import ForecastPMP
 
         productos_list = productos.split(",") if productos else None
 
         with ForecastPMP() as forecaster:
+            logger.info(f"📊 ForecastPMP inicializado, calculando...")
             forecasts = forecaster.calcular_forecast_tienda(
                 ubicacion_id=ubicacion_id,
                 productos=productos_list,
-                dias_adelante=dias_adelante
+                dias_adelante=dias_adelante,
+                limit=limit
             )
 
+        logger.info(f"✅ Forecast completado: {len(forecasts)} productos")
         return {
             "success": True,
             "ubicacion_id": ubicacion_id,
@@ -1623,7 +1627,7 @@ def get_forecast_productos(
         }
 
     except Exception as e:
-        logger.error(f"Error calculando forecast: {str(e)}")
+        logger.error(f"❌ Error calculando forecast: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error en forecast: {str(e)}")
 
 

@@ -1,6 +1,6 @@
 # ========================================
 # Dockerfile - Fluxion AI Backend
-# FastAPI + DuckDB + Sentry
+# FastAPI + DuckDB + Sentry + Forecast
 # ========================================
 
 FROM python:3.11-slim
@@ -9,6 +9,7 @@ FROM python:3.11-slim
 LABEL maintainer="josefe-ing"
 LABEL project="fluxion-ai"
 LABEL component="backend"
+LABEL version="2.1.3"
 
 # Set working directory
 WORKDIR /app

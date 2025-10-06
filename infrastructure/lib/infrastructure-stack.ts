@@ -348,6 +348,7 @@ PersistentKeepalive = 25`),
       vpc,
       internetFacing: true,
       loadBalancerName: 'fluxion-alb',
+      idleTimeout: cdk.Duration.seconds(120), // Increased for forecast endpoint
     });
 
     const listener = alb.addListener('HttpListener', { port: 80 });

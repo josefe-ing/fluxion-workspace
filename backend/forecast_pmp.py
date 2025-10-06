@@ -17,17 +17,37 @@ import duckdb
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import uuid
+import os
+from pathlib import Path
 
 
 class ForecastPMP:
     """Modelo de Forecast basado en Promedio Móvil Ponderado"""
 
-    def __init__(self, db_path: str = "../data/fluxion_production.db"):
+    def __init__(self, db_path: str = None):
+        # Auto-detect database path
+        if db_path is None:
+            # Try environment variable first (for Docker/ECS)
+            db_path = os.getenv('DATABASE_PATH')
+
+            if db_path is None:
+                # Try production path (Docker container)
+                if Path("/data/fluxion_production.db").exists():
+                    db_path = "/data/fluxion_production.db"
+                # Try local development path
+                elif Path("../data/fluxion_production.db").exists():
+                    db_path = "../data/fluxion_production.db"
+                # Try current directory
+                elif Path("data/fluxion_production.db").exists():
+                    db_path = "data/fluxion_production.db"
+                else:
+                    raise FileNotFoundError("No se encontró fluxion_production.db en ninguna ubicación conocida")
+
         self.db_path = db_path
         self.conn = None
 
     def __enter__(self):
-        self.conn = duckdb.connect(self.db_path)
+        self.conn = duckdb.connect(self.db_path, read_only=True)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -298,28 +318,30 @@ class ForecastPMP:
         ubicacion_id: str,
         productos: Optional[List[str]] = None,
         dias_adelante: int = 7,
+        limit: int = 50,
     ) -> List[Dict]:
         """
-        Calcula forecast para todos los productos de una tienda
+        Calcula forecast para productos de una tienda
 
         Args:
             ubicacion_id: ID de la ubicación
-            productos: Lista de códigos de producto (None = todos)
+            productos: Lista de códigos de producto (None = top productos)
             dias_adelante: Días a futuro
+            limit: Número máximo de productos (default: 50)
 
         Returns:
             Lista de dicts con forecasts por producto
         """
-        # Si no se especifican productos, obtener los top 100 más vendidos
+        # Si no se especifican productos, obtener los top N más vendidos
         if productos is None:
-            query_top = """
+            query_top = f"""
             SELECT codigo_producto
             FROM ventas_raw
             WHERE ubicacion_id = ?
               AND CAST(fecha AS DATE) >= CURRENT_DATE - INTERVAL '30 days'
             GROUP BY codigo_producto
             ORDER BY SUM(CAST(cantidad_vendida AS DECIMAL)) DESC
-            LIMIT 100
+            LIMIT {limit}
             """
             result = self.conn.execute(query_top, [ubicacion_id]).fetchall()
             productos = [row[0] for row in result]
