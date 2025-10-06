@@ -28,7 +28,7 @@ fi
 
 # Initialize authentication schema if needed
 echo "🔐 Initializing authentication schema..."
-python3 /app/database/init_auth.py || echo "⚠️  Auth initialization failed (may already exist)"
+cd /app && python3 database/init_auth.py || echo "⚠️  Auth initialization failed (may already exist)"
 
 # Start the application
 echo "🚀 Starting Uvicorn server..."

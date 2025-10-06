@@ -37,9 +37,6 @@ RUN pip install --no-cache-dir sentry-sdk[fastapi]
 # Copy application code
 COPY . .
 
-# Copy database initialization scripts
-COPY ../database /app/database
-
 # Create data directory for DuckDB
 RUN mkdir -p /data
 
