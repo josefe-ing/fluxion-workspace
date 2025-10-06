@@ -6,7 +6,6 @@ Conecta con DuckDB para servir datos de inventario en tiempo real
 
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import duckdb
@@ -41,19 +40,6 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-)
-
-# Trusted Host Middleware (protección contra Host header attacks)
-app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=[
-        "localhost",
-        "localhost:8001",
-        "127.0.0.1",
-        "*.cloudfront.net",
-        "*.elb.amazonaws.com",
-        "*.fluxion.ai",  # Si en el futuro tienes dominio propio
-    ]
 )
 
 # Security Headers Middleware
