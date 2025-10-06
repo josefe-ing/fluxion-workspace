@@ -1,0 +1,820 @@
+{
+  "info": {
+    "name": "Fluxion AI - Complete API",
+    "description": "Colección completa de endpoints de Fluxion AI para gestión de inventario inteligente.\n\nInstrucciones:\n1. Importar los environments (Production y Local)\n2. Seleccionar el environment deseado\n3. Ejecutar login para obtener token\n4. El token se guarda automáticamente en {{auth_token}}",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "fluxion-ai"
+  },
+  "item": [
+    {
+      "name": "🔐 Autenticación",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.environment.set(\"auth_token\", jsonData.access_token);",
+                  "    pm.environment.set(\"current_user\", jsonData.username);",
+                  "    console.log(\"✅ Token guardado: \" + jsonData.access_token.substring(0, 20) + \"...\");",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Autenticarse y obtener token JWT (válido por 8 horas)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "me"]
+            },
+            "description": "Obtener información del usuario autenticado actual"
+          },
+          "response": []
+        },
+        {
+          "name": "Register New User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"nuevo_usuario\",\n  \"password\": \"password123\",\n  \"nombre_completo\": \"Nombre Completo\",\n  \"email\": \"email@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register"]
+            },
+            "description": "Crear un nuevo usuario (requiere autenticación)"
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "logout"]
+            },
+            "description": "Cerrar sesión (el token se invalida en el cliente)"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints de autenticación y gestión de usuarios"
+    },
+    {
+      "name": "📍 Ubicaciones",
+      "item": [
+        {
+          "name": "Get All Ubicaciones",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/ubicaciones",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ubicaciones"],
+              "query": [
+                {
+                  "key": "tipo",
+                  "value": "tienda",
+                  "disabled": true,
+                  "description": "Filtrar por tipo: tienda o cedi"
+                }
+              ]
+            },
+            "description": "Obtener todas las ubicaciones (tiendas y CEDIs)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Ubicaciones Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/ubicaciones/summary",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ubicaciones", "summary"]
+            },
+            "description": "Obtener resumen de inventario por ubicación"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Stock Parameters by Ubicacion",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/ubicaciones/:ubicacion_id/stock-params",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ubicaciones", ":ubicacion_id", "stock-params"],
+              "variable": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "description": "ID de la ubicación"
+                }
+              ]
+            },
+            "description": "Obtener parámetros de stock para una ubicación específica"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints para gestión de ubicaciones (tiendas y CEDIs)"
+    },
+    {
+      "name": "📦 Productos",
+      "item": [
+        {
+          "name": "Get All Productos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/productos",
+              "host": ["{{base_url}}"],
+              "path": ["api", "productos"],
+              "query": [
+                {
+                  "key": "categoria",
+                  "value": "LACTEOS",
+                  "disabled": true,
+                  "description": "Filtrar por categoría"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": "Límite de resultados"
+                }
+              ]
+            },
+            "description": "Obtener catálogo de productos"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Categorias",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/categorias",
+              "host": ["{{base_url}}"],
+              "path": ["api", "categorias"]
+            },
+            "description": "Obtener lista de todas las categorías de productos"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints para gestión de productos y categorías"
+    },
+    {
+      "name": "📊 Inventario / Stock",
+      "item": [
+        {
+          "name": "Get Stock",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/stock",
+              "host": ["{{base_url}}"],
+              "path": ["api", "stock"],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                },
+                {
+                  "key": "producto_id",
+                  "value": "P001",
+                  "disabled": true,
+                  "description": "Filtrar por producto"
+                },
+                {
+                  "key": "categoria",
+                  "value": "LACTEOS",
+                  "disabled": true,
+                  "description": "Filtrar por categoría"
+                },
+                {
+                  "key": "bajo_stock",
+                  "value": "true",
+                  "disabled": true,
+                  "description": "Solo productos con bajo stock"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": "Límite de resultados"
+                }
+              ]
+            },
+            "description": "Obtener inventario actual con múltiples filtros"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints para consultar inventario y stock actual"
+    },
+    {
+      "name": "📈 Dashboard",
+      "item": [
+        {
+          "name": "Get Dashboard Metrics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/dashboard/metrics",
+              "host": ["{{base_url}}"],
+              "path": ["api", "dashboard", "metrics"],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                }
+              ]
+            },
+            "description": "Obtener métricas principales del dashboard"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Category Metrics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/dashboard/categories",
+              "host": ["{{base_url}}"],
+              "path": ["api", "dashboard", "categories"],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                }
+              ]
+            },
+            "description": "Obtener métricas por categoría"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints para métricas y KPIs del dashboard"
+    },
+    {
+      "name": "💰 Ventas",
+      "item": [
+        {
+          "name": "Get Ventas Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/ventas/summary",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ventas", "summary"],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                },
+                {
+                  "key": "fecha_desde",
+                  "value": "2024-01-01",
+                  "disabled": true,
+                  "description": "Fecha inicio (YYYY-MM-DD)"
+                },
+                {
+                  "key": "fecha_hasta",
+                  "value": "2024-12-31",
+                  "disabled": true,
+                  "description": "Fecha fin (YYYY-MM-DD)"
+                }
+              ]
+            },
+            "description": "Obtener resumen de ventas"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Ventas Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/ventas/detail",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ventas", "detail"],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                },
+                {
+                  "key": "producto_id",
+                  "value": "P001",
+                  "disabled": true,
+                  "description": "Filtrar por producto"
+                },
+                {
+                  "key": "fecha_desde",
+                  "value": "2024-01-01",
+                  "disabled": true,
+                  "description": "Fecha inicio"
+                },
+                {
+                  "key": "fecha_hasta",
+                  "value": "2024-12-31",
+                  "disabled": true,
+                  "description": "Fecha fin"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": "Límite de resultados"
+                }
+              ]
+            },
+            "description": "Obtener detalle de ventas con filtros"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Ventas by Categorias",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/ventas/categorias",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ventas", "categorias"],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                }
+              ]
+            },
+            "description": "Obtener ventas agrupadas por categoría"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints para análisis de ventas"
+    },
+    {
+      "name": "🛒 Pedidos Sugeridos",
+      "item": [
+        {
+          "name": "Calculate Pedido Sugerido",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ubicacion_id\": 1,\n  \"dias_horizonte\": 7,\n  \"nivel_servicio\": 0.95\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/pedidos-sugeridos/calcular",
+              "host": ["{{base_url}}"],
+              "path": ["api", "pedidos-sugeridos", "calcular"]
+            },
+            "description": "Calcular pedido sugerido basado en IA/forecast"
+          },
+          "response": []
+        },
+        {
+          "name": "Save Pedido",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ubicacion_id\": 1,\n  \"productos\": [\n    {\n      \"codigo_producto\": \"P001\",\n      \"cantidad_sugerida\": 100,\n      \"cantidad_ajustada\": 120\n    }\n  ],\n  \"notas\": \"Pedido ajustado manualmente\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/pedidos-sugeridos",
+              "host": ["{{base_url}}"],
+              "path": ["api", "pedidos-sugeridos"]
+            },
+            "description": "Guardar pedido sugerido (con ajustes opcionales)"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints para gestión de pedidos sugeridos por IA"
+    },
+    {
+      "name": "🔮 Forecast",
+      "item": [
+        {
+          "name": "Get Productos Forecast",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/forecast/productos",
+              "host": ["{{base_url}}"],
+              "path": ["api", "forecast", "productos"],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": "Límite de resultados"
+                }
+              ]
+            },
+            "description": "Obtener forecast de demanda para productos"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Producto Forecast Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/forecast/producto/:codigo_producto",
+              "host": ["{{base_url}}"],
+              "path": ["api", "forecast", "producto", ":codigo_producto"],
+              "variable": [
+                {
+                  "key": "codigo_producto",
+                  "value": "P001",
+                  "description": "Código del producto"
+                }
+              ],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                }
+              ]
+            },
+            "description": "Obtener forecast detallado de un producto específico"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Producto Forecast Diario",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/forecast/producto/:codigo_producto/diario",
+              "host": ["{{base_url}}"],
+              "path": ["api", "forecast", "producto", ":codigo_producto", "diario"],
+              "variable": [
+                {
+                  "key": "codigo_producto",
+                  "value": "P001",
+                  "description": "Código del producto"
+                }
+              ],
+              "query": [
+                {
+                  "key": "ubicacion_id",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "Filtrar por ubicación"
+                },
+                {
+                  "key": "dias",
+                  "value": "30",
+                  "disabled": true,
+                  "description": "Días de forecast"
+                }
+              ]
+            },
+            "description": "Obtener forecast diario de un producto"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints para pronósticos de demanda con IA"
+    },
+    {
+      "name": "🔄 ETL",
+      "item": [
+        {
+          "name": "Get ETL Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/etl/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "etl", "status"]
+            },
+            "description": "Obtener estado del proceso ETL"
+          },
+          "response": []
+        },
+        {
+          "name": "Check ETL Connectivity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/etl/check-connectivity",
+              "host": ["{{base_url}}"],
+              "path": ["api", "etl", "check-connectivity"]
+            },
+            "description": "Verificar conectividad con fuentes de datos"
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger ETL Sync",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/etl/sync",
+              "host": ["{{base_url}}"],
+              "path": ["api", "etl", "sync"]
+            },
+            "description": "Disparar sincronización ETL manual"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoints para gestión de procesos ETL"
+    },
+    {
+      "name": "❤️ Health Check",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/",
+              "host": ["{{base_url}}"],
+              "path": [""]
+            },
+            "description": "Verificar que la API está funcionando correctamente"
+          },
+          "response": []
+        }
+      ],
+      "description": "Endpoint de salud de la API"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{auth_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Este script se ejecuta antes de cada request",
+          "console.log('🚀 Request to:', pm.request.url.toString());"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Este script se ejecuta después de cada request",
+          "if (pm.response.code >= 200 && pm.response.code < 300) {",
+          "    console.log('✅ Request successful:', pm.response.code);",
+          "} else {",
+          "    console.log('❌ Request failed:', pm.response.code);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8001",
+      "type": "string"
+    }
+  ]
+}
