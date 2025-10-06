@@ -99,11 +99,11 @@ export default function OrderWizard() {
     <div className="space-y-6 w-full max-w-none px-4">
       {/* Breadcrumb / Steps */}
       <nav aria-label="Progress">
-        <ol className="flex items-center">
+        <ol className="flex items-center justify-center">
           {steps.map((step, stepIdx) => (
             <li
               key={step.name}
-              className={`${stepIdx !== steps.length - 1 ? 'pr-8 sm:pr-20' : ''} relative`}
+              className={`${stepIdx !== steps.length - 1 ? 'pr-12 sm:pr-32' : ''} relative`}
             >
               {currentStep > step.number ? (
                 <>
@@ -139,8 +139,8 @@ export default function OrderWizard() {
                   </div>
                 </>
               )}
-              <span className="absolute top-10 left-1/2 -translate-x-1/2 w-24 text-center">
-                <span className="block text-xs font-medium text-gray-900">{step.name}</span>
+              <span className="absolute top-10 left-1/2 -translate-x-1/2 w-32 sm:w-40 text-center">
+                <span className="block text-xs font-medium text-gray-900 whitespace-nowrap">{step.name}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">{step.description}</span>
               </span>
             </li>
