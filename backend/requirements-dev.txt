@@ -1,0 +1,18 @@
+# Testing dependencies for Fluxion AI Backend
+
+# Core testing
+pytest==8.4.2
+pytest-asyncio==1.2.0
+pytest-cov==7.0.0
+
+# HTTP testing for FastAPI
+httpx==0.28.1
+
+# Test data generation
+faker==20.0.3
+
+# Date/time mocking
+freezegun==1.4.0
+
+# Coverage reporting
+coverage==7.10.7
