@@ -6,9 +6,10 @@ import duckdb
 from pathlib import Path
 import bcrypt
 import uuid
+import os
 
-# Ruta a la base de datos
-DB_PATH = Path(__file__).parent.parent / "data" / "fluxion_production.db"
+# Ruta a la base de datos (usar variable de entorno o path absoluto en Docker)
+DB_PATH = Path(os.getenv('DB_PATH', '/data/fluxion_production.db'))
 
 def hash_password(password: str) -> str:
     """Hashea una contraseña usando bcrypt"""
