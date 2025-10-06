@@ -8,6 +8,15 @@ from typing import Dict, Any
 import os
 from dataclasses import dataclass
 
+# Helper functions para obtener credenciales
+def get_sql_user():
+    """Obtiene el usuario SQL de variables de entorno"""
+    return os.getenv("SQL_USER", "beliveryApp")
+
+def get_sql_pass():
+    """Obtiene el password SQL de variables de entorno"""
+    return os.getenv("SQL_PASS", "AxPG_25!")
+
 @dataclass
 class TiendaConfig:
     """Configuración de una tienda"""
@@ -44,10 +53,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="PERIFERICO",
         server_ip="192.168.20.12",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
-        activo=False,
+        activo=True,
         codigo_deposito="0102"
     ),
 
@@ -56,10 +65,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="AV. BOLIVAR",
         server_ip="192.168.30.52",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
-        activo=False,
+        activo=True,
         codigo_deposito="0202"
     ),
 
@@ -68,10 +77,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="MAÑONGO",
         server_ip="192.168.50.20",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
-        activo=False,
+        activo=True,
         codigo_deposito="0302"
     ),
 
@@ -80,8 +89,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="SAN DIEGO",
         server_ip="192.168.140.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
         activo=True,
         codigo_deposito="0402"
@@ -92,10 +101,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="VIVIENDA",
         server_ip="192.168.80.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
-        activo=False,
+        activo=True,
         codigo_deposito="0502"
     ),
 
@@ -104,10 +113,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="NAGUANAGUA",
         server_ip="192.168.40.53",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
-        activo=False,
+        activo=True,
         codigo_deposito="0602"
     ),
 
@@ -116,8 +125,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="CENTRO",
         server_ip="192.168.130.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
         activo=True,
         codigo_deposito="0702"
@@ -128,8 +137,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="BOSQUE",
         server_ip="192.168.150.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
         activo=True,
         codigo_deposito="0802"
@@ -140,8 +149,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="GUACARA",
         server_ip="192.168.120.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
         activo=True,
         codigo_deposito="0902"
@@ -152,10 +161,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="FERIAS",
         server_ip="192.168.70.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
-        activo=False,
+        activo=True,
         codigo_deposito="1002"
     ),
 
@@ -164,8 +173,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="FLOR AMARILLO",
         server_ip="192.168.160.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=1433,
         activo=True,
         codigo_deposito="1102"
@@ -176,8 +185,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="PARAPARAL",
         server_ip="192.168.170.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=1433,
         activo=True,
         codigo_deposito="1202"
@@ -188,8 +197,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="NAGUANAGUA III",
         server_ip="192.168.190.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
         activo=True,
         codigo_deposito="1302"
@@ -200,8 +209,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="ISABELICA",
         server_ip="192.168.180.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=1433,
         activo=True,
         codigo_deposito="1502"
@@ -212,8 +221,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="TOCUYITO",
         server_ip="192.168.110.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=1433,
         activo=True,
         codigo_deposito="1602"
@@ -224,8 +233,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="GUIGUE",
         server_ip="192.168.210.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=1433,
         activo=True,
         codigo_deposito="1902"
@@ -237,8 +246,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="CEDI Seco",
         server_ip="192.168.90.20",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=1433,
         codigo_deposito="0001",
         activo=True,
@@ -250,8 +259,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="CEDI Frio",
         server_ip="192.168.170.20",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=1433,
         codigo_deposito="1710",
         activo=True,
@@ -263,8 +272,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="CEDI Verde",
         server_ip="192.168.200.10",
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=1433,
         codigo_deposito="1801",
         activo=True,
@@ -276,8 +285,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         ubicacion_nombre="CEDI Frutas",
         server_ip="192.168.XXX.XX",  # TODO: Confirmar IP
         database_name="VAD10",
-        username=os.getenv("SQL_USER"),
-        password=os.getenv("SQL_PASS"),
+        username=get_sql_user(),
+        password=get_sql_pass(),
         port=14348,
         activo=False,  # Activar cuando tengamos la IP
         tipo="cedi"
