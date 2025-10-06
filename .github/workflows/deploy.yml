@@ -170,14 +170,28 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Get Stack Outputs
+        id: get-outputs
+        run: |
+          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name FluxionStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucket`].OutputValue' \
+            --output text)
+          CLOUDFRONT_ID=$(aws cloudformation describe-stacks \
+            --stack-name FluxionStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text)
+          echo "frontend-bucket=$FRONTEND_BUCKET" >> $GITHUB_OUTPUT
+          echo "cloudfront-id=$CLOUDFRONT_ID" >> $GITHUB_OUTPUT
+
       - name: Upload to S3
         run: |
-          aws s3 sync ./dist/ s3://${{ needs.deploy-infrastructure.outputs.frontend-bucket }}/ --delete
+          aws s3 sync ./dist/ s3://${{ steps.get-outputs.outputs.frontend-bucket }}/ --delete
 
       - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id ${{ needs.deploy-infrastructure.outputs.cloudfront-id }} \
+            --distribution-id ${{ steps.get-outputs.outputs.cloudfront-id }} \
             --paths "/*"
 
       - name: Deployment Summary
