@@ -48,6 +48,12 @@ class Usuario(BaseModel):
     email: Optional[str] = None
     activo: bool
 
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    nombre_completo: Optional[str] = None
+    email: Optional[str] = None
+
 # =====================================================================================
 # FUNCIONES DE AUTENTICACIÓN
 # =====================================================================================
@@ -170,3 +176,45 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     except Exception as e:
         print(f"Error en verify_token: {e}")
         raise credentials_exception
+
+def create_user(username: str, password: str, nombre_completo: Optional[str] = None, email: Optional[str] = None) -> Usuario:
+    """Crea un nuevo usuario en la base de datos"""
+    import uuid
+
+    try:
+        with get_auth_db_connection() as conn:
+            # Verificar si el usuario ya existe
+            existing = conn.execute("""
+                SELECT COUNT(*) FROM usuarios WHERE username = ?
+            """, (username,)).fetchone()
+
+            if existing[0] > 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El usuario '{username}' ya existe"
+                )
+
+            # Crear nuevo usuario
+            user_id = str(uuid.uuid4())
+            password_hash = get_password_hash(password)
+
+            conn.execute("""
+                INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, username, password_hash, nombre_completo, email, True))
+
+            return Usuario(
+                id=user_id,
+                username=username,
+                nombre_completo=nombre_completo,
+                email=email,
+                activo=True
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error al crear usuario: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear usuario: {str(e)}"
+        )

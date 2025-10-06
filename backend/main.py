@@ -22,8 +22,10 @@ from auth import (
     LoginRequest,
     TokenResponse,
     Usuario,
+    CreateUserRequest,
     authenticate_user,
     create_access_token,
+    create_user,
     verify_token,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
@@ -323,6 +325,22 @@ async def logout():
     El token se invalida en el cliente
     """
     return {"message": "Logout exitoso"}
+
+@app.post("/api/auth/register", response_model=Usuario, tags=["Autenticación"])
+async def register(request: CreateUserRequest, current_user: Usuario = Depends(verify_token)):
+    """
+    Crea un nuevo usuario (requiere autenticación)
+    Solo usuarios autenticados pueden crear nuevos usuarios
+    """
+    new_user = create_user(
+        username=request.username,
+        password=request.password,
+        nombre_completo=request.nombre_completo,
+        email=request.email
+    )
+
+    logger.info(f"Usuario '{new_user.username}' creado por '{current_user.username}'")
+    return new_user
 
 # =====================================================================================
 # ENDPOINTS DE DATOS (PROTEGIDOS)
