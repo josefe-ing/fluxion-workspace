@@ -177,6 +177,21 @@ export class InfrastructureStack extends cdk.Stack {
           },
         ],
         comment: 'Fluxion AI Frontend CDN',
+        defaultRootObject: 'index.html',
+        errorConfigurations: [
+          {
+            errorCode: 403,
+            responseCode: 200,
+            responsePagePath: '/index.html',
+            errorCachingMinTtl: 300,
+          },
+          {
+            errorCode: 404,
+            responseCode: 200,
+            responsePagePath: '/index.html',
+            errorCachingMinTtl: 300,
+          },
+        ],
       }
     );
 
