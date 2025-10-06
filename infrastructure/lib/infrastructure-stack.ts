@@ -10,6 +10,7 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 
 export class InfrastructureStack extends cdk.Stack {
@@ -39,7 +40,6 @@ export class InfrastructureStack extends cdk.Stack {
       vpcName: 'fluxion-vpc',
       maxAzs: 2,
       natGateways: 1, // Save costs - use 1 NAT Gateway
-      // vpnGateway: true, // Disabled for now - will enable when we have La Granja IP
       subnetConfiguration: [
         {
           name: 'Public',
@@ -55,51 +55,104 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     // ========================================
-    // 1b. Site-to-Site VPN Configuration (TEMPORARILY DISABLED)
+    // 1b. WireGuard VPN Bridge (EC2)
     // ========================================
-    /* COMMENTED OUT - Need actual public IP from La Granja
-    // Customer Gateway - La Granja WireGuard Server
-    // TODO: Replace with actual public IP from La Granja
-    const laGranjaPublicIP = process.env.LA_GRANJA_PUBLIC_IP || '0.0.0.0';
 
-    const customerGateway = new ec2.CfnCustomerGateway(this, 'LaGranjaCustomerGateway', {
-      bgpAsn: 65000, // Default BGP ASN
-      ipAddress: laGranjaPublicIP,
-      type: 'ipsec.1',
-      tags: [
-        { key: 'Name', value: 'la-granja-customer-gateway' },
-        { key: 'Project', value: 'fluxion-ai' },
+    // Security Group for WireGuard EC2
+    const wireguardSG = new ec2.SecurityGroup(this, 'WireGuardBridgeSG', {
+      vpc,
+      description: 'Security group for WireGuard VPN bridge to La Granja',
+      allowAllOutbound: true,
+    });
+
+    // Allow UDP 51820 outbound for WireGuard (already allowed by allowAllOutbound)
+    // Allow inbound from ECS tasks on private subnets
+    wireguardSG.addIngressRule(
+      ec2.Peer.ipv4(vpc.vpcCidrBlock),
+      ec2.Port.allTraffic(),
+      'Allow traffic from VPC to route through WireGuard'
+    );
+
+    // Store WireGuard config in Secrets Manager
+    const wireguardConfig = new secretsmanager.Secret(this, 'WireGuardConfig', {
+      secretName: 'fluxion/wireguard-config',
+      description: 'WireGuard configuration for La Granja VPN',
+      secretStringValue: cdk.SecretValue.unsafePlainText(`[Interface]
+PrivateKey = oBXfWH5DbhcU9N57/iqFYarozxc/mUiVSH2h5nc8+1w=
+Address = 10.32.0.24/32
+
+[Peer]
+PublicKey = j6ioRetJeMVbO4oipmcTiEGT4mUCXLlS0iIpQ8d8F0Y=
+AllowedIPs = 192.168.0.0/16
+Endpoint = f0270ee31a20.sn.mynetname.net:51820
+PersistentKeepalive = 25`),
+    });
+
+    // IAM Role for WireGuard EC2
+    const wireguardRole = new iam.Role(this, 'WireGuardInstanceRole', {
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
       ],
     });
 
-    // VPN Connection
-    const vpnConnection = new ec2.CfnVPNConnection(this, 'LaGranjaVPNConnection', {
-      type: 'ipsec.1',
-      customerGatewayId: customerGateway.ref,
-      vpnGatewayId: vpc.vpnGatewayId!,
-      staticRoutesOnly: true,
-      tags: [
-        { key: 'Name', value: 'la-granja-vpn-connection' },
-        { key: 'Project', value: 'fluxion-ai' },
-      ],
+    // EC2 Instance for WireGuard Bridge
+    const wireguardInstance = new ec2.Instance(this, 'WireGuardBridge', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+      machineImage: ec2.MachineImage.latestAmazonLinux2023(),
+      securityGroup: wireguardSG,
+      sourceDestCheck: false, // Required for routing/NAT functionality
+      role: wireguardRole,
     });
 
-    // Static Routes to La Granja Network
-    // Route to 192.168.0.0/16 (covers all 192.168.x.x addresses)
-    new ec2.CfnVPNConnectionRoute(this, 'LaGranjaNetworkRoute', {
-      destinationCidrBlock: '192.168.0.0/16',
-      vpnConnectionId: vpnConnection.ref,
-    });
+    // Grant access to read WireGuard config
+    wireguardConfig.grantRead(wireguardInstance.role);
 
-    // Propagate VPN routes to VPC route tables
+    // UserData script to install and configure WireGuard
+    wireguardInstance.addUserData(
+      '#!/bin/bash',
+      'set -e',
+      '',
+      '# Update system',
+      'dnf update -y',
+      '',
+      '# Install WireGuard',
+      'dnf install -y wireguard-tools',
+      '',
+      '# Enable IP forwarding',
+      'echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf',
+      'sysctl -p',
+      '',
+      '# Retrieve WireGuard config from Secrets Manager',
+      `aws secretsmanager get-secret-value --secret-id ${wireguardConfig.secretName} --region ${this.region} --query SecretString --output text > /etc/wireguard/wg0.conf`,
+      'chmod 600 /etc/wireguard/wg0.conf',
+      '',
+      '# Start WireGuard',
+      'systemctl enable wg-quick@wg0',
+      'systemctl start wg-quick@wg0',
+      '',
+      '# Configure iptables for NAT',
+      'iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE',
+      'iptables -A FORWARD -i eth0 -o wg0 -j ACCEPT',
+      'iptables -A FORWARD -i wg0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT',
+      '',
+      '# Save iptables rules',
+      'dnf install -y iptables-services',
+      'service iptables save',
+      '',
+      'echo "WireGuard bridge setup complete"'
+    );
+
+    // Add routes to La Granja network through WireGuard instance
     vpc.privateSubnets.forEach((subnet, index) => {
-      const routeTable = subnet.routeTable;
-      new ec2.CfnVPNGatewayRoutePropagation(this, `VPNRoutePropagation${index}`, {
-        routeTableIds: [routeTable.routeTableId],
-        vpnGatewayId: vpc.vpnGatewayId!,
+      new ec2.CfnRoute(this, `LaGranjaRoute${index}`, {
+        routeTableId: subnet.routeTable.routeTableId,
+        destinationCidrBlock: '192.168.0.0/16',
+        instanceId: wireguardInstance.instanceId,
       });
     });
-    */ // END VPN COMMENT
 
     // ========================================
     // 2. EFS for DuckDB Persistence
@@ -482,30 +535,22 @@ export class InfrastructureStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'VPCId', {
       value: vpc.vpcId,
-      description: 'VPC ID for VPN configuration',
+      description: 'VPC ID',
     });
 
-    /* VPN Outputs - Commented out until VPN is configured
-    new cdk.CfnOutput(this, 'VPNGatewayId', {
-      value: vpc.vpnGatewayId || 'N/A',
-      description: 'VPN Gateway ID',
+    new cdk.CfnOutput(this, 'WireGuardInstanceId', {
+      value: wireguardInstance.instanceId,
+      description: 'WireGuard Bridge EC2 Instance ID',
     });
 
-    new cdk.CfnOutput(this, 'CustomerGatewayId', {
-      value: customerGateway.ref,
-      description: 'Customer Gateway ID (La Granja)',
+    new cdk.CfnOutput(this, 'WireGuardInstancePrivateIP', {
+      value: wireguardInstance.instancePrivateIp,
+      description: 'WireGuard Bridge Private IP',
     });
 
-    new cdk.CfnOutput(this, 'VPNConnectionId', {
-      value: vpnConnection.ref,
-      description: 'VPN Connection ID - Use to download VPN config',
-      exportName: 'FluxionVPNConnectionId',
+    new cdk.CfnOutput(this, 'WireGuardSSMCommand', {
+      value: `aws ssm start-session --target ${wireguardInstance.instanceId}`,
+      description: 'Command to connect to WireGuard instance via SSM',
     });
-
-    new cdk.CfnOutput(this, 'VPNConfigDownloadCommand', {
-      value: `aws ec2 describe-vpn-connections --vpn-connection-ids ${vpnConnection.ref} --query 'VpnConnections[0].CustomerGatewayConfiguration' --output text`,
-      description: 'Command to download VPN configuration',
-    });
-    */
   }
 }
