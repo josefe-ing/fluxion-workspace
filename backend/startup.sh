@@ -28,4 +28,5 @@ fi
 
 # Start the application
 echo "🚀 Starting Uvicorn server..."
-exec uvicorn main:app --host 0.0.0.0 --port 8001 --workers 4
+# Use single worker to avoid DuckDB file locking issues
+exec uvicorn main:app --host 0.0.0.0 --port 8001 --workers 1

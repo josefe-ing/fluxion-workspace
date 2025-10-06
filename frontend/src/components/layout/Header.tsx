@@ -1,7 +1,9 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function Header() {
   const location = useLocation();
+  const { username, nombreCompleto, logout } = useAuth();
 
   const navItems = [
     { path: '/dashboard', label: 'Inventarios' },
@@ -51,6 +53,19 @@ export default function Header() {
               </Link>
             ))}
           </nav>
+
+          {/* User menu */}
+          <div className="flex items-center space-x-4">
+            <div className="text-sm text-gray-700">
+              <span className="font-medium">{nombreCompleto || username}</span>
+            </div>
+            <button
+              onClick={logout}
+              className="text-sm text-gray-500 hover:text-gray-700 font-medium transition-colors"
+            >
+              Salir
+            </button>
+          </div>
         </div>
       </div>
     </header>

@@ -10,11 +10,23 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import duckdb
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import logging
 import subprocess
 import asyncio
 import os
+from contextlib import contextmanager
+
+# Importar módulo de autenticación
+from auth import (
+    LoginRequest,
+    TokenResponse,
+    Usuario,
+    authenticate_user,
+    create_access_token,
+    verify_token,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -34,8 +46,9 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:5173",
-        "https://d21ssh2ccl7jy6.cloudfront.net",
-        "http://fluxion-alb-1881437163.us-east-1.elb.amazonaws.com"
+        "https://d2p5vs6b298vzk.cloudfront.net",
+        "http://fluxion-alb-1002393067.us-east-1.elb.amazonaws.com",
+        "http://fluxion-frontend-611395766952.s3-website-us-east-1.amazonaws.com"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -74,11 +87,20 @@ async def add_security_headers(request: Request, call_next):
 # Configuración de la base de datos
 DB_PATH = Path(os.getenv('DATABASE_PATH', str(Path(__file__).parent.parent / "data" / "fluxion_production.db")))
 
+@contextmanager
 def get_db_connection():
-    """Obtiene una conexión a la base de datos DuckDB"""
+    """Context manager para conexiones DuckDB con auto-close"""
     if not DB_PATH.exists():
         raise HTTPException(status_code=500, detail="Base de datos no encontrada")
-    return duckdb.connect(str(DB_PATH))
+
+    conn = None
+    try:
+        # Crear conexión read-only (soporta múltiples lecturas simultáneas)
+        conn = duckdb.connect(str(DB_PATH), read_only=True)
+        yield conn
+    finally:
+        if conn:
+            conn.close()
 
 # Modelos Pydantic
 class UbicacionResponse(BaseModel):
@@ -253,51 +275,102 @@ async def health_check():
         "database": "DuckDB Connected" if DB_PATH.exists() else "Database Missing"
     }
 
+# =====================================================================================
+# ENDPOINTS DE AUTENTICACIÓN
+# =====================================================================================
+
+@app.post("/api/auth/login", response_model=TokenResponse, tags=["Autenticación"])
+async def login(request: LoginRequest):
+    """
+    Endpoint de login
+    Recibe username y password, retorna JWT token
+    """
+    # Autenticar usuario
+    user = authenticate_user(request.username, request.password)
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Usuario o contraseña incorrectos"
+        )
+
+    # Crear token JWT
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username},
+        expires_delta=access_token_expires
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        username=user.username,
+        nombre_completo=user.nombre_completo
+    )
+
+@app.get("/api/auth/me", response_model=Usuario, tags=["Autenticación"])
+async def get_current_user(current_user: Usuario = Depends(verify_token)):
+    """
+    Obtiene información del usuario autenticado actual
+    Requiere token JWT válido
+    """
+    return current_user
+
+@app.post("/api/auth/logout", tags=["Autenticación"])
+async def logout():
+    """
+    Endpoint de logout (solo para consistencia de API)
+    El token se invalida en el cliente
+    """
+    return {"message": "Logout exitoso"}
+
+# =====================================================================================
+# ENDPOINTS DE DATOS (PROTEGIDOS)
+# =====================================================================================
+
 @app.get("/api/ubicaciones", response_model=List[UbicacionResponse], tags=["Ubicaciones"])
 async def get_ubicaciones(tipo: Optional[str] = None):
     """Obtiene todas las ubicaciones (tiendas y CEDIs) desde inventario_raw (datos reales)"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            # Query desde inventario_raw para obtener solo las ubicaciones con datos reales
+            # Excluye mayorista según instrucciones
+            query = """
+                SELECT DISTINCT
+                    ubicacion_id as id,
+                    SUBSTRING(ubicacion_id, 1, 3) as codigo,
+                    ubicacion_nombre as nombre,
+                    tipo_ubicacion as tipo,
+                    NULL as region,
+                    NULL as ciudad,
+                    NULL as superficie_m2,
+                    true as activo
+                FROM inventario_raw
+                WHERE activo = true
+                    AND tipo_ubicacion != 'mayorista'
+            """
 
-        # Query desde inventario_raw para obtener solo las ubicaciones con datos reales
-        # Excluye mayorista según instrucciones
-        query = """
-            SELECT DISTINCT
-                ubicacion_id as id,
-                SUBSTRING(ubicacion_id, 1, 3) as codigo,
-                ubicacion_nombre as nombre,
-                tipo_ubicacion as tipo,
-                NULL as region,
-                NULL as ciudad,
-                NULL as superficie_m2,
-                true as activo
-            FROM inventario_raw
-            WHERE activo = true
-                AND tipo_ubicacion != 'mayorista'
-        """
+            if tipo:
+                query += " AND tipo_ubicacion = ?"
 
-        if tipo:
-            query += " AND tipo_ubicacion = ?"
+            query += " ORDER BY tipo_ubicacion, ubicacion_nombre"
 
-        query += " ORDER BY tipo_ubicacion, ubicacion_nombre"
+            result = conn.execute(query, [tipo] if tipo else []).fetchall()
 
-        result = conn.execute(query, [tipo] if tipo else []).fetchall()
-        conn.close()
+            ubicaciones = []
+            for row in result:
+                ubicaciones.append(UbicacionResponse(
+                    id=row[0],
+                    codigo=row[1],
+                    nombre=row[2],
+                    tipo=row[3],
+                    region=row[4],
+                    ciudad=row[5],
+                    superficie_m2=row[6],
+                    activo=row[7]
+                ))
 
-        ubicaciones = []
-        for row in result:
-            ubicaciones.append(UbicacionResponse(
-                id=row[0],
-                codigo=row[1],
-                nombre=row[2],
-                tipo=row[3],
-                region=row[4],
-                ciudad=row[5],
-                superficie_m2=row[6],
-                activo=row[7]
-            ))
-
-        return ubicaciones
+            return ubicaciones
 
     except Exception as e:
         logger.error(f"Error obteniendo ubicaciones: {str(e)}")
@@ -307,40 +380,38 @@ async def get_ubicaciones(tipo: Optional[str] = None):
 async def get_ubicaciones_summary():
     """Obtiene un resumen de inventario por ubicación"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            query = """
+                SELECT
+                    inv.ubicacion_id,
+                    inv.ubicacion_nombre,
+                    inv.tipo_ubicacion,
+                    COUNT(DISTINCT inv.codigo_producto) as total_productos,
+                    SUM(CASE WHEN inv.cantidad_actual = 0 THEN 1 ELSE 0 END) as stock_cero,
+                    SUM(CASE WHEN inv.cantidad_actual < 0 THEN 1 ELSE 0 END) as stock_negativo,
+                    CAST(MAX(inv.fecha_extraccion) AS VARCHAR) as ultima_actualizacion
+                FROM inventario_raw inv
+                WHERE inv.activo = true
+                    AND inv.tipo_ubicacion != 'mayorista'
+                GROUP BY inv.ubicacion_id, inv.ubicacion_nombre, inv.tipo_ubicacion
+                ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre
+            """
 
-        query = """
-            SELECT
-                inv.ubicacion_id,
-                inv.ubicacion_nombre,
-                inv.tipo_ubicacion,
-                COUNT(DISTINCT inv.codigo_producto) as total_productos,
-                SUM(CASE WHEN inv.cantidad_actual = 0 THEN 1 ELSE 0 END) as stock_cero,
-                SUM(CASE WHEN inv.cantidad_actual < 0 THEN 1 ELSE 0 END) as stock_negativo,
-                CAST(MAX(inv.fecha_extraccion) AS VARCHAR) as ultima_actualizacion
-            FROM inventario_raw inv
-            WHERE inv.activo = true
-                AND inv.tipo_ubicacion != 'mayorista'
-            GROUP BY inv.ubicacion_id, inv.ubicacion_nombre, inv.tipo_ubicacion
-            ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre
-        """
+            result = conn.execute(query).fetchall()
 
-        result = conn.execute(query).fetchall()
-        conn.close()
+            summary = []
+            for row in result:
+                summary.append(UbicacionSummaryResponse(
+                    ubicacion_id=row[0],
+                    ubicacion_nombre=row[1],
+                    tipo_ubicacion=row[2],
+                    total_productos=row[3],
+                    stock_cero=row[4],
+                    stock_negativo=row[5],
+                    ultima_actualizacion=row[6]
+                ))
 
-        summary = []
-        for row in result:
-            summary.append(UbicacionSummaryResponse(
-                ubicacion_id=row[0],
-                ubicacion_nombre=row[1],
-                tipo_ubicacion=row[2],
-                total_productos=row[3],
-                stock_cero=row[4],
-                stock_negativo=row[5],
-                ultima_actualizacion=row[6]
-            ))
-
-        return summary
+            return summary
 
     except Exception as e:
         logger.error(f"Error obteniendo resumen de ubicaciones: {str(e)}")
@@ -395,40 +466,38 @@ async def get_stock_params(ubicacion_id: str):
 async def get_productos(categoria: Optional[str] = None, activo: bool = True):
     """Obtiene todos los productos"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            query = """
+                SELECT p.id, p.codigo, p.descripcion, p.categoria, p.marca,
+                       p.presentacion, p.precio_venta, p.costo_promedio, p.activo
+                FROM productos p
+                WHERE p.activo = ?
+            """
+            params = [activo]
 
-        query = """
-            SELECT p.id, p.codigo, p.descripcion, p.categoria, p.marca,
-                   p.presentacion, p.precio_venta, p.costo_promedio, p.activo
-            FROM productos p
-            WHERE p.activo = ?
-        """
-        params = [activo]
+            if categoria:
+                query += " AND p.categoria = ?"
+                params.append(categoria)
 
-        if categoria:
-            query += " AND p.categoria = ?"
-            params.append(categoria)
+            query += " ORDER BY p.categoria, p.descripcion"
 
-        query += " ORDER BY p.categoria, p.descripcion"
+            result = conn.execute(query, params).fetchall()
 
-        result = conn.execute(query, params).fetchall()
-        conn.close()
+            productos = []
+            for row in result:
+                productos.append(ProductoResponse(
+                    id=row[0],
+                    codigo=row[1],
+                    descripcion=row[2],
+                    categoria=row[3],
+                    marca=row[4],
+                    presentacion=row[5],
+                    precio_venta=row[6],
+                    costo_promedio=row[7],
+                    activo=row[8]
+                ))
 
-        productos = []
-        for row in result:
-            productos.append(ProductoResponse(
-                id=row[0],
-                codigo=row[1],
-                descripcion=row[2],
-                categoria=row[3],
-                marca=row[4],
-                presentacion=row[5],
-                precio_venta=row[6],
-                costo_promedio=row[7],
-                activo=row[8]
-            ))
-
-        return productos
+            return productos
 
     except Exception as e:
         logger.error(f"Error obteniendo productos: {str(e)}")
@@ -438,20 +507,17 @@ async def get_productos(categoria: Optional[str] = None, activo: bool = True):
 async def get_categorias():
     """Obtiene todas las categorías de productos desde inventario_raw"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            result = conn.execute("""
+                SELECT DISTINCT categoria
+                FROM inventario_raw
+                WHERE activo = true
+                    AND categoria IS NOT NULL
+                    AND tipo_ubicacion != 'mayorista'
+                ORDER BY categoria
+            """).fetchall()
 
-        result = conn.execute("""
-            SELECT DISTINCT categoria
-            FROM inventario_raw
-            WHERE activo = true
-                AND categoria IS NOT NULL
-                AND tipo_ubicacion != 'mayorista'
-            ORDER BY categoria
-        """).fetchall()
-
-        conn.close()
-
-        return [row[0] for row in result]
+            return [row[0] for row in result]
 
     except Exception as e:
         logger.error(f"Error obteniendo categorías: {str(e)}")
@@ -465,75 +531,73 @@ async def get_stock(
 ):
     """Obtiene el estado del stock desde inventario_raw (datos reales)"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            query = """
+                SELECT
+                    inv.ubicacion_id,
+                    inv.ubicacion_nombre,
+                    inv.tipo_ubicacion,
+                    inv.codigo_producto as producto_id,
+                    inv.codigo_producto,
+                    inv.descripcion_producto,
+                    inv.categoria,
+                    inv.marca,
+                    inv.cantidad_actual as stock_actual,
+                    inv.stock_minimo,
+                    inv.stock_maximo,
+                    inv.punto_reorden,
+                    inv.precio_venta_actual as precio_venta,
+                    inv.cantidad_bultos,
+                    inv.estado_stock,
+                    inv.dias_sin_movimiento as dias_cobertura_actual,
+                    false as es_producto_estrella,
+                    CAST(inv.fecha_extraccion AS VARCHAR) as fecha_extraccion
+                FROM inventario_raw inv
+                WHERE inv.activo = true
+            """
 
-        query = """
-            SELECT
-                inv.ubicacion_id,
-                inv.ubicacion_nombre,
-                inv.tipo_ubicacion,
-                inv.codigo_producto as producto_id,
-                inv.codigo_producto,
-                inv.descripcion_producto,
-                inv.categoria,
-                inv.marca,
-                inv.cantidad_actual as stock_actual,
-                inv.stock_minimo,
-                inv.stock_maximo,
-                inv.punto_reorden,
-                inv.precio_venta_actual as precio_venta,
-                inv.cantidad_bultos,
-                inv.estado_stock,
-                inv.dias_sin_movimiento as dias_cobertura_actual,
-                false as es_producto_estrella,
-                CAST(inv.fecha_extraccion AS VARCHAR) as fecha_extraccion
-            FROM inventario_raw inv
-            WHERE inv.activo = true
-        """
+            params = []
 
-        params = []
+            if ubicacion_id:
+                query += " AND inv.ubicacion_id = ?"
+                params.append(ubicacion_id)
 
-        if ubicacion_id:
-            query += " AND inv.ubicacion_id = ?"
-            params.append(ubicacion_id)
+            if categoria:
+                query += " AND inv.categoria = ?"
+                params.append(categoria)
 
-        if categoria:
-            query += " AND inv.categoria = ?"
-            params.append(categoria)
+            if estado:
+                query += " AND inv.estado_stock = ?"
+                params.append(estado)
 
-        if estado:
-            query += " AND inv.estado_stock = ?"
-            params.append(estado)
+            query += " ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre, inv.categoria, inv.descripcion_producto"
 
-        query += " ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre, inv.categoria, inv.descripcion_producto"
+            result = conn.execute(query, params).fetchall()
 
-        result = conn.execute(query, params).fetchall()
-        conn.close()
+            stock_data = []
+            for row in result:
+                stock_data.append(StockResponse(
+                    ubicacion_id=row[0],
+                    ubicacion_nombre=row[1],
+                    ubicacion_tipo=row[2],
+                    producto_id=row[3],
+                    codigo_producto=row[4],
+                    descripcion_producto=row[5],
+                    categoria=row[6],
+                    marca=row[7],
+                    stock_actual=row[8],
+                    stock_minimo=row[9],
+                    stock_maximo=row[10],
+                    punto_reorden=row[11],
+                    precio_venta=row[12],
+                    cantidad_bultos=row[13],
+                    estado_stock=row[14],
+                    dias_cobertura_actual=row[15],
+                    es_producto_estrella=row[16],
+                    fecha_extraccion=row[17]
+                ))
 
-        stock_data = []
-        for row in result:
-            stock_data.append(StockResponse(
-                ubicacion_id=row[0],
-                ubicacion_nombre=row[1],
-                ubicacion_tipo=row[2],
-                producto_id=row[3],
-                codigo_producto=row[4],
-                descripcion_producto=row[5],
-                categoria=row[6],
-                marca=row[7],
-                stock_actual=row[8],
-                stock_minimo=row[9],
-                stock_maximo=row[10],
-                punto_reorden=row[11],
-                precio_venta=row[12],
-                cantidad_bultos=row[13],
-                estado_stock=row[14],
-                dias_cobertura_actual=row[15],
-                es_producto_estrella=row[16],
-                fecha_extraccion=row[17]
-            ))
-
-        return stock_data
+            return stock_data
 
     except Exception as e:
         logger.error(f"Error obteniendo stock: {str(e)}")
@@ -543,50 +607,47 @@ async def get_stock(
 async def get_dashboard_metrics():
     """Obtiene métricas principales para el dashboard"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            # Métricas generales
+            result = conn.execute("""
+                SELECT
+                    COUNT(DISTINCT puc.ubicacion_id) as total_ubicaciones,
+                    COUNT(DISTINCT puc.producto_id) as total_productos,
+                    COUNT(*) as total_configuraciones,
+                    COALESCE(SUM(s.valor_inventario), 0) as valor_inventario_total
+                FROM producto_ubicacion_config puc
+                LEFT JOIN stock_actual s ON puc.ubicacion_id = s.ubicacion_id
+                                        AND puc.producto_id = s.producto_id
+                WHERE puc.activo = true
+            """).fetchone()
 
-        # Métricas generales
-        result = conn.execute("""
-            SELECT
-                COUNT(DISTINCT puc.ubicacion_id) as total_ubicaciones,
-                COUNT(DISTINCT puc.producto_id) as total_productos,
-                COUNT(*) as total_configuraciones,
-                COALESCE(SUM(s.valor_inventario), 0) as valor_inventario_total
-            FROM producto_ubicacion_config puc
-            LEFT JOIN stock_actual s ON puc.ubicacion_id = s.ubicacion_id
-                                    AND puc.producto_id = s.producto_id
-            WHERE puc.activo = true
-        """).fetchone()
+            total_ubicaciones, total_productos, total_configuraciones, valor_inventario_total = result
 
-        total_ubicaciones, total_productos, total_configuraciones, valor_inventario_total = result
+            # Contar por estados de stock
+            estados = conn.execute("""
+                SELECT
+                    SUM(CASE WHEN s.cantidad IS NULL OR s.cantidad <= puc.stock_minimo THEN 1 ELSE 0 END) as critico,
+                    SUM(CASE WHEN s.cantidad > puc.stock_minimo AND s.cantidad <= puc.punto_reorden THEN 1 ELSE 0 END) as bajo,
+                    SUM(CASE WHEN s.cantidad > puc.punto_reorden AND s.cantidad < puc.stock_maximo THEN 1 ELSE 0 END) as normal,
+                    SUM(CASE WHEN s.cantidad >= puc.stock_maximo THEN 1 ELSE 0 END) as exceso
+                FROM producto_ubicacion_config puc
+                LEFT JOIN stock_actual s ON puc.ubicacion_id = s.ubicacion_id
+                                        AND puc.producto_id = s.producto_id
+                WHERE puc.activo = true
+            """).fetchone()
 
-        # Contar por estados de stock
-        estados = conn.execute("""
-            SELECT
-                SUM(CASE WHEN s.cantidad IS NULL OR s.cantidad <= puc.stock_minimo THEN 1 ELSE 0 END) as critico,
-                SUM(CASE WHEN s.cantidad > puc.stock_minimo AND s.cantidad <= puc.punto_reorden THEN 1 ELSE 0 END) as bajo,
-                SUM(CASE WHEN s.cantidad > puc.punto_reorden AND s.cantidad < puc.stock_maximo THEN 1 ELSE 0 END) as normal,
-                SUM(CASE WHEN s.cantidad >= puc.stock_maximo THEN 1 ELSE 0 END) as exceso
-            FROM producto_ubicacion_config puc
-            LEFT JOIN stock_actual s ON puc.ubicacion_id = s.ubicacion_id
-                                    AND puc.producto_id = s.producto_id
-            WHERE puc.activo = true
-        """).fetchone()
+            critico, bajo, normal, exceso = estados
 
-        critico, bajo, normal, exceso = estados
-
-        conn.close()
-
-        return DashboardMetrics(
-            total_ubicaciones=total_ubicaciones,
-            total_productos=total_productos,
-            total_configuraciones=total_configuraciones,
-            valor_inventario_total=float(valor_inventario_total or 0),
-            productos_stock_critico=critico or 0,
-            productos_stock_bajo=bajo or 0,
-            productos_normal=normal or 0,
-            productos_exceso=exceso or 0
-        )
+            return DashboardMetrics(
+                total_ubicaciones=total_ubicaciones,
+                total_productos=total_productos,
+                total_configuraciones=total_configuraciones,
+                valor_inventario_total=float(valor_inventario_total or 0),
+                productos_stock_critico=critico or 0,
+                productos_stock_bajo=bajo or 0,
+                productos_normal=normal or 0,
+                productos_exceso=exceso or 0
+            )
 
     except Exception as e:
         logger.error(f"Error obteniendo métricas de dashboard: {str(e)}")
@@ -596,41 +657,38 @@ async def get_dashboard_metrics():
 async def get_category_metrics():
     """Obtiene métricas por categoría"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            result = conn.execute("""
+                SELECT
+                    p.categoria,
+                    COUNT(DISTINCT puc.producto_id) as productos_count,
+                    SUM(CASE WHEN s.cantidad IS NULL OR s.cantidad <= puc.stock_minimo THEN 1 ELSE 0 END) as stock_critico,
+                    SUM(CASE WHEN s.cantidad > puc.stock_minimo AND s.cantidad <= puc.punto_reorden THEN 1 ELSE 0 END) as stock_bajo,
+                    SUM(CASE WHEN s.cantidad > puc.punto_reorden AND s.cantidad < puc.stock_maximo THEN 1 ELSE 0 END) as stock_normal,
+                    SUM(CASE WHEN s.cantidad >= puc.stock_maximo THEN 1 ELSE 0 END) as stock_exceso,
+                    COALESCE(SUM(s.valor_inventario), 0) as valor_total
+                FROM producto_ubicacion_config puc
+                JOIN productos p ON puc.producto_id = p.id
+                LEFT JOIN stock_actual s ON puc.ubicacion_id = s.ubicacion_id
+                                        AND puc.producto_id = s.producto_id
+                WHERE puc.activo = true AND p.activo = true
+                GROUP BY p.categoria
+                ORDER BY productos_count DESC
+            """).fetchall()
 
-        result = conn.execute("""
-            SELECT
-                p.categoria,
-                COUNT(DISTINCT puc.producto_id) as productos_count,
-                SUM(CASE WHEN s.cantidad IS NULL OR s.cantidad <= puc.stock_minimo THEN 1 ELSE 0 END) as stock_critico,
-                SUM(CASE WHEN s.cantidad > puc.stock_minimo AND s.cantidad <= puc.punto_reorden THEN 1 ELSE 0 END) as stock_bajo,
-                SUM(CASE WHEN s.cantidad > puc.punto_reorden AND s.cantidad < puc.stock_maximo THEN 1 ELSE 0 END) as stock_normal,
-                SUM(CASE WHEN s.cantidad >= puc.stock_maximo THEN 1 ELSE 0 END) as stock_exceso,
-                COALESCE(SUM(s.valor_inventario), 0) as valor_total
-            FROM producto_ubicacion_config puc
-            JOIN productos p ON puc.producto_id = p.id
-            LEFT JOIN stock_actual s ON puc.ubicacion_id = s.ubicacion_id
-                                    AND puc.producto_id = s.producto_id
-            WHERE puc.activo = true AND p.activo = true
-            GROUP BY p.categoria
-            ORDER BY productos_count DESC
-        """).fetchall()
+            categories = []
+            for row in result:
+                categories.append(CategoryMetrics(
+                    categoria=row[0],
+                    productos_count=row[1],
+                    stock_critico=row[2] or 0,
+                    stock_bajo=row[3] or 0,
+                    stock_normal=row[4] or 0,
+                    stock_exceso=row[5] or 0,
+                    valor_total=float(row[6] or 0)
+                ))
 
-        conn.close()
-
-        categories = []
-        for row in result:
-            categories.append(CategoryMetrics(
-                categoria=row[0],
-                productos_count=row[1],
-                stock_critico=row[2] or 0,
-                stock_bajo=row[3] or 0,
-                stock_normal=row[4] or 0,
-                stock_exceso=row[5] or 0,
-                valor_total=float(row[6] or 0)
-            ))
-
-        return categories
+            return categories
 
     except Exception as e:
         logger.error(f"Error obteniendo métricas por categoría: {str(e)}")
@@ -699,61 +757,60 @@ async def run_etl_background(ubicacion_id: Optional[str] = None):
 
         if exitoso:
             # Contar registros actualizados CON DETALLE POR TIENDA
-            conn = get_db_connection()
-            total_registros = conn.execute("""
-                SELECT COUNT(*) FROM inventario_raw
-                WHERE DATE(fecha_extraccion) = CURRENT_DATE
-            """).fetchone()[0]
-
-            # Obtener detalle por ubicación
-            ubicaciones_detalle = []
-            if ubicacion_id:
-                # Una sola ubicación
-                result = conn.execute("""
-                    SELECT
-                        ubicacion_id,
-                        ubicacion_nombre,
-                        COUNT(*) as registros,
-                        COUNT(DISTINCT codigo_producto) as productos
-                    FROM inventario_raw
+            with get_db_connection() as conn:
+                total_registros = conn.execute("""
+                    SELECT COUNT(*) FROM inventario_raw
                     WHERE DATE(fecha_extraccion) = CURRENT_DATE
-                      AND ubicacion_id = ?
-                    GROUP BY ubicacion_id, ubicacion_nombre
-                """, [ubicacion_id]).fetchone()
+                """).fetchone()[0]
 
-                if result:
-                    ubicaciones_detalle.append({
-                        "id": result[0],
-                        "nombre": result[1],
-                        "registros": result[2],
-                        "productos": result[3],
-                        "success": True
-                    })
-            else:
-                # Todas las ubicaciones
-                result_ubicaciones = conn.execute("""
-                    SELECT
-                        ubicacion_id,
-                        ubicacion_nombre,
-                        COUNT(*) as registros,
-                        COUNT(DISTINCT codigo_producto) as productos
-                    FROM inventario_raw
-                    WHERE DATE(fecha_extraccion) = CURRENT_DATE
-                    GROUP BY ubicacion_id, ubicacion_nombre
-                    ORDER BY ubicacion_id
-                """).fetchall()
+                # Obtener detalle por ubicación
+                ubicaciones_detalle = []
+                if ubicacion_id:
+                    # Una sola ubicación
+                    result = conn.execute("""
+                        SELECT
+                            ubicacion_id,
+                            ubicacion_nombre,
+                            COUNT(*) as registros,
+                            COUNT(DISTINCT codigo_producto) as productos
+                        FROM inventario_raw
+                        WHERE DATE(fecha_extraccion) = CURRENT_DATE
+                          AND ubicacion_id = ?
+                        GROUP BY ubicacion_id, ubicacion_nombre
+                    """, [ubicacion_id]).fetchone()
 
-                for row in result_ubicaciones:
-                    ubicaciones_detalle.append({
-                        "id": row[0],
-                        "nombre": row[1],
-                        "registros": row[2],
-                        "productos": row[3],
-                        "success": True
-                    })
+                    if result:
+                        ubicaciones_detalle.append({
+                            "id": result[0],
+                            "nombre": result[1],
+                            "registros": result[2],
+                            "productos": result[3],
+                            "success": True
+                        })
+                else:
+                    # Todas las ubicaciones
+                    result_ubicaciones = conn.execute("""
+                        SELECT
+                            ubicacion_id,
+                            ubicacion_nombre,
+                            COUNT(*) as registros,
+                            COUNT(DISTINCT codigo_producto) as productos
+                        FROM inventario_raw
+                        WHERE DATE(fecha_extraccion) = CURRENT_DATE
+                        GROUP BY ubicacion_id, ubicacion_nombre
+                        ORDER BY ubicacion_id
+                    """).fetchall()
 
-            conn.close()
-            ubicaciones_procesadas = [u["id"] for u in ubicaciones_detalle]
+                    for row in result_ubicaciones:
+                        ubicaciones_detalle.append({
+                            "id": row[0],
+                            "nombre": row[1],
+                            "registros": row[2],
+                            "productos": row[3],
+                            "success": True
+                        })
+
+                ubicaciones_procesadas = [u["id"] for u in ubicaciones_detalle]
 
             message = f"✅ ETL completado: {len(ubicaciones_procesadas)} ubicaciones, {total_registros:,} registros"
         else:
@@ -917,37 +974,35 @@ async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: Background
 async def get_ventas_summary():
     """Obtiene resumen de ventas por ubicación"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            query = """
+                SELECT
+                    v.ubicacion_id,
+                    v.ubicacion_nombre,
+                    'tienda' as tipo_ubicacion,
+                    COUNT(DISTINCT v.numero_factura) as total_transacciones,
+                    COUNT(DISTINCT v.codigo_producto) as productos_unicos,
+                    CAST(SUM(CAST(v.cantidad_vendida AS DECIMAL)) AS INTEGER) as unidades_vendidas,
+                    MAX(v.fecha) as ultima_venta
+                FROM ventas_raw v
+                GROUP BY v.ubicacion_id, v.ubicacion_nombre
+                ORDER BY v.ubicacion_nombre
+            """
 
-        query = """
-            SELECT
-                v.ubicacion_id,
-                v.ubicacion_nombre,
-                'tienda' as tipo_ubicacion,
-                COUNT(DISTINCT v.numero_factura) as total_transacciones,
-                COUNT(DISTINCT v.codigo_producto) as productos_unicos,
-                CAST(SUM(CAST(v.cantidad_vendida AS DECIMAL)) AS INTEGER) as unidades_vendidas,
-                MAX(v.fecha) as ultima_venta
-            FROM ventas_raw v
-            GROUP BY v.ubicacion_id, v.ubicacion_nombre
-            ORDER BY v.ubicacion_nombre
-        """
+            result = conn.execute(query).fetchall()
 
-        result = conn.execute(query).fetchall()
-        conn.close()
-
-        return [
-            VentasSummaryResponse(
-                ubicacion_id=row[0],
-                ubicacion_nombre=row[1],
-                tipo_ubicacion=row[2],
-                total_transacciones=row[3],
-                productos_unicos=row[4],
-                unidades_vendidas=row[5],
-                ultima_venta=row[6]
-            )
-            for row in result
-        ]
+            return [
+                VentasSummaryResponse(
+                    ubicacion_id=row[0],
+                    ubicacion_nombre=row[1],
+                    tipo_ubicacion=row[2],
+                    total_transacciones=row[3],
+                    productos_unicos=row[4],
+                    unidades_vendidas=row[5],
+                    ultima_venta=row[6]
+                )
+                for row in result
+            ]
 
     except Exception as e:
         logger.error(f"Error obteniendo resumen de ventas: {str(e)}")
@@ -962,132 +1017,130 @@ async def get_ventas_detail(
 ):
     """Obtiene detalle de ventas por producto con promedios y comparaciones"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            # Si no se especifican fechas, usar último mes
+            if not fecha_inicio or not fecha_fin:
+                fecha_fin = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()[0]
+                fecha_inicio = conn.execute(
+                    "SELECT CAST(CAST(? AS DATE) - INTERVAL 30 DAY AS VARCHAR)",
+                    (fecha_fin,)
+                ).fetchone()[0]
 
-        # Si no se especifican fechas, usar último mes
-        if not fecha_inicio or not fecha_fin:
-            fecha_fin = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()[0]
-            fecha_inicio = conn.execute(
-                "SELECT CAST(CAST(? AS DATE) - INTERVAL 30 DAY AS VARCHAR)",
-                (fecha_fin,)
-            ).fetchone()[0]
+            # Construir query base (fecha es VARCHAR, usar comparación de strings)
+            where_clauses = ["v.fecha >= ? AND v.fecha <= ?"]
+            params = [fecha_inicio, fecha_fin]
 
-        # Construir query base (fecha es VARCHAR, usar comparación de strings)
-        where_clauses = ["v.fecha >= ? AND v.fecha <= ?"]
-        params = [fecha_inicio, fecha_fin]
+            if ubicacion_id:
+                where_clauses.append("v.ubicacion_id = ?")
+                params.append(ubicacion_id)
 
-        if ubicacion_id:
-            where_clauses.append("v.ubicacion_id = ?")
-            params.append(ubicacion_id)
+            if categoria:
+                where_clauses.append("v.categoria_producto = ?")
+                params.append(categoria)
 
-        if categoria:
-            where_clauses.append("v.categoria_producto = ?")
-            params.append(categoria)
+            where_clause = " AND ".join(where_clauses)
 
-        where_clause = " AND ".join(where_clauses)
-
-        # Query principal con todos los cálculos
-        query = f"""
-            WITH periodo_actual AS (
+            # Query principal con todos los cálculos
+            query = f"""
+                WITH periodo_actual AS (
+                    SELECT
+                        v.codigo_producto,
+                        v.descripcion_producto,
+                        v.categoria_producto,
+                        CAST(SUM(CAST(v.cantidad_vendida AS DECIMAL)) AS DECIMAL) as cantidad_total,
+                        COUNT(DISTINCT v.fecha) as dias_distintos,
+                        AVG(CAST(v.cantidad_bultos AS DECIMAL)) as cantidad_bultos_promedio
+                    FROM ventas_raw v
+                    WHERE {where_clause}
+                    GROUP BY v.codigo_producto, v.descripcion_producto, v.categoria_producto
+                ),
+                por_dia_semana AS (
+                    SELECT
+                        v.codigo_producto,
+                        v.dia_semana,
+                        SUM(CAST(v.cantidad_vendida AS DECIMAL)) as cantidad_por_dia_semana,
+                        COUNT(DISTINCT v.fecha) as dias_de_este_dia_semana
+                    FROM ventas_raw v
+                    WHERE {where_clause}
+                    GROUP BY v.codigo_producto, v.dia_semana
+                ),
+                promedio_dia_semana AS (
+                    SELECT
+                        codigo_producto,
+                        AVG(cantidad_por_dia_semana / NULLIF(dias_de_este_dia_semana, 0)) as promedio_mismo_dia
+                    FROM por_dia_semana
+                    GROUP BY codigo_producto
+                ),
+                ano_anterior AS (
+                    SELECT
+                        v.codigo_producto,
+                        v.fecha,
+                        SUM(CAST(v.cantidad_vendida AS DECIMAL)) as cantidad_dia
+                    FROM ventas_raw v
+                    WHERE v.fecha >= CAST(CAST(? AS DATE) - INTERVAL 365 DAY AS VARCHAR)
+                        AND v.fecha <= CAST(CAST(? AS DATE) - INTERVAL 335 DAY AS VARCHAR)
+                        {"AND v.ubicacion_id = ?" if ubicacion_id else ""}
+                        {"AND v.categoria_producto = ?" if categoria else ""}
+                    GROUP BY v.codigo_producto, v.fecha
+                ),
+                promedio_ano AS (
+                    SELECT
+                        codigo_producto,
+                        AVG(cantidad_dia) as promedio_diario_ano_anterior
+                    FROM ano_anterior
+                    GROUP BY codigo_producto
+                ),
+                totales AS (
+                    SELECT SUM(cantidad_total) as gran_total
+                    FROM periodo_actual
+                )
                 SELECT
-                    v.codigo_producto,
-                    v.descripcion_producto,
-                    v.categoria_producto,
-                    CAST(SUM(CAST(v.cantidad_vendida AS DECIMAL)) AS DECIMAL) as cantidad_total,
-                    COUNT(DISTINCT v.fecha) as dias_distintos,
-                    AVG(CAST(v.cantidad_bultos AS DECIMAL)) as cantidad_bultos_promedio
-                FROM ventas_raw v
-                WHERE {where_clause}
-                GROUP BY v.codigo_producto, v.descripcion_producto, v.categoria_producto
-            ),
-            por_dia_semana AS (
-                SELECT
-                    v.codigo_producto,
-                    v.dia_semana,
-                    SUM(CAST(v.cantidad_vendida AS DECIMAL)) as cantidad_por_dia_semana,
-                    COUNT(DISTINCT v.fecha) as dias_de_este_dia_semana
-                FROM ventas_raw v
-                WHERE {where_clause}
-                GROUP BY v.codigo_producto, v.dia_semana
-            ),
-            promedio_dia_semana AS (
-                SELECT
-                    codigo_producto,
-                    AVG(cantidad_por_dia_semana / NULLIF(dias_de_este_dia_semana, 0)) as promedio_mismo_dia
-                FROM por_dia_semana
-                GROUP BY codigo_producto
-            ),
-            ano_anterior AS (
-                SELECT
-                    v.codigo_producto,
-                    v.fecha,
-                    SUM(CAST(v.cantidad_vendida AS DECIMAL)) as cantidad_dia
-                FROM ventas_raw v
-                WHERE v.fecha >= CAST(CAST(? AS DATE) - INTERVAL 365 DAY AS VARCHAR)
-                    AND v.fecha <= CAST(CAST(? AS DATE) - INTERVAL 335 DAY AS VARCHAR)
-                    {"AND v.ubicacion_id = ?" if ubicacion_id else ""}
-                    {"AND v.categoria_producto = ?" if categoria else ""}
-                GROUP BY v.codigo_producto, v.fecha
-            ),
-            promedio_ano AS (
-                SELECT
-                    codigo_producto,
-                    AVG(cantidad_dia) as promedio_diario_ano_anterior
-                FROM ano_anterior
-                GROUP BY codigo_producto
-            ),
-            totales AS (
-                SELECT SUM(cantidad_total) as gran_total
-                FROM periodo_actual
-            )
-            SELECT
-                pa.codigo_producto,
-                pa.descripcion_producto,
-                pa.categoria_producto,
-                pa.cantidad_total,
-                pa.cantidad_total / NULLIF(pa.dias_distintos, 0) as promedio_diario,
-                COALESCE(pds.promedio_mismo_dia, 0) as promedio_mismo_dia_semana,
-                pan.promedio_diario_ano_anterior,
-                (pa.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
-                pa.cantidad_bultos_promedio as cantidad_bultos,
-                pa.cantidad_total / NULLIF(pa.cantidad_bultos_promedio, 0) as total_bultos,
-                (pa.cantidad_total / NULLIF(pa.dias_distintos, 0)) / NULLIF(pa.cantidad_bultos_promedio, 0) as promedio_bultos_diario
-            FROM periodo_actual pa
-            CROSS JOIN totales t
-            LEFT JOIN promedio_dia_semana pds ON pa.codigo_producto = pds.codigo_producto
-            LEFT JOIN promedio_ano pan ON pa.codigo_producto = pan.codigo_producto
-            ORDER BY pa.cantidad_total DESC
-        """
+                    pa.codigo_producto,
+                    pa.descripcion_producto,
+                    pa.categoria_producto,
+                    pa.cantidad_total,
+                    pa.cantidad_total / NULLIF(pa.dias_distintos, 0) as promedio_diario,
+                    COALESCE(pds.promedio_mismo_dia, 0) as promedio_mismo_dia_semana,
+                    pan.promedio_diario_ano_anterior,
+                    (pa.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
+                    pa.cantidad_bultos_promedio as cantidad_bultos,
+                    pa.cantidad_total / NULLIF(pa.cantidad_bultos_promedio, 0) as total_bultos,
+                    (pa.cantidad_total / NULLIF(pa.dias_distintos, 0)) / NULLIF(pa.cantidad_bultos_promedio, 0) as promedio_bultos_diario
+                FROM periodo_actual pa
+                CROSS JOIN totales t
+                LEFT JOIN promedio_dia_semana pds ON pa.codigo_producto = pds.codigo_producto
+                LEFT JOIN promedio_ano pan ON pa.codigo_producto = pan.codigo_producto
+                ORDER BY pa.cantidad_total DESC
+            """
 
-        # Construir lista de parámetros:
-        # params para periodo_actual, params para por_dia_semana, luego año anterior
-        all_params = params.copy()  # Para periodo_actual
-        all_params.extend(params.copy())  # Para por_dia_semana (mismos parámetros)
-        all_params.extend([fecha_inicio, fecha_fin])  # Para año anterior
-        if ubicacion_id:
-            all_params.append(ubicacion_id)
-        if categoria:
-            all_params.append(categoria)
+            # Construir lista de parámetros:
+            # params para periodo_actual, params para por_dia_semana, luego año anterior
+            all_params = params.copy()  # Para periodo_actual
+            all_params.extend(params.copy())  # Para por_dia_semana (mismos parámetros)
+            all_params.extend([fecha_inicio, fecha_fin])  # Para año anterior
+            if ubicacion_id:
+                all_params.append(ubicacion_id)
+            if categoria:
+                all_params.append(categoria)
 
-        result = conn.execute(query, all_params).fetchall()
-        conn.close()
+            result = conn.execute(query, all_params).fetchall()
 
-        return [
-            VentasDetailResponse(
-                codigo_producto=row[0],
-                descripcion_producto=row[1],
-                categoria=row[2],
-                cantidad_total=float(row[3]) if row[3] else 0,
-                promedio_diario=float(row[4]) if row[4] else 0,
-                promedio_mismo_dia_semana=float(row[5]) if row[5] else 0,
-                comparacion_ano_anterior=float(row[6]) if row[6] else None,
-                porcentaje_total=float(row[7]) if row[7] else 0,
-                cantidad_bultos=float(row[8]) if row[8] else None,
-                total_bultos=float(row[9]) if row[9] else None,
-                promedio_bultos_diario=float(row[10]) if row[10] else None
-            )
-            for row in result
-        ]
+            return [
+                VentasDetailResponse(
+                    codigo_producto=row[0],
+                    descripcion_producto=row[1],
+                    categoria=row[2],
+                    cantidad_total=float(row[3]) if row[3] else 0,
+                    promedio_diario=float(row[4]) if row[4] else 0,
+                    promedio_mismo_dia_semana=float(row[5]) if row[5] else 0,
+                    comparacion_ano_anterior=float(row[6]) if row[6] else None,
+                    porcentaje_total=float(row[7]) if row[7] else 0,
+                    cantidad_bultos=float(row[8]) if row[8] else None,
+                    total_bultos=float(row[9]) if row[9] else None,
+                    promedio_bultos_diario=float(row[10]) if row[10] else None
+                )
+                for row in result
+            ]
 
     except Exception as e:
         logger.error(f"Error obteniendo detalle de ventas: {str(e)}")
@@ -1097,18 +1150,15 @@ async def get_ventas_detail(
 async def get_ventas_categorias():
     """Obtiene todas las categorías de productos vendidos"""
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            result = conn.execute("""
+                SELECT DISTINCT categoria_producto
+                FROM ventas_raw
+                WHERE categoria_producto IS NOT NULL
+                ORDER BY categoria_producto
+            """).fetchall()
 
-        result = conn.execute("""
-            SELECT DISTINCT categoria_producto
-            FROM ventas_raw
-            WHERE categoria_producto IS NOT NULL
-            ORDER BY categoria_producto
-        """).fetchall()
-
-        conn.close()
-
-        return [{"value": row[0], "label": row[0]} for row in result]
+            return [{"value": row[0], "label": row[0]} for row in result]
 
     except Exception as e:
         logger.error(f"Error obteniendo categorías de ventas: {str(e)}")
@@ -1128,13 +1178,12 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
     - Pronóstico de ventas para los próximos días
     """
     try:
-        conn = get_db_connection()
+        with get_db_connection() as conn:
+            # Obtener fecha actual (última fecha en ventas)
+            fecha_actual = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()[0]
 
-        # Obtener fecha actual (última fecha en ventas)
-        fecha_actual = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()[0]
-
-        # Query principal para calcular pedido sugerido
-        query = f"""
+            # Query principal para calcular pedido sugerido
+            query = f"""
         WITH ventas_8sem AS (
             SELECT
                 v.codigo_producto,
@@ -1293,53 +1342,52 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
         LEFT JOIN ventas_mismo_dia vmd ON it.codigo_producto = vmd.codigo_producto
         LEFT JOIN inv_cedi ic ON it.codigo_producto = ic.codigo_producto
         ORDER BY COALESCE(v8.prom_diario_8sem, 0) DESC
-        """
+            """
 
-        result = conn.execute(query).fetchall()
-        conn.close()
+            result = conn.execute(query).fetchall()
 
-        productos = []
-        for row in result:
-            # Desempaquetar datos de los índices calculados (31-33)
-            prom_diario = float(row[31]) if row[31] else 0
-            cantidad_bultos = float(row[32]) if row[32] else 1
-            stock_total = float(row[33]) if row[33] else 0
-            stock_minimo = float(row[28]) if row[28] else 10
-            stock_maximo = float(row[29]) if row[29] else 100
-            punto_reorden = float(row[30]) if row[30] else 30
-            pronostico_unid = float(row[17]) if row[17] else 0
+            productos = []
+            for row in result:
+                # Desempaquetar datos de los índices calculados (31-33)
+                prom_diario = float(row[31]) if row[31] else 0
+                cantidad_bultos = float(row[32]) if row[32] else 1
+                stock_total = float(row[33]) if row[33] else 0
+                stock_minimo = float(row[28]) if row[28] else 10
+                stock_maximo = float(row[29]) if row[29] else 100
+                punto_reorden = float(row[30]) if row[30] else 30
+                pronostico_unid = float(row[17]) if row[17] else 0
 
-            # Calcular cantidad sugerida
-            stock_seguridad = stock_minimo * 1.5
+                # Calcular cantidad sugerida
+                stock_seguridad = stock_minimo * 1.5
 
-            # Lógica de pedido
-            if stock_total < punto_reorden:
-                cantidad_sugerida = (stock_maximo - stock_total) + pronostico_unid
-                razon = "Stock bajo punto de reorden"
-            elif stock_total < stock_minimo:
-                cantidad_sugerida = stock_maximo - stock_total
-                razon = "Stock bajo mínimo"
-            elif stock_total < stock_seguridad:
-                cantidad_sugerida = stock_maximo - stock_total
-                razon = "Stock bajo seguridad"
-            else:
-                cantidad_sugerida = 0
-                razon = "Stock suficiente"
+                # Lógica de pedido
+                if stock_total < punto_reorden:
+                    cantidad_sugerida = (stock_maximo - stock_total) + pronostico_unid
+                    razon = "Stock bajo punto de reorden"
+                elif stock_total < stock_minimo:
+                    cantidad_sugerida = stock_maximo - stock_total
+                    razon = "Stock bajo mínimo"
+                elif stock_total < stock_seguridad:
+                    cantidad_sugerida = stock_maximo - stock_total
+                    razon = "Stock bajo seguridad"
+                else:
+                    cantidad_sugerida = 0
+                    razon = "Stock suficiente"
 
-            # Convertir a bultos
-            cantidad_bultos_sugerida = cantidad_sugerida / cantidad_bultos if cantidad_bultos > 0 else 0
-            cantidad_bultos_ajustada = int(cantidad_bultos_sugerida) + (1 if cantidad_bultos_sugerida % 1 >= 0.5 else 0)
+                # Convertir a bultos
+                cantidad_bultos_sugerida = cantidad_sugerida / cantidad_bultos if cantidad_bultos > 0 else 0
+                cantidad_bultos_ajustada = int(cantidad_bultos_sugerida) + (1 if cantidad_bultos_sugerida % 1 >= 0.5 else 0)
 
-            # Clasificación ABC basada en promedio de ventas
-            if prom_diario >= 10:
-                clasificacion = "A"
-            elif prom_diario >= 3:
-                clasificacion = "B"
-            else:
-                clasificacion = "C"
+                # Clasificación ABC basada en promedio de ventas
+                if prom_diario >= 10:
+                    clasificacion = "A"
+                elif prom_diario >= 3:
+                    clasificacion = "B"
+                else:
+                    clasificacion = "C"
 
-            # Incluir todos los productos para permitir búsqueda y pedido manual
-            productos.append(ProductoPedidoSugerido(
+                # Incluir todos los productos para permitir búsqueda y pedido manual
+                productos.append(ProductoPedidoSugerido(
                     codigo_producto=row[0],
                     codigo_barras=row[1],
                     descripcion_producto=row[2],
@@ -1381,8 +1429,8 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
                     razon_pedido=razon
                 ))
 
-        logger.info(f"✅ Calculados {len(productos)} productos para pedido sugerido")
-        return productos
+            logger.info(f"✅ Calculados {len(productos)} productos para pedido sugerido")
+            return productos
 
     except Exception as e:
         logger.error(f"Error calculando pedido sugerido: {str(e)}")
@@ -1429,9 +1477,6 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
     try:
         logger.info(f"💾 Guardando pedido: CEDI {request.cedi_origen} → Tienda {request.tienda_destino}")
 
-        # Conectar a base de datos
-        conn = duckdb.connect(str(db_path), read_only=False)
-
         # Generar IDs únicos
         import uuid
         from datetime import datetime
@@ -1439,74 +1484,80 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
         pedido_id = str(uuid.uuid4())
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-        # Obtener último número de pedido para generar secuencia
-        result = conn.execute("SELECT MAX(numero_pedido) as ultimo FROM pedidos_sugeridos").fetchone()
-        ultimo_numero = result[0] if result[0] else "PED-0000"
-        siguiente_numero = int(ultimo_numero.split('-')[1]) + 1
-        numero_pedido = f"PED-{siguiente_numero:04d}"
+        # Conectar a base de datos con escritura
+        # Note: guardar_pedido_sugerido needs write access, so we can't use the read-only context manager
+        # We'll connect directly but still use proper cleanup
+        conn = duckdb.connect(str(DB_PATH), read_only=False)
 
-        # Filtrar solo productos incluidos
-        productos_incluidos = [p for p in request.productos if p.incluido]
+        try:
+            # Obtener último número de pedido para generar secuencia
+            result = conn.execute("SELECT MAX(numero_pedido) as ultimo FROM pedidos_sugeridos").fetchone()
+            ultimo_numero = result[0] if result[0] else "PED-0000"
+            siguiente_numero = int(ultimo_numero.split('-')[1]) + 1
+            numero_pedido = f"PED-{siguiente_numero:04d}"
 
-        # Calcular totales
-        total_productos = len(productos_incluidos)
-        total_bultos = sum(p.cantidad_pedida_bultos for p in productos_incluidos)
-        total_unidades = sum(p.cantidad_pedida_bultos * p.cantidad_bultos for p in productos_incluidos)
+            # Filtrar solo productos incluidos
+            productos_incluidos = [p for p in request.productos if p.incluido]
 
-        # Insertar pedido principal
-        conn.execute("""
-            INSERT INTO pedidos_sugeridos (
-                id, numero_pedido, cedi_origen_id, cedi_origen_nombre,
-                tienda_destino_id, tienda_destino_nombre, estado,
-                total_productos, total_bultos, total_unidades,
-                dias_cobertura, observaciones, fecha_creacion,
-                usuario_creador, fecha_modificacion
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
-        """, [
-            pedido_id, numero_pedido, request.cedi_origen, request.cedi_origen_nombre,
-            request.tienda_destino, request.tienda_destino_nombre, 'borrador',
-            total_productos, float(total_bultos), float(total_unidades),
-            request.dias_cobertura, request.observaciones,
-            'sistema'  # TODO: Obtener usuario real
-        ])
+            # Calcular totales
+            total_productos = len(productos_incluidos)
+            total_bultos = sum(p.cantidad_pedida_bultos for p in productos_incluidos)
+            total_unidades = sum(p.cantidad_pedida_bultos * p.cantidad_bultos for p in productos_incluidos)
 
-        # Insertar detalle de productos
-        for idx, producto in enumerate(productos_incluidos):
-            detalle_id = str(uuid.uuid4())
+            # Insertar pedido principal
             conn.execute("""
-                INSERT INTO pedidos_sugeridos_detalle (
-                    id, pedido_id, linea_numero, codigo_producto, descripcion_producto,
-                    cantidad_bultos, cantidad_pedida_bultos, cantidad_pedida_unidades,
-                    cantidad_sugerida_bultos, cantidad_sugerida_unidades,
-                    clasificacion_abc, razon_pedido, incluido,
-                    prom_ventas_8sem_unid, prom_ventas_8sem_bultos,
-                    stock_tienda, stock_total
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO pedidos_sugeridos (
+                    id, numero_pedido, cedi_origen_id, cedi_origen_nombre,
+                    tienda_destino_id, tienda_destino_nombre, estado,
+                    total_productos, total_bultos, total_unidades,
+                    dias_cobertura, observaciones, fecha_creacion,
+                    usuario_creador, fecha_modificacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
             """, [
-                detalle_id, pedido_id, idx + 1,
-                producto.codigo_producto, producto.descripcion_producto,
-                float(producto.cantidad_bultos),
-                int(producto.cantidad_pedida_bultos),
-                float(producto.cantidad_pedida_bultos * producto.cantidad_bultos),
-                int(producto.cantidad_sugerida_bultos),
-                float(producto.cantidad_sugerida_bultos * producto.cantidad_bultos),
-                producto.clasificacion_abc, producto.razon_pedido, producto.incluido,
-                float(producto.prom_ventas_8sem_unid), float(producto.prom_ventas_8sem_bultos),
-                float(producto.stock_tienda), float(producto.stock_total)
+                pedido_id, numero_pedido, request.cedi_origen, request.cedi_origen_nombre,
+                request.tienda_destino, request.tienda_destino_nombre, 'borrador',
+                total_productos, float(total_bultos), float(total_unidades),
+                request.dias_cobertura, request.observaciones,
+                'sistema'  # TODO: Obtener usuario real
             ])
 
-        conn.close()
+            # Insertar detalle de productos
+            for idx, producto in enumerate(productos_incluidos):
+                detalle_id = str(uuid.uuid4())
+                conn.execute("""
+                    INSERT INTO pedidos_sugeridos_detalle (
+                        id, pedido_id, linea_numero, codigo_producto, descripcion_producto,
+                        cantidad_bultos, cantidad_pedida_bultos, cantidad_pedida_unidades,
+                        cantidad_sugerida_bultos, cantidad_sugerida_unidades,
+                        clasificacion_abc, razon_pedido, incluido,
+                        prom_ventas_8sem_unid, prom_ventas_8sem_bultos,
+                        stock_tienda, stock_total
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    detalle_id, pedido_id, idx + 1,
+                    producto.codigo_producto, producto.descripcion_producto,
+                    float(producto.cantidad_bultos),
+                    int(producto.cantidad_pedida_bultos),
+                    float(producto.cantidad_pedida_bultos * producto.cantidad_bultos),
+                    int(producto.cantidad_sugerida_bultos),
+                    float(producto.cantidad_sugerida_bultos * producto.cantidad_bultos),
+                    producto.clasificacion_abc, producto.razon_pedido, producto.incluido,
+                    float(producto.prom_ventas_8sem_unid), float(producto.prom_ventas_8sem_bultos),
+                    float(producto.stock_tienda), float(producto.stock_total)
+                ])
 
-        logger.info(f"✅ Pedido guardado: {numero_pedido} con {total_productos} productos, {total_bultos} bultos")
+            logger.info(f"✅ Pedido guardado: {numero_pedido} con {total_productos} productos, {total_bultos} bultos")
 
-        return PedidoGuardadoResponse(
-            id=pedido_id,
-            numero_pedido=numero_pedido,
-            estado='borrador',
-            total_productos=total_productos,
-            total_bultos=float(total_bultos),
-            fecha_creacion=timestamp
-        )
+            return PedidoGuardadoResponse(
+                id=pedido_id,
+                numero_pedido=numero_pedido,
+                estado='borrador',
+                total_productos=total_productos,
+                total_bultos=float(total_bultos),
+                fecha_creacion=timestamp
+            )
+        finally:
+            conn.close()
 
     except Exception as e:
         logger.error(f"Error guardando pedido sugerido: {str(e)}")
