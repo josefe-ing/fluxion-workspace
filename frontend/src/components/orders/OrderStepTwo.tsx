@@ -311,6 +311,46 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     return ventaDiariaBultos * multiplicador;
   };
 
+  const calcularPedidoSugerido = (producto: ProductoPedido): number => {
+    if (!stockParams || producto.prom_ventas_5dias_unid <= 0) return 0;
+
+    const ventaDiariaBultos = producto.prom_ventas_5dias_unid / producto.cantidad_bultos;
+    const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
+    const stockTotalBultos = stockTotalUnidades / producto.cantidad_bultos;
+    const stockTotalDias = stockTotalUnidades / producto.prom_ventas_5dias_unid;
+
+    // Calcular punto de reorden en días
+    const puntoReordenBultos = calcularPuntoReorden(producto);
+    const puntoReordenDias = puntoReordenBultos / ventaDiariaBultos;
+
+    // Calcular stock máximo en bultos
+    const stockMaximoBultos = calcularStockMaximo(producto);
+
+    // Si Stock Total (días) <= Punto de Reorden (días), necesitamos pedir
+    if (stockTotalDias <= puntoReordenDias) {
+      // Sugerido = Stock Máximo - Stock Total (en bultos)
+      const sugeridoSinLimite = stockMaximoBultos - stockTotalBultos;
+
+      // Limitar al stock disponible en CEDI origen (en bultos)
+      const stockCediBultos = producto.stock_cedi_origen / producto.cantidad_bultos;
+      const sugerido = Math.min(sugeridoSinLimite, stockCediBultos);
+
+      return Math.max(0, Math.round(sugerido)); // No sugerir valores negativos
+    }
+
+    return 0;
+  };
+
+  const esStockCritico = (producto: ProductoPedido): boolean => {
+    if (!stockParams || producto.prom_ventas_5dias_unid <= 0) return false;
+
+    const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
+    const stockMinimoBultos = calcularStockMinimo(producto);
+    const stockMinimoUnidades = stockMinimoBultos * producto.cantidad_bultos;
+
+    return stockTotalUnidades <= stockMinimoUnidades;
+  };
+
   const SortableHeader = ({ field, label, bgColor = 'bg-gray-50' }: { field: SortField; label: string; bgColor?: string }) => (
     <th
       onClick={() => handleSort(field)}
@@ -482,8 +522,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {productosOrdenados.slice(0, 50).map((producto, index) => (
-                  <tr key={`${producto.codigo_producto}-${index}`} className={producto.incluido ? '' : 'opacity-50'}>
+                {productosOrdenados.slice(0, 50).map((producto, index) => {
+                  const stockCritico = esStockCritico(producto);
+                  return (
+                  <tr
+                    key={`${producto.codigo_producto}-${index}`}
+                    className={`${producto.incluido ? '' : 'opacity-50'} ${stockCritico ? 'bg-red-50 border-l-4 border-red-500' : ''}`}
+                  >
                     <td className="sticky left-0 z-10 bg-white px-4 py-3" style={{ minWidth: '60px' }}>
                       <input
                         type="checkbox"
@@ -551,13 +596,20 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         <span className="text-xs text-blue-500">({Math.round(producto.stock_tienda + producto.stock_en_transito).toLocaleString('es-VE')} unid)</span>
                       </div>
                     </td>
-                    <td className="bg-green-50 px-4 py-3 text-sm text-indigo-700 text-center">
-                      <span className="font-medium">
-                        {producto.prom_ventas_5dias_unid > 0
-                          ? ((producto.stock_tienda + producto.stock_en_transito) / producto.prom_ventas_5dias_unid).toFixed(1)
-                          : '∞'
-                        } días
-                      </span>
+                    <td className="bg-green-50 px-4 py-3 text-sm text-center">
+                      <div className="flex flex-col items-center">
+                        <span className={`font-medium ${stockCritico ? 'text-red-700' : 'text-indigo-700'}`}>
+                          {producto.prom_ventas_5dias_unid > 0
+                            ? ((producto.stock_tienda + producto.stock_en_transito) / producto.prom_ventas_5dias_unid).toFixed(1)
+                            : '∞'
+                          } días
+                        </span>
+                        {stockCritico && (
+                          <span className="text-xs text-red-600 font-semibold mt-1">
+                            🚨 CRÍTICO
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="bg-green-50 px-4 py-3 text-sm text-green-700 text-center">
                       <div className="flex flex-col">
@@ -630,7 +682,18 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         </span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-sm font-semibold text-orange-600 text-center">{producto.cantidad_ajustada_bultos}</td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex flex-col items-center">
+                        <span className={`text-sm font-semibold ${calcularPedidoSugerido(producto) > 0 ? 'text-orange-600' : 'text-gray-400'}`}>
+                          {calcularPedidoSugerido(producto)} bultos
+                        </span>
+                        {calcularPedidoSugerido(producto) > 0 && producto.stock_cedi_origen < (calcularPedidoSugerido(producto) * producto.cantidad_bultos) && (
+                          <span className="text-xs text-amber-600 mt-1">
+                            ⚠️ Stock CEDI limitado
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-center">
                       <input
                         type="number"
@@ -652,7 +715,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       />
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
