@@ -214,6 +214,7 @@ class ProductoPedidoSugerido(BaseModel):
     marca: Optional[str]
     presentacion: Optional[str]
     cantidad_bultos: float
+    cuadrante_producto: Optional[str]
 
     # Ventas (unidades y bultos)
     prom_ventas_5dias_unid: float
@@ -1289,6 +1290,14 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
             FROM inventario_raw i
             WHERE i.ubicacion_id = '{request.tienda_destino}'
         ),
+        productos_cuadrante AS (
+            SELECT DISTINCT
+                codigo_producto,
+                FIRST_VALUE(cuadrante_producto) OVER (PARTITION BY codigo_producto ORDER BY fecha DESC) as cuadrante_producto
+            FROM ventas_raw
+            WHERE ubicacion_id = '{request.tienda_destino}'
+                AND cuadrante_producto IS NOT NULL
+        ),
         inv_cedi AS (
             SELECT
                 codigo_producto,
@@ -1310,6 +1319,7 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
             it.marca,
             it.presentacion,
             it.cantidad_bultos,
+            pc.cuadrante_producto,
 
             -- Ventas
             COALESCE(v5.prom_diario_5dias, 0) as prom_ventas_5dias_unid,
@@ -1357,6 +1367,7 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
         LEFT JOIN ventas_20dias v20 ON it.codigo_producto = v20.codigo_producto
         LEFT JOIN ventas_mismo_dia vmd ON it.codigo_producto = vmd.codigo_producto
         LEFT JOIN inv_cedi ic ON it.codigo_producto = ic.codigo_producto
+        LEFT JOIN productos_cuadrante pc ON it.codigo_producto = pc.codigo_producto
         ORDER BY COALESCE(v8.prom_diario_8sem, 0) DESC
             """
 
@@ -1364,14 +1375,14 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
 
             productos = []
             for row in result:
-                # Desempaquetar datos de los índices calculados (31-33)
-                prom_diario = float(row[31]) if row[31] else 0
-                cantidad_bultos = float(row[32]) if row[32] else 1
-                stock_total = float(row[33]) if row[33] else 0
-                stock_minimo = float(row[28]) if row[28] else 10
-                stock_maximo = float(row[29]) if row[29] else 100
-                punto_reorden = float(row[30]) if row[30] else 30
-                pronostico_unid = float(row[17]) if row[17] else 0
+                # Desempaquetar datos de los índices calculados (32-34 - ajustado por cuadrante)
+                prom_diario = float(row[32]) if row[32] else 0
+                cantidad_bultos = float(row[33]) if row[33] else 1
+                stock_total = float(row[34]) if row[34] else 0
+                stock_minimo = float(row[29]) if row[29] else 10
+                stock_maximo = float(row[30]) if row[30] else 100
+                punto_reorden = float(row[31]) if row[31] else 30
+                pronostico_unid = float(row[18]) if row[18] else 0
 
                 # Calcular cantidad sugerida
                 stock_seguridad = stock_minimo * 1.5
@@ -1413,27 +1424,28 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
                     marca=row[6],
                     presentacion=row[7],
                     cantidad_bultos=float(row[8]) if row[8] else 1,
-                    # Ventas - nuevos índices
-                    prom_ventas_5dias_unid=float(row[9]) if row[9] else 0,
-                    prom_ventas_20dias_unid=float(row[10]) if row[10] else 0,
-                    prom_mismo_dia_unid=float(row[11]) if row[11] else 0,
-                    prom_ventas_8sem_unid=float(row[12]) if row[12] else 0,
-                    prom_ventas_8sem_bultos=float(row[13]) if row[13] else 0,
-                    prom_ventas_3dias_unid=float(row[14]) if row[14] else 0,
-                    prom_ventas_3dias_bultos=float(row[15]) if row[15] else 0,
-                    prom_mismo_dia_bultos=float(row[16]) if row[16] else 0,
-                    pronostico_3dias_unid=float(row[17]) if row[17] else 0,
-                    pronostico_3dias_bultos=float(row[18]) if row[18] else 0,
+                    cuadrante_producto=row[9],
+                    # Ventas - actualizados índices (+1 por cuadrante)
+                    prom_ventas_5dias_unid=float(row[10]) if row[10] else 0,
+                    prom_ventas_20dias_unid=float(row[11]) if row[11] else 0,
+                    prom_mismo_dia_unid=float(row[12]) if row[12] else 0,
+                    prom_ventas_8sem_unid=float(row[13]) if row[13] else 0,
+                    prom_ventas_8sem_bultos=float(row[14]) if row[14] else 0,
+                    prom_ventas_3dias_unid=float(row[15]) if row[15] else 0,
+                    prom_ventas_3dias_bultos=float(row[16]) if row[16] else 0,
+                    prom_mismo_dia_bultos=float(row[17]) if row[17] else 0,
+                    pronostico_3dias_unid=float(row[18]) if row[18] else 0,
+                    pronostico_3dias_bultos=float(row[19]) if row[19] else 0,
                     # Inventario
-                    stock_tienda=float(row[19]) if row[19] else 0,
-                    stock_en_transito=float(row[20]) if row[20] else 0,
-                    stock_total=float(row[21]) if row[21] else 0,
-                    stock_total_bultos=float(row[22]) if row[22] else 0,
-                    stock_dias_cobertura=float(row[23]) if row[23] else 0,
-                    stock_cedi_seco=float(row[24]) if row[24] else 0,
-                    stock_cedi_frio=float(row[25]) if row[25] else 0,
-                    stock_cedi_verde=float(row[26]) if row[26] else 0,
-                    stock_cedi_origen=float(row[27]) if row[27] else 0,
+                    stock_tienda=float(row[20]) if row[20] else 0,
+                    stock_en_transito=float(row[21]) if row[21] else 0,
+                    stock_total=float(row[22]) if row[22] else 0,
+                    stock_total_bultos=float(row[23]) if row[23] else 0,
+                    stock_dias_cobertura=float(row[24]) if row[24] else 0,
+                    stock_cedi_seco=float(row[25]) if row[25] else 0,
+                    stock_cedi_frio=float(row[26]) if row[26] else 0,
+                    stock_cedi_verde=float(row[27]) if row[27] else 0,
+                    stock_cedi_origen=float(row[28]) if row[28] else 0,
                     clasificacion_abc=clasificacion,
                     stock_minimo=stock_minimo,
                     stock_maximo=stock_maximo,
