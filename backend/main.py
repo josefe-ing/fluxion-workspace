@@ -29,7 +29,13 @@ app = FastAPI(
 # Configurar CORS para el frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",
+        "https://d21ssh2ccl7jy6.cloudfront.net",
+        "http://fluxion-alb-1881437163.us-east-1.elb.amazonaws.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
