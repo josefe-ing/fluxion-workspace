@@ -36,7 +36,8 @@ app.add_middleware(
 )
 
 # Configuración de la base de datos
-DB_PATH = Path(__file__).parent.parent / "data" / "fluxion_production.db"
+import os
+DB_PATH = Path(os.getenv('DATABASE_PATH', str(Path(__file__).parent.parent / "data" / "fluxion_production.db")))
 
 def get_db_connection():
     """Obtiene una conexión a la base de datos DuckDB"""
