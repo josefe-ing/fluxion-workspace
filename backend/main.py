@@ -4,8 +4,9 @@ FastAPI Backend para Fluxion AI - La Granja Mercado
 Conecta con DuckDB para servir datos de inventario en tiempo real
 """
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import duckdb
@@ -14,6 +15,7 @@ from datetime import datetime, date
 import logging
 import subprocess
 import asyncio
+import os
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -37,12 +39,53 @@ app.add_middleware(
         "http://fluxion-alb-1881437163.us-east-1.elb.amazonaws.com"
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
+# Trusted Host Middleware (protección contra Host header attacks)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=[
+        "localhost",
+        "localhost:8001",
+        "127.0.0.1",
+        "*.cloudfront.net",
+        "*.elb.amazonaws.com",
+        "*.fluxion.ai",  # Si en el futuro tienes dominio propio
+    ]
+)
+
+# Security Headers Middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """
+    Agrega headers de seguridad a todas las respuestas
+    """
+    response = await call_next(request)
+
+    # Prevenir MIME sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Protección contra clickjacking
+    response.headers["X-Frame-Options"] = "DENY"
+
+    # Protección XSS (legacy, pero no hace daño)
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    # Referrer policy (no enviar info sensible en referer)
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Permissions Policy (deshabilitar features innecesarias)
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+    # HSTS solo si es HTTPS (CloudFront lo maneja, pero por si acaso)
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    return response
+
 # Configuración de la base de datos
-import os
 DB_PATH = Path(os.getenv('DATABASE_PATH', str(Path(__file__).parent.parent / "data" / "fluxion_production.db")))
 
 def get_db_connection():
