@@ -24,6 +24,11 @@ interface StockParams {
   stock_seg_mult_b: number;
   stock_seg_mult_bc: number;
   stock_seg_mult_c: number;
+  stock_max_mult_a: number;
+  stock_max_mult_ab: number;
+  stock_max_mult_b: number;
+  stock_max_mult_bc: number;
+  stock_max_mult_c: number;
 }
 
 export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBack }: Props) {
@@ -111,7 +116,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         stock_seg_mult_ab: 2.5,
         stock_seg_mult_b: 2.0,
         stock_seg_mult_bc: 3.0,
-        stock_seg_mult_c: 7.0
+        stock_seg_mult_c: 7.0,
+        stock_max_mult_a: 5.0,
+        stock_max_mult_ab: 7.0,
+        stock_max_mult_b: 12.0,
+        stock_max_mult_bc: 17.0,
+        stock_max_mult_c: 26.0
       });
     }
   };
@@ -283,6 +293,22 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     const stockSeg = calcularStockSeguridad(producto);
 
     return stockMin + stockSeg + (1.25 * ventaDiariaBultos);
+  };
+
+  const calcularStockMaximo = (producto: ProductoPedido): number => {
+    if (!stockParams) return 0;
+
+    const ventaDiariaBultos = producto.prom_ventas_5dias_unid / producto.cantidad_bultos;
+    let multiplicador = 0;
+
+    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_max_mult_a;
+    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_max_mult_ab;
+    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_max_mult_b;
+    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_max_mult_bc;
+    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_max_mult_c;
+    else return 0;
+
+    return ventaDiariaBultos * multiplicador;
   };
 
   const SortableHeader = ({ field, label, bgColor = 'bg-gray-50' }: { field: SortField; label: string; bgColor?: string }) => (
@@ -592,7 +618,17 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       </div>
                     </td>
                     <td className="bg-orange-50 px-4 py-3 text-sm text-orange-700 text-center">
-                      <span className="font-medium">-</span>
+                      <div className="flex flex-col">
+                        <span className="font-medium">
+                          {stockParams && producto.prom_ventas_5dias_unid > 0
+                            ? (calcularStockMaximo(producto) / (producto.prom_ventas_5dias_unid / producto.cantidad_bultos)).toFixed(1)
+                            : '-'
+                          } días
+                        </span>
+                        <span className="text-xs text-orange-500">
+                          ({stockParams ? Math.round(calcularStockMaximo(producto)).toLocaleString('es-VE') : '-'} unid)
+                        </span>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-sm font-semibold text-orange-600 text-center">{producto.cantidad_ajustada_bultos}</td>
                     <td className="px-4 py-3 text-center">

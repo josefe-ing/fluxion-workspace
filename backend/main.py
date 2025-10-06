@@ -458,7 +458,12 @@ async def get_stock_params(ubicacion_id: str):
                 "stock_seg_mult_ab": 2.5,
                 "stock_seg_mult_b": 2.0,
                 "stock_seg_mult_bc": 3.0,
-                "stock_seg_mult_c": 7.0
+                "stock_seg_mult_c": 7.0,
+                "stock_max_mult_a": 5.0,
+                "stock_max_mult_ab": 7.0,
+                "stock_max_mult_b": 12.0,
+                "stock_max_mult_bc": 17.0,
+                "stock_max_mult_c": 26.0
             }
 
         return {
@@ -472,7 +477,12 @@ async def get_stock_params(ubicacion_id: str):
             "stock_seg_mult_ab": tienda_config.stock_seg_mult_ab,
             "stock_seg_mult_b": tienda_config.stock_seg_mult_b,
             "stock_seg_mult_bc": tienda_config.stock_seg_mult_bc,
-            "stock_seg_mult_c": tienda_config.stock_seg_mult_c
+            "stock_seg_mult_c": tienda_config.stock_seg_mult_c,
+            "stock_max_mult_a": tienda_config.stock_max_mult_a,
+            "stock_max_mult_ab": tienda_config.stock_max_mult_ab,
+            "stock_max_mult_b": tienda_config.stock_max_mult_b,
+            "stock_max_mult_bc": tienda_config.stock_max_mult_bc,
+            "stock_max_mult_c": tienda_config.stock_max_mult_c
         }
 
     except Exception as e:

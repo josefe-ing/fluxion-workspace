@@ -34,6 +34,12 @@ class TiendaConfig:
     stock_seg_mult_b: float = 2.0
     stock_seg_mult_bc: float = 3.0
     stock_seg_mult_c: float = 7.0
+    # Parámetros de stock máximo por clasificación ABC
+    stock_max_mult_a: float = 5.0
+    stock_max_mult_ab: float = 7.0
+    stock_max_mult_b: float = 12.0
+    stock_max_mult_bc: float = 17.0
+    stock_max_mult_c: float = 26.0
 
 # Configuración de tiendas disponibles
 TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
@@ -60,7 +66,9 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=14348,
         activo=True,
-        codigo_deposito="0202"
+        codigo_deposito="0202",
+        stock_max_mult_b=9.0,
+        stock_max_mult_bc=15.0
     ),
 
     "tienda_03": TiendaConfig(
@@ -72,7 +80,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=14348,
         activo=True,
-        codigo_deposito="0302"
+        codigo_deposito="0302",
+        stock_max_mult_ab=6.0,
+        stock_max_mult_b=7.0,
+        stock_max_mult_bc=9.0,
+        stock_max_mult_c=18.0
     ),
 
     "tienda_04": TiendaConfig(
@@ -84,7 +96,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=14348,
         activo=True,
-        codigo_deposito="0402"
+        codigo_deposito="0402",
+        stock_max_mult_a=5.0,
+        stock_max_mult_ab=7.0,
+        stock_max_mult_b=9.0,
+        stock_max_mult_bc=15.0
     ),
 
     "tienda_05": TiendaConfig(
@@ -132,7 +148,12 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=14348,
         activo=True,
-        codigo_deposito="0802"
+        codigo_deposito="0802",
+        stock_max_mult_a=5.0,
+        stock_max_mult_ab=7.0,
+        stock_max_mult_b=12.0,
+        stock_max_mult_bc=17.0,
+        stock_max_mult_c=26.0
     ),
 
     "tienda_09": TiendaConfig(
@@ -144,7 +165,12 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=14348,
         activo=True,
-        codigo_deposito="0902"
+        codigo_deposito="0902",
+        stock_max_mult_a=5.0,
+        stock_max_mult_ab=7.0,
+        stock_max_mult_b=9.0,
+        stock_max_mult_bc=15.0,
+        stock_max_mult_c=26.0
     ),
 
     "tienda_10": TiendaConfig(
@@ -180,7 +206,12 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=1433,
         activo=True,
-        codigo_deposito="1202"
+        codigo_deposito="1202",
+        stock_max_mult_a=5.0,
+        stock_max_mult_ab=7.0,
+        stock_max_mult_b=12.0,
+        stock_max_mult_bc=17.0,
+        stock_max_mult_c=26.0
     ),
 
     "tienda_13": TiendaConfig(
@@ -192,7 +223,12 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=14348,
         activo=True,
-        codigo_deposito="1302"
+        codigo_deposito="1302",
+        stock_max_mult_a=5.0,
+        stock_max_mult_ab=7.0,
+        stock_max_mult_b=9.0,
+        stock_max_mult_bc=15.0,
+        stock_max_mult_c=26.0
     ),
 
     "tienda_15": TiendaConfig(
@@ -216,7 +252,12 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=1433,
         activo=True,
-        codigo_deposito="1602"
+        codigo_deposito="1602",
+        stock_max_mult_a=5.0,
+        stock_max_mult_ab=7.0,
+        stock_max_mult_b=12.0,
+        stock_max_mult_bc=17.0,
+        stock_max_mult_c=26.0
     ),
 
     "tienda_19": TiendaConfig(
@@ -228,7 +269,12 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=os.getenv("SQL_PASS"),
         port=1433,
         activo=True,
-        codigo_deposito="1902"
+        codigo_deposito="1902",
+        stock_max_mult_a=5.0,
+        stock_max_mult_ab=7.0,
+        stock_max_mult_b=12.0,
+        stock_max_mult_bc=17.0,
+        stock_max_mult_c=26.0
     ),
 
     # CEDIs - Configurados con datos reales
