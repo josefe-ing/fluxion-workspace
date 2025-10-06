@@ -245,7 +245,15 @@ export class InfrastructureStack extends cdk.Stack {
     // Grant EFS access to task role
     fileSystem.grantRootAccess(backendTask.taskRole);
 
-    // Grant S3 read access to download database
+    // Grant S3 read access to download database from old backup bucket
+    const oldBackupBucket = s3.Bucket.fromBucketName(
+      this,
+      'OldFluxionBackups',
+      'fluxion-backups-611395766952'
+    );
+    oldBackupBucket.grantRead(backendTask.taskRole);
+
+    // Also grant access to new backup bucket
     backupBucket.grantRead(backendTask.taskRole);
 
     const backendContainer = backendTask.addContainer('backend', {
