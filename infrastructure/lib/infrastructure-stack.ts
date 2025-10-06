@@ -146,7 +146,7 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     const backupBucket = new s3.Bucket(this, 'FluxionBackups', {
-      bucketName: `fluxion-backups-${cdk.Stack.of(this).account}`,
+      bucketName: `fluxion-backups-v2-${cdk.Stack.of(this).account}`,
       versioned: true,
       encryption: s3.BucketEncryption.S3_MANAGED,
       lifecycleRules: [
