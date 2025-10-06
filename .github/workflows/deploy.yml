@@ -133,7 +133,7 @@ jobs:
             --output text)
           FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name FluxionStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
+            --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucket`].OutputValue' \
             --output text)
           CLOUDFRONT_ID=$(aws cloudformation describe-stacks \
             --stack-name FluxionStack \
