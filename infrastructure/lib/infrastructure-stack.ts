@@ -367,6 +367,42 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
+    // 7b. CloudFront Distribution for Backend API (HTTPS)
+    // ========================================
+    const backendDistribution = new cloudfront.CloudFrontWebDistribution(
+      this,
+      'FluxionBackendCDN',
+      {
+        originConfigs: [
+          {
+            customOriginSource: {
+              domainName: alb.loadBalancerDnsName,
+              originProtocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+              httpPort: 80,
+            },
+            behaviors: [
+              {
+                isDefaultBehavior: true,
+                allowedMethods: cloudfront.CloudFrontAllowedMethods.ALL,
+                cachedMethods: cloudfront.CloudFrontAllowedCachedMethods.GET_HEAD_OPTIONS,
+                forwardedValues: {
+                  queryString: true,
+                  headers: ['Authorization', 'Content-Type', 'Accept'],
+                  cookies: { forward: 'all' },
+                },
+                minTtl: cdk.Duration.seconds(0),
+                defaultTtl: cdk.Duration.seconds(0),
+                maxTtl: cdk.Duration.seconds(0),
+              },
+            ],
+          },
+        ],
+        comment: 'Fluxion AI Backend API CDN (HTTPS)',
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      }
+    );
+
+    // ========================================
     // 8. ETL Task Definition (TEMPORARILY DISABLED)
     // ========================================
     /* COMMENTED OUT - Will enable after VPN is configured
@@ -510,7 +546,19 @@ PersistentKeepalive = 25`),
     // ========================================
     new cdk.CfnOutput(this, 'BackendURL', {
       value: `http://${alb.loadBalancerDnsName}`,
-      description: 'Backend API URL',
+      description: 'Backend API URL (HTTP - Direct ALB)',
+    });
+
+    new cdk.CfnOutput(this, 'BackendURLSecure', {
+      value: `https://${backendDistribution.distributionDomainName}`,
+      description: 'Backend API URL (HTTPS - via CloudFront)',
+      exportName: 'FluxionBackendAPIURL',
+    });
+
+    new cdk.CfnOutput(this, 'BackendCloudFrontDistributionId', {
+      value: backendDistribution.distributionId,
+      description: 'Backend CloudFront Distribution ID',
+      exportName: 'FluxionBackendCloudFrontDistributionId',
     });
 
     new cdk.CfnOutput(this, 'FrontendURL', {
