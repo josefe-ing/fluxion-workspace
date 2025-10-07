@@ -21,6 +21,7 @@ export class InfrastructureStack extends cdk.Stack {
     // TAGS - Multi-project support
     // ========================================
     const projectTags = {
+      Application: 'fluxion',
       Project: 'fluxion-ai',
       Environment: 'production',
       ManagedBy: 'cdk',

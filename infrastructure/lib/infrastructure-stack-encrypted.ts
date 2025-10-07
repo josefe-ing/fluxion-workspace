@@ -26,6 +26,7 @@ export class InfrastructureStackEncrypted extends cdk.Stack {
     super(scope, id, props);
 
     const projectTags = {
+      Application: 'fluxion',
       Project: 'fluxion-ai',
       Environment: 'production',
       ManagedBy: 'cdk',
