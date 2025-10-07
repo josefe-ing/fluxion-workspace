@@ -7,7 +7,7 @@ const isProduction =
 // Use environment variable for backend URL, fallback to hardcoded values
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? (
   isProduction
-    ? 'https://d2hp4ldjelozkz.cloudfront.net' // Backend CloudFront with HTTPS
+    ? 'https://d276pm86hqqrs8.cloudfront.net' // Backend CloudFront with HTTPS
     : 'http://localhost:8001'
 );
 
