@@ -5,6 +5,7 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as efs from 'aws-cdk-lib/aws-efs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
@@ -218,36 +219,31 @@ PersistentKeepalive = 25`),
     });
 
     // CloudFront Distribution for Frontend
-    const distribution = new cloudfront.CloudFrontWebDistribution(
-      this,
-      'FluxionCDN',
-      {
-        originConfigs: [
-          {
-            s3OriginSource: {
-              s3BucketSource: frontendBucket,
-            },
-            behaviors: [{ isDefaultBehavior: true }],
-          },
-        ],
-        comment: 'Fluxion AI Frontend CDN',
-        defaultRootObject: 'index.html',
-        errorConfigurations: [
-          {
-            errorCode: 403,
-            responseCode: 200,
-            responsePagePath: '/index.html',
-            errorCachingMinTtl: 300,
-          },
-          {
-            errorCode: 404,
-            responseCode: 200,
-            responsePagePath: '/index.html',
-            errorCachingMinTtl: 300,
-          },
-        ],
-      }
-    );
+    const distribution = new cloudfront.Distribution(this, 'FluxionCDN', {
+      defaultBehavior: {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(frontendBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        compress: true,
+      },
+      comment: 'Fluxion AI Frontend CDN',
+      defaultRootObject: 'index.html',
+      errorResponses: [
+        {
+          httpStatus: 403,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html',
+          ttl: cdk.Duration.seconds(300),
+        },
+        {
+          httpStatus: 404,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html',
+          ttl: cdk.Duration.seconds(300),
+        },
+      ],
+    });
 
     // ========================================
     // 4. Secrets Manager for Credentials
@@ -268,7 +264,7 @@ PersistentKeepalive = 25`),
     const cluster = new ecs.Cluster(this, 'FluxionCluster', {
       vpc,
       clusterName: 'fluxion-cluster',
-      containerInsights: true,
+      containerInsightsV2: ecs.ContainerInsights.ENHANCED,
     });
 
     // ========================================
@@ -340,6 +336,8 @@ PersistentKeepalive = 25`),
       taskDefinition: backendTask,
       desiredCount: 1, // Start with 1, can scale to 2+
       assignPublicIp: false,
+      minHealthyPercent: 50, // Allow rolling updates with minimum 50% healthy tasks
+      maxHealthyPercent: 200, // Allow up to 200% during deployments
     });
 
     // Allow ECS tasks to access EFS
@@ -369,36 +367,24 @@ PersistentKeepalive = 25`),
     // ========================================
     // 7b. CloudFront Distribution for Backend API (HTTPS)
     // ========================================
-    const backendDistribution = new cloudfront.CloudFrontWebDistribution(
+    const backendDistribution = new cloudfront.Distribution(
       this,
       'FluxionBackendCDN',
       {
-        originConfigs: [
-          {
-            customOriginSource: {
-              domainName: alb.loadBalancerDnsName,
-              originProtocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-              httpPort: 80,
-            },
-            behaviors: [
-              {
-                isDefaultBehavior: true,
-                allowedMethods: cloudfront.CloudFrontAllowedMethods.ALL,
-                cachedMethods: cloudfront.CloudFrontAllowedCachedMethods.GET_HEAD_OPTIONS,
-                forwardedValues: {
-                  queryString: true,
-                  headers: ['Authorization', 'Content-Type', 'Accept'],
-                  cookies: { forward: 'all' },
-                },
-                minTtl: cdk.Duration.seconds(0),
-                defaultTtl: cdk.Duration.seconds(0),
-                maxTtl: cdk.Duration.seconds(0),
-              },
-            ],
-          },
-        ],
+        defaultBehavior: {
+          origin: new origins.HttpOrigin(alb.loadBalancerDnsName, {
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+            httpPort: 80,
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+          // Use managed CachingDisabled policy instead of custom policy
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          // Use managed AllViewer origin request policy to forward all headers, query strings, and cookies
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        },
         comment: 'Fluxion AI Backend API CDN (HTTPS)',
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       }
     );
 

@@ -148,7 +148,7 @@ export class InfrastructureStackEncrypted extends cdk.Stack {
     // ========================================
     const distribution = new cloudfront.Distribution(this, 'FluxionCDNSecure', {
       defaultBehavior: {
-        origin: new origins.S3Origin(frontendBucket, {
+        origin: origins.S3BucketOrigin.withOriginAccessIdentity(frontendBucket, {
           originAccessIdentity: cloudfrontOAI, // ✅ Solo CloudFront puede acceder al bucket
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS, // ✅ Forzar HTTPS
@@ -189,12 +189,12 @@ export class InfrastructureStackEncrypted extends cdk.Stack {
     });
 
     // ========================================
-    // 7. ECS Cluster (sin cambios)
+    // 7. ECS Cluster
     // ========================================
     const cluster = new ecs.Cluster(this, 'FluxionCluster', {
       vpc,
       clusterName: 'fluxion-cluster',
-      containerInsights: true,
+      containerInsightsV2: ecs.ContainerInsights.ENHANCED,
     });
 
     // ========================================
@@ -251,13 +251,15 @@ export class InfrastructureStackEncrypted extends cdk.Stack {
     });
 
     // ========================================
-    // 9. Backend Service with ALB (sin cambios)
+    // 9. Backend Service with ALB
     // ========================================
     const backendService = new ecs.FargateService(this, 'FluxionBackendService', {
       cluster,
       taskDefinition: backendTask,
       desiredCount: 1,
       assignPublicIp: false,
+      minHealthyPercent: 50, // Allow rolling updates with minimum 50% healthy tasks
+      maxHealthyPercent: 200, // Allow up to 200% during deployments
     });
 
     fileSystem.connections.allowDefaultPortFrom(backendService);
