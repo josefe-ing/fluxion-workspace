@@ -5,11 +5,18 @@ const isProduction =
   window.location.hostname.includes('amazonaws.com');
 
 // Use environment variable for backend URL, fallback to hardcoded values
-const API_BASE_URL = import.meta.env.VITE_API_URL || (
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? (
   isProduction
     ? 'https://d2hp4ldjelozkz.cloudfront.net' // Backend CloudFront with HTTPS
     : 'http://localhost:8001'
 );
+
+// Debug log to verify which URL is being used
+console.log('🔧 Environment:', {
+  VITE_API_URL: import.meta.env.VITE_API_URL,
+  isProduction,
+  API_BASE_URL,
+});
 
 // Helper to get auth headers
 const getAuthHeaders = () => {
