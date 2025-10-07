@@ -4,9 +4,12 @@ const isProduction =
   window.location.hostname.includes('s3-website') ||
   window.location.hostname.includes('amazonaws.com');
 
-const API_BASE_URL = isProduction
-  ? 'http://fluxion-alb-1002393067.us-east-1.elb.amazonaws.com'
-  : 'http://localhost:8001';
+// Use environment variable for backend URL, fallback to hardcoded values
+const API_BASE_URL = import.meta.env.VITE_API_URL || (
+  isProduction
+    ? 'https://d2hp4ldjelozkz.cloudfront.net' // Backend CloudFront with HTTPS
+    : 'http://localhost:8001'
+);
 
 // Helper to get auth headers
 const getAuthHeaders = () => {
