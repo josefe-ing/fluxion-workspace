@@ -76,6 +76,8 @@ jobs:
         run: npm run type-check
 
       - name: Build
+        env:
+          VITE_API_URL: https://d2hp4ldjelozkz.cloudfront.net
         run: npm run build
 
       - name: Upload build artifacts
