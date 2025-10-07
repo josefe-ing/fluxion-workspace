@@ -77,7 +77,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_API_URL: https://d2hp4ldjelozkz.cloudfront.net
+          VITE_API_URL: https://d276pm86hqqrs8.cloudfront.net
         run: npm run build
 
       - name: Upload build artifacts
