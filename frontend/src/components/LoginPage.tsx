@@ -22,9 +22,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         window.location.hostname.includes('s3-website') ||
         window.location.hostname.includes('amazonaws.com');
 
-      const API_BASE_URL = isProduction
-        ? 'https://d2hp4ldjelozkz.cloudfront.net'
-        : 'http://localhost:8001';
+      const API_BASE_URL = import.meta.env.VITE_API_URL ?? (
+        isProduction
+          ? 'https://d276pm86hqqrs8.cloudfront.net'
+          : 'http://localhost:8001'
+      );
 
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
