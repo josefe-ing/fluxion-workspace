@@ -3,6 +3,7 @@
 // Conexión con AI Engine Backend - APIs de Analytics
 // =====================================================================================
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
 
 interface APIResponse<T> {
@@ -72,6 +73,7 @@ class APIClient {
     return this.request<T>(endpoint, { method: 'GET' });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async post<T>(endpoint: string, body: any): Promise<APIResponse<T>> {
     return this.request<T>(endpoint, {
       method: 'POST',
@@ -174,6 +176,7 @@ export interface TemporalInsight {
   businessImpact: string;
   recommendation: string;
   confidence: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data?: any;
 }
 

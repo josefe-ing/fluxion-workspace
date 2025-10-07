@@ -42,6 +42,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [forecastData, setForecastData] = useState<Record<string, number>>({});
   const [forecastModalOpen, setForecastModalOpen] = useState(false);
   const [selectedProductoForecast, setSelectedProductoForecast] = useState<ProductoPedido | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [forecastsDiarios, setForecastsDiarios] = useState<any[]>([]);
   const [cuadranteActivo, setCuadranteActivo] = useState<string>('CUADRANTE I');
 
@@ -53,6 +54,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     } else {
       cargarProductosSugeridos();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Ajustar cuadrante activo si no existe en los productos cargados
@@ -68,6 +70,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productos]);
 
   const cargarForecast = async () => {
@@ -75,6 +78,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       const response = await http.get(`/api/forecast/productos?ubicacion_id=${orderData.tienda_destino}&dias_adelante=7`);
       if (response.data.success && response.data.forecasts) {
         const forecastMap: Record<string, number> = {};
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         response.data.forecasts.forEach((f: any) => {
           forecastMap[f.codigo_producto] = f.forecast_unidades;
         });

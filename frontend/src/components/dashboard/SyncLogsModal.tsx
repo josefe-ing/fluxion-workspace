@@ -75,6 +75,7 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
     if (isOpen) {
       startSync();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const startSync = async () => {

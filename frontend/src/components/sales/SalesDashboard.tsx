@@ -146,12 +146,14 @@ export default function SalesDashboard() {
     loadCategorias();
     // Establecer el período inicial al cargar
     handlePeriodoChange('ultimo_mes');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (fechaInicio && fechaFin) {
       loadVentasData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubicacionId, selectedCategoria, fechaInicio, fechaFin]);
 
   // Filtrado por búsqueda

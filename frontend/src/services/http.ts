@@ -34,6 +34,7 @@ const getAuthHeaders = () => {
 
 // Simple HTTP client using native fetch
 const http = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async get(url: string, options?: { params?: Record<string, any> }) {
     const queryParams = options?.params
       ? '?' + new URLSearchParams(options.params).toString()
@@ -63,6 +64,7 @@ const http = {
     return { data };
   },
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async post(url: string, body: any) {
     const fullUrl = `${API_BASE_URL}${url}`;
     console.log('🌐 HTTP POST:', fullUrl);

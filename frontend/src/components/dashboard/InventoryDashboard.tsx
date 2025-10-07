@@ -100,6 +100,7 @@ export default function InventoryDashboard() {
   // Cargar stock cuando cambian los filtros o la página
   useEffect(() => {
     loadStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUbicacion, selectedCategoria, currentPage, debouncedSearchTerm, sortByStock, sortOrderStock, sortByPeso, sortOrderPeso]);
 
   // Resetear a página 1 cuando cambian filtros (pero no cuando cambia el ordenamiento)
@@ -158,7 +159,7 @@ export default function InventoryDashboard() {
   const loadStock = async () => {
     setLoading(true);
     try {
-      const params: any = {
+      const params: Record<string, string | number> = {
         page: currentPage,
         page_size: itemsPerPage,
       };

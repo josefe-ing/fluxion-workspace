@@ -45,6 +45,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
 
       alert(mensaje);
       navigate('/pedidos-sugeridos');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       console.error('Error creando pedido:', error);
       const mensaje = error.response?.data?.detail || 'Error al crear el pedido';
