@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import http from '../../services/http';
 import type { OrderData, ProductoPedido } from './OrderWizard';
 import ForecastDetailModal from './ForecastDetailModal';
+import { formatNumber, formatInteger } from '../../utils/formatNumber';
 
 interface Props {
   orderData: OrderData;
@@ -386,7 +387,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         <div className="mt-4 grid grid-cols-3 gap-4">
           <div className="bg-gray-50 rounded-md p-3">
             <div className="text-xs text-gray-500">Total Bultos</div>
-            <div className="text-lg font-semibold text-gray-900">{totalBultos.toLocaleString()}</div>
+            <div className="text-lg font-semibold text-gray-900">{formatNumber(totalBultos, 2)}</div>
           </div>
           <div className="bg-gray-50 rounded-md p-3">
             <div className="text-xs text-gray-500">CEDI Origen</div>
@@ -580,20 +581,20 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     </td>
                     <td className="bg-green-50 px-4 py-3 text-sm text-gray-700 text-center">
                       <div className="flex flex-col">
-                        <span className="font-medium">{Math.round(producto.stock_tienda / producto.cantidad_bultos).toLocaleString('es-VE')}</span>
-                        <span className="text-xs text-gray-500">({Math.round(producto.stock_tienda).toLocaleString('es-VE')} unid)</span>
+                        <span className="font-medium">{formatNumber(producto.stock_tienda / producto.cantidad_bultos, 2)}</span>
+                        <span className="text-xs text-gray-500">({formatInteger(producto.stock_tienda)} unid)</span>
                       </div>
                     </td>
                     <td className="bg-green-50 px-4 py-3 text-sm text-amber-700 text-center">
                       <div className="flex flex-col">
-                        <span className="font-medium">{Math.round(producto.stock_en_transito / producto.cantidad_bultos).toLocaleString('es-VE')}</span>
-                        <span className="text-xs text-amber-500">({Math.round(producto.stock_en_transito).toLocaleString('es-VE')} unid)</span>
+                        <span className="font-medium">{formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 2)}</span>
+                        <span className="text-xs text-amber-500">({formatInteger(producto.stock_en_transito)} unid)</span>
                       </div>
                     </td>
                     <td className="bg-green-50 px-4 py-3 text-sm text-blue-700 text-center">
                       <div className="flex flex-col">
-                        <span className="font-medium">{Math.round((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos).toLocaleString('es-VE')}</span>
-                        <span className="text-xs text-blue-500">({Math.round(producto.stock_tienda + producto.stock_en_transito).toLocaleString('es-VE')} unid)</span>
+                        <span className="font-medium">{formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 2)}</span>
+                        <span className="text-xs text-blue-500">({formatInteger(producto.stock_tienda + producto.stock_en_transito)} unid)</span>
                       </div>
                     </td>
                     <td className="bg-green-50 px-4 py-3 text-sm text-center">
@@ -613,8 +614,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     </td>
                     <td className="bg-green-50 px-4 py-3 text-sm text-green-700 text-center">
                       <div className="flex flex-col">
-                        <span className="font-medium">{Math.round(producto.stock_cedi_origen / producto.cantidad_bultos).toLocaleString('es-VE')}</span>
-                        <span className="text-xs text-green-500">({Math.round(producto.stock_cedi_origen).toLocaleString('es-VE')} unid)</span>
+                        <span className="font-medium">{formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 2)}</span>
+                        <span className="text-xs text-green-500">({formatInteger(producto.stock_cedi_origen)} unid)</span>
                       </div>
                     </td>
                     <td className="bg-orange-50 px-4 py-3 text-sm text-orange-700 text-center">
@@ -639,7 +640,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           } días
                         </span>
                         <span className="text-xs text-orange-500">
-                          ({stockParams ? Math.round(calcularStockMinimo(producto)).toLocaleString('es-VE') : '-'} unid)
+                          ({stockParams ? formatInteger(calcularStockMinimo(producto)) : '-'} unid)
                         </span>
                       </div>
                     </td>
@@ -652,7 +653,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           } días
                         </span>
                         <span className="text-xs text-orange-500">
-                          ({stockParams ? Math.round(calcularPuntoReorden(producto)).toLocaleString('es-VE') : '-'} unid)
+                          ({stockParams ? formatInteger(calcularPuntoReorden(producto)) : '-'} unid)
                         </span>
                       </div>
                     </td>
@@ -665,7 +666,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           } días
                         </span>
                         <span className="text-xs text-orange-500">
-                          ({stockParams ? Math.round(calcularStockSeguridad(producto)).toLocaleString('es-VE') : '-'} unid)
+                          ({stockParams ? formatInteger(calcularStockSeguridad(producto)) : '-'} unid)
                         </span>
                       </div>
                     </td>
@@ -678,7 +679,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           } días
                         </span>
                         <span className="text-xs text-orange-500">
-                          ({stockParams ? Math.round(calcularStockMaximo(producto)).toLocaleString('es-VE') : '-'} unid)
+                          ({stockParams ? formatInteger(calcularStockMaximo(producto)) : '-'} unid)
                         </span>
                       </div>
                     </td>

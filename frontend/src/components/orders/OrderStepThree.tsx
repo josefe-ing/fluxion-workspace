@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import http from '../../services/http';
 import type { OrderData } from './OrderWizard';
+import { formatNumber, formatInteger } from '../../utils/formatNumber';
 
 interface Props {
   orderData: OrderData;
@@ -85,11 +86,11 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
           </div>
           <div className="bg-green-50 rounded-md p-4">
             <div className="text-xs text-green-600 mb-1">Total Bultos</div>
-            <div className="text-2xl font-bold text-green-900">{totalBultos.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-green-900">{formatNumber(totalBultos, 2)}</div>
           </div>
           <div className="bg-purple-50 rounded-md p-4">
             <div className="text-xs text-purple-600 mb-1">Total Unidades</div>
-            <div className="text-2xl font-bold text-purple-900">{Math.round(totalUnidades).toLocaleString()}</div>
+            <div className="text-2xl font-bold text-purple-900">{formatInteger(Math.round(totalUnidades))}</div>
           </div>
         </div>
 
@@ -130,10 +131,10 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
                   <td className="px-6 py-3 text-sm font-medium text-gray-900">{producto.codigo_producto}</td>
                   <td className="px-6 py-3 text-sm text-gray-900">{producto.descripcion_producto}</td>
                   <td className="px-6 py-3 text-sm text-right font-semibold text-gray-900">
-                    {producto.cantidad_pedida_bultos}
+                    {formatNumber(producto.cantidad_pedida_bultos, 2)}
                   </td>
                   <td className="px-6 py-3 text-sm text-right text-gray-600">
-                    {Math.round((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos).toLocaleString()}
+                    {formatInteger(Math.round((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos))}
                   </td>
                   <td className="px-6 py-3 text-xs text-gray-500">{producto.razon_pedido}</td>
                 </tr>

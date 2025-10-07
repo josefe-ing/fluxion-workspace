@@ -145,6 +145,22 @@ class StockResponse(BaseModel):
     dias_cobertura_actual: Optional[float]
     es_producto_estrella: bool
     fecha_extraccion: Optional[str]  # Fecha de última actualización
+    peso_producto_kg: Optional[float]  # Peso unitario en kilogramos
+    peso_total_kg: Optional[float]  # Peso total del stock en kilogramos
+
+class PaginationMetadata(BaseModel):
+    total_items: int
+    total_pages: int
+    current_page: int
+    page_size: int
+    has_next: bool
+    has_previous: bool
+    stock_cero: Optional[int] = 0  # Productos con stock en cero
+    stock_negativo: Optional[int] = 0  # Productos con stock negativo
+
+class PaginatedStockResponse(BaseModel):
+    data: List[StockResponse]
+    pagination: PaginationMetadata
 
 class UbicacionSummaryResponse(BaseModel):
     ubicacion_id: str
@@ -550,15 +566,46 @@ async def get_categorias():
         logger.error(f"Error obteniendo categorías: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-@app.get("/api/stock", response_model=List[StockResponse], tags=["Inventario"])
+@app.get("/api/stock", response_model=PaginatedStockResponse, tags=["Inventario"])
 async def get_stock(
     ubicacion_id: Optional[str] = None,
     categoria: Optional[str] = None,
-    estado: Optional[str] = None
+    estado: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    search: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = 'desc'
 ):
-    """Obtiene el estado del stock desde inventario_raw (datos reales)"""
+    """
+    Obtiene el estado del stock desde inventario_raw con paginación server-side
+
+    Args:
+        ubicacion_id: Filtrar por ID de ubicación
+        categoria: Filtrar por categoría
+        estado: Filtrar por estado de stock
+        page: Número de página (inicia en 1)
+        page_size: Cantidad de items por página (máx 500)
+        search: Buscar por código o descripción de producto
+        sort_by: Campo por el cual ordenar (stock, categoria, estado)
+        sort_order: Orden ascendente (asc) o descendente (desc)
+    """
     try:
+        # Validar parámetros de paginación
+        if page < 1:
+            raise HTTPException(status_code=400, detail="El número de página debe ser >= 1")
+        if page_size < 1 or page_size > 500:
+            raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 500")
+
         with get_db_connection() as conn:
+            # Query base para contar total de registros
+            count_query = """
+                SELECT COUNT(*)
+                FROM inventario_raw inv
+                WHERE inv.activo = true
+            """
+
+            # Query principal
             query = """
                 SELECT
                     inv.ubicacion_id,
@@ -578,26 +625,96 @@ async def get_stock(
                     inv.estado_stock,
                     inv.dias_sin_movimiento as dias_cobertura_actual,
                     false as es_producto_estrella,
-                    CAST(inv.fecha_extraccion AS VARCHAR) as fecha_extraccion
+                    CAST(inv.fecha_extraccion AS VARCHAR) as fecha_extraccion,
+                    inv.peso_producto as peso_producto_kg,
+                    (inv.cantidad_actual * inv.peso_producto) as peso_total_kg
                 FROM inventario_raw inv
                 WHERE inv.activo = true
             """
 
             params = []
 
+            # Aplicar filtros
             if ubicacion_id:
                 query += " AND inv.ubicacion_id = ?"
+                count_query += " AND inv.ubicacion_id = ?"
                 params.append(ubicacion_id)
 
             if categoria:
                 query += " AND inv.categoria = ?"
+                count_query += " AND inv.categoria = ?"
                 params.append(categoria)
 
             if estado:
                 query += " AND inv.estado_stock = ?"
+                count_query += " AND inv.estado_stock = ?"
                 params.append(estado)
 
-            query += " ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre, inv.categoria, inv.descripcion_producto"
+            if search:
+                search_term = f"%{search}%"
+                query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
+                count_query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
+                params.append(search_term)
+                params.append(search_term)
+
+            # Obtener total de registros
+            total_items = conn.execute(count_query, params).fetchone()[0]
+
+            # Calcular estadísticas de stock (stock en cero y stock negativo)
+            stats_query = """
+                SELECT
+                    SUM(CASE WHEN inv.cantidad_actual = 0 THEN 1 ELSE 0 END) as stock_cero,
+                    SUM(CASE WHEN inv.cantidad_actual < 0 THEN 1 ELSE 0 END) as stock_negativo
+                FROM inventario_raw inv
+                WHERE inv.activo = true
+            """
+
+            # Aplicar los mismos filtros que en count_query
+            stats_params = []
+            if ubicacion_id:
+                stats_query += " AND inv.ubicacion_id = ?"
+                stats_params.append(ubicacion_id)
+            if categoria:
+                stats_query += " AND inv.categoria = ?"
+                stats_params.append(categoria)
+            if estado:
+                stats_query += " AND inv.estado_stock = ?"
+                stats_params.append(estado)
+            if search:
+                search_term = f"%{search}%"
+                stats_query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
+                stats_params.append(search_term)
+                stats_params.append(search_term)
+
+            stats_result = conn.execute(stats_query, stats_params).fetchone()
+            stock_cero = stats_result[0] if stats_result[0] is not None else 0
+            stock_negativo = stats_result[1] if stats_result[1] is not None else 0
+
+            # Calcular paginación
+            total_pages = (total_items + page_size - 1) // page_size  # Ceiling division
+            offset = (page - 1) * page_size
+
+            # Agregar ORDER BY según sort_by
+            if sort_by == 'stock':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                # Ordenar por bultos (cantidad_actual / cantidad_bultos)
+                # Si no tiene bultos, usar cantidad_actual directamente
+                query += f" ORDER BY (CASE WHEN inv.cantidad_bultos > 0 THEN inv.cantidad_actual / inv.cantidad_bultos ELSE inv.cantidad_actual END) {order_direction}, inv.descripcion_producto"
+            elif sort_by == 'peso':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                # Ordenar por peso total en kg (cantidad_actual * peso_producto)
+                query += f" ORDER BY (inv.cantidad_actual * inv.peso_producto) {order_direction} NULLS LAST, inv.descripcion_producto"
+            elif sort_by == 'categoria':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                query += f" ORDER BY inv.categoria {order_direction}, inv.descripcion_producto"
+            elif sort_by == 'estado':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                query += f" ORDER BY inv.estado_stock {order_direction}, inv.descripcion_producto"
+            else:
+                # Orden por defecto
+                query += " ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre, inv.categoria, inv.descripcion_producto"
+
+            query += f" LIMIT {page_size} OFFSET {offset}"
 
             result = conn.execute(query, params).fetchall()
 
@@ -621,11 +738,30 @@ async def get_stock(
                     estado_stock=row[14],
                     dias_cobertura_actual=row[15],
                     es_producto_estrella=row[16],
-                    fecha_extraccion=row[17]
+                    fecha_extraccion=row[17],
+                    peso_producto_kg=row[18],
+                    peso_total_kg=row[19]
                 ))
 
-            return stock_data
+            # Crear metadata de paginación
+            pagination = PaginationMetadata(
+                total_items=total_items,
+                total_pages=total_pages,
+                current_page=page,
+                page_size=page_size,
+                has_next=page < total_pages,
+                has_previous=page > 1,
+                stock_cero=stock_cero,
+                stock_negativo=stock_negativo
+            )
 
+            return PaginatedStockResponse(
+                data=stock_data,
+                pagination=pagination
+            )
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error obteniendo stock: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")

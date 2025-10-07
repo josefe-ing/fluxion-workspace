@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import http from '../../services/http';
+import { formatNumber, formatInteger } from '../../utils/formatNumber';
 
 interface StockItem {
   ubicacion_id: string;
@@ -21,6 +22,24 @@ interface StockItem {
   dias_cobertura_actual: number | null;
   es_producto_estrella: boolean;
   fecha_extraccion: string | null;
+  peso_producto_kg: number | null;
+  peso_total_kg: number | null;
+}
+
+interface PaginationMetadata {
+  total_items: number;
+  total_pages: number;
+  current_page: number;
+  page_size: number;
+  has_next: boolean;
+  has_previous: boolean;
+  stock_cero?: number;
+  stock_negativo?: number;
+}
+
+interface PaginatedStockResponse {
+  data: StockItem[];
+  pagination: PaginationMetadata;
 }
 
 interface Ubicacion {
@@ -43,21 +62,34 @@ export default function InventoryDashboard() {
   const [stockData, setStockData] = useState<StockItem[]>([]);
   const [stats, setStats] = useState<StockStats>({ total_productos: 0, stock_cero: 0, stock_negativo: 0 });
   const [loading, setLoading] = useState(true);
+  const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
 
   // Filtros
   const [selectedUbicacion, setSelectedUbicacion] = useState<string>(ubicacionId || 'tienda_08');
   const [selectedCategoria, setSelectedCategoria] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
   const [categorias, setCategorias] = useState<string[]>([]);
 
   // Paginación
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(50);
+  const [itemsPerPage] = useState(30);
 
-  // Ordenamiento
-  const [sortBy, setSortBy] = useState<'stock' | 'estado' | 'categoria' | null>(null);
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  // Ordenamiento (por defecto ordenar por stock descendente)
+  const [sortByStock, setSortByStock] = useState(true);
+  const [sortOrderStock, setSortOrderStock] = useState<'asc' | 'desc'>('desc');
+  const [sortByPeso, setSortByPeso] = useState(false);
+  const [sortOrderPeso, setSortOrderPeso] = useState<'asc' | 'desc'>('desc');
+
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 500); // Wait 500ms after user stops typing
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   // Cargar ubicaciones y categorías al inicio
   useEffect(() => {
@@ -65,11 +97,15 @@ export default function InventoryDashboard() {
     loadCategorias();
   }, []);
 
-  // Cargar stock cuando cambian los filtros
+  // Cargar stock cuando cambian los filtros o la página
   useEffect(() => {
     loadStock();
-    setCurrentPage(1); // Resetear a página 1 cuando cambian los filtros
-  }, [selectedUbicacion, selectedCategoria]);
+  }, [selectedUbicacion, selectedCategoria, currentPage, debouncedSearchTerm, sortByStock, sortOrderStock, sortByPeso, sortOrderPeso]);
+
+  // Resetear a página 1 cuando cambian filtros (pero no cuando cambia el ordenamiento)
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedUbicacion, selectedCategoria, debouncedSearchTerm]);
 
   const loadUbicaciones = async () => {
     try {
@@ -89,10 +125,43 @@ export default function InventoryDashboard() {
     }
   };
 
+  const handleStockSort = () => {
+    // Desactivar ordenamiento por peso
+    setSortByPeso(false);
+
+    if (sortByStock) {
+      // Si ya estamos ordenando por stock, cambiar el orden
+      setSortOrderStock(sortOrderStock === 'desc' ? 'asc' : 'desc');
+    } else {
+      // Activar ordenamiento por stock (empezar con mayor a menor)
+      setSortByStock(true);
+      setSortOrderStock('desc');
+    }
+    setCurrentPage(1); // Reset a página 1
+  };
+
+  const handlePesoSort = () => {
+    // Desactivar ordenamiento por stock
+    setSortByStock(false);
+
+    if (sortByPeso) {
+      // Si ya estamos ordenando por peso, cambiar el orden
+      setSortOrderPeso(sortOrderPeso === 'desc' ? 'asc' : 'desc');
+    } else {
+      // Activar ordenamiento por peso (empezar con mayor a menor)
+      setSortByPeso(true);
+      setSortOrderPeso('desc');
+    }
+    setCurrentPage(1); // Reset a página 1
+  };
+
   const loadStock = async () => {
     setLoading(true);
     try {
-      const params: any = {};
+      const params: any = {
+        page: currentPage,
+        page_size: itemsPerPage,
+      };
 
       if (selectedUbicacion !== 'all') {
         params.ubicacion_id = selectedUbicacion;
@@ -102,19 +171,30 @@ export default function InventoryDashboard() {
         params.categoria = selectedCategoria;
       }
 
-      const response = await http.get('/api/stock', { params });
-      const data: StockItem[] = response.data;
+      if (debouncedSearchTerm) {
+        params.search = debouncedSearchTerm;
+      }
+
+      // Ordenamiento
+      if (sortByStock) {
+        params.sort_by = 'stock';
+        params.sort_order = sortOrderStock;
+      } else if (sortByPeso) {
+        params.sort_by = 'peso';
+        params.sort_order = sortOrderPeso;
+      }
+
+      const response = await http.get<PaginatedStockResponse>('/api/stock', { params });
+      const { data, pagination: paginationData } = response.data;
+
       setStockData(data);
+      setPagination(paginationData);
 
-      // Calcular estadísticas
-      const total = data.length;
-      const cero = data.filter((item) => item.stock_actual === 0).length;
-      const negativo = data.filter((item) => item.stock_actual !== null && item.stock_actual < 0).length;
-
+      // Usar estadísticas del backend (calculadas sobre todo el dataset filtrado)
       setStats({
-        total_productos: total,
-        stock_cero: cero,
-        stock_negativo: negativo,
+        total_productos: paginationData.total_items,
+        stock_cero: paginationData.stock_cero ?? 0,
+        stock_negativo: paginationData.stock_negativo ?? 0,
       });
 
     } catch (error) {
@@ -124,59 +204,8 @@ export default function InventoryDashboard() {
     }
   };
 
-  // Función de ordenamiento
-  const handleSort = (column: 'stock' | 'estado' | 'categoria') => {
-    if (sortBy === column) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortOrder('asc');
-    }
-    setCurrentPage(1); // Resetear a página 1
-  };
-
-  // Aplicar filtro de búsqueda
-  const filteredData = stockData.filter(item => {
-    if (!searchTerm) return true;
-
-    const search = searchTerm.toLowerCase();
-    const codigo = (item.codigo_producto || '').toLowerCase();
-    const descripcion = (item.descripcion_producto || '').toLowerCase();
-
-    return codigo.includes(search) || descripcion.includes(search);
-  });
-
-  // Aplicar ordenamiento
-  const sortedData = [...filteredData].sort((a, b) => {
-    if (!sortBy) return 0;
-
-    let comparison = 0;
-
-    if (sortBy === 'stock') {
-      const aStock = a.stock_actual ?? 0;
-      const bStock = b.stock_actual ?? 0;
-      comparison = aStock - bStock;
-    } else if (sortBy === 'estado') {
-      const estadoOrder: { [key: string]: number } = {
-        'CRITICO': 1,
-        'SIN_STOCK': 2,
-        'BAJO': 3,
-        'NORMAL': 4,
-        'EXCESO': 5
-      };
-      comparison = (estadoOrder[a.estado_stock] || 99) - (estadoOrder[b.estado_stock] || 99);
-    } else if (sortBy === 'categoria') {
-      comparison = (a.categoria || '').localeCompare(b.categoria || '');
-    }
-
-    return sortOrder === 'asc' ? comparison : -comparison;
-  });
-
-  // Cálculos de paginación
-  const totalPages = Math.ceil(sortedData.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentItems = sortedData.slice(startIndex, endIndex);
+  // Ya no necesitamos ordenamiento ni filtrado client-side
+  // Todo se maneja en el servidor
 
   // Obtener fecha de última actualización (la más reciente de todos los registros)
   const getUltimaActualizacion = (): string => {
@@ -231,7 +260,7 @@ export default function InventoryDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Total Productos</p>
-              <p className="mt-2 text-3xl font-semibold text-gray-900">{stats.total_productos}</p>
+              <p className="mt-2 text-3xl font-semibold text-gray-900">{formatInteger(stats.total_productos)}</p>
             </div>
             <div className="h-12 w-12 bg-gray-100 rounded-lg flex items-center justify-center">
               <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -245,7 +274,7 @@ export default function InventoryDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Stock en Cero</p>
-              <p className="mt-2 text-3xl font-semibold text-yellow-600">{stats.stock_cero}</p>
+              <p className="mt-2 text-3xl font-semibold text-yellow-600">{formatInteger(stats.stock_cero)}</p>
             </div>
             <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
               <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -259,7 +288,7 @@ export default function InventoryDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Stock Negativo</p>
-              <p className="mt-2 text-3xl font-semibold text-red-600">{stats.stock_negativo}</p>
+              <p className="mt-2 text-3xl font-semibold text-red-600">{formatInteger(stats.stock_negativo)}</p>
             </div>
             <div className="h-12 w-12 bg-red-100 rounded-lg flex items-center justify-center">
               <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -320,10 +349,7 @@ export default function InventoryDashboard() {
                 type="text"
                 id="buscar"
                 value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setCurrentPage(1); // Reset to page 1 on search
-                }}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Código o descripción..."
                 className="w-full px-3 py-2 pl-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
               />
@@ -366,53 +392,33 @@ export default function InventoryDashboard() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Código
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Descripción
                   </th>
-                  <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('categoria')}
-                  >
-                    <div className="flex items-center space-x-1">
-                      <span>Categoría</span>
-                      {sortBy === 'categoria' && (
-                        <span className="text-gray-900">
-                          {sortOrder === 'asc' ? '↑' : '↓'}
-                        </span>
-                      )}
-                    </div>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Categoría
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Ubicación
-                  </th>
-                  <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('stock')}
-                  >
-                    <div className="flex items-center space-x-1">
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleStockSort()}>
+                    <div className="flex items-center justify-center space-x-1">
                       <span>Stock Actual</span>
-                      {sortBy === 'stock' && (
+                      {sortByStock && (
                         <span className="text-gray-900">
-                          {sortOrder === 'asc' ? '↑' : '↓'}
+                          {sortOrderStock === 'desc' ? '↓' : '↑'}
                         </span>
                       )}
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Stock Bultos
-                  </th>
-                  <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('estado')}
-                  >
-                    <div className="flex items-center space-x-1">
-                      <span>Estado</span>
-                      {sortBy === 'estado' && (
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handlePesoSort()}>
+                    <div className="flex items-center justify-center space-x-1">
+                      <span>Peso Total</span>
+                      {sortByPeso && (
                         <span className="text-gray-900">
-                          {sortOrder === 'asc' ? '↑' : '↓'}
+                          {sortOrderPeso === 'desc' ? '↓' : '↑'}
                         </span>
                       )}
                     </div>
@@ -420,66 +426,57 @@ export default function InventoryDashboard() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {currentItems.length === 0 ? (
+                {stockData.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-sm text-gray-500">
+                    <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
                       No se encontraron productos con los filtros seleccionados
                     </td>
                   </tr>
                 ) : (
-                  currentItems.map((item) => (
+                  stockData.map((item) => (
                     <tr key={`${item.producto_id}-${item.ubicacion_id}`} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-center">
                         {item.codigo_producto}
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-900">
+                      <td className="px-6 py-4 text-sm text-gray-900 text-center">
                         {item.descripcion_producto}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
                         {item.categoria}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        <div>
-                          <div className="font-medium text-gray-900">{item.ubicacion_nombre}</div>
-                          <div className="text-xs text-gray-500">{item.ubicacion_tipo}</div>
+                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                        <div className="flex flex-col items-center">
+                          <div className="text-lg font-semibold text-gray-900">
+                            {(() => {
+                              const stockActual = item.stock_actual ?? 0;
+                              const bultos = item.cantidad_bultos ?? 0;
+
+                              if (bultos === 0 || bultos === null) {
+                                return formatInteger(stockActual);
+                              }
+
+                              const stockBultos = stockActual / bultos;
+                              return formatNumber(stockBultos, 2);
+                            })()}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            ({formatInteger(item.stock_actual)} unid)
+                          </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                          item.stock_actual === null || item.stock_actual < 0
-                            ? 'bg-red-100 text-red-800'
-                            : item.stock_actual === 0
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : 'bg-green-100 text-green-800'
-                        }`}>
-                          {(item.stock_actual ?? 0).toLocaleString()}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-semibold">
-                        {(() => {
-                          const stockActual = item.stock_actual ?? 0;
-                          const bultos = item.cantidad_bultos ?? 0;
-
-                          if (bultos === 0 || bultos === null) {
-                            return '-';
-                          }
-
-                          const stockBultos = stockActual / bultos;
-                          return stockBultos.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                        })()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                          item.estado_stock === 'CRITICO' || item.estado_stock === 'SIN_STOCK'
-                            ? 'bg-red-100 text-red-800'
-                            : item.estado_stock === 'BAJO'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : item.estado_stock === 'EXCESO'
-                            ? 'bg-orange-100 text-orange-800'
-                            : 'bg-green-100 text-green-800'
-                        }`}>
-                          {item.estado_stock}
-                        </span>
+                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                        {item.peso_total_kg !== null && item.peso_total_kg !== undefined ? (
+                          <div className="flex flex-col items-center">
+                            <div className="text-lg font-semibold text-gray-900">
+                              {formatNumber(item.peso_total_kg, 2)} kg
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              ({formatNumber(item.peso_total_kg / 1000, 2)} ton)
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-lg font-semibold text-gray-500">-</div>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -490,27 +487,27 @@ export default function InventoryDashboard() {
         )}
 
         {/* Paginación */}
-        {!loading && stockData.length > 0 && (
+        {!loading && pagination && stockData.length > 0 && (
           <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
             <div className="text-sm text-gray-700">
-              Mostrando <span className="font-medium">{startIndex + 1}</span> a{' '}
-              <span className="font-medium">{Math.min(endIndex, stockData.length)}</span> de{' '}
-              <span className="font-medium">{stockData.length}</span> productos
+              Mostrando <span className="font-medium">{((currentPage - 1) * itemsPerPage) + 1}</span> a{' '}
+              <span className="font-medium">{Math.min(currentPage * itemsPerPage, pagination.total_items)}</span> de{' '}
+              <span className="font-medium">{formatInteger(pagination.total_items)}</span> productos
             </div>
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                disabled={currentPage === 1}
+                disabled={!pagination.has_previous}
                 className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Anterior
               </button>
               <span className="text-sm text-gray-700">
-                Página {currentPage} de {totalPages}
+                Página {pagination.current_page} de {formatInteger(pagination.total_pages)}
               </span>
               <button
-                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(prev => prev + 1)}
+                disabled={!pagination.has_next}
                 className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Siguiente

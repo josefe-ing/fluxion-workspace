@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import http from '../../services/http';
 import SyncButton from './SyncButton';
+import { formatInteger } from '../../utils/formatNumber';
 
 interface UbicacionSummary {
   ubicacion_id: string;
@@ -101,7 +102,7 @@ export default function InventorySummary() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Total Productos</p>
-              <p className="mt-2 text-3xl font-semibold text-gray-900">{totales.total_productos.toLocaleString()}</p>
+              <p className="mt-2 text-3xl font-semibold text-gray-900">{formatInteger(totales.total_productos)}</p>
             </div>
             <div className="h-12 w-12 bg-gray-100 rounded-lg flex items-center justify-center">
               <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -115,7 +116,7 @@ export default function InventorySummary() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Stock en Cero</p>
-              <p className="mt-2 text-3xl font-semibold text-yellow-600">{totales.stock_cero.toLocaleString()}</p>
+              <p className="mt-2 text-3xl font-semibold text-yellow-600">{formatInteger(totales.stock_cero)}</p>
             </div>
             <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
               <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -129,7 +130,7 @@ export default function InventorySummary() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Stock Negativo</p>
-              <p className="mt-2 text-3xl font-semibold text-red-600">{totales.stock_negativo.toLocaleString()}</p>
+              <p className="mt-2 text-3xl font-semibold text-red-600">{formatInteger(totales.stock_negativo)}</p>
             </div>
             <div className="h-12 w-12 bg-red-100 rounded-lg flex items-center justify-center">
               <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -150,26 +151,29 @@ export default function InventorySummary() {
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Ubicación
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Tipo
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Total Productos
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Stock en Cero
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Disponibilidad
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Stock Negativo
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Última Actualización
+                </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Acciones
                 </th>
               </tr>
             </thead>
@@ -177,15 +181,14 @@ export default function InventorySummary() {
               {summaryData.map((item) => (
                 <tr
                   key={item.ubicacion_id}
-                  onClick={() => handleUbicacionClick(item.ubicacion_id)}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  className="hover:bg-gray-50 transition-colors"
                 >
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="text-sm font-medium text-gray-900">{item.ubicacion_nombre}</div>
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
+                    <div className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600" onClick={() => handleUbicacionClick(item.ubicacion_id)}>
+                      {item.ubicacion_nombre}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                       item.tipo_ubicacion === 'tienda'
                         ? 'bg-blue-100 text-blue-800'
@@ -194,12 +197,12 @@ export default function InventorySummary() {
                       {item.tipo_ubicacion.toUpperCase()}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
-                    {item.total_productos.toLocaleString()}
+                  <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">
+                    {formatInteger(item.total_productos)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
                     <span className={`text-sm font-medium ${item.stock_cero > 0 ? 'text-yellow-600' : 'text-gray-500'}`}>
-                      {item.stock_cero.toLocaleString()}
+                      {formatInteger(item.stock_cero)}
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -212,7 +215,7 @@ export default function InventorySummary() {
                         : 0;
 
                       return (
-                        <div className="flex items-center space-x-3">
+                        <div className="flex items-center justify-center space-x-3">
                           <div className="flex-1 min-w-[120px]">
                             <div className="relative w-full h-5 bg-gray-200 rounded-full overflow-hidden">
                               <div
@@ -234,13 +237,29 @@ export default function InventorySummary() {
                       );
                     })()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
                     <span className={`text-sm font-medium ${item.stock_negativo > 0 ? 'text-red-600' : 'text-gray-500'}`}>
-                      {item.stock_negativo.toLocaleString()}
+                      {formatInteger(item.stock_negativo)}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">
                     {formatFecha(item.ultima_actualizacion)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // TODO: Implementar sincronización por ubicación
+                        console.log('Sincronizando ubicación:', item.ubicacion_id);
+                        alert(`Sincronizando ${item.ubicacion_nombre}`);
+                      }}
+                      className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                    >
+                      <svg className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Sincronizar
+                    </button>
                   </td>
                 </tr>
               ))}

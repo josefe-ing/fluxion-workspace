@@ -1,0 +1,38 @@
+/**
+ * Formatea un número con separador de miles (.) y decimales (,)
+ * Formato español/europeo
+ *
+ * @param value - Número a formatear
+ * @param decimals - Cantidad de decimales (default: 2)
+ * @returns String formateado
+ *
+ * Ejemplos:
+ * formatNumber(1234.56) => "1.234,56"
+ * formatNumber(1234.567, 3) => "1.234,567"
+ * formatNumber(1234) => "1.234,00"
+ */
+export function formatNumber(value: number | null | undefined, decimals: number = 2): string {
+  if (value === null || value === undefined) {
+    return '-';
+  }
+
+  // Forzar formato español manualmente
+  const parts = value.toFixed(decimals).split('.');
+  const integerPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const decimalPart = parts[1];
+
+  return `${integerPart},${decimalPart}`;
+}
+
+/**
+ * Formatea un número sin decimales
+ */
+export function formatInteger(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return '-';
+  }
+
+  // Forzar formato español manualmente
+  const integerValue = Math.round(value);
+  return integerValue.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}

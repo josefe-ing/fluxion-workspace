@@ -50,8 +50,8 @@ def install_dependencies():
 def start_server():
     """Inicia el servidor FastAPI"""
     print("🚀 Iniciando servidor FastAPI...")
-    print("🌐 API estará disponible en: http://localhost:8000")
-    print("📖 Documentación en: http://localhost:8000/docs")
+    print("🌐 API estará disponible en: http://localhost:8001")
+    print("📖 Documentación en: http://localhost:8001/docs")
     print("⚡ Modo desarrollo con auto-reload habilitado")
     print("\n" + "="*60)
 
@@ -59,7 +59,7 @@ def start_server():
     os.chdir(Path(__file__).parent)
 
     # Iniciar uvicorn
-    os.system("python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload")
+    os.system("python -m uvicorn main:app --host 0.0.0.0 --port 8001 --reload")
 
 if __name__ == "__main__":
     print("=" * 60)
