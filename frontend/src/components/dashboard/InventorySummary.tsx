@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import http from '../../services/http';
 import SyncButton from './SyncButton';
+import SyncLogsModal from './SyncLogsModal';
 import { formatInteger } from '../../utils/formatNumber';
 
 interface UbicacionSummary {
@@ -17,6 +18,8 @@ interface UbicacionSummary {
 export default function InventorySummary() {
   const [summaryData, setSummaryData] = useState<UbicacionSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [selectedUbicacionId, setSelectedUbicacionId] = useState<string | undefined>();
   const navigate = useNavigate();
 
   const loadSummary = useCallback(async () => {
@@ -249,9 +252,8 @@ export default function InventorySummary() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        // TODO: Implementar sincronización por ubicación
-                        console.log('Sincronizando ubicación:', item.ubicacion_id);
-                        alert(`Sincronizando ${item.ubicacion_nombre}`);
+                        setSelectedUbicacionId(item.ubicacion_id);
+                        setShowSyncModal(true);
                       }}
                       className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
                     >
@@ -281,6 +283,17 @@ export default function InventorySummary() {
           </div>
         </div>
       </div>
+
+      {/* Modal de logs de sincronización */}
+      <SyncLogsModal
+        isOpen={showSyncModal}
+        onClose={() => {
+          setShowSyncModal(false);
+          setSelectedUbicacionId(undefined);
+          loadSummary(); // Recargar datos después de sincronizar
+        }}
+        ubicacionId={selectedUbicacionId}
+      />
     </div>
   );
 }
