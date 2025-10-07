@@ -184,8 +184,8 @@ export default function InventoryDashboard() {
         params.sort_order = sortOrderPeso;
       }
 
-      const response = await http.get<PaginatedStockResponse>('/api/stock', { params });
-      const { data, pagination: paginationData } = response.data;
+      const response = await http.get('/api/stock', { params });
+      const { data, pagination: paginationData } = response.data as PaginatedStockResponse;
 
       setStockData(data);
       setPagination(paginationData);
