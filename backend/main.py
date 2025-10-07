@@ -48,7 +48,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:5173",
-        "https://d2p5vs6b298vzk.cloudfront.net",
+        "https://d3jghnkvt6d1is.cloudfront.net",  # Frontend CloudFront
         "http://fluxion-alb-1002393067.us-east-1.elb.amazonaws.com",
         "http://fluxion-frontend-611395766952.s3-website-us-east-1.amazonaws.com"
     ],
@@ -878,7 +878,8 @@ etl_status = {
     "current_ubicacion": None,
     "progress": 0,
     "message": "",
-    "result": None
+    "result": None,
+    "logs": []  # Lista de logs del ETL
 }
 
 async def run_etl_background(ubicacion_id: Optional[str] = None):
@@ -901,6 +902,13 @@ async def run_etl_background(ubicacion_id: Optional[str] = None):
 
         logger.info(f"Ejecutando ETL en background: {' '.join(command)}")
 
+        # Agregar log inicial
+        etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "info",
+            "message": f"Ejecutando comando: {' '.join(command)}"
+        })
+
         # Ejecutar ETL de forma asíncrona
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -908,7 +916,34 @@ async def run_etl_background(ubicacion_id: Optional[str] = None):
             stderr=asyncio.subprocess.PIPE
         )
 
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
+        # Leer stdout y stderr línea por línea en tiempo real
+        async def read_stream(stream, stream_name):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                line_text = line.decode().strip()
+                if line_text:
+                    level = "error" if stream_name == "stderr" else "info"
+                    etl_status["logs"].append({
+                        "timestamp": datetime.now().isoformat(),
+                        "level": level,
+                        "message": line_text
+                    })
+                    logger.info(f"[ETL {stream_name}] {line_text}")
+
+        # Leer ambos streams simultáneamente
+        await asyncio.gather(
+            read_stream(process.stdout, "stdout"),
+            read_stream(process.stderr, "stderr")
+        )
+
+        # Esperar a que el proceso termine
+        await asyncio.wait_for(process.wait(), timeout=600)
+
+        # Simular captura de stdout/stderr para compatibilidad
+        stdout = b""
+        stderr = b""
 
         end_time = datetime.now()
         tiempo_ejecucion = (end_time - start_time).total_seconds()
@@ -976,11 +1011,26 @@ async def run_etl_background(ubicacion_id: Optional[str] = None):
                 ubicaciones_procesadas = [u["id"] for u in ubicaciones_detalle]
 
             message = f"✅ ETL completado: {len(ubicaciones_procesadas)} ubicaciones, {total_registros:,} registros"
+
+            # Agregar log de éxito
+            etl_status["logs"].append({
+                "timestamp": datetime.now().isoformat(),
+                "level": "success",
+                "message": message
+            })
         else:
             total_registros = 0
             ubicaciones_detalle = []
-            errores.append(stderr.decode())
-            message = f"❌ ETL falló: {stderr.decode()[:200]}"
+            error_msg = "Ver logs para detalles"
+            errores.append(error_msg)
+            message = f"❌ ETL falló: {error_msg}"
+
+            # Agregar log de error
+            etl_status["logs"].append({
+                "timestamp": datetime.now().isoformat(),
+                "level": "error",
+                "message": f"ETL terminó con código de error: {process.returncode}"
+            })
 
         etl_status["running"] = False
         etl_status["progress"] = 100
@@ -1119,6 +1169,7 @@ async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: Background
     etl_status["progress"] = 0
     etl_status["message"] = "Iniciando ETL..."
     etl_status["result"] = None
+    etl_status["logs"] = []  # Limpiar logs anteriores
 
     # Ejecutar en background
     background_tasks.add_task(run_etl_background, request.ubicacion_id)
@@ -1127,6 +1178,15 @@ async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: Background
         "success": True,
         "message": "ETL iniciado en background. Use /api/etl/status para monitorear el progreso.",
         "status": "running"
+    }
+
+@app.get("/api/etl/logs", tags=["ETL"])
+async def get_etl_logs():
+    """Obtiene los logs del ETL en ejecución o el último ejecutado"""
+    return {
+        "logs": etl_status.get("logs", []),
+        "status": "running" if etl_status["running"] else "completed",
+        "progress": etl_status.get("progress", 0)
     }
 
 # ============================================================================
