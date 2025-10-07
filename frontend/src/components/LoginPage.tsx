@@ -23,7 +23,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         window.location.hostname.includes('amazonaws.com');
 
       const API_BASE_URL = isProduction
-        ? 'http://fluxion-alb-1002393067.us-east-1.elb.amazonaws.com'
+        ? 'https://d2hp4ldjelozkz.cloudfront.net'
         : 'http://localhost:8001';
 
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
