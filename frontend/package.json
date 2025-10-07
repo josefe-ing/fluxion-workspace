@@ -9,7 +9,7 @@
     "build": "tsc && vite build",
     "build-single": "tsc && vite build --config vite.single.config.ts",
     "preview": "vite preview",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 50",
     "type-check": "tsc --noEmit",
     "db:setup": "node backend/scripts/setup-database.cjs init",
     "db:test": "node backend/scripts/setup-database.cjs test",

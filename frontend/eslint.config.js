@@ -1,4 +1,5 @@
 import js from '@eslint/js';
+import globals from 'globals';
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
 import reactHooks from 'eslint-plugin-react-hooks';
@@ -21,8 +22,12 @@ export default [
         },
       },
       globals: {
-        browser: true,
-        es2021: true,
+        ...globals.browser,
+        ...globals.es2021,
+        React: 'readonly',
+        NodeJS: 'readonly',
+        HeadersInit: 'readonly',
+        RequestInit: 'readonly',
       },
     },
     plugins: {
