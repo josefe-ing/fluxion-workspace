@@ -213,6 +213,10 @@ class VentasDetailResponse(BaseModel):
     total_bultos: Optional[float]  # Total vendido en bultos
     promedio_bultos_diario: Optional[float]  # Promedio diario en bultos
 
+class PaginatedVentasResponse(BaseModel):
+    data: List[VentasDetailResponse]
+    pagination: PaginationMetadata
+
 # Modelos para Pedidos Sugeridos
 class CalcularPedidoRequest(BaseModel):
     cedi_origen: str
@@ -1375,15 +1379,39 @@ async def get_ventas_summary():
         logger.error(f"Error obteniendo resumen de ventas: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-@app.get("/api/ventas/detail", response_model=List[VentasDetailResponse], tags=["Ventas"])
+@app.get("/api/ventas/detail", response_model=PaginatedVentasResponse, tags=["Ventas"])
 async def get_ventas_detail(
     ubicacion_id: Optional[str] = None,
     categoria: Optional[str] = None,
     fecha_inicio: Optional[str] = None,
-    fecha_fin: Optional[str] = None
+    fecha_fin: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    search: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = 'desc'
 ):
-    """Obtiene detalle de ventas por producto con promedios y comparaciones"""
+    """
+    Obtiene detalle de ventas por producto con promedios y comparaciones (paginado)
+
+    Args:
+        ubicacion_id: Filtrar por ID de ubicación
+        categoria: Filtrar por categoría
+        fecha_inicio: Fecha inicial del rango (YYYY-MM-DD)
+        fecha_fin: Fecha final del rango (YYYY-MM-DD)
+        page: Número de página (inicia en 1)
+        page_size: Cantidad de items por página (máx 500)
+        search: Buscar por código o descripción de producto
+        sort_by: Campo por el cual ordenar (cantidad_total, promedio_diario, categoria, porcentaje_total)
+        sort_order: Orden ascendente (asc) o descendente (desc)
+    """
     try:
+        # Validar parámetros de paginación
+        if page < 1:
+            raise HTTPException(status_code=400, detail="El número de página debe ser >= 1")
+        if page_size < 1 or page_size > 500:
+            raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 500")
+
         with get_db_connection() as conn:
             # Si no se especifican fechas, usar último mes
             if not fecha_inicio or not fecha_fin:
@@ -1405,9 +1433,32 @@ async def get_ventas_detail(
                 where_clauses.append("v.categoria_producto = ?")
                 params.append(categoria)
 
+            # Añadir búsqueda si se proporciona
+            if search:
+                search_term = f"%{search}%"
+                where_clauses.append("(v.codigo_producto ILIKE ? OR v.descripcion_producto ILIKE ?)")
+                params.append(search_term)
+                params.append(search_term)
+
             where_clause = " AND ".join(where_clauses)
 
+            # Primero obtener el conteo total para paginación
+            # Simplificamos para solo contar productos únicos que cumplen filtros
+            count_query = f"""
+                SELECT COUNT(DISTINCT v.codigo_producto)
+                FROM ventas_raw v
+                WHERE {where_clause}
+            """
+
+            total_items = conn.execute(count_query, params).fetchone()[0]
+
+            # Calcular paginación
+            total_pages = (total_items + page_size - 1) // page_size
+            offset = (page - 1) * page_size
+
             # Query principal con todos los cálculos
+            # NOTA: Removemos el cálculo de año anterior para mejorar performance (muy pesado)
+            # Se puede añadir condicionalmente si el usuario lo solicita
             query = f"""
                 WITH periodo_actual AS (
                     SELECT
@@ -1438,25 +1489,6 @@ async def get_ventas_detail(
                     FROM por_dia_semana
                     GROUP BY codigo_producto
                 ),
-                ano_anterior AS (
-                    SELECT
-                        v.codigo_producto,
-                        v.fecha,
-                        SUM(CAST(v.cantidad_vendida AS DECIMAL)) as cantidad_dia
-                    FROM ventas_raw v
-                    WHERE v.fecha >= CAST(CAST(? AS DATE) - INTERVAL 365 DAY AS VARCHAR)
-                        AND v.fecha <= CAST(CAST(? AS DATE) - INTERVAL 335 DAY AS VARCHAR)
-                        {"AND v.ubicacion_id = ?" if ubicacion_id else ""}
-                        {"AND v.categoria_producto = ?" if categoria else ""}
-                    GROUP BY v.codigo_producto, v.fecha
-                ),
-                promedio_ano AS (
-                    SELECT
-                        codigo_producto,
-                        AVG(cantidad_dia) as promedio_diario_ano_anterior
-                    FROM ano_anterior
-                    GROUP BY codigo_producto
-                ),
                 totales AS (
                     SELECT SUM(cantidad_total) as gran_total
                     FROM periodo_actual
@@ -1468,7 +1500,7 @@ async def get_ventas_detail(
                     pa.cantidad_total,
                     pa.cantidad_total / NULLIF(pa.dias_distintos, 0) as promedio_diario,
                     COALESCE(pds.promedio_mismo_dia, 0) as promedio_mismo_dia_semana,
-                    pan.promedio_diario_ano_anterior,
+                    NULL as comparacion_ano_anterior,
                     (pa.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
                     pa.cantidad_bultos_promedio as cantidad_bultos,
                     pa.cantidad_total / NULLIF(pa.cantidad_bultos_promedio, 0) as total_bultos,
@@ -1476,23 +1508,36 @@ async def get_ventas_detail(
                 FROM periodo_actual pa
                 CROSS JOIN totales t
                 LEFT JOIN promedio_dia_semana pds ON pa.codigo_producto = pds.codigo_producto
-                LEFT JOIN promedio_ano pan ON pa.codigo_producto = pan.codigo_producto
-                ORDER BY pa.cantidad_total DESC
             """
 
+            # Añadir ORDER BY según sort_by
+            if sort_by == 'cantidad_total':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                query += f" ORDER BY pa.cantidad_total {order_direction}, pa.descripcion_producto"
+            elif sort_by == 'promedio_diario':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                query += f" ORDER BY promedio_diario {order_direction}, pa.descripcion_producto"
+            elif sort_by == 'categoria':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                query += f" ORDER BY pa.categoria_producto {order_direction}, pa.descripcion_producto"
+            elif sort_by == 'porcentaje_total':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                query += f" ORDER BY porcentaje_total {order_direction}, pa.descripcion_producto"
+            else:
+                # Orden por defecto: mayor cantidad vendida primero
+                query += " ORDER BY pa.cantidad_total DESC, pa.descripcion_producto"
+
+            # Añadir LIMIT y OFFSET para paginación
+            query += f" LIMIT {page_size} OFFSET {offset}"
+
             # Construir lista de parámetros:
-            # params para periodo_actual, params para por_dia_semana, luego año anterior
+            # params para count, params para periodo_actual, params para por_dia_semana
             all_params = params.copy()  # Para periodo_actual
             all_params.extend(params.copy())  # Para por_dia_semana (mismos parámetros)
-            all_params.extend([fecha_inicio, fecha_fin])  # Para año anterior
-            if ubicacion_id:
-                all_params.append(ubicacion_id)
-            if categoria:
-                all_params.append(categoria)
 
             result = conn.execute(query, all_params).fetchall()
 
-            return [
+            items = [
                 VentasDetailResponse(
                     codigo_producto=row[0],
                     descripcion_producto=row[1],
@@ -1508,6 +1553,18 @@ async def get_ventas_detail(
                 )
                 for row in result
             ]
+
+            return PaginatedVentasResponse(
+                data=items,
+                pagination=PaginationMetadata(
+                    total_items=total_items,
+                    total_pages=total_pages,
+                    current_page=page,
+                    page_size=page_size,
+                    has_next=page < total_pages,
+                    has_previous=page > 1
+                )
+            )
 
     except Exception as e:
         logger.error(f"Error obteniendo detalle de ventas: {str(e)}")

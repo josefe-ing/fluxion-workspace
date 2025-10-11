@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import http from '../../services/http';
 import ProductSalesModal from './ProductSalesModal';
@@ -17,6 +17,20 @@ interface VentasDetail {
   promedio_bultos_diario: number | null;
 }
 
+interface PaginationMetadata {
+  total_items: number;
+  total_pages: number;
+  current_page: number;
+  page_size: number;
+  has_next: boolean;
+  has_previous: boolean;
+}
+
+interface PaginatedVentasResponse {
+  data: VentasDetail[];
+  pagination: PaginationMetadata;
+}
+
 interface Categoria {
   value: string;
   label: string;
@@ -27,30 +41,53 @@ export default function SalesDashboard() {
   const { ubicacionId } = useParams();
 
   const [ventasData, setVentasData] = useState<VentasDetail[]>([]);
+  const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filtros
   const [selectedCategoria, setSelectedCategoria] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [fechaInicio, setFechaInicio] = useState('');
   const [fechaFin, setFechaFin] = useState('');
   const [periodoSeleccionado, setPeriodoSeleccionado] = useState('ultimo_mes');
 
-  // Paginación
+  // Debounce para búsqueda
+  const searchDebounceTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Paginación (ahora server-side)
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 50;
+  const pageSize = 50;
 
   // Modal de análisis de producto
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProducto, setSelectedProducto] = useState<{codigo: string; descripcion: string} | null>(null);
 
-  // Métricas
+  // Métricas (ahora basadas en la página actual)
   const stats = {
-    total_transacciones: ventasData.length,
+    total_transacciones: pagination?.total_items || 0,
     total_unidades: ventasData.reduce((sum, item) => sum + item.cantidad_total, 0),
-    productos_unicos: ventasData.length,
+    productos_unicos: pagination?.total_items || 0,
   };
+
+  // Debounce effect para búsqueda (300ms)
+  useEffect(() => {
+    if (searchDebounceTimer.current) {
+      clearTimeout(searchDebounceTimer.current);
+    }
+
+    searchDebounceTimer.current = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+      setCurrentPage(1); // Reset a página 1 cuando se busca
+    }, 300);
+
+    return () => {
+      if (searchDebounceTimer.current) {
+        clearTimeout(searchDebounceTimer.current);
+      }
+    };
+  }, [searchTerm]);
 
   const calcularRangoFechas = (periodo: string) => {
     const hoy = new Date();
@@ -138,8 +175,16 @@ export default function SalesDashboard() {
       if (fechaInicio) params.append('fecha_inicio', fechaInicio);
       if (fechaFin) params.append('fecha_fin', fechaFin);
 
-      const response = await http.get(`/api/ventas/detail?${params.toString()}`);
-      setVentasData(response.data);
+      // Paginación server-side
+      params.append('page', currentPage.toString());
+      params.append('page_size', pageSize.toString());
+
+      // Búsqueda (se enviará al backend en lugar de filtrar client-side)
+      if (debouncedSearchTerm) params.append('search', debouncedSearchTerm);
+
+      const response = await http.get(`/api/ventas/detail?${params.toString()}`) as { data: PaginatedVentasResponse };
+      setVentasData(response.data.data);
+      setPagination(response.data.pagination);
     } catch (error) {
       console.error('Error cargando datos de ventas:', error);
     } finally {
@@ -159,22 +204,12 @@ export default function SalesDashboard() {
       loadVentasData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ubicacionId, selectedCategoria, fechaInicio, fechaFin]);
+  }, [ubicacionId, selectedCategoria, fechaInicio, fechaFin, currentPage, debouncedSearchTerm]);
 
-  // Filtrado por búsqueda
-  const filteredData = ventasData.filter(item => {
-    if (!searchTerm) return true;
-    const search = searchTerm.toLowerCase();
-    const codigo = (item.codigo_producto || '').toLowerCase();
-    const descripcion = (item.descripcion_producto || '').toLowerCase();
-    return codigo.includes(search) || descripcion.includes(search);
-  });
-
-  // Paginación
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = filteredData.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+  // Ya no necesitamos filtrado client-side, se hace en el backend
+  // Los datos de ventasData ya vienen filtrados y paginados del servidor
+  const currentItems = ventasData;
+  const totalPages = pagination?.total_pages || 1;
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -381,7 +416,7 @@ export default function SalesDashboard() {
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">
-            Productos Vendidos ({filteredData.length})
+            Productos Vendidos ({pagination?.total_items || 0})
           </h2>
         </div>
 
@@ -474,20 +509,20 @@ export default function SalesDashboard() {
             </div>
 
             {/* Paginación */}
-            {totalPages > 1 && (
+            {totalPages > 1 && pagination && (
               <div className="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-gray-700">
-                    Mostrando <span className="font-medium">{indexOfFirstItem + 1}</span> a{' '}
+                    Mostrando <span className="font-medium">{((currentPage - 1) * pageSize) + 1}</span> a{' '}
                     <span className="font-medium">
-                      {Math.min(indexOfLastItem, filteredData.length)}
+                      {Math.min(currentPage * pageSize, pagination.total_items)}
                     </span>{' '}
-                    de <span className="font-medium">{filteredData.length}</span> productos
+                    de <span className="font-medium">{pagination.total_items}</span> productos
                   </div>
                   <div className="flex space-x-2">
                     <button
                       onClick={() => handlePageChange(currentPage - 1)}
-                      disabled={currentPage === 1}
+                      disabled={!pagination.has_previous}
                       className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                     >
                       Anterior
@@ -497,7 +532,7 @@ export default function SalesDashboard() {
                     </span>
                     <button
                       onClick={() => handlePageChange(currentPage + 1)}
-                      disabled={currentPage === totalPages}
+                      disabled={!pagination.has_next}
                       className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                     >
                       Siguiente
