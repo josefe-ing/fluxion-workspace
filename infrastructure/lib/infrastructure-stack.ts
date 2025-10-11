@@ -12,6 +12,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 
 export class InfrastructureStack extends cdk.Stack {
@@ -259,7 +260,7 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
-    // 5. ECS Cluster
+    // 5. ECS Cluster with EC2 Capacity
     // ========================================
     const cluster = new ecs.Cluster(this, 'FluxionCluster', {
       vpc,
@@ -267,33 +268,124 @@ PersistentKeepalive = 25`),
       containerInsightsV2: ecs.ContainerInsights.ENHANCED,
     });
 
+    // Create Auto Scaling Group for ECS with EBS-optimized instances
+    const asg = new autoscaling.AutoScalingGroup(this, 'FluxionASG', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      instanceType: new ec2.InstanceType('t3.small'), // 2 vCPU, 2GB RAM
+      machineImage: ecs.EcsOptimizedImage.amazonLinux2(),
+      minCapacity: 1,
+      maxCapacity: 1, // Keep at 1 since we only need 1 backend task
+      desiredCapacity: 1,
+      blockDevices: [
+        {
+          deviceName: '/dev/xvda', // Root volume
+          volume: autoscaling.BlockDeviceVolume.ebs(30, {
+            volumeType: autoscaling.EbsDeviceVolumeType.GP3,
+            deleteOnTermination: true,
+          }),
+        },
+        {
+          deviceName: '/dev/xvdf', // Data volume for DuckDB
+          volume: autoscaling.BlockDeviceVolume.ebs(25, {
+            volumeType: autoscaling.EbsDeviceVolumeType.GP3,
+            iops: 3000,
+            throughput: 125,
+            deleteOnTermination: false, // Preserve data on instance termination
+          }),
+        },
+      ],
+      userData: ec2.UserData.forLinux(),
+    });
+
+    // Add tags to ASG for identification
+    cdk.Tags.of(asg).add('Name', 'fluxion-ecs-instance');
+    cdk.Tags.of(asg).add('Purpose', 'backend-database');
+
+    // Add user data to format, mount EBS volume, and download database
+    asg.addUserData(
+      '#!/bin/bash',
+      'set -e',
+      '',
+      'echo "=== Fluxion EC2 Instance Initialization ==="',
+      '',
+      '# Wait for EBS volume to be attached',
+      'echo "Waiting for EBS volume /dev/xvdf..."',
+      'while [ ! -e /dev/xvdf ]; do sleep 1; done',
+      'echo "✅ EBS volume detected"',
+      '',
+      '# Check if filesystem exists, if not create it',
+      'if ! file -s /dev/xvdf | grep -q ext4; then',
+      '  echo "Creating ext4 filesystem on /dev/xvdf"',
+      '  mkfs -t ext4 /dev/xvdf',
+      'else',
+      '  echo "✅ Filesystem already exists"',
+      'fi',
+      '',
+      '# Create mount point and mount',
+      'mkdir -p /mnt/data',
+      'mount /dev/xvdf /mnt/data',
+      'echo "✅ Volume mounted at /mnt/data"',
+      '',
+      '# Add to fstab for persistence',
+      'if ! grep -q "/dev/xvdf" /etc/fstab; then',
+      '  echo "/dev/xvdf /mnt/data ext4 defaults,nofail 0 2" >> /etc/fstab',
+      'fi',
+      '',
+      '# Set permissions',
+      'chmod 755 /mnt/data',
+      'chown 1000:1000 /mnt/data',
+      '',
+      '# Download database from S3 if not exists',
+      'echo "Checking for database..."',
+      'if [ ! -f /mnt/data/fluxion_production.db ]; then',
+      '  echo "📦 Downloading database from S3 (15GB, will take 3-5 minutes)..."',
+      '  aws s3 cp s3://fluxion-backups-v2-611395766952/production_db_uncompressed_20251011.db \\',
+      '    /mnt/data/fluxion_production.db \\',
+      '    --region us-east-1',
+      '  ',
+      '  if [ -f /mnt/data/fluxion_production.db ]; then',
+      '    echo "✅ Database downloaded successfully"',
+      '    chown 1000:1000 /mnt/data/fluxion_production.db',
+      '    chmod 644 /mnt/data/fluxion_production.db',
+      '    echo "Size: $(du -h /mnt/data/fluxion_production.db | cut -f1)"',
+      '  else',
+      '    echo "❌ Failed to download database"',
+      '  fi',
+      'else',
+      '  echo "✅ Database already exists ($(du -h /mnt/data/fluxion_production.db | cut -f1))"',
+      'fi',
+      '',
+      'echo "=== Initialization complete ==="'
+    );
+
+    // Create ECS Capacity Provider
+    const capacityProvider = new ecs.AsgCapacityProvider(this, 'FluxionCapacityProvider', {
+      autoScalingGroup: asg,
+      enableManagedScaling: true,
+      enableManagedTerminationProtection: false,
+    });
+
+    cluster.addAsgCapacityProvider(capacityProvider);
+
     // ========================================
-    // 6. Backend Task Definition
+    // 6. Backend Task Definition (EC2 with host volume)
     // ========================================
-    const backendTask = new ecs.FargateTaskDefinition(
+    const backendTask = new ecs.Ec2TaskDefinition(
       this,
       'FluxionBackendTask',
       {
-        memoryLimitMiB: 2048,
-        cpu: 1024,
+        networkMode: ecs.NetworkMode.AWS_VPC,
         volumes: [
           {
             name: 'fluxion-data',
-            efsVolumeConfiguration: {
-              fileSystemId: fileSystem.fileSystemId,
-              transitEncryption: 'ENABLED',
-              authorizationConfig: {
-                accessPointId: accessPoint.accessPointId,
-                iam: 'ENABLED',
-              },
+            host: {
+              sourcePath: '/mnt/data', // EBS mount point from EC2 user data
             },
           },
         ],
       }
     );
-
-    // Grant EFS access to task role
-    fileSystem.grantRootAccess(backendTask.taskRole);
 
     // Grant S3 read access to download database from old backup bucket
     const oldBackupBucket = s3.Bucket.fromBucketName(
@@ -308,8 +400,9 @@ PersistentKeepalive = 25`),
 
     const backendContainer = backendTask.addContainer('backend', {
       image: ecs.ContainerImage.fromAsset('../backend', {
-        platform: Platform.LINUX_AMD64, // Force AMD64 for Fargate
+        platform: Platform.LINUX_AMD64,
       }),
+      memoryReservationMiB: 1024, // Soft limit for EC2
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'fluxion-backend',
         logRetention: logs.RetentionDays.ONE_WEEK,
@@ -329,18 +422,23 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
-    // 7. Backend Service with ALB
+    // 7. Backend Service with ALB (EC2)
     // ========================================
-    const backendService = new ecs.FargateService(this, 'FluxionBackendService', {
+    const backendService = new ecs.Ec2Service(this, 'FluxionBackendService', {
       cluster,
       taskDefinition: backendTask,
-      desiredCount: 1, // Start with 1, can scale to 2+
-      assignPublicIp: false,
-      minHealthyPercent: 50, // Allow rolling updates with minimum 50% healthy tasks
-      maxHealthyPercent: 200, // Allow up to 200% during deployments
+      desiredCount: 1,
+      capacityProviderStrategies: [
+        {
+          capacityProvider: capacityProvider.capacityProviderName,
+          weight: 1,
+        },
+      ],
+      minHealthyPercent: 0, // Allow stopping old task before starting new one (only 1 task)
+      maxHealthyPercent: 100, // Only 1 task at a time
     });
 
-    // Allow ECS tasks to access EFS
+    // Allow ECS tasks to access EFS (keep for ETL compatibility)
     fileSystem.connections.allowDefaultPortFrom(backendService);
 
     const alb = new elbv2.ApplicationLoadBalancer(this, 'FluxionALB', {

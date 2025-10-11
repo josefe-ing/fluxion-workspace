@@ -1,0 +1,29 @@
+{
+  "success": true,
+  "estadisticas_globales": {
+    "inicio": "2025-10-10 19:00:47.395486",
+    "fin": "2025-10-10 19:45:11.925018",
+    "tiendas_procesadas": 1,
+    "meses_procesados": 13,
+    "registros_totales": 5403438,
+    "errores_totales": 0,
+    "tiempo_total": 2664.529532
+  },
+  "resumen": {
+    "total_tareas": 13,
+    "exitosas": 13,
+    "fallidas": 0,
+    "tasa_exito": 100.0,
+    "registros_totales": 5403438,
+    "tiempo_promedio_tarea": 204.03312569398148,
+    "registros_por_segundo": 2027.9144723699762
+  },
+  "estadisticas_tiendas": {
+    "tienda_04": {
+      "periodos_exitosos": 13,
+      "registros_total": 5403438,
+      "tiempo_total": 2652.430634021759
+    }
+  },
+  "errores": []
+}

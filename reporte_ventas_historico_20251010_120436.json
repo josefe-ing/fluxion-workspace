@@ -1,0 +1,45 @@
+{
+  "success": false,
+  "estadisticas_globales": {
+    "inicio": "2025-10-10 11:35:50.533270",
+    "fin": "2025-10-10 12:04:36.317228",
+    "tiendas_procesadas": 4,
+    "meses_procesados": 1,
+    "registros_totales": 1526667,
+    "errores_totales": 1,
+    "tiempo_total": 1725.783958
+  },
+  "resumen": {
+    "total_tareas": 4,
+    "exitosas": 3,
+    "fallidas": 1,
+    "tasa_exito": 75.0,
+    "registros_totales": 1526667,
+    "tiempo_promedio_tarea": 993.8549672762553,
+    "registros_por_segundo": 884.6223149328869
+  },
+  "estadisticas_tiendas": {
+    "tienda_13": {
+      "periodos_exitosos": 1,
+      "registros_total": 309222,
+      "tiempo_total": 476.10481572151184
+    },
+    "tienda_10": {
+      "periodos_exitosos": 1,
+      "registros_total": 642353,
+      "tiempo_total": 779.6773529052734
+    },
+    "tienda_12": {
+      "periodos_exitosos": 1,
+      "registros_total": 575092,
+      "tiempo_total": 1725.7827332019806
+    }
+  },
+  "errores": [
+    {
+      "tienda": "tienda_11",
+      "periodo": "2025-08-01 - 2025-08-31",
+      "mensaje": "Sin datos de ventas extraídos"
+    }
+  ]
+}
