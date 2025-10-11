@@ -188,7 +188,7 @@ PersistentKeepalive = 25`),
     // 3. S3 for Frontend + Backups
     // ========================================
     const frontendBucket = new s3.Bucket(this, 'FluxionFrontend', {
-      bucketName: `fluxion-frontend-${cdk.Stack.of(this).account}`,
+      bucketName: `fluxion-frontend-v3-${cdk.Stack.of(this).account}`,
       publicReadAccess: true,
       websiteIndexDocument: 'index.html',
       websiteErrorDocument: 'index.html',
@@ -202,7 +202,7 @@ PersistentKeepalive = 25`),
     });
 
     const backupBucket = new s3.Bucket(this, 'FluxionBackups', {
-      bucketName: `fluxion-backups-v2-${cdk.Stack.of(this).account}`,
+      bucketName: `fluxion-backups-v3-${cdk.Stack.of(this).account}`,
       versioned: true,
       encryption: s3.BucketEncryption.S3_MANAGED,
       lifecycleRules: [
@@ -340,7 +340,7 @@ PersistentKeepalive = 25`),
       'echo "Checking for database..."',
       'if [ ! -f /mnt/data/fluxion_production.db ]; then',
       '  echo "📦 Downloading database from S3 (15GB, will take 3-5 minutes)..."',
-      '  aws s3 cp s3://fluxion-backups-v2-611395766952/production_db_uncompressed_20251011.db \\',
+      '  aws s3 cp s3://fluxion-backups-v3-611395766952/production_db_uncompressed_20251011.db \\',
       '    /mnt/data/fluxion_production.db \\',
       '    --region us-east-1',
       '  ',
