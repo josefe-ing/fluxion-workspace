@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -188,13 +188,7 @@ export default function ProductSalesModal({
   const [semanas, setSemanas] = useState<number>(8); // Default: 8 semanas
   const [forecastData, setForecastData] = useState<{ [tiendaId: string]: ForecastResponse }>({});
 
-  useEffect(() => {
-    if (isOpen && codigoProducto) {
-      fetchVentasData();
-    }
-  }, [isOpen, codigoProducto, semanas]);
-
-  const fetchVentasData = async () => {
+  const fetchVentasData = useCallback(async () => {
     setLoading(true);
     try {
       // Calcular fechas basadas en las semanas seleccionadas
@@ -222,9 +216,15 @@ export default function ProductSalesModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [codigoProducto, semanas, currentUbicacionId, fetchForecastsData]);
 
-  const fetchForecastsData = async (tiendas: string[]) => {
+  useEffect(() => {
+    if (isOpen && codigoProducto) {
+      fetchVentasData();
+    }
+  }, [isOpen, codigoProducto, fetchVentasData]);
+
+  const fetchForecastsData = useCallback(async (tiendas: string[]) => {
     try {
       const forecasts: { [tiendaId: string]: ForecastResponse } = {};
 
@@ -246,7 +246,7 @@ export default function ProductSalesModal({
     } catch (error) {
       console.error('Error fetching forecasts:', error);
     }
-  };
+  }, [codigoProducto]);
 
   const toggleTienda = (tiendaId: string) => {
     const newSelected = new Set(selectedTiendas);

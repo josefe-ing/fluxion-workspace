@@ -183,7 +183,7 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
               message: '⚠️ No se pudo ejecutar test de conectividad. Continuando...'
             }]);
           }
-        } catch (testError) {
+        } catch {
           setLogs(prev => [...prev, {
             timestamp: new Date().toISOString(),
             level: 'warning',
@@ -246,7 +246,7 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
               message: '⚠️ Test de conectividad no disponible. Continuando...'
             }]);
           }
-        } catch (testError) {
+        } catch {
           setLogs(prev => [...prev, {
             timestamp: new Date().toISOString(),
             level: 'warning',
