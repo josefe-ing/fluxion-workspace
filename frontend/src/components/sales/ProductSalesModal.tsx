@@ -126,6 +126,7 @@ interface VentaDiaria {
       bultos: number;
       unidades: number;
       venta_total: number;
+      es_outlier?: boolean;
     };
   };
 }
@@ -188,6 +189,31 @@ export default function ProductSalesModal({
   const [semanas, setSemanas] = useState<number>(8); // Default: 8 semanas
   const [forecastData, setForecastData] = useState<{ [tiendaId: string]: ForecastResponse }>({});
 
+  // Declarar fetchForecastsData primero (antes de usarla en fetchVentasData)
+  const fetchForecastsData = useCallback(async (tiendas: string[]) => {
+    try {
+      const forecasts: { [tiendaId: string]: ForecastResponse } = {};
+
+      // Fetch forecast para cada tienda en paralelo
+      await Promise.all(
+        tiendas.map(async (tiendaId) => {
+          try {
+            const response = await http.get(
+              `/api/ventas/producto/forecast?ubicacion_id=${tiendaId}&codigo_producto=${codigoProducto}&dias_adelante=7`
+            );
+            forecasts[tiendaId] = response.data;
+          } catch (error) {
+            console.error(`Error fetching forecast for ${tiendaId}:`, error);
+          }
+        })
+      );
+
+      setForecastData(forecasts);
+    } catch (error) {
+      console.error('Error fetching forecasts:', error);
+    }
+  }, [codigoProducto]);
+
   const fetchVentasData = useCallback(async () => {
     setLoading(true);
     try {
@@ -196,7 +222,7 @@ export default function ProductSalesModal({
       const fechaInicio = new Date();
       fechaInicio.setDate(fechaInicio.getDate() - (semanas * 7));
 
-      const response = await http.get<VentasResponse>(
+      const response = await http.get(
         `/api/ventas/producto/diario?codigo_producto=${codigoProducto}&fecha_inicio=${fechaInicio.toISOString().split('T')[0]}&fecha_fin=${fechaFin.toISOString().split('T')[0]}`
       );
       setVentasData(response.data);
@@ -223,30 +249,6 @@ export default function ProductSalesModal({
       fetchVentasData();
     }
   }, [isOpen, codigoProducto, fetchVentasData]);
-
-  const fetchForecastsData = useCallback(async (tiendas: string[]) => {
-    try {
-      const forecasts: { [tiendaId: string]: ForecastResponse } = {};
-
-      // Fetch forecast para cada tienda en paralelo
-      await Promise.all(
-        tiendas.map(async (tiendaId) => {
-          try {
-            const response = await http.get<ForecastResponse>(
-              `/api/ventas/producto/forecast?ubicacion_id=${tiendaId}&codigo_producto=${codigoProducto}&dias_adelante=7`
-            );
-            forecasts[tiendaId] = response.data;
-          } catch (error) {
-            console.error(`Error fetching forecast for ${tiendaId}:`, error);
-          }
-        })
-      );
-
-      setForecastData(forecasts);
-    } catch (error) {
-      console.error('Error fetching forecasts:', error);
-    }
-  }, [codigoProducto]);
 
   const toggleTienda = (tiendaId: string) => {
     const newSelected = new Set(selectedTiendas);
@@ -276,7 +278,7 @@ export default function ProductSalesModal({
     // Combinar todas las fechas
     const allFechas = [...fechasHistoricas, ...fechasFuturas];
 
-    const datasets = [];
+    const datasets: any[] = [];
 
     // Datasets de ventas históricas
     Array.from(selectedTiendas).forEach(tiendaId => {
@@ -329,7 +331,7 @@ export default function ProductSalesModal({
       // Dataset de forecast (línea punteada)
       if (forecastData[tiendaId] && forecastData[tiendaId].forecasts.length > 0) {
         // Obtener el último valor válido (no outlier)
-        let lastHistoricValue = 0;
+        let lastHistoricValue: number | null = 0;
         for (let i = dataHistoricaSuavizada.length - 1; i >= 0; i--) {
           if (dataHistoricaSuavizada[i] !== null) {
             lastHistoricValue = dataHistoricaSuavizada[i];
