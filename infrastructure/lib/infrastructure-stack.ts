@@ -356,6 +356,11 @@ PersistentKeepalive = 25`),
       '  echo "✅ Database already exists ($(du -h /mnt/data/fluxion_production.db | cut -f1))"',
       'fi',
       '',
+      '# Configure ECS agent to join cluster',
+      'echo "Configuring ECS agent..."',
+      `echo ECS_CLUSTER=${cluster.clusterName} >> /etc/ecs/ecs.config`,
+      'echo "✅ ECS agent configured"',
+      '',
       'echo "=== Initialization complete ==="'
     );
 
