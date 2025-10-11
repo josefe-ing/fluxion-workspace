@@ -389,9 +389,8 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 8. ETL Task Definition (TEMPORARILY DISABLED)
+    // 8. ETL Task Definition
     // ========================================
-    /* COMMENTED OUT - Will enable after VPN is configured
     const etlTask = new ecs.FargateTaskDefinition(this, 'FluxionETLTask', {
       memoryLimitMiB: 4096,
       cpu: 2048,
@@ -455,7 +454,6 @@ PersistentKeepalive = 25`),
         taskCount: 1,
       })
     );
-    */ // END ETL COMMENT
 
     // ========================================
     // 10. Backup Task Definition (TEMPORARILY DISABLED)
@@ -587,6 +585,16 @@ PersistentKeepalive = 25`),
     new cdk.CfnOutput(this, 'WireGuardSSMCommand', {
       value: `aws ssm start-session --target ${wireguardInstance.instanceId}`,
       description: 'Command to connect to WireGuard instance via SSM',
+    });
+
+    new cdk.CfnOutput(this, 'ETLTaskDefinition', {
+      value: etlTask.taskDefinitionArn,
+      description: 'ETL Task Definition ARN',
+    });
+
+    new cdk.CfnOutput(this, 'ClusterName', {
+      value: cluster.clusterName,
+      description: 'ECS Cluster Name',
     });
   }
 }

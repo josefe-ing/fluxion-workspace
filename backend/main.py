@@ -16,6 +16,7 @@ import subprocess
 import asyncio
 import os
 from contextlib import contextmanager
+from forecast_pmp import ForecastPMP
 
 # Importar módulo de autenticación
 from auth import (
@@ -879,7 +880,8 @@ etl_status = {
     "progress": 0,
     "message": "",
     "result": None,
-    "logs": []  # Lista de logs del ETL
+    "logs": [],  # Lista de logs del ETL
+    "tiendas_status": []  # Status de cada tienda durante la sincronización
 }
 
 async def run_etl_background(ubicacion_id: Optional[str] = None):
@@ -925,6 +927,48 @@ async def run_etl_background(ubicacion_id: Optional[str] = None):
                 line_text = line.decode().strip()
                 if line_text:
                     level = "error" if stream_name == "stderr" else "info"
+
+                    # Detectar progreso de tiendas en el output
+                    import re
+                    tienda_match = re.search(r'tienda_(\d+)', line_text.lower())
+                    if tienda_match:
+                        tienda_id = f"tienda_{tienda_match.group(1)}"
+
+                        # Actualizar o agregar status de tienda
+                        tienda_found = False
+                        for t in etl_status["tiendas_status"]:
+                            if t["id"] == tienda_id:
+                                t["status"] = "processing"
+                                t["last_update"] = datetime.now().isoformat()
+                                tienda_found = True
+                                break
+
+                        if not tienda_found:
+                            etl_status["tiendas_status"].append({
+                                "id": tienda_id,
+                                "status": "processing",
+                                "last_update": datetime.now().isoformat()
+                            })
+
+                        # Detectar éxito o error
+                        if "✅" in line_text or "exitoso" in line_text.lower() or "completado" in line_text.lower():
+                            for t in etl_status["tiendas_status"]:
+                                if t["id"] == tienda_id:
+                                    t["status"] = "completed"
+                                    t["success"] = True
+                                    # Extraer registros si están disponibles
+                                    registros_match = re.search(r'(\d+)\s*registros', line_text)
+                                    if registros_match:
+                                        t["registros"] = int(registros_match.group(1))
+                                    break
+                        elif "❌" in line_text or "error" in line_text.lower() or "falló" in line_text.lower():
+                            for t in etl_status["tiendas_status"]:
+                                if t["id"] == tienda_id:
+                                    t["status"] = "error"
+                                    t["success"] = False
+                                    t["error_message"] = line_text
+                                    break
+
                     etl_status["logs"].append({
                         "timestamp": datetime.now().isoformat(),
                         "level": level,
@@ -1157,6 +1201,105 @@ async def check_connectivity():
             "resumen": {"total": 0, "conectadas": 0, "porcentaje": 0}
         }
 
+@app.get("/api/etl/test-connection-generic", tags=["ETL"])
+async def test_connection_generic():
+    """Ejecuta el test de conexión genérico para identificar tiendas con problemas"""
+    try:
+        test_script = Path(__file__).parent.parent / "etl" / "_backup_cleanup" / "tests" / "test_connection_generic.py"
+        etl_venv_python = Path(__file__).parent.parent / "etl" / "venv" / "bin" / "python3"
+        python_cmd = str(etl_venv_python) if etl_venv_python.exists() else "python3"
+
+        if not test_script.exists():
+            raise HTTPException(status_code=404, detail=f"Script de test no encontrado: {test_script}")
+
+        # Ejecutar el script de test genérico
+        process = await asyncio.create_subprocess_exec(
+            python_cmd, str(test_script),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(test_script.parent)
+        )
+
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+
+        # Capturar toda la salida para los logs
+        output_lines = stdout.decode().split('\n')
+        error_lines = stderr.decode().split('\n') if stderr else []
+
+        # Parsear resultados
+        drivers_disponibles = []
+        tiendas_results = []
+        current_tienda = None
+
+        for line in output_lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Detectar drivers ODBC
+            if "DRIVERS ODBC DISPONIBLES" in line:
+                continue
+            elif line and line[0].isdigit() and '. ' in line:
+                driver_name = line.split('. ', 1)[1]
+                drivers_disponibles.append(driver_name)
+
+            # Detectar inicio de prueba de tienda
+            elif "Usando driver:" in line:
+                current_tienda = {"driver": line.split("Usando driver:", 1)[1].strip()}
+            elif "PRUEBAS DE CONEXIÓN" in line:
+                continue
+            elif line.startswith("Probando") and ":" in line:
+                tienda_info = line.split("Probando", 1)[1].split(":")[0].strip()
+                current_tienda = {"tienda": tienda_info, "status": "testing"}
+            elif "✅" in line and current_tienda:
+                current_tienda["success"] = True
+                current_tienda["message"] = line
+                if "productos" in line.lower():
+                    # Extraer número de productos
+                    import re
+                    match = re.search(r'(\d+[\d,]*)\s*productos', line)
+                    if match:
+                        current_tienda["productos"] = int(match.group(1).replace(',', ''))
+                tiendas_results.append(current_tienda)
+                current_tienda = None
+            elif "❌" in line and current_tienda:
+                current_tienda["success"] = False
+                current_tienda["message"] = line
+                tiendas_results.append(current_tienda)
+                current_tienda = None
+
+        # Resumen
+        exitosas = sum(1 for t in tiendas_results if t.get("success", False))
+        total_tiendas = len(tiendas_results)
+
+        return {
+            "success": process.returncode == 0,
+            "drivers_disponibles": drivers_disponibles,
+            "tiendas": tiendas_results,
+            "resumen": {
+                "total": total_tiendas,
+                "exitosas": exitosas,
+                "fallidas": total_tiendas - exitosas,
+                "porcentaje_exito": (exitosas / total_tiendas * 100) if total_tiendas > 0 else 0
+            },
+            "logs": output_lines,
+            "errors": error_lines if error_lines else []
+        }
+
+    except asyncio.TimeoutError:
+        return {
+            "success": False,
+            "error": "Timeout ejecutando test de conexión (>60s)",
+            "drivers_disponibles": [],
+            "tiendas": [],
+            "resumen": {"total": 0, "exitosas": 0, "fallidas": 0, "porcentaje_exito": 0},
+            "logs": [],
+            "errors": ["Timeout después de 60 segundos"]
+        }
+    except Exception as e:
+        logger.error(f"Error ejecutando test de conexión genérico: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 @app.post("/api/etl/sync", tags=["ETL"])
 async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: BackgroundTasks):
     """Inicia el ETL de inventario en background y retorna inmediatamente"""
@@ -1170,6 +1313,7 @@ async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: Background
     etl_status["message"] = "Iniciando ETL..."
     etl_status["result"] = None
     etl_status["logs"] = []  # Limpiar logs anteriores
+    etl_status["tiendas_status"] = []  # Limpiar status de tiendas
 
     # Ejecutar en background
     background_tasks.add_task(run_etl_background, request.ubicacion_id)
@@ -1386,6 +1530,208 @@ async def get_ventas_categorias():
     except Exception as e:
         logger.error(f"Error obteniendo categorías de ventas: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@app.get("/api/ventas/producto/diario", tags=["Ventas"])
+async def get_ventas_producto_diario(
+    codigo_producto: str,
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None
+):
+    """
+    Obtiene ventas diarias de un producto específico, desglosado por tienda.
+    Retorna cantidad en bultos por día y por tienda.
+    """
+    try:
+        # Validar parámetros
+        if not codigo_producto:
+            raise HTTPException(status_code=400, detail="codigo_producto es requerido")
+
+        # Calcular fechas por defecto (últimas 8 semanas = 56 días)
+        if not fecha_fin:
+            fecha_fin = datetime.now().strftime('%Y-%m-%d')
+        if not fecha_inicio:
+            fecha_inicio = (datetime.now() - timedelta(days=56)).strftime('%Y-%m-%d')
+
+        with get_db_connection() as conn:
+            # Obtener información del producto
+            producto_info = conn.execute("""
+                SELECT DISTINCT
+                    codigo_producto,
+                    descripcion_producto,
+                    categoria_producto
+                FROM ventas_raw
+                WHERE codigo_producto = ?
+                LIMIT 1
+            """, [codigo_producto]).fetchone()
+
+            if not producto_info:
+                raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+            # Obtener ventas diarias por tienda
+            # Calcular bultos correctamente: cantidad_vendida / cantidad_bultos
+            # cantidad_bultos representa las unidades por bulto para ese producto
+            ventas_query = """
+                SELECT
+                    TRY_CAST(fecha AS DATE) as fecha,
+                    ubicacion_id,
+                    ubicacion_nombre,
+                    SUM(TRY_CAST(cantidad_vendida AS DOUBLE) / NULLIF(TRY_CAST(cantidad_bultos AS DOUBLE), 0)) as total_bultos,
+                    SUM(TRY_CAST(cantidad_vendida AS DOUBLE)) as total_unidades,
+                    SUM(TRY_CAST(venta_total AS DOUBLE)) as venta_total
+                FROM ventas_raw
+                WHERE codigo_producto = ?
+                    AND TRY_CAST(fecha AS DATE) BETWEEN ? AND ?
+                    AND TRY_CAST(cantidad_vendida AS DOUBLE) > 0
+                    AND TRY_CAST(cantidad_bultos AS DOUBLE) > 0
+                GROUP BY fecha, ubicacion_id, ubicacion_nombre
+                ORDER BY fecha, ubicacion_id
+            """
+
+            ventas_result = conn.execute(ventas_query, [
+                codigo_producto,
+                fecha_inicio,
+                fecha_fin
+            ]).fetchall()
+
+            # Organizar datos por fecha y tienda
+            ventas_por_fecha = {}
+            tiendas_set = set()
+            ventas_por_tienda = {}  # Para detectar outliers
+
+            for row in ventas_result:
+                fecha, ubicacion_id, ubicacion_nombre, bultos, unidades, venta = row
+                fecha_str = fecha.strftime('%Y-%m-%d') if fecha else None
+
+                if not fecha_str:
+                    continue
+
+                if fecha_str not in ventas_por_fecha:
+                    ventas_por_fecha[fecha_str] = {}
+
+                bultos_val = float(bultos) if bultos else 0
+
+                ventas_por_fecha[fecha_str][ubicacion_id] = {
+                    "tienda": ubicacion_nombre,
+                    "bultos": bultos_val,
+                    "unidades": float(unidades) if unidades else 0,
+                    "venta_total": float(venta) if venta else 0
+                }
+
+                # Guardar para análisis de outliers
+                if ubicacion_id not in ventas_por_tienda:
+                    ventas_por_tienda[ubicacion_id] = []
+                ventas_por_tienda[ubicacion_id].append(bultos_val)
+
+                tiendas_set.add(ubicacion_id)
+
+            # Detectar outliers por tienda usando múltiples criterios (más agresivo)
+            outliers_por_tienda = {}
+            for tienda_id, valores in ventas_por_tienda.items():
+                if len(valores) < 4:  # Necesita al menos 4 valores
+                    outliers_por_tienda[tienda_id] = set()
+                    continue
+
+                valores_sorted = sorted(valores)
+                n = len(valores_sorted)
+                q1_idx = n // 4
+                q3_idx = (3 * n) // 4
+                mediana_idx = n // 2
+                q1 = valores_sorted[q1_idx]
+                q3 = valores_sorted[q3_idx]
+                mediana = valores_sorted[mediana_idx]
+                iqr = q3 - q1
+
+                # Umbrales múltiples (más agresivos)
+                umbral_iqr = max(0, q1 - 1.0 * iqr)  # Más estricto: 1.0x en lugar de 1.5x
+                umbral_mediana = mediana * 0.30  # Excluir valores < 30% de la mediana
+                umbral_q3 = q3 * 0.20  # Excluir valores < 20% del Q3
+
+                outliers_por_tienda[tienda_id] = set()
+                for fecha in sorted(ventas_por_fecha.keys()):
+                    if tienda_id in ventas_por_fecha[fecha]:
+                        valor = ventas_por_fecha[fecha][tienda_id]["bultos"]
+                        # Marcar como outlier si falla cualquiera de los 3 filtros
+                        if (valor < umbral_iqr or
+                            valor < umbral_mediana or
+                            valor < umbral_q3):
+                            outliers_por_tienda[tienda_id].add(fecha)
+
+            # Convertir a lista ordenada y marcar outliers
+            ventas_list = []
+            for fecha in sorted(ventas_por_fecha.keys()):
+                fecha_data = {
+                    "fecha": fecha,
+                    "tiendas": {}
+                }
+                for tienda_id, datos in ventas_por_fecha[fecha].items():
+                    fecha_data["tiendas"][tienda_id] = {
+                        **datos,
+                        "es_outlier": fecha in outliers_por_tienda.get(tienda_id, set())
+                    }
+                ventas_list.append(fecha_data)
+
+            return {
+                "producto": {
+                    "codigo": producto_info[0],
+                    "descripcion": producto_info[1],
+                    "categoria": producto_info[2]
+                },
+                "fecha_inicio": fecha_inicio,
+                "fecha_fin": fecha_fin,
+                "tiendas_disponibles": sorted(list(tiendas_set)),
+                "ventas_diarias": ventas_list
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo ventas diarias del producto: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/ventas/producto/forecast", tags=["Ventas"])
+async def get_forecast_producto(
+    ubicacion_id: str,
+    codigo_producto: str,
+    dias_adelante: int = 7
+):
+    """
+    Calcula el forecast PMP (Promedio Móvil Ponderado) para un producto en una ubicación específica.
+
+    Retorna proyección diaria de ventas para los próximos N días basado en:
+    - Promedios por día de la semana (últimas 8 semanas)
+    - Ajustes de estacionalidad y tendencia
+    """
+    try:
+        with ForecastPMP(str(DB_PATH)) as forecaster:
+            resultado = forecaster.calcular_forecast_diario(
+                ubicacion_id=ubicacion_id,
+                codigo_producto=codigo_producto,
+                dias_adelante=dias_adelante
+            )
+
+            if not resultado or not resultado.get("forecasts"):
+                return {
+                    "ubicacion_id": ubicacion_id,
+                    "codigo_producto": codigo_producto,
+                    "forecasts": [],
+                    "dias_excluidos": 0,
+                    "mensaje": "No hay datos históricos suficientes para calcular forecast"
+                }
+
+            return {
+                "ubicacion_id": ubicacion_id,
+                "codigo_producto": codigo_producto,
+                "dias_adelante": dias_adelante,
+                "forecasts": resultado.get("forecasts", []),
+                "dias_excluidos": resultado.get("dias_excluidos", 0),
+                "metodo": resultado.get("metodo", "PMP")
+            }
+
+    except Exception as e:
+        logger.error(f"Error calculando forecast PMP: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error calculando forecast: {str(e)}")
+
 
 # ========== ENDPOINTS PEDIDOS SUGERIDOS ==========
 

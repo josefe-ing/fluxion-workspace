@@ -12,10 +12,21 @@ interface LogEntry {
   message: string;
 }
 
+interface TiendaStatus {
+  id: string;
+  nombre?: string;
+  status: 'pending' | 'testing' | 'processing' | 'completed' | 'error' | 'skipped';
+  success?: boolean;
+  registros?: number;
+  error_message?: string;
+  last_update?: string;
+}
+
 export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogsModalProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [tiendasStatus, setTiendasStatus] = useState<TiendaStatus[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -32,23 +43,34 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
 
     const pollLogs = async () => {
       try {
-        const response = await fetch('http://localhost:8001/api/etl/logs');
-        const data = await response.json();
+        // Poll para status y logs
+        const [logsResponse, statusResponse] = await Promise.all([
+          fetch('http://localhost:8001/api/etl/logs'),
+          fetch('http://localhost:8001/api/etl/status')
+        ]);
 
-        if (data.logs && data.logs.length > 0) {
+        const logsData = await logsResponse.json();
+        const statusData = await statusResponse.json();
+
+        if (logsData.logs && logsData.logs.length > 0) {
           setLogs(prevLogs => {
             // Solo agregar logs nuevos
             const existingMessages = new Set(prevLogs.map(l => l.message));
-            const newLogs = data.logs.filter((log: LogEntry) => !existingMessages.has(log.message));
+            const newLogs = logsData.logs.filter((log: LogEntry) => !existingMessages.has(log.message));
             return [...prevLogs, ...newLogs];
           });
         }
 
-        if (data.progress !== undefined) {
-          setProgress(data.progress);
+        if (logsData.progress !== undefined) {
+          setProgress(logsData.progress);
         }
 
-        if (data.status === 'completed' || data.status === 'failed') {
+        // Actualizar status de tiendas si está disponible
+        if (statusData.tiendas_status && statusData.tiendas_status.length > 0) {
+          setTiendasStatus(statusData.tiendas_status);
+        }
+
+        if (logsData.status === 'completed' || logsData.status === 'failed') {
           setIsRunning(false);
           if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
@@ -73,6 +95,12 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
   // Start sync when modal opens
   useEffect(() => {
     if (isOpen) {
+      // Limpiar estado al abrir el modal
+      setLogs([]);
+      setTiendasStatus([]);
+      setProgress(0);
+
+      // Iniciar sincronización
       startSync();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -80,13 +108,161 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
 
   const startSync = async () => {
     try {
+      // Primero verificar si ya hay un ETL corriendo
+      const statusCheckResponse = await fetch('http://localhost:8001/api/etl/status');
+      const statusCheck = await statusCheckResponse.json();
+
+      if (statusCheck.running) {
+        setLogs([{
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          message: `❌ Ya hay una sincronización en curso. Por favor espera a que termine.`
+        }, {
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          message: `ℹ️ Sincronización actual: ${statusCheck.message || 'En progreso'}`
+        }]);
+        setIsRunning(false);
+        return;
+      }
+
       setIsRunning(true);
-      setLogs([{
+      setProgress(0);
+
+      // Fase 1: Test de conexiones
+      if (!ubicacionId) {
+        // Sincronización de TODAS las tiendas
+        setLogs([{
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          message: '🔍 Fase 1: Verificando conectividad de tiendas...'
+        }]);
+
+        try {
+          const testResponse = await fetch('http://localhost:8001/api/etl/test-connection-generic');
+          const testData = await testResponse.json();
+
+          if (testData.success) {
+            const exitosas = testData.tiendas.filter((t: any) => t.success);
+            const fallidas = testData.tiendas.filter((t: any) => !t.success);
+
+            setLogs(prev => [...prev, {
+              timestamp: new Date().toISOString(),
+              level: 'success',
+              message: `✅ Test completado: ${exitosas.length}/${testData.tiendas.length} tiendas disponibles`
+            }]);
+
+            // Inicializar status de tiendas
+            const initialStatus: TiendaStatus[] = testData.tiendas.map((t: any) => ({
+              id: t.tienda || 'unknown',
+              nombre: t.tienda || 'Desconocida',
+              status: t.success ? 'pending' : 'skipped',
+              success: t.success
+            }));
+            setTiendasStatus(initialStatus);
+
+            if (fallidas.length > 0) {
+              setLogs(prev => [...prev, {
+                timestamp: new Date().toISOString(),
+                level: 'warning',
+                message: `⚠️ ${fallidas.length} tienda(s) sin conectividad (serán omitidas)`
+              }]);
+
+              fallidas.forEach((t: any) => {
+                setLogs(prev => [...prev, {
+                  timestamp: new Date().toISOString(),
+                  level: 'warning',
+                  message: `  • ${t.tienda}: ${t.message || 'Sin acceso'}`
+                }]);
+              });
+            }
+          } else {
+            setLogs(prev => [...prev, {
+              timestamp: new Date().toISOString(),
+              level: 'warning',
+              message: '⚠️ No se pudo ejecutar test de conectividad. Continuando...'
+            }]);
+          }
+        } catch (testError) {
+          setLogs(prev => [...prev, {
+            timestamp: new Date().toISOString(),
+            level: 'warning',
+            message: '⚠️ Error en test de conectividad. Continuando con sincronización...'
+          }]);
+        }
+
+        setProgress(25);
+      } else {
+        // Sincronización de UNA sola tienda
+        setLogs([{
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          message: `🔍 Verificando conectividad de ${ubicacionId}...`
+        }]);
+
+        try {
+          // Usar el test simple de conectividad (ping de red)
+          const testResponse = await fetch('http://localhost:8001/api/etl/check-connectivity');
+          const testData = await testResponse.json();
+
+          if (testData.success && testData.tiendas) {
+            const tiendaTest = testData.tiendas.find((t: any) => t.id === ubicacionId);
+
+            if (tiendaTest) {
+              if (tiendaTest.conectado) {
+                setLogs(prev => [...prev, {
+                  timestamp: new Date().toISOString(),
+                  level: 'success',
+                  message: `✅ ${ubicacionId} disponible (${tiendaTest.tiempo_ms.toFixed(0)}ms)`
+                }]);
+
+                // Inicializar status de esta tienda
+                setTiendasStatus([{
+                  id: ubicacionId,
+                  nombre: tiendaTest.nombre,
+                  status: 'pending',
+                  success: true
+                }]);
+              } else {
+                setLogs(prev => [...prev, {
+                  timestamp: new Date().toISOString(),
+                  level: 'error',
+                  message: `❌ ${ubicacionId} no está disponible. Verifica la VPN y conexión.`
+                }]);
+                setIsRunning(false);
+                return;
+              }
+            } else {
+              setLogs(prev => [...prev, {
+                timestamp: new Date().toISOString(),
+                level: 'warning',
+                message: `⚠️ No se pudo verificar conectividad de ${ubicacionId}. Continuando...`
+              }]);
+            }
+          } else {
+            setLogs(prev => [...prev, {
+              timestamp: new Date().toISOString(),
+              level: 'warning',
+              message: '⚠️ Test de conectividad no disponible. Continuando...'
+            }]);
+          }
+        } catch (testError) {
+          setLogs(prev => [...prev, {
+            timestamp: new Date().toISOString(),
+            level: 'warning',
+            message: '⚠️ Error verificando conectividad. Continuando...'
+          }]);
+        }
+
+        setProgress(25);
+      }
+
+      // Fase 2: Iniciar sincronización
+      setLogs(prev => [...prev, {
         timestamp: new Date().toISOString(),
         level: 'info',
-        message: ubicacionId ? `Iniciando sincronización de ${ubicacionId}...` : 'Iniciando sincronización de todas las tiendas...'
+        message: ubicacionId ? `🔄 Sincronizando ${ubicacionId}...` : '🔄 Fase 2: Iniciando sincronización de tiendas disponibles...'
       }]);
-      setProgress(0);
 
       const body = ubicacionId ? { ubicacion_id: ubicacionId } : {};
       const response = await fetch('http://localhost:8001/api/etl/sync', {
@@ -267,6 +443,47 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
               </div>
             )}
           </div>
+
+          {/* Tiendas Status */}
+          {tiendasStatus.length > 0 && (
+            <div className="bg-gray-50 px-6 py-4 border-b">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                {ubicacionId ? 'Estado de Sincronización' : 'Estado de Tiendas'}
+              </h4>
+              <div className={`grid gap-2 max-h-40 overflow-y-auto ${
+                ubicacionId ? 'grid-cols-1' : 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4'
+              }`}>
+                {tiendasStatus.map((tienda) => (
+                  <div
+                    key={tienda.id}
+                    className={`flex items-center space-x-2 p-2 rounded text-xs ${
+                      tienda.status === 'completed' ? 'bg-green-100 text-green-800' :
+                      tienda.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                      tienda.status === 'error' ? 'bg-red-100 text-red-800' :
+                      tienda.status === 'skipped' ? 'bg-gray-100 text-gray-500' :
+                      'bg-yellow-100 text-yellow-800'
+                    }`}
+                  >
+                    <span>
+                      {tienda.status === 'completed' ? '✅' :
+                       tienda.status === 'processing' ? '🔄' :
+                       tienda.status === 'error' ? '❌' :
+                       tienda.status === 'skipped' ? '⏭️' :
+                       '⏳'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium truncate block">{tienda.nombre || tienda.id}</span>
+                      {tienda.registros && (
+                        <span className="text-xs text-gray-600">
+                          {tienda.registros.toLocaleString()} registros
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Logs container */}
           <div className="bg-gray-50 px-6 py-4">

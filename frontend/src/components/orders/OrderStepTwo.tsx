@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import http from '../../services/http';
 import type { OrderData, ProductoPedido } from './OrderWizard';
 import ForecastDetailModal from './ForecastDetailModal';
+import ProductSalesModal from '../sales/ProductSalesModal';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 
 interface Props {
@@ -45,6 +46,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [forecastsDiarios, setForecastsDiarios] = useState<any[]>([]);
   const [cuadranteActivo, setCuadranteActivo] = useState<string>('CUADRANTE I');
+  const [salesModalOpen, setSalesModalOpen] = useState(false);
+  const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
 
   useEffect(() => {
     cargarStockParams();
@@ -102,6 +105,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     } catch (error) {
       console.error('Error cargando forecast diario:', error);
     }
+  };
+
+  const handleProductoClick = (producto: ProductoPedido) => {
+    setSelectedProductoSales(producto);
+    setSalesModalOpen(true);
   };
 
   const cargarStockParams = async () => {
@@ -543,7 +551,14 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       />
                     </td>
                     <td className="sticky left-12 z-10 bg-blue-50 px-4 py-3 text-sm font-medium text-gray-900 text-center" style={{ minWidth: '100px' }}>{producto.codigo_producto}</td>
-                    <td className="sticky left-40 z-10 bg-blue-50 px-4 py-3 text-sm text-gray-900 text-left" style={{ minWidth: '300px' }}>{producto.descripcion_producto}</td>
+                    <td className="sticky left-40 z-10 bg-blue-50 px-4 py-3 text-sm text-gray-900 text-left" style={{ minWidth: '300px' }}>
+                      <button
+                        onClick={() => handleProductoClick(producto)}
+                        className="text-left hover:text-blue-600 hover:underline cursor-pointer transition-colors w-full"
+                      >
+                        {producto.descripcion_producto}
+                      </button>
+                    </td>
                     <td className="bg-blue-50 px-4 py-3 text-sm text-gray-600 text-center">{Math.round(producto.cantidad_bultos)}</td>
                     <td className="bg-purple-50 px-4 py-3 text-sm text-purple-700 text-center">
                       <div className="flex flex-col">
@@ -754,6 +769,17 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
           descripcionProducto={selectedProductoForecast.descripcion_producto}
           forecasts={forecastsDiarios}
           cantidadBultos={selectedProductoForecast.cantidad_bultos}
+        />
+      )}
+
+      {/* Modal de Análisis de Ventas */}
+      {selectedProductoSales && (
+        <ProductSalesModal
+          isOpen={salesModalOpen}
+          onClose={() => setSalesModalOpen(false)}
+          codigoProducto={selectedProductoSales.codigo_producto}
+          descripcionProducto={selectedProductoSales.descripcion_producto}
+          currentUbicacionId={orderData.tienda_destino}
         />
       )}
     </div>

@@ -175,7 +175,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
+        port=14348,
         activo=True,
         codigo_deposito="1102"
     ),

@@ -112,6 +112,7 @@ class ForecastPMP:
         params = self.get_forecast_params(ubicacion_id)
 
         # Query para obtener ventas DIARIAS de las últimas 8 semanas
+        # Excluye outliers bajos (posiblemente por falta de stock)
         query = """
         WITH ventas_diarias AS (
             SELECT
@@ -125,16 +126,45 @@ class ForecastPMP:
               AND CAST(fecha AS DATE) < CURRENT_DATE
             GROUP BY CAST(fecha AS DATE), DAYOFWEEK(CAST(fecha AS DATE))
         ),
+        estadisticas_por_dia_semana AS (
+            SELECT
+                dia_semana,
+                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY cantidad_dia) as q1,
+                PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY cantidad_dia) as mediana,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as q3
+            FROM ventas_diarias
+            GROUP BY dia_semana
+        ),
+        ventas_filtradas AS (
+            SELECT
+                v.dia_semana,
+                v.cantidad_dia,
+                e.q1,
+                e.q3,
+                e.mediana,
+                (e.q3 - e.q1) as iqr
+            FROM ventas_diarias v
+            JOIN estadisticas_por_dia_semana e ON v.dia_semana = e.dia_semana
+            WHERE
+                -- Filtro 1: Usar IQR más estricto (1.0x en lugar de 1.5x)
+                v.cantidad_dia >= GREATEST(0, e.q1 - 1.0 * (e.q3 - e.q1))
+                -- Filtro 2: Excluir valores menores a 30% de la mediana (caídas dramáticas)
+                AND v.cantidad_dia >= e.mediana * 0.30
+                -- Filtro 3: Excluir valores menores a 20% del Q3
+                AND v.cantidad_dia >= e.q3 * 0.20
+        ),
         promedios_por_dia_semana AS (
             SELECT
                 dia_semana,
-                AVG(cantidad_dia) as promedio_dia
-            FROM ventas_diarias
+                AVG(cantidad_dia) as promedio_dia,
+                COUNT(*) as dias_usados
+            FROM ventas_filtradas
             GROUP BY dia_semana
         )
         SELECT
             dia_semana,
-            promedio_dia
+            promedio_dia,
+            dias_usados
         FROM promedios_por_dia_semana
         ORDER BY dia_semana
         """
@@ -146,8 +176,15 @@ class ForecastPMP:
 
         # Crear mapa de promedios por día de la semana (1=Lunes, 7=Domingo)
         promedios_dia_semana = {}
-        for dia_semana, promedio_dia in result:
+        total_dias_excluidos = 0
+        total_dias_evaluados = 0
+
+        for dia_semana, promedio_dia, dias_usados in result:
             promedios_dia_semana[dia_semana] = float(promedio_dia)
+            total_dias_evaluados += 8  # 8 semanas de datos
+
+        # Calcular días excluidos (aproximación: 8 semanas = ~8 ocurrencias por día de semana)
+        total_dias_excluidos = (len(result) * 8) - sum(row[2] for row in result)
 
         # Calcular forecast para cada día
         forecasts_diarios = []
@@ -175,13 +212,36 @@ class ForecastPMP:
             7: 'Domingo'
         }
 
+        # Calcular promedio general como fallback para días sin datos
+        promedio_general = sum(promedios_dia_semana.values()) / len(promedios_dia_semana) if promedios_dia_semana else 0.0
+
         for i in range(1, dias_adelante + 1):
             fecha_futura = hoy + timedelta(days=i)
             # DuckDB usa 1=Lunes, 7=Domingo (ISO)
             dia_semana = fecha_futura.isoweekday()
 
             # Obtener promedio para ese día de la semana
-            forecast_unidades = promedios_dia_semana.get(dia_semana, 0.0)
+            forecast_unidades = promedios_dia_semana.get(dia_semana, None)
+
+            # Si no hay datos para ese día, usar fallback
+            if forecast_unidades is None or forecast_unidades == 0:
+                # Intentar con días adyacentes (día anterior y siguiente)
+                dia_anterior = ((dia_semana - 2) % 7) + 1
+                dia_siguiente = (dia_semana % 7) + 1
+
+                promedio_anterior = promedios_dia_semana.get(dia_anterior, 0.0)
+                promedio_siguiente = promedios_dia_semana.get(dia_siguiente, 0.0)
+
+                if promedio_anterior > 0 and promedio_siguiente > 0:
+                    # Usar promedio de días adyacentes
+                    forecast_unidades = (promedio_anterior + promedio_siguiente) / 2.0
+                elif promedio_anterior > 0:
+                    forecast_unidades = promedio_anterior
+                elif promedio_siguiente > 0:
+                    forecast_unidades = promedio_siguiente
+                else:
+                    # Usar promedio general de la semana
+                    forecast_unidades = promedio_general
 
             # Aplicar ajustes
             forecast_unidades *= float(params["ajuste_estacional"])
@@ -198,7 +258,11 @@ class ForecastPMP:
                 "forecast_bultos": round(forecast_bultos, 1),
             })
 
-        return forecasts_diarios
+        return {
+            "forecasts": forecasts_diarios,
+            "dias_excluidos": total_dias_excluidos,
+            "metodo": "PMP con filtro de outliers bajos (posible falta de stock)"
+        }
 
     def calcular_forecast_producto(
         self,

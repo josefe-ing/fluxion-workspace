@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import http from '../../services/http';
+import ProductSalesModal from './ProductSalesModal';
 
 interface VentasDetail {
   codigo_producto: string;
@@ -39,6 +40,10 @@ export default function SalesDashboard() {
   // Paginación
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50;
+
+  // Modal de análisis de producto
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedProducto, setSelectedProducto] = useState<{codigo: string; descripcion: string} | null>(null);
 
   // Métricas
   const stats = {
@@ -175,6 +180,14 @@ export default function SalesDashboard() {
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  const handleProductClick = (codigo: string, descripcion: string) => {
+    setSelectedProducto({ codigo, descripcion });
+    setIsModalOpen(true);
+  };
+
+  // Obtener ubicacionId actual (puede ser undefined si no hay)
+  const currentUbicacionId = ubicacionId || null;
 
   return (
     <div className="space-y-6">
@@ -421,8 +434,12 @@ export default function SalesDashboard() {
                     </tr>
                   ) : (
                     currentItems.map((item, index) => (
-                      <tr key={`${item.codigo_producto}-${index}`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <tr
+                        key={`${item.codigo_producto}-${index}`}
+                        className="hover:bg-blue-50 cursor-pointer transition-colors"
+                        onClick={() => handleProductClick(item.codigo_producto, item.descripcion_producto)}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
                           {item.codigo_producto}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-900">
@@ -492,6 +509,17 @@ export default function SalesDashboard() {
           </>
         )}
       </div>
+
+      {/* Modal de análisis de ventas por producto */}
+      {selectedProducto && (
+        <ProductSalesModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          codigoProducto={selectedProducto.codigo}
+          descripcionProducto={selectedProducto.descripcion}
+          currentUbicacionId={currentUbicacionId}
+        />
+      )}
     </div>
   );
 }
