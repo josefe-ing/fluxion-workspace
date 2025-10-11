@@ -639,13 +639,11 @@ PersistentKeepalive = 25`),
     new cdk.CfnOutput(this, 'BackendURLSecure', {
       value: `https://${backendDistribution.distributionDomainName}`,
       description: 'Backend API URL (HTTPS - via CloudFront)',
-      exportName: 'FluxionBackendAPIURL',
     });
 
     new cdk.CfnOutput(this, 'BackendCloudFrontDistributionId', {
       value: backendDistribution.distributionId,
       description: 'Backend CloudFront Distribution ID',
-      exportName: 'FluxionBackendCloudFrontDistributionId',
     });
 
     new cdk.CfnOutput(this, 'FrontendURL', {
@@ -656,13 +654,11 @@ PersistentKeepalive = 25`),
     new cdk.CfnOutput(this, 'FrontendBucket', {
       value: frontendBucket.bucketName,
       description: 'Frontend S3 bucket name',
-      exportName: 'FluxionFrontendBucketName',
     });
 
     new cdk.CfnOutput(this, 'CloudFrontDistributionId', {
       value: distribution.distributionId,
       description: 'CloudFront Distribution ID for cache invalidation',
-      exportName: 'FluxionCloudFrontDistributionId',
     });
 
     new cdk.CfnOutput(this, 'BackupBucket', {
