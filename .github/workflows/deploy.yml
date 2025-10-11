@@ -124,21 +124,21 @@ jobs:
 
       - name: CDK Deploy
         working-directory: ./infrastructure
-        run: npx cdk deploy FluxionStack --require-approval never
+        run: npx cdk deploy --require-approval never
 
       - name: Get Stack Outputs
         id: stack-outputs
         run: |
           BACKEND_URL=$(aws cloudformation describe-stacks \
-            --stack-name FluxionStack \
+            --stack-name FluxionStackV2 \
             --query 'Stacks[0].Outputs[?OutputKey==`BackendURL`].OutputValue' \
             --output text)
           FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name FluxionStack \
+            --stack-name FluxionStackV2 \
             --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucket`].OutputValue' \
             --output text)
           CLOUDFRONT_ID=$(aws cloudformation describe-stacks \
-            --stack-name FluxionStack \
+            --stack-name FluxionStackV2 \
             --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
             --output text)
 
@@ -176,11 +176,11 @@ jobs:
         id: get-outputs
         run: |
           FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name FluxionStack \
+            --stack-name FluxionStackV2 \
             --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucket`].OutputValue' \
             --output text)
           CLOUDFRONT_ID=$(aws cloudformation describe-stacks \
-            --stack-name FluxionStack \
+            --stack-name FluxionStackV2 \
             --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
             --output text)
           echo "frontend-bucket=$FRONTEND_BUCKET" >> $GITHUB_OUTPUT
