@@ -77,7 +77,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_API_URL: https://d276pm86hqqrs8.cloudfront.net
+          VITE_API_URL: https://d1tgnaj74tv17v.cloudfront.net
         run: npm run build
 
       - name: Upload build artifacts
@@ -87,10 +87,43 @@ jobs:
           path: frontend/dist/
           retention-days: 1
 
-  # Job 3: Deploy Infrastructure & Backend
+  # Job 3: Build and Push Backend Docker Image
+  backend-docker:
+    name: Build & Push Backend Docker Image
+    needs: backend-build
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        working-directory: ./backend
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: fluxion-backend
+          IMAGE_TAG: latest
+        run: |
+          docker build --platform linux/amd64 -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+  # Job 4: Deploy Infrastructure & Backend
   deploy-infrastructure:
     name: Deploy Infrastructure & Backend
-    needs: [backend-build, frontend-build]
+    needs: [backend-docker, frontend-build]
     runs-on: ubuntu-latest
     environment: production
 
@@ -151,7 +184,7 @@ jobs:
       frontend-bucket: ${{ steps.stack-outputs.outputs.frontend-bucket }}
       cloudfront-id: ${{ steps.stack-outputs.outputs.cloudfront-id }}
 
-  # Job 4: Deploy Frontend to S3 + CloudFront
+  # Job 5: Deploy Frontend to S3 + CloudFront
   deploy-frontend:
     name: Deploy Frontend
     needs: deploy-infrastructure
@@ -202,7 +235,7 @@ jobs:
           echo "Backend API: ${{ needs.deploy-infrastructure.outputs.backend-url }}"
           echo "Frontend: https://${{ needs.deploy-infrastructure.outputs.cloudfront-id }}.cloudfront.net"
 
-  # Job 5: Health Check
+  # Job 6: Health Check
   health-check:
     name: Health Check
     needs: [deploy-infrastructure, deploy-frontend]
