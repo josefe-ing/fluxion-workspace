@@ -28,7 +28,8 @@ from auth import (
     create_access_token,
     create_user,
     verify_token,
-    ACCESS_TOKEN_EXPIRE_MINUTES
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    auto_bootstrap_admin
 )
 
 # Configurar logging
@@ -42,6 +43,16 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Auto-bootstrap admin user on startup
+@app.on_event("startup")
+async def startup_event():
+    """Execute startup tasks"""
+    logger.info("🚀 Starting Fluxion AI Backend...")
+    try:
+        auto_bootstrap_admin()
+    except Exception as e:
+        logger.error(f"⚠️  Auto-bootstrap failed: {e}")
+
 # Configurar CORS para el frontend
 app.add_middleware(
     CORSMiddleware,
@@ -49,8 +60,11 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:5173",
-        "https://d3jghnkvt6d1is.cloudfront.net",  # Frontend CloudFront
-        "http://fluxion-alb-1002393067.us-east-1.elb.amazonaws.com",
+        "https://d20a0g9yxinot2.cloudfront.net",  # Frontend CloudFront (current)
+        "https://d3jghnkvt6d1is.cloudfront.net",  # Frontend CloudFront (old)
+        "https://dynsftz61igf5.cloudfront.net",  # Frontend CloudFront (old)
+        "http://fluxion-alb-433331665.us-east-1.elb.amazonaws.com",  # Backend ALB (current)
+        "http://fluxion-alb-1002393067.us-east-1.elb.amazonaws.com",  # Backend ALB (old)
         "http://fluxion-frontend-611395766952.s3-website-us-east-1.amazonaws.com"
     ],
     allow_credentials=True,
@@ -363,6 +377,92 @@ async def register(request: CreateUserRequest, current_user: Usuario = Depends(v
 
     logger.info(f"Usuario '{new_user.username}' creado por '{current_user.username}'")
     return new_user
+
+@app.post("/api/auth/init-db", tags=["Autenticación"])
+async def init_database():
+    """
+    Inicializa la tabla usuarios si no existe
+    Endpoint temporal para setup inicial de BD
+    """
+    try:
+        with get_db_connection() as conn:
+            # Crear tabla usuarios
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    id VARCHAR PRIMARY KEY,
+                    username VARCHAR UNIQUE NOT NULL,
+                    password_hash VARCHAR NOT NULL,
+                    nombre_completo VARCHAR,
+                    email VARCHAR,
+                    activo BOOLEAN DEFAULT true,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ultimo_login TIMESTAMP
+                )
+            """)
+
+            logger.info("Tabla usuarios creada/verificada exitosamente")
+
+            # Now create admin user
+            import uuid
+            from passlib.context import CryptContext
+
+            pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+            user_id = str(uuid.uuid4())
+            password_hash = pwd_context.hash("admin123")
+
+            conn.execute("""
+                INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, (user_id, "admin", password_hash, "Administrador", "admin@fluxion.ai", True))
+
+            logger.info("Usuario admin creado exitosamente")
+
+            return {"message": "Database initialized and admin user created successfully", "username": "admin"}
+
+    except Exception as e:
+        logger.error(f"Error en init-db: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error inicializando BD: {str(e)}"
+        )
+
+@app.post("/api/auth/bootstrap-admin", response_model=Usuario, tags=["Autenticación"])
+async def bootstrap_admin():
+    """
+    Endpoint temporal para crear usuario admin inicial
+    SOLO FUNCIONA SI NO HAY USUARIOS EN LA BD
+    """
+    try:
+        with get_db_connection() as conn:
+            # Verificar si ya hay usuarios
+            count = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+
+            if count > 0:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Ya existen usuarios en el sistema. Use /api/auth/register para crear nuevos usuarios."
+                )
+
+            # Crear usuario admin
+            admin_user = create_user(
+                username="admin",
+                password="admin123",
+                nombre_completo="Administrador",
+                email="admin@fluxion.ai"
+            )
+
+            logger.info("Usuario admin creado via bootstrap")
+            return admin_user
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en bootstrap-admin: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creando usuario admin: {str(e)}"
+        )
 
 # =====================================================================================
 # ENDPOINTS DE DATOS (PROTEGIDOS)

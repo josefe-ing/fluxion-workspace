@@ -218,3 +218,33 @@ def create_user(username: str, password: str, nombre_completo: Optional[str] = N
             status_code=500,
             detail=f"Error al crear usuario: {str(e)}"
         )
+
+def auto_bootstrap_admin():
+    """
+    Auto-creates admin user if no users exist in the database
+    Called automatically on startup
+    """
+    import uuid
+    try:
+        with get_auth_db_connection() as conn:
+            # Check if any users exist
+            count = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+
+            if count == 0:
+                # No users exist - create admin
+                user_id = str(uuid.uuid4())
+                password_hash = get_password_hash("admin123")
+
+                conn.execute("""
+                    INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, (user_id, "admin", password_hash, "Administrador", "admin@fluxion.ai", True))
+
+                print("✅ Auto-bootstrap: Admin user created (username: admin, password: admin123)")
+                return True
+            else:
+                print(f"✅ Database has {count} user(s) - skipping auto-bootstrap")
+                return False
+    except Exception as e:
+        print(f"⚠️  Auto-bootstrap failed: {e}")
+        return False

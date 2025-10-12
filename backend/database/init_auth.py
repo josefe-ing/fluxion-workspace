@@ -9,7 +9,7 @@ import uuid
 import os
 
 # Ruta a la base de datos (usar variable de entorno o path absoluto en Docker)
-DB_PATH = Path(os.getenv('DB_PATH', '/data/fluxion_production.db'))
+DB_PATH = Path(os.getenv('DATABASE_PATH', '/data/fluxion_production.db'))
 
 def hash_password(password: str) -> str:
     """Hashea una contraseña usando bcrypt"""
@@ -24,7 +24,7 @@ def init_auth_schema():
         return
 
     print(f"📊 Conectando a base de datos: {DB_PATH}")
-    conn = duckdb.connect(str(DB_PATH))
+    conn = duckdb.connect(str(DB_PATH), read_only=False)
 
     try:
         # Leer y ejecutar el schema de autenticación

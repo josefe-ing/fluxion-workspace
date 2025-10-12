@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as efs from 'aws-cdk-lib/aws-efs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
@@ -13,7 +14,6 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
-import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 
 export class InfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -176,7 +176,7 @@ PersistentKeepalive = 25`),
       createAcl: {
         ownerGid: '1000',
         ownerUid: '1000',
-        permissions: '755',
+        permissions: '777', // Full read-write-execute for all (required for DuckDB write access)
       },
       posixUser: {
         gid: '1000',
@@ -185,39 +185,19 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
-    // 3. S3 for Frontend + Backups
+    // 3. S3 for Frontend + Backups (Import existing buckets)
     // ========================================
-    const frontendBucket = new s3.Bucket(this, 'FluxionFrontend', {
-      bucketName: `fluxion-frontend-v4-${cdk.Stack.of(this).account}`,
-      publicReadAccess: true,
-      websiteIndexDocument: 'index.html',
-      websiteErrorDocument: 'index.html',
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      blockPublicAccess: new s3.BlockPublicAccess({
-        blockPublicAcls: false,
-        blockPublicPolicy: false,
-        ignorePublicAcls: false,
-        restrictPublicBuckets: false,
-      }),
-    });
+    const frontendBucket = s3.Bucket.fromBucketName(
+      this,
+      'FluxionFrontend',
+      `fluxion-frontend-v4-${cdk.Stack.of(this).account}`
+    );
 
-    const backupBucket = new s3.Bucket(this, 'FluxionBackups', {
-      bucketName: `fluxion-backups-v4-${cdk.Stack.of(this).account}`,
-      versioned: true,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      lifecycleRules: [
-        {
-          expiration: cdk.Duration.days(90),
-          transitions: [
-            {
-              storageClass: s3.StorageClass.GLACIER,
-              transitionAfter: cdk.Duration.days(30),
-            },
-          ],
-        },
-      ],
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
+    const backupBucket = s3.Bucket.fromBucketName(
+      this,
+      'FluxionBackups',
+      `fluxion-backups-v4-${cdk.Stack.of(this).account}`
+    );
 
     // CloudFront Distribution for Frontend
     const distribution = new cloudfront.Distribution(this, 'FluxionCDN', {
@@ -260,7 +240,7 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
-    // 5. ECS Cluster with EC2 Capacity
+    // 5. ECS Cluster (Fargate only - no EC2 capacity needed)
     // ========================================
     const cluster = new ecs.Cluster(this, 'FluxionCluster', {
       vpc,
@@ -268,6 +248,20 @@ PersistentKeepalive = 25`),
       containerInsightsV2: ecs.ContainerInsights.ENHANCED,
     });
 
+    /*
+    ========================================
+    EC2 CAPACITY REMOVED - USING FARGATE
+    ========================================
+    The following EC2/AutoScaling configuration has been commented out.
+    We're now using Fargate which is serverless and doesn't require EC2 management.
+    */
+
+    /*
+    ========================================
+    EC2/AutoScaling/CapacityProvider COMMENTED OUT
+    Using Fargate instead - no EC2 management needed
+    ========================================
+/*
     // Create IAM Role for EC2 instances in ECS
     // This is CRITICAL - without this role, EC2 cannot register with ECS cluster
     const ecsInstanceRole = new iam.Role(this, 'EcsInstanceRole', {
@@ -314,124 +308,117 @@ PersistentKeepalive = 25`),
       ],
       userData: ec2.UserData.forLinux(),
     });
+*/
 
-    // Add tags to ASG for identification
-    cdk.Tags.of(asg).add('Name', 'fluxion-ecs-instance');
-    cdk.Tags.of(asg).add('Purpose', 'backend-database');
-
-    // Add user data to format, mount EBS volume, and download database
-    // NOTE: All output goes to /var/log/cloud-init-output.log
-    asg.addUserData(
-      '#!/bin/bash',
-      'set -ex', // -x for debug logging, -e to exit on error
-      '',
-      'echo "=== Fluxion EC2 Instance Initialization ==="',
-      'echo "Timestamp: $(date)"',
-      'echo "Instance ID: $(ec2-metadata --instance-id | cut -d\" \" -f2)"',
-      '',
-      '# Wait for EBS volume to be attached',
-      'echo "Waiting for EBS volume /dev/xvdf..."',
-      'while [ ! -e /dev/xvdf ]; do sleep 1; done',
-      'echo "✅ EBS volume detected"',
-      '',
-      '# Check if filesystem exists, if not create it',
-      'if ! file -s /dev/xvdf | grep -q ext4; then',
-      '  echo "Creating ext4 filesystem on /dev/xvdf"',
-      '  mkfs -t ext4 /dev/xvdf',
-      'else',
-      '  echo "✅ Filesystem already exists"',
-      'fi',
-      '',
-      '# Create mount point and mount',
-      'mkdir -p /mnt/data',
-      'mount /dev/xvdf /mnt/data',
-      'echo "✅ Volume mounted at /mnt/data"',
-      '',
-      '# Add to fstab for persistence',
-      'if ! grep -q "/dev/xvdf" /etc/fstab; then',
-      '  echo "/dev/xvdf /mnt/data ext4 defaults,nofail 0 2" >> /etc/fstab',
-      'fi',
-      '',
-      '# Set permissions',
-      'chmod 755 /mnt/data',
-      'chown 1000:1000 /mnt/data',
-      '',
-      '# Download database from S3 if not exists',
-      'echo "Checking for database..."',
-      'if [ ! -f /mnt/data/fluxion_production.db ]; then',
-      '  echo "📦 Downloading database from S3 (15GB, will take 3-5 minutes)..."',
-      '  aws s3 cp s3://fluxion-backups-v4-611395766952/production_db_uncompressed_20251011.db \\',
-      '    /mnt/data/fluxion_production.db \\',
-      '    --region us-east-1',
-      '  ',
-      '  if [ -f /mnt/data/fluxion_production.db ]; then',
-      '    echo "✅ Database downloaded successfully"',
-      '    chown 1000:1000 /mnt/data/fluxion_production.db',
-      '    chmod 644 /mnt/data/fluxion_production.db',
-      '    echo "Size: $(du -h /mnt/data/fluxion_production.db | cut -f1)"',
-      '  else',
-      '    echo "❌ Failed to download database"',
-      '  fi',
-      'else',
-      '  echo "✅ Database already exists ($(du -h /mnt/data/fluxion_production.db | cut -f1))"',
-      'fi',
-      '',
-      '# Configure ECS agent to join cluster',
-      'echo "========================================="',
-      'echo "CRITICAL: Configuring ECS agent..."',
-      'echo "========================================="',
-      `echo "ECS_CLUSTER=${cluster.clusterName}" >> /etc/ecs/ecs.config`,
-      'echo "ECS_ENABLE_TASK_IAM_ROLE=true" >> /etc/ecs/ecs.config',
-      'echo "ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true" >> /etc/ecs/ecs.config',
-      'cat /etc/ecs/ecs.config',
-      'echo "✅ ECS cluster name configured"',
-      '',
-      '# Restart ECS agent to apply configuration',
-      'echo "Restarting ECS agent..."',
-      'systemctl restart ecs || service ecs restart',
-      'sleep 10',
-      'echo "Checking ECS agent status..."',
-      'systemctl status ecs --no-pager --lines=20 || service ecs status',
-      '',
-      '# Verify registration',
-      'echo "Waiting for ECS agent to register (max 30 seconds)..."',
-      'for i in {1..30}; do',
-      '  if curl -s http://localhost:51678/v1/metadata | grep -q "Cluster"; then',
-      '    echo "✅ ECS agent registered successfully!"',
-      '    curl -s http://localhost:51678/v1/metadata',
-      '    break',
-      '  fi',
-      '  echo "[$i/30] Waiting for registration..."',
-      '  sleep 1',
-      'done',
-      '',
-      'echo "========================================="',
-      'echo "=== Initialization complete ==="',
-      'echo "========================================="'
-    );
-
-    // Create ECS Capacity Provider
-    const capacityProvider = new ecs.AsgCapacityProvider(this, 'FluxionCapacityProvider', {
-      autoScalingGroup: asg,
-      enableManagedScaling: true,
-      enableManagedTerminationProtection: false,
-    });
-
-    cluster.addAsgCapacityProvider(capacityProvider);
+//     // Add tags to ASG for identification
+//     cdk.Tags.of(asg).add('Name', 'fluxion-ecs-instance');
+//     cdk.Tags.of(asg).add('Purpose', 'backend-database');
+// 
+//     // Add user data to format, mount EBS volume, and download database
+//     // NOTE: All output goes to /var/log/cloud-init-output.log
+//     asg.addUserData(
+//       '#!/bin/bash',
+//       'set -x', // Debug logging only, do NOT exit on error (ECS agent must configure!)
+//       '',
+//       'echo "=== Fluxion EC2 Instance Initialization ==="',
+//       'echo "Timestamp: $(date)"',
+//       'echo "Instance ID: $(ec2-metadata --instance-id | cut -d\" \" -f2)"',
+//       '',
+//       '# Wait for EBS volume to be attached',
+//       'echo "Waiting for EBS volume /dev/xvdf..."',
+//       'while [ ! -e /dev/xvdf ]; do sleep 1; done',
+//       'echo "✅ EBS volume detected"',
+//       '',
+//       '# Check if filesystem exists, if not create it',
+//       'if ! file -s /dev/xvdf | grep -q ext4; then',
+//       '  echo "Creating ext4 filesystem on /dev/xvdf"',
+//       '  mkfs -t ext4 /dev/xvdf',
+//       'else',
+//       '  echo "✅ Filesystem already exists"',
+//       'fi',
+//       '',
+//       '# Create mount point and mount',
+//       'mkdir -p /mnt/data',
+//       'mount /dev/xvdf /mnt/data',
+//       'echo "✅ Volume mounted at /mnt/data"',
+//       '',
+//       '# Add to fstab for persistence',
+//       'if ! grep -q "/dev/xvdf" /etc/fstab; then',
+//       '  echo "/dev/xvdf /mnt/data ext4 defaults,nofail 0 2" >> /etc/fstab',
+//       'fi',
+//       '',
+//       '# Set permissions',
+//       'chmod 755 /mnt/data',
+//       'chown 1000:1000 /mnt/data',
+//       '',
+//       '# NOTE: Database will be downloaded by Docker container on first run',
+//       '# using awscli installed in the container image',
+//       '',
+//       '# Configure ECS agent to join cluster',
+//       'echo "========================================="',
+//       'echo "CRITICAL: Configuring ECS agent..."',
+//       'echo "========================================="',
+//       `echo "ECS_CLUSTER=${cluster.clusterName}" >> /etc/ecs/ecs.config`,
+//       'echo "ECS_ENABLE_TASK_IAM_ROLE=true" >> /etc/ecs/ecs.config',
+//       'echo "ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true" >> /etc/ecs/ecs.config',
+//       'cat /etc/ecs/ecs.config',
+//       'echo "✅ ECS cluster name configured"',
+//       '',
+//       '# Enable and start ECS agent',
+//       'echo "Enabling and starting ECS agent..."',
+//       'systemctl enable ecs',
+//       'systemctl start ecs',
+//       'sleep 10',
+//       'echo "Checking ECS agent status..."',
+//       'systemctl status ecs --no-pager --lines=20',
+//       '',
+//       '# Verify registration',
+//       'echo "Waiting for ECS agent to register (max 30 seconds)..."',
+//       'for i in {1..30}; do',
+//       '  if curl -s http://localhost:51678/v1/metadata | grep -q "Cluster"; then',
+//       '    echo "✅ ECS agent registered successfully!"',
+//       '    curl -s http://localhost:51678/v1/metadata',
+//       '    break',
+//       '  fi',
+//       '  echo "[$i/30] Waiting for registration..."',
+//       '  sleep 1',
+//       'done',
+//       '',
+//       'echo "========================================="',
+//       'echo "=== Initialization complete ==="',
+//       'echo "========================================="'
+//     );
+// 
+//     /*
+// // Create ECS Capacity Provider
+//     const capacityProvider = new ecs.AsgCapacityProvider(this, 'FluxionCapacityProvider', {
+//       autoScalingGroup: asg,
+//       enableManagedScaling: true,
+//       enableManagedTerminationProtection: false,
+//     });
+//
+//     cluster.addAsgCapacityProvider(capacityProvider);
+//     */
 
     // ========================================
     // 6. Backend Task Definition (EC2 with host volume)
     // ========================================
-    const backendTask = new ecs.Ec2TaskDefinition(
+    const backendTask = new ecs.FargateTaskDefinition(
       this,
       'FluxionBackendTask',
       {
-        networkMode: ecs.NetworkMode.AWS_VPC,
+        memoryLimitMiB: 2048,
+        cpu: 1024,
         volumes: [
           {
             name: 'fluxion-data',
-            host: {
-              sourcePath: '/mnt/data', // EBS mount point from EC2 user data
+            efsVolumeConfiguration: {
+              fileSystemId: fileSystem.fileSystemId,
+              transitEncryption: 'ENABLED',
+              authorizationConfig: {
+                accessPointId: accessPoint.accessPointId,
+                iam: 'ENABLED',
+              },
             },
           },
         ],
@@ -449,11 +436,19 @@ PersistentKeepalive = 25`),
     // Also grant access to new backup bucket
     backupBucket.grantRead(backendTask.taskRole);
 
+    // Grant EFS root access to task role (required for Fargate)
+    fileSystem.grantRootAccess(backendTask.taskRole);
+
+    // Reference existing ECR repository
+    const backendRepo = ecr.Repository.fromRepositoryName(
+      this,
+      'FluxionBackendRepo',
+      'fluxion-backend'
+    );
+
     const backendContainer = backendTask.addContainer('backend', {
-      image: ecs.ContainerImage.fromAsset('../backend', {
-        platform: Platform.LINUX_AMD64,
-      }),
-      memoryReservationMiB: 1024, // Soft limit for EC2
+      image: ecs.ContainerImage.fromEcrRepository(backendRepo, 'latest'),
+      // Note: Memory is defined at task level for Fargate (2048 MiB)
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'fluxion-backend',
         logRetention: logs.RetentionDays.ONE_WEEK,
@@ -475,18 +470,16 @@ PersistentKeepalive = 25`),
     // ========================================
     // 7. Backend Service with ALB (EC2)
     // ========================================
-    const backendService = new ecs.Ec2Service(this, 'FluxionBackendService', {
+    const backendService = new ecs.FargateService(this, 'FluxionBackendService', {
       cluster,
       taskDefinition: backendTask,
       desiredCount: 1,
-      capacityProviderStrategies: [
-        {
-          capacityProvider: capacityProvider.capacityProviderName,
-          weight: 1,
-        },
-      ],
+      platformVersion: ecs.FargatePlatformVersion.LATEST,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      assignPublicIp: false,
       minHealthyPercent: 0, // Allow stopping old task before starting new one (only 1 task)
       maxHealthyPercent: 100, // Only 1 task at a time
+      healthCheckGracePeriod: cdk.Duration.seconds(600), // 10 minutes - allow time for DB download
     });
 
     // Allow ECS tasks to access EFS (keep for ETL compatibility)
@@ -507,8 +500,10 @@ PersistentKeepalive = 25`),
       targets: [backendService],
       healthCheck: {
         path: '/',
-        interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(5),
+        interval: cdk.Duration.seconds(60), // Check every 60s to reduce load during startup
+        timeout: cdk.Duration.seconds(10), // Increased timeout
+        healthyThresholdCount: 2, // Need 2 successful checks to be healthy
+        unhealthyThresholdCount: 5, // Need 5 failed checks to be unhealthy (5min grace)
       },
       deregistrationDelay: cdk.Duration.seconds(30),
     });
@@ -538,8 +533,9 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 8. ETL Task Definition
+    // 8. ETL Task Definition (TEMPORARILY DISABLED - Docker build fails on ARM64)
     // ========================================
+    /* COMMENTED OUT - ETL Docker build fails due to ARM64/AMD64 incompatibility with MSSQL ODBC drivers
     const etlTask = new ecs.FargateTaskDefinition(this, 'FluxionETLTask', {
       memoryLimitMiB: 4096,
       cpu: 2048,
@@ -603,6 +599,7 @@ PersistentKeepalive = 25`),
         taskCount: 1,
       })
     );
+    */ // END ETL COMMENT
 
     // ========================================
     // 10. Backup Task Definition (TEMPORARILY DISABLED)
@@ -732,10 +729,12 @@ PersistentKeepalive = 25`),
       description: 'Command to connect to WireGuard instance via SSM',
     });
 
+    /* COMMENTED OUT - ETL is disabled
     new cdk.CfnOutput(this, 'ETLTaskDefinition', {
       value: etlTask.taskDefinitionArn,
       description: 'ETL Task Definition ARN',
     });
+    */
 
     new cdk.CfnOutput(this, 'ClusterName', {
       value: cluster.clusterName,
