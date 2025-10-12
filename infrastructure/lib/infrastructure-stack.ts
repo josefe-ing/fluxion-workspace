@@ -274,7 +274,11 @@ PersistentKeepalive = 25`),
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies: [
         // Required for ECS agent to register and communicate with ECS
-        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonEC2ContainerServiceforEC2Role'),
+        iam.ManagedPolicy.fromManagedPolicyArn(
+          this,
+          'ECSforEC2Policy',
+          'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role'
+        ),
         // Required for Systems Manager (for debugging if needed)
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
       ],
