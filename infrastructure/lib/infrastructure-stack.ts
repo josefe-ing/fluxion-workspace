@@ -268,12 +268,25 @@ PersistentKeepalive = 25`),
       containerInsightsV2: ecs.ContainerInsights.ENHANCED,
     });
 
+    // Create IAM Role for EC2 instances in ECS
+    // This is CRITICAL - without this role, EC2 cannot register with ECS cluster
+    const ecsInstanceRole = new iam.Role(this, 'EcsInstanceRole', {
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      managedPolicies: [
+        // Required for ECS agent to register and communicate with ECS
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonEC2ContainerServiceforEC2Role'),
+        // Required for Systems Manager (for debugging if needed)
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+      ],
+    });
+
     // Create Auto Scaling Group for ECS with EBS-optimized instances
     const asg = new autoscaling.AutoScalingGroup(this, 'FluxionASG', {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       instanceType: new ec2.InstanceType('t3.small'), // 2 vCPU, 2GB RAM
       machineImage: ecs.EcsOptimizedImage.amazonLinux2(),
+      role: ecsInstanceRole, // THIS IS THE KEY FIX!
       minCapacity: 1,
       maxCapacity: 1, // Keep at 1 since we only need 1 backend task
       desiredCapacity: 1,
@@ -303,11 +316,14 @@ PersistentKeepalive = 25`),
     cdk.Tags.of(asg).add('Purpose', 'backend-database');
 
     // Add user data to format, mount EBS volume, and download database
+    // NOTE: All output goes to /var/log/cloud-init-output.log
     asg.addUserData(
       '#!/bin/bash',
-      'set -e',
+      'set -ex', // -x for debug logging, -e to exit on error
       '',
       'echo "=== Fluxion EC2 Instance Initialization ==="',
+      'echo "Timestamp: $(date)"',
+      'echo "Instance ID: $(ec2-metadata --instance-id | cut -d\" \" -f2)"',
       '',
       '# Wait for EBS volume to be attached',
       'echo "Waiting for EBS volume /dev/xvdf..."',
@@ -357,18 +373,37 @@ PersistentKeepalive = 25`),
       'fi',
       '',
       '# Configure ECS agent to join cluster',
-      'echo "Configuring ECS agent..."',
+      'echo "========================================="',
+      'echo "CRITICAL: Configuring ECS agent..."',
+      'echo "========================================="',
       `echo "ECS_CLUSTER=${cluster.clusterName}" >> /etc/ecs/ecs.config`,
+      'echo "ECS_ENABLE_TASK_IAM_ROLE=true" >> /etc/ecs/ecs.config',
+      'echo "ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true" >> /etc/ecs/ecs.config',
+      'cat /etc/ecs/ecs.config',
       'echo "✅ ECS cluster name configured"',
       '',
       '# Restart ECS agent to apply configuration',
       'echo "Restarting ECS agent..."',
       'systemctl restart ecs || service ecs restart',
-      'sleep 5',
-      'systemctl status ecs --no-pager || service ecs status',
-      'echo "✅ ECS agent restarted"',
+      'sleep 10',
+      'echo "Checking ECS agent status..."',
+      'systemctl status ecs --no-pager --lines=20 || service ecs status',
       '',
-      'echo "=== Initialization complete ==="'
+      '# Verify registration',
+      'echo "Waiting for ECS agent to register (max 30 seconds)..."',
+      'for i in {1..30}; do',
+      '  if curl -s http://localhost:51678/v1/metadata | grep -q "Cluster"; then',
+      '    echo "✅ ECS agent registered successfully!"',
+      '    curl -s http://localhost:51678/v1/metadata',
+      '    break',
+      '  fi',
+      '  echo "[$i/30] Waiting for registration..."',
+      '  sleep 1',
+      'done',
+      '',
+      'echo "========================================="',
+      'echo "=== Initialization complete ==="',
+      'echo "========================================="'
     );
 
     // Create ECS Capacity Provider
