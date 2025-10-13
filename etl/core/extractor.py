@@ -4,6 +4,7 @@ Extractor de datos SQL Server para ETL - La Granja Mercado
 Maneja conexiones múltiples y extracción de inventarios
 """
 
+import os
 import pyodbc
 import pandas as pd
 from typing import Optional, Dict, List, Any
@@ -51,9 +52,12 @@ class SQLServerExtractor:
         """Crea una conexión a SQL Server"""
 
         try:
+            # Determinar driver ODBC disponible (prioritize msodbcsql18, fallback to FreeTDS)
+            odbc_driver = os.environ.get('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server')
+
             # String de conexión SQL Server
             connection_string = (
-                f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+                f"DRIVER={{{odbc_driver}}};"
                 f"SERVER={config.server_ip},{config.port};"
                 f"DATABASE={config.database_name};"
                 f"UID={config.username};"

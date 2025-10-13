@@ -39,12 +39,25 @@ class ETLConfig:
     # Directorio base (workspace raíz, no etl/)
     BASE_DIR = Path(__file__).parent.parent.parent
 
-    # Base de datos destino (DuckDB)
-    DUCKDB_PATH = BASE_DIR / "data" / "fluxion_production.db"
+    # Base de datos destino (DuckDB) - puede ser sobreescrito por DATABASE_PATH env var
+    DATABASE_PATH_ENV = os.environ.get('DATABASE_PATH')
+    if DATABASE_PATH_ENV:
+        DUCKDB_PATH = Path(DATABASE_PATH_ENV)
+    else:
+        DUCKDB_PATH = BASE_DIR / "data" / "fluxion_production.db"
 
-    # Logs del ETL
-    LOG_DIR = BASE_DIR / "etl" / "logs"
-    LOG_DIR.mkdir(exist_ok=True)
+    # Logs del ETL - usar /app/logs en Docker, etl/logs localmente
+    LOG_DIR_ENV = os.environ.get('LOG_DIR')
+    if LOG_DIR_ENV:
+        LOG_DIR = Path(LOG_DIR_ENV)
+    elif Path('/app/logs').exists():
+        # Running in Docker container
+        LOG_DIR = Path('/app/logs')
+    else:
+        # Running locally
+        LOG_DIR = BASE_DIR / "etl" / "logs"
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     # Configuraciones de conexión por ubicación
     # NOTA: Estas configuraciones deberán ser actualizadas con los datos reales

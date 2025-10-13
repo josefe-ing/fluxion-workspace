@@ -239,6 +239,13 @@ PersistentKeepalive = 25`),
       },
     });
 
+    // SQL Server credentials for La Granja (ETL) - Import existing secret
+    const sqlCredentials = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'SQLServerCredentials',
+      'fluxion/sql-credentials'
+    );
+
     // ========================================
     // 5. ECS Cluster (Fargate only - no EC2 capacity needed)
     // ========================================
@@ -533,62 +540,90 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 8. ETL Task Definition (TEMPORARILY DISABLED - Docker build fails on ARM64)
+    // 8. ECR Repository for ETL - Import existing
     // ========================================
-    /* COMMENTED OUT - ETL Docker build fails due to ARM64/AMD64 incompatibility with MSSQL ODBC drivers
+    const etlRepo = ecr.Repository.fromRepositoryName(
+      this,
+      'FluxionETLRepo',
+      'fluxion-etl'
+    );
+
+    // ========================================
+    // 9. ETL Task Definition (Fargate)
+    // ========================================
     const etlTask = new ecs.FargateTaskDefinition(this, 'FluxionETLTask', {
-      memoryLimitMiB: 4096,
-      cpu: 2048,
-      volumes: [
-        {
-          name: 'fluxion-data',
-          efsVolumeConfiguration: {
-            fileSystemId: fileSystem.fileSystemId,
-            transitEncryption: 'ENABLED',
-            authorizationConfig: {
-              accessPointId: accessPoint.accessPointId,
-              iam: 'ENABLED',
-            },
-          },
-        },
-      ],
+      memoryLimitMiB: 4096,  // 4GB RAM
+      cpu: 2048,              // 2 vCPU
+      ephemeralStorageGiB: 50,  // 50GB ephemeral storage for initial testing
+      // EFS disabled for initial testing - will enable after first successful run
+      // volumes: [
+      //   {
+      //     name: 'fluxion-data',
+      //     efsVolumeConfiguration: {
+      //       fileSystemId: fileSystem.fileSystemId,
+      //       transitEncryption: 'ENABLED',
+      //       authorizationConfig: {
+      //         accessPointId: accessPoint.accessPointId,
+      //         iam: 'ENABLED',
+      //       },
+      //     },
+      //   },
+      // ],
     });
 
-    fileSystem.grantRootAccess(etlTask.taskRole);
+    // Grant permissions to ETL task
+    // fileSystem.grantRootAccess(etlTask.taskRole);  // Disabled for initial testing
+    sqlCredentials.grantRead(etlTask.taskRole);
+    wireguardConfig.grantRead(etlTask.taskRole);
 
+    // ETL Container
     const etlContainer = etlTask.addContainer('etl', {
-      image: ecs.ContainerImage.fromAsset('../etl'),
+      image: ecs.ContainerImage.fromEcrRepository(etlRepo, 'latest'),
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'fluxion-etl',
-        logRetention: logs.RetentionDays.ONE_MONTH,
+        logRetention: logs.RetentionDays.ONE_WEEK,
       }),
-      command: ['python3', 'etl_inventario.py'],
       environment: {
-        DATABASE_PATH: '/data/fluxion_production.db',
+        ENVIRONMENT: 'production',
+        AWS_REGION: this.region,
+        DATABASE_PATH: '/tmp/fluxion_production.db',  // Use ephemeral storage for testing
+        ETL_MODE: 'etl_inventario.py',
+        ETL_ARGS: '--tienda tienda_08',  // Solo BOSQUE para testing (note: --tienda singular)
+        RUN_MODE: 'scheduled',
         SENTRY_DSN: process.env.SENTRY_DSN || '',
       },
-      secrets: {
-        SQL_SERVER_PASSWORD: ecs.Secret.fromSecretsManager(dbCredentials, 'password'),
-      },
+      stopTimeout: cdk.Duration.minutes(2),
     });
 
-    etlContainer.addMountPoints({
-      containerPath: '/data',
-      sourceVolume: 'fluxion-data',
-      readOnly: false,
+    // Mount points disabled for initial testing
+    // etlContainer.addMountPoints({
+    //   containerPath: '/data',
+    //   sourceVolume: 'fluxion-data',
+    //   readOnly: false,
+    // });
+
+    // Security Group for ETL
+    const etlSecurityGroup = new ec2.SecurityGroup(this, 'ETLSecurityGroup', {
+      vpc,
+      description: 'Security group for ETL tasks',
+      allowAllOutbound: true,
     });
+
+    // Allow ETL to access La Granja network via VPN
+    etlSecurityGroup.addEgressRule(
+      ec2.Peer.ipv4('192.168.0.0/16'),
+      ec2.Port.allTraffic(),
+      'Allow ETL to access La Granja network via VPN'
+    );
 
     // ========================================
-    // 9. ETL Scheduled Rule (Daily at 2am UTC)
+    // 10. ETL Scheduled Rule (Every 4 hours - DISABLED for testing)
     // ========================================
     const etlRule = new events.Rule(this, 'FluxionETLSchedule', {
-      schedule: events.Schedule.cron({
-        minute: '0',
-        hour: '2',
-        weekDay: '*',
-      }),
-      description: 'Run Fluxion ETL daily at 2am UTC',
-      ruleName: 'fluxion-etl-daily',
+      schedule: events.Schedule.rate(cdk.Duration.hours(4)),
+      description: 'Run Fluxion ETL every 4 hours (6 times/day)',
+      ruleName: 'fluxion-etl-schedule',
+      enabled: false, // DISABLED - will enable after manual testing
     });
 
     etlRule.addTarget(
@@ -596,10 +631,12 @@ PersistentKeepalive = 25`),
         cluster,
         taskDefinition: etlTask,
         subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [etlSecurityGroup],
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
         taskCount: 1,
+        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
       })
     );
-    */ // END ETL COMMENT
 
     // ========================================
     // 10. Backup Task Definition (TEMPORARILY DISABLED)
@@ -729,12 +766,23 @@ PersistentKeepalive = 25`),
       description: 'Command to connect to WireGuard instance via SSM',
     });
 
-    /* COMMENTED OUT - ETL is disabled
-    new cdk.CfnOutput(this, 'ETLTaskDefinition', {
+    new cdk.CfnOutput(this, 'ETLRepositoryURI', {
+      value: etlRepo.repositoryUri,
+      description: 'ECR Repository URI for ETL',
+      exportName: 'FluxionETLRepoURI',
+    });
+
+    new cdk.CfnOutput(this, 'ETLTaskDefinitionArn', {
       value: etlTask.taskDefinitionArn,
       description: 'ETL Task Definition ARN',
+      exportName: 'FluxionETLTaskArn',
     });
-    */
+
+    new cdk.CfnOutput(this, 'ETLLogGroup', {
+      value: '/aws/ecs/fluxion-etl',
+      description: 'CloudWatch Log Group for ETL',
+      exportName: 'FluxionETLLogGroup',
+    });
 
     new cdk.CfnOutput(this, 'ClusterName', {
       value: cluster.clusterName,

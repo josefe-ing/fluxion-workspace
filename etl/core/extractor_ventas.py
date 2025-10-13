@@ -4,6 +4,7 @@ Extractor de datos de ventas para ETL - La Granja Mercado
 Extrae transacciones de ventas desde SQL Server
 """
 
+import os
 import pyodbc
 import pandas as pd
 from typing import Optional, Dict, Any
@@ -34,8 +35,11 @@ class VentasExtractor:
 
     def _create_connection_string(self, config) -> str:
         """Crea la cadena de conexión para SQL Server"""
+        # Determinar driver ODBC disponible (prioritize msodbcsql18, fallback to FreeTDS)
+        odbc_driver = os.environ.get('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server')
+
         return (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"DRIVER={{{odbc_driver}}};"
             f"SERVER={config.server_ip},{config.port};"
             f"DATABASE={config.database_name};"
             f"UID={config.username};"
