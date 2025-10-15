@@ -754,7 +754,7 @@ PersistentKeepalive = 25`),
         RUN_MODE: 'scheduled',
         SENTRY_DSN: process.env.SENTRY_DSN || '',
       },
-      stopTimeout: cdk.Duration.minutes(5),  // Ventas ETL puede tardar más
+      stopTimeout: cdk.Duration.minutes(2),  // Fargate max is 120 seconds
     });
 
     // Mount EFS volume to /data
