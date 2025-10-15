@@ -109,7 +109,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to Amazon ECR
+      - name: Build, tag, and push Backend image to Amazon ECR
         working-directory: ./backend
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -118,7 +118,18 @@ jobs:
         run: |
           docker build --platform linux/amd64 -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "Backend image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Build, tag, and push ETL image to Amazon ECR
+        working-directory: ./etl
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: fluxion-etl
+          IMAGE_TAG: latest
+        run: |
+          docker build --platform linux/amd64 -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "ETL image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
   # Job 4: Deploy Infrastructure & Backend
   deploy-infrastructure:
