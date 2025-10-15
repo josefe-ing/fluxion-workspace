@@ -985,7 +985,12 @@ class ETLSyncResponse(BaseModel):
     tiempo_ejecucion: float
     errores: List[str]
 
-# Variable global para tracking del estado del ETL
+class VentasETLSyncRequest(BaseModel):
+    ubicacion_id: Optional[str] = None  # Si es None, ejecuta todas las tiendas
+    fecha_inicio: Optional[str] = None  # Formato YYYY-MM-DD
+    fecha_fin: Optional[str] = None  # Formato YYYY-MM-DD
+
+# Variable global para tracking del estado del ETL de Inventario
 etl_status = {
     "running": False,
     "current_ubicacion": None,
@@ -994,6 +999,19 @@ etl_status = {
     "result": None,
     "logs": [],  # Lista de logs del ETL
     "tiendas_status": []  # Status de cada tienda durante la sincronización
+}
+
+# Variable global para tracking del estado del ETL de Ventas
+ventas_etl_status = {
+    "running": False,
+    "current_ubicacion": None,
+    "progress": 0,
+    "message": "",
+    "result": None,
+    "logs": [],  # Lista de logs del ETL de ventas
+    "tiendas_status": [],  # Status de cada tienda durante la sincronización
+    "fecha_inicio": None,
+    "fecha_fin": None
 }
 
 def is_production_environment() -> bool:
@@ -1113,6 +1131,254 @@ async def run_etl_production(ubicacion_id: Optional[str] = None):
             "errores": [str(e)]
         }
         etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "error",
+            "message": f"❌ Error: {str(e)}"
+        })
+
+async def run_etl_ventas_production(ubicacion_id: Optional[str] = None, fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None):
+    """Ejecuta ETL de ventas en producción lanzando una tarea ECS en AWS"""
+    if not BOTO3_AVAILABLE:
+        ventas_etl_status["running"] = False
+        ventas_etl_status["result"] = {
+            "exitoso": False,
+            "mensaje": "boto3 no disponible - no se puede ejecutar ETL de ventas en producción",
+            "errores": ["boto3 module not installed"]
+        }
+        ventas_etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "error",
+            "message": "boto3 no disponible"
+        })
+        return
+
+    try:
+        start_time = datetime.now()
+
+        # Configuración de ECS desde variables de entorno
+        cluster_name = os.getenv("ECS_CLUSTER_NAME", "fluxion-cluster")
+        task_definition = os.getenv("VENTAS_TASK_DEFINITION")
+        subnets = os.getenv("ETL_SUBNETS", "").split(",")
+        security_groups = os.getenv("ETL_SECURITY_GROUPS", "").split(",")
+        aws_region = os.getenv("AWS_REGION", "us-east-1")
+
+        if not task_definition:
+            raise ValueError("VENTAS_TASK_DEFINITION environment variable not set")
+
+        # Construir comando ETL de ventas
+        etl_command = ["python3", "/app/etl_ventas_multi_tienda.py"]
+
+        if ubicacion_id:
+            etl_command.extend(["--tienda", ubicacion_id])
+            ventas_etl_status["message"] = f"Lanzando ETL de ventas para {ubicacion_id} en ECS..."
+        else:
+            etl_command.append("--todas")
+            ventas_etl_status["message"] = "Lanzando ETL de ventas para todas las tiendas en ECS..."
+
+        # Agregar parámetros de fecha si se proporcionan
+        if fecha_inicio:
+            etl_command.extend(["--fecha-inicio", fecha_inicio])
+        if fecha_fin:
+            etl_command.extend(["--fecha-fin", fecha_fin])
+
+        logger.info(f"Lanzando tarea ECS de ventas: {cluster_name} / {task_definition}")
+        logger.info(f"Comando ETL de ventas: {' '.join(etl_command)}")
+
+        ventas_etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "info",
+            "message": f"Lanzando tarea ECS de ventas en cluster {cluster_name}"
+        })
+
+        # Crear cliente ECS
+        ecs = boto3.client("ecs", region_name=aws_region)
+
+        # Lanzar tarea ECS
+        response = ecs.run_task(
+            cluster=cluster_name,
+            taskDefinition=task_definition,
+            launchType="FARGATE",
+            networkConfiguration={
+                "awsvpcConfiguration": {
+                    "subnets": subnets,
+                    "securityGroups": security_groups,
+                    "assignPublicIp": "DISABLED"  # En subnet privada con NAT
+                }
+            },
+            overrides={
+                "containerOverrides": [
+                    {
+                        "name": "ventas-etl",
+                        "command": etl_command
+                    }
+                ]
+            },
+            propagateTags="TASK_DEFINITION"
+        )
+
+        # Obtener ARN de la tarea
+        if response["tasks"]:
+            task_arn = response["tasks"][0]["taskArn"]
+            task_id = task_arn.split("/")[-1]
+
+            logger.info(f"Tarea ECS de ventas lanzada: {task_id}")
+
+            ventas_etl_status["logs"].append({
+                "timestamp": datetime.now().isoformat(),
+                "level": "info",
+                "message": f"✅ Tarea ECS de ventas lanzada exitosamente: {task_id}"
+            })
+            ventas_etl_status["logs"].append({
+                "timestamp": datetime.now().isoformat(),
+                "level": "info",
+                "message": "La sincronización de ventas está en progreso. Los datos se actualizarán cuando la tarea finalice."
+            })
+
+            # Marcar como completado el lanzamiento (no esperamos a que termine la tarea)
+            ventas_etl_status["running"] = False
+            ventas_etl_status["result"] = {
+                "exitoso": True,
+                "mensaje": f"Tarea ECS de ventas lanzada exitosamente: {task_id}",
+                "task_arn": task_arn,
+                "task_id": task_id,
+                "tiempo_ejecucion": (datetime.now() - start_time).total_seconds()
+            }
+        else:
+            raise Exception("No se pudo lanzar la tarea ECS de ventas - respuesta vacía")
+
+    except Exception as e:
+        logger.error(f"Error lanzando tarea ECS de ventas: {str(e)}")
+        ventas_etl_status["running"] = False
+        ventas_etl_status["result"] = {
+            "exitoso": False,
+            "mensaje": f"Error lanzando ETL de ventas en producción: {str(e)}",
+            "errores": [str(e)]
+        }
+        ventas_etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "error",
+            "message": f"❌ Error: {str(e)}"
+        })
+
+async def run_etl_ventas_background(ubicacion_id: Optional[str] = None, fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None):
+    """Ejecuta el ETL de ventas en background sin bloquear el servidor"""
+    try:
+        start_time = datetime.now()
+        etl_script = Path(__file__).parent.parent / "etl" / "etl_ventas_multi_tienda.py"
+
+        # Usar Python del venv de ETL si existe, sino usar python3 del sistema
+        etl_venv_python = Path(__file__).parent.parent / "etl" / "venv" / "bin" / "python3"
+        python_cmd = str(etl_venv_python) if etl_venv_python.exists() else "python3"
+
+        # Construir comando
+        if ubicacion_id:
+            command = [python_cmd, str(etl_script), "--tienda", ubicacion_id]
+            ventas_etl_status["message"] = f"Sincronizando ventas de {ubicacion_id}..."
+        else:
+            command = [python_cmd, str(etl_script), "--todas"]
+            ventas_etl_status["message"] = "Sincronizando ventas de todas las tiendas..."
+
+        # Agregar parámetros de fecha si se proporcionan
+        if fecha_inicio:
+            command.extend(["--fecha-inicio", fecha_inicio])
+        if fecha_fin:
+            command.extend(["--fecha-fin", fecha_fin])
+
+        logger.info(f"Ejecutando ETL de ventas en background: {' '.join(command)}")
+
+        # Agregar log inicial
+        ventas_etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "info",
+            "message": f"Ejecutando comando: {' '.join(command)}"
+        })
+
+        # Ejecutar ETL de forma asíncrona
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        # Leer stdout y stderr línea por línea en tiempo real
+        async def read_stream(stream, stream_name):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                line_text = line.decode().strip()
+                if line_text:
+                    level = "error" if stream_name == "stderr" else "info"
+
+                    ventas_etl_status["logs"].append({
+                        "timestamp": datetime.now().isoformat(),
+                        "level": level,
+                        "message": line_text
+                    })
+                    logger.info(f"[ETL Ventas {stream_name}] {line_text}")
+
+        # Leer ambos streams simultáneamente
+        await asyncio.gather(
+            read_stream(process.stdout, "stdout"),
+            read_stream(process.stderr, "stderr")
+        )
+
+        # Esperar a que el proceso termine
+        await asyncio.wait_for(process.wait(), timeout=600)
+
+        end_time = datetime.now()
+        tiempo_ejecucion = (end_time - start_time).total_seconds()
+
+        # Marcar resultado
+        exitoso = process.returncode == 0
+
+        if exitoso:
+            ventas_etl_status["logs"].append({
+                "timestamp": datetime.now().isoformat(),
+                "level": "info",
+                "message": f"✅ ETL de ventas completado exitosamente en {tiempo_ejecucion:.2f}s"
+            })
+            ventas_etl_status["result"] = {
+                "exitoso": True,
+                "mensaje": "ETL de ventas completado",
+                "tiempo_ejecucion": tiempo_ejecucion
+            }
+        else:
+            ventas_etl_status["logs"].append({
+                "timestamp": datetime.now().isoformat(),
+                "level": "error",
+                "message": f"❌ ETL de ventas falló con código {process.returncode}"
+            })
+            ventas_etl_status["result"] = {
+                "exitoso": False,
+                "mensaje": f"ETL de ventas falló con código {process.returncode}",
+                "errores": [f"Exit code: {process.returncode}"]
+            }
+
+        ventas_etl_status["running"] = False
+
+    except asyncio.TimeoutError:
+        logger.error("Timeout ejecutando ETL de ventas")
+        ventas_etl_status["running"] = False
+        ventas_etl_status["result"] = {
+            "exitoso": False,
+            "mensaje": "Timeout ejecutando ETL de ventas (>10 minutos)",
+            "errores": ["Timeout"]
+        }
+        ventas_etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "error",
+            "message": "❌ Timeout ejecutando ETL de ventas"
+        })
+    except Exception as e:
+        logger.error(f"Error ejecutando ETL de ventas: {str(e)}")
+        ventas_etl_status["running"] = False
+        ventas_etl_status["result"] = {
+            "exitoso": False,
+            "mensaje": f"Error ejecutando ETL de ventas: {str(e)}",
+            "errores": [str(e)]
+        }
+        ventas_etl_status["logs"].append({
             "timestamp": datetime.now().isoformat(),
             "level": "error",
             "message": f"❌ Error: {str(e)}"
@@ -1575,6 +1841,82 @@ async def get_etl_logs():
         "logs": etl_status.get("logs", []),
         "status": "running" if etl_status["running"] else "completed",
         "progress": etl_status.get("progress", 0)
+    }
+
+# ============================================================================
+# ETL VENTAS ENDPOINTS
+# ============================================================================
+
+@app.post("/api/etl/sync/ventas", tags=["ETL"])
+async def trigger_ventas_etl_sync(request: VentasETLSyncRequest, background_tasks: BackgroundTasks):
+    """Inicia el ETL de ventas en background y retorna inmediatamente"""
+
+    if ventas_etl_status["running"]:
+        raise HTTPException(status_code=409, detail="ETL de ventas ya está en ejecución")
+
+    # Inicializar estado
+    ventas_etl_status["running"] = True
+    ventas_etl_status["progress"] = 0
+    ventas_etl_status["message"] = "Iniciando ETL de ventas..."
+    ventas_etl_status["result"] = None
+    ventas_etl_status["logs"] = []  # Limpiar logs anteriores
+    ventas_etl_status["tiendas_status"] = []  # Limpiar status de tiendas
+    ventas_etl_status["fecha_inicio"] = request.fecha_inicio
+    ventas_etl_status["fecha_fin"] = request.fecha_fin
+
+    # Detectar entorno y ejecutar la función correspondiente
+    if is_production_environment():
+        # En producción (AWS ECS), lanzar tarea ECS
+        logger.info("Entorno de producción detectado - lanzando tarea ECS de ventas")
+        background_tasks.add_task(
+            run_etl_ventas_production,
+            request.ubicacion_id,
+            request.fecha_inicio,
+            request.fecha_fin
+        )
+        message = "ETL de ventas task being launched on ECS. Data will update when task completes."
+    else:
+        # En desarrollo (local), usar subprocess
+        logger.info("Entorno de desarrollo detectado - ejecutando ETL de ventas local")
+        background_tasks.add_task(
+            run_etl_ventas_background,
+            request.ubicacion_id,
+            request.fecha_inicio,
+            request.fecha_fin
+        )
+        message = "ETL de ventas iniciado en background. Use /api/etl/ventas/status para monitorear el progreso."
+
+    return {
+        "success": True,
+        "message": message,
+        "status": "running",
+        "environment": "production" if is_production_environment() else "development",
+        "fecha_inicio": request.fecha_inicio,
+        "fecha_fin": request.fecha_fin
+    }
+
+@app.get("/api/etl/ventas/status", tags=["ETL"])
+async def get_ventas_etl_status():
+    """Obtiene el estado actual del ETL de ventas"""
+    return {
+        "running": ventas_etl_status["running"],
+        "progress": ventas_etl_status.get("progress", 0),
+        "message": ventas_etl_status.get("message", ""),
+        "result": ventas_etl_status.get("result"),
+        "tiendas_status": ventas_etl_status.get("tiendas_status", []),
+        "fecha_inicio": ventas_etl_status.get("fecha_inicio"),
+        "fecha_fin": ventas_etl_status.get("fecha_fin")
+    }
+
+@app.get("/api/etl/ventas/logs", tags=["ETL"])
+async def get_ventas_etl_logs():
+    """Obtiene los logs del ETL de ventas en ejecución o el último ejecutado"""
+    return {
+        "logs": ventas_etl_status.get("logs", []),
+        "status": "running" if ventas_etl_status["running"] else "completed",
+        "progress": ventas_etl_status.get("progress", 0),
+        "fecha_inicio": ventas_etl_status.get("fecha_inicio"),
+        "fecha_fin": ventas_etl_status.get("fecha_fin")
     }
 
 # ============================================================================

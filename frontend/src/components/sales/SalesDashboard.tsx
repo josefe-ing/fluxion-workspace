@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import http from '../../services/http';
 import ProductSalesModal from './ProductSalesModal';
+import SyncVentasModal from './SyncVentasModal';
 
 interface VentasDetail {
   codigo_producto: string;
@@ -63,6 +64,9 @@ export default function SalesDashboard() {
   // Modal de análisis de producto
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProducto, setSelectedProducto] = useState<{codigo: string; descripcion: string} | null>(null);
+
+  // Modal de sincronización de ventas
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
   // Métricas (ahora basadas en la página actual)
   const stats = {
@@ -238,11 +242,22 @@ export default function SalesDashboard() {
       </button>
 
       {/* Título */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Detalle de Ventas</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Análisis de productos vendidos con promedios y comparaciones
-        </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Detalle de Ventas</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Análisis de productos vendidos con promedios y comparaciones
+          </p>
+        </div>
+        <button
+          onClick={() => setIsSyncModalOpen(true)}
+          className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+        >
+          <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Sincronizar Ventas
+        </button>
       </div>
 
       {/* Métricas Cards */}
@@ -555,6 +570,13 @@ export default function SalesDashboard() {
           currentUbicacionId={currentUbicacionId}
         />
       )}
+
+      {/* Modal de sincronización de ventas */}
+      <SyncVentasModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        ubicacionId={ubicacionId}
+      />
     </div>
   );
 }

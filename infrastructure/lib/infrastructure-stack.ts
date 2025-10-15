@@ -713,7 +713,141 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 10. Backup Task Definition (TEMPORARILY DISABLED)
+    // 10. Ventas ETL Task Definition (Fargate)
+    // ========================================
+    const ventasEtlTask = new ecs.FargateTaskDefinition(this, 'FluxionVentasETLTask', {
+      memoryLimitMiB: 4096,  // 4GB RAM
+      cpu: 2048,              // 2 vCPU
+      volumes: [
+        {
+          name: 'fluxion-data',
+          efsVolumeConfiguration: {
+            fileSystemId: fileSystem.fileSystemId,
+            transitEncryption: 'ENABLED',
+            authorizationConfig: {
+              accessPointId: accessPoint.accessPointId,
+              iam: 'ENABLED',
+            },
+          },
+        },
+      ],
+    });
+
+    // Grant permissions to Ventas ETL task
+    fileSystem.grantRootAccess(ventasEtlTask.taskRole);
+    sqlCredentials.grantRead(ventasEtlTask.taskRole);
+    wireguardConfig.grantRead(ventasEtlTask.taskRole);
+
+    // Ventas ETL Container
+    const ventasEtlContainer = ventasEtlTask.addContainer('ventas-etl', {
+      image: ecs.ContainerImage.fromEcrRepository(etlRepo, 'latest'),
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: 'fluxion-ventas-etl',
+        logRetention: logs.RetentionDays.ONE_WEEK,
+      }),
+      environment: {
+        ENVIRONMENT: 'production',
+        AWS_REGION: this.region,
+        DATABASE_PATH: '/data/fluxion_production.db',  // Use EFS shared storage
+        ETL_MODE: 'etl_ventas_multi_tienda.py',
+        ETL_ARGS: '--fecha-inicio 2025-01-01 --fecha-fin 2025-12-31 --todas',  // Default args
+        RUN_MODE: 'scheduled',
+        SENTRY_DSN: process.env.SENTRY_DSN || '',
+      },
+      stopTimeout: cdk.Duration.minutes(5),  // Ventas ETL puede tardar más
+    });
+
+    // Mount EFS volume to /data
+    ventasEtlContainer.addMountPoints({
+      containerPath: '/data',
+      sourceVolume: 'fluxion-data',
+      readOnly: false,
+    });
+
+    // ========================================
+    // 11. Ventas ETL Scheduled Rules (Twice daily: 3:00 AM and 2:00 PM)
+    // ========================================
+    // Morning Ventas ETL at 3:00 AM UTC-4 (7:00 AM UTC)
+    const ventasEtlRuleMorning = new events.Rule(this, 'FluxionVentasETLScheduleMorning', {
+      schedule: events.Schedule.cron({
+        minute: '0',
+        hour: '7',  // 3:00 AM Venezuela time (UTC-4)
+        weekDay: '*',
+      }),
+      description: 'Run Fluxion Ventas ETL at 3:00 AM Venezuela time',
+      ruleName: 'fluxion-ventas-etl-schedule-morning',
+      enabled: true,
+    });
+
+    ventasEtlRuleMorning.addTarget(
+      new targets.EcsTask({
+        cluster,
+        taskDefinition: ventasEtlTask,
+        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [etlSecurityGroup],
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+        taskCount: 1,
+        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+      })
+    );
+
+    // Afternoon Ventas ETL at 2:00 PM UTC-4 (6:00 PM UTC)
+    const ventasEtlRuleAfternoon = new events.Rule(this, 'FluxionVentasETLScheduleAfternoon', {
+      schedule: events.Schedule.cron({
+        minute: '0',
+        hour: '18',  // 2:00 PM Venezuela time (UTC-4)
+        weekDay: '*',
+      }),
+      description: 'Run Fluxion Ventas ETL at 2:00 PM Venezuela time',
+      ruleName: 'fluxion-ventas-etl-schedule-afternoon',
+      enabled: true,
+    });
+
+    ventasEtlRuleAfternoon.addTarget(
+      new targets.EcsTask({
+        cluster,
+        taskDefinition: ventasEtlTask,
+        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [etlSecurityGroup],
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+        taskCount: 1,
+        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+      })
+    );
+
+    // ========================================
+    // 12. Configure Backend with Ventas ETL task information
+    // ========================================
+    // Add Ventas ETL configuration to Backend container environment
+    backendContainer.addEnvironment('VENTAS_TASK_DEFINITION', ventasEtlTask.taskDefinitionArn);
+
+    // Grant Backend permission to run Ventas ETL tasks
+    backendTask.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'ecs:RunTask',
+          'ecs:DescribeTasks',
+          'ecs:StopTask',
+        ],
+        resources: [ventasEtlTask.taskDefinitionArn],
+      })
+    );
+
+    // Grant Backend permission to pass Ventas ETL task role (required for ecs:RunTask)
+    backendTask.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['iam:PassRole'],
+        resources: [
+          ventasEtlTask.taskRole.roleArn,
+          ventasEtlTask.executionRole!.roleArn,
+        ],
+      })
+    );
+
+    // ========================================
+    // 13. Backup Task Definition (TEMPORARILY DISABLED)
     // ========================================
     /* COMMENTED OUT - Will enable after initial deployment
     const backupTask = new ecs.FargateTaskDefinition(
