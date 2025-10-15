@@ -554,25 +554,23 @@ PersistentKeepalive = 25`),
     const etlTask = new ecs.FargateTaskDefinition(this, 'FluxionETLTask', {
       memoryLimitMiB: 4096,  // 4GB RAM
       cpu: 2048,              // 2 vCPU
-      ephemeralStorageGiB: 50,  // 50GB ephemeral storage for initial testing
-      // EFS disabled for initial testing - will enable after first successful run
-      // volumes: [
-      //   {
-      //     name: 'fluxion-data',
-      //     efsVolumeConfiguration: {
-      //       fileSystemId: fileSystem.fileSystemId,
-      //       transitEncryption: 'ENABLED',
-      //       authorizationConfig: {
-      //         accessPointId: accessPoint.accessPointId,
-      //         iam: 'ENABLED',
-      //       },
-      //     },
-      //   },
-      // ],
+      volumes: [
+        {
+          name: 'fluxion-data',
+          efsVolumeConfiguration: {
+            fileSystemId: fileSystem.fileSystemId,
+            transitEncryption: 'ENABLED',
+            authorizationConfig: {
+              accessPointId: accessPoint.accessPointId,
+              iam: 'ENABLED',
+            },
+          },
+        },
+      ],
     });
 
     // Grant permissions to ETL task
-    // fileSystem.grantRootAccess(etlTask.taskRole);  // Disabled for initial testing
+    fileSystem.grantRootAccess(etlTask.taskRole);
     sqlCredentials.grantRead(etlTask.taskRole);
     wireguardConfig.grantRead(etlTask.taskRole);
 
@@ -586,7 +584,7 @@ PersistentKeepalive = 25`),
       environment: {
         ENVIRONMENT: 'production',
         AWS_REGION: this.region,
-        DATABASE_PATH: '/tmp/fluxion_production.db',  // Use ephemeral storage for testing
+        DATABASE_PATH: '/data/fluxion_production.db',  // Use EFS shared storage
         ETL_MODE: 'etl_inventario.py',
         ETL_ARGS: '--tienda tienda_08',  // Solo BOSQUE para testing (note: --tienda singular)
         RUN_MODE: 'scheduled',
@@ -595,12 +593,12 @@ PersistentKeepalive = 25`),
       stopTimeout: cdk.Duration.minutes(2),
     });
 
-    // Mount points disabled for initial testing
-    // etlContainer.addMountPoints({
-    //   containerPath: '/data',
-    //   sourceVolume: 'fluxion-data',
-    //   readOnly: false,
-    // });
+    // Mount EFS volume to /data
+    etlContainer.addMountPoints({
+      containerPath: '/data',
+      sourceVolume: 'fluxion-data',
+      readOnly: false,
+    });
 
     // Security Group for ETL
     const etlSecurityGroup = new ec2.SecurityGroup(this, 'ETLSecurityGroup', {
@@ -615,6 +613,9 @@ PersistentKeepalive = 25`),
       ec2.Port.allTraffic(),
       'Allow ETL to access La Granja network via VPN'
     );
+
+    // Allow ETL to access EFS
+    fileSystem.connections.allowDefaultPortFrom(etlSecurityGroup);
 
     // ========================================
     // 10. ETL Scheduled Rule (Every 4 hours - DISABLED for testing)
