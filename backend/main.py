@@ -18,6 +18,14 @@ import os
 from contextlib import contextmanager
 from forecast_pmp import ForecastPMP
 
+# AWS SDK for ECS task execution in production
+try:
+    import boto3
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
+    logger.warning("boto3 not available - ETL sync in production will not work")
+
 # Importar módulo de autenticación
 from auth import (
     LoginRequest,
@@ -988,6 +996,128 @@ etl_status = {
     "tiendas_status": []  # Status de cada tienda durante la sincronización
 }
 
+def is_production_environment() -> bool:
+    """Detecta si estamos en producción (AWS ECS) o desarrollo (local)"""
+    # En AWS ECS, la variable ECS_CONTAINER_METADATA_URI_V4 está disponible
+    return os.getenv("ECS_CONTAINER_METADATA_URI_V4") is not None
+
+async def run_etl_production(ubicacion_id: Optional[str] = None):
+    """Ejecuta ETL en producción lanzando una tarea ECS en AWS"""
+    if not BOTO3_AVAILABLE:
+        etl_status["running"] = False
+        etl_status["result"] = {
+            "exitoso": False,
+            "mensaje": "boto3 no disponible - no se puede ejecutar ETL en producción",
+            "errores": ["boto3 module not installed"]
+        }
+        etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "error",
+            "message": "boto3 no disponible"
+        })
+        return
+
+    try:
+        start_time = datetime.now()
+
+        # Configuración de ECS desde variables de entorno
+        cluster_name = os.getenv("ECS_CLUSTER_NAME", "fluxion-cluster")
+        task_definition = os.getenv("ETL_TASK_DEFINITION")
+        subnets = os.getenv("ETL_SUBNETS", "").split(",")
+        security_groups = os.getenv("ETL_SECURITY_GROUPS", "").split(",")
+        aws_region = os.getenv("AWS_REGION", "us-east-1")
+
+        if not task_definition:
+            raise ValueError("ETL_TASK_DEFINITION environment variable not set")
+
+        # Construir comando ETL
+        etl_command = ["python3", "/app/etl_inventario.py"]
+        if ubicacion_id:
+            etl_command.extend(["--tienda", ubicacion_id])
+            etl_status["message"] = f"Lanzando ETL para {ubicacion_id} en ECS..."
+        else:
+            etl_command.append("--todas")
+            etl_status["message"] = "Lanzando ETL para todas las tiendas en ECS..."
+
+        logger.info(f"Lanzando tarea ECS: {cluster_name} / {task_definition}")
+        logger.info(f"Comando ETL: {' '.join(etl_command)}")
+
+        etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "info",
+            "message": f"Lanzando tarea ECS en cluster {cluster_name}"
+        })
+
+        # Crear cliente ECS
+        ecs = boto3.client("ecs", region_name=aws_region)
+
+        # Lanzar tarea ECS
+        response = ecs.run_task(
+            cluster=cluster_name,
+            taskDefinition=task_definition,
+            launchType="FARGATE",
+            networkConfiguration={
+                "awsvpcConfiguration": {
+                    "subnets": subnets,
+                    "securityGroups": security_groups,
+                    "assignPublicIp": "DISABLED"  # En subnet privada con NAT
+                }
+            },
+            overrides={
+                "containerOverrides": [
+                    {
+                        "name": "etl",
+                        "command": etl_command
+                    }
+                ]
+            },
+            propagateTags="TASK_DEFINITION"
+        )
+
+        # Obtener ARN de la tarea
+        if response["tasks"]:
+            task_arn = response["tasks"][0]["taskArn"]
+            task_id = task_arn.split("/")[-1]
+
+            logger.info(f"Tarea ECS lanzada: {task_id}")
+
+            etl_status["logs"].append({
+                "timestamp": datetime.now().isoformat(),
+                "level": "info",
+                "message": f"✅ Tarea ECS lanzada exitosamente: {task_id}"
+            })
+            etl_status["logs"].append({
+                "timestamp": datetime.now().isoformat(),
+                "level": "info",
+                "message": "La sincronización está en progreso. Los datos se actualizarán cuando la tarea finalice."
+            })
+
+            # Marcar como completado el lanzamiento (no esperamos a que termine la tarea)
+            etl_status["running"] = False
+            etl_status["result"] = {
+                "exitoso": True,
+                "mensaje": f"Tarea ECS lanzada exitosamente: {task_id}",
+                "task_arn": task_arn,
+                "task_id": task_id,
+                "tiempo_ejecucion": (datetime.now() - start_time).total_seconds()
+            }
+        else:
+            raise Exception("No se pudo lanzar la tarea ECS - respuesta vacía")
+
+    except Exception as e:
+        logger.error(f"Error lanzando tarea ECS: {str(e)}")
+        etl_status["running"] = False
+        etl_status["result"] = {
+            "exitoso": False,
+            "mensaje": f"Error lanzando ETL en producción: {str(e)}",
+            "errores": [str(e)]
+        }
+        etl_status["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "error",
+            "message": f"❌ Error: {str(e)}"
+        })
+
 async def run_etl_background(ubicacion_id: Optional[str] = None):
     """Ejecuta el ETL en background sin bloquear el servidor"""
     try:
@@ -1419,13 +1549,23 @@ async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: Background
     etl_status["logs"] = []  # Limpiar logs anteriores
     etl_status["tiendas_status"] = []  # Limpiar status de tiendas
 
-    # Ejecutar en background
-    background_tasks.add_task(run_etl_background, request.ubicacion_id)
+    # Detectar entorno y ejecutar la función correspondiente
+    if is_production_environment():
+        # En producción (AWS ECS), lanzar tarea ECS
+        logger.info("Entorno de producción detectado - lanzando tarea ECS")
+        background_tasks.add_task(run_etl_production, request.ubicacion_id)
+        message = "ETL task being launched on ECS. Data will update when task completes."
+    else:
+        # En desarrollo (local), usar subprocess
+        logger.info("Entorno de desarrollo detectado - ejecutando ETL local")
+        background_tasks.add_task(run_etl_background, request.ubicacion_id)
+        message = "ETL iniciado en background. Use /api/etl/status para monitorear el progreso."
 
     return {
         "success": True,
-        "message": "ETL iniciado en background. Use /api/etl/status para monitorear el progreso.",
-        "status": "running"
+        "message": message,
+        "status": "running",
+        "environment": "production" if is_production_environment() else "development"
     }
 
 @app.get("/api/etl/logs", tags=["ETL"])
