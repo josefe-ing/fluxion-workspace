@@ -85,3 +85,7 @@ tmp/
 # Development logs
 /tmp/fluxion_*.log
 /tmp/fluxion_*.pid
+
+# ============ CDK / INFRASTRUCTURE ============
+infrastructure/cdk.out/
+cdk.out/
