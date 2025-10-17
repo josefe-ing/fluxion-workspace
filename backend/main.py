@@ -1110,6 +1110,12 @@ async def run_etl_production(ubicacion_id: Optional[str] = None):
                 "message": "La sincronización está en progreso. Los datos se actualizarán cuando la tarea finalice."
             })
 
+            # Guardar task_arn para streaming de logs
+            etl_status["task_arn"] = task_arn
+            etl_status["task_id"] = task_id
+            etl_status["log_group"] = os.getenv("ETL_LOG_GROUP", "FluxionStackV2-FluxionETLTasketlLogGroupEB088C6B-xzaljvRuwjkm")
+            etl_status["last_log_timestamp"] = None  # Para paginación de logs
+
             # Marcar como completado el lanzamiento (no esperamos a que termine la tarea)
             etl_status["running"] = False
             etl_status["result"] = {
@@ -1870,11 +1876,124 @@ async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: Background
 
 @app.get("/api/etl/logs", tags=["ETL"])
 async def get_etl_logs():
-    """Obtiene los logs del ETL en ejecución o el último ejecutado"""
+    """Obtiene los logs del ETL en ejecución o el último ejecutado
+
+    En producción: obtiene logs de CloudWatch usando el task_arn
+    En desarrollo: obtiene logs del proceso local
+    """
+
+    # Si está en producción y hay un task_arn, obtener logs de CloudWatch
+    if is_production_environment() and etl_status.get("task_arn") and BOTO3_AVAILABLE:
+        try:
+            task_id = etl_status.get("task_id")
+            log_group = etl_status.get("log_group")
+
+            # El log stream en ECS Fargate tiene el formato: prefix/container-name/task-id
+            log_stream_prefix = f"fluxion-etl/etl/{task_id}"
+
+            logs_client = boto3.client("logs", region_name=os.getenv("AWS_REGION", "us-east-1"))
+
+            # Obtener streams que coincidan con el task_id
+            streams_response = logs_client.describe_log_streams(
+                logGroupName=log_group,
+                logStreamNamePrefix=log_stream_prefix,
+                orderBy='LastEventTime',
+                descending=True,
+                limit=1
+            )
+
+            if not streams_response.get('logStreams'):
+                # Todavía no hay logs, la tarea está iniciando
+                return {
+                    "logs": etl_status.get("logs", []),
+                    "status": "starting",
+                    "progress": 0,
+                    "task_id": task_id,
+                    "message": "Tarea ECS iniciando, esperando primeros logs..."
+                }
+
+            log_stream_name = streams_response['logStreams'][0]['logStreamName']
+
+            # Obtener logs desde el último timestamp
+            get_logs_params = {
+                "logGroupName": log_group,
+                "logStreamName": log_stream_name,
+                "startFromHead": True
+            }
+
+            # Si ya tenemos un timestamp, solo obtener logs nuevos
+            if etl_status.get("last_log_timestamp"):
+                get_logs_params["startTime"] = etl_status["last_log_timestamp"] + 1
+
+            logs_response = logs_client.get_log_events(**get_logs_params)
+
+            # Convertir logs de CloudWatch al formato esperado
+            cloudwatch_logs = []
+            for event in logs_response.get('events', []):
+                message = event['message'].strip()
+                if message:
+                    # Detectar nivel del log
+                    if "ERROR" in message or "❌" in message or "falló" in message.lower():
+                        level = "error"
+                    elif "WARNING" in message or "⚠️" in message:
+                        level = "warning"
+                    elif "✅" in message or "exitoso" in message.lower():
+                        level = "success"
+                    else:
+                        level = "info"
+
+                    cloudwatch_logs.append({
+                        "timestamp": datetime.fromtimestamp(event['timestamp'] / 1000).isoformat(),
+                        "level": level,
+                        "message": message
+                    })
+
+            # Actualizar último timestamp
+            if logs_response.get('events'):
+                etl_status["last_log_timestamp"] = logs_response['events'][-1]['timestamp']
+
+            # Combinar logs iniciales con logs de CloudWatch
+            all_logs = etl_status.get("logs", []) + cloudwatch_logs
+
+            # Verificar si la tarea sigue corriendo
+            ecs = boto3.client("ecs", region_name=os.getenv("AWS_REGION", "us-east-1"))
+            task_response = ecs.describe_tasks(
+                cluster=os.getenv("ECS_CLUSTER_NAME", "fluxion-cluster"),
+                tasks=[etl_status["task_arn"]]
+            )
+
+            task_status = "running"
+            if task_response.get('tasks'):
+                last_status = task_response['tasks'][0]['lastStatus']
+                if last_status == "STOPPED":
+                    task_status = "completed"
+                    etl_status["running"] = False
+
+            return {
+                "logs": all_logs,
+                "status": task_status,
+                "progress": 50 if task_status == "running" else 100,
+                "task_id": task_id,
+                "log_stream": log_stream_name,
+                "ubicacion_solicitada": etl_status.get("ubicacion_solicitada")
+            }
+
+        except Exception as e:
+            logger.error(f"Error obteniendo logs de CloudWatch: {str(e)}")
+            # Fallback a logs locales si falla CloudWatch
+            return {
+                "logs": etl_status.get("logs", []),
+                "status": "running" if etl_status["running"] else "completed",
+                "progress": etl_status.get("progress", 0),
+                "error": f"Error obteniendo logs de CloudWatch: {str(e)}"
+            }
+
+    # Modo desarrollo: logs locales
     return {
         "logs": etl_status.get("logs", []),
         "status": "running" if etl_status["running"] else "completed",
-        "progress": etl_status.get("progress", 0)
+        "progress": etl_status.get("progress", 0),
+        "ubicacion_solicitada": etl_status.get("ubicacion_solicitada")
     }
 
 # ============================================================================
