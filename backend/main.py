@@ -1308,7 +1308,15 @@ async def run_etl_ventas_background(ubicacion_id: Optional[str] = None, fecha_in
                     break
                 line_text = line.decode().strip()
                 if line_text:
-                    level = "error" if stream_name == "stderr" else "info"
+                    # Detectar el nivel real del log basado en contenido
+                    if "ERROR" in line_text or "❌" in line_text or "falló" in line_text.lower():
+                        level = "error"
+                    elif "WARNING" in line_text or "⚠️" in line_text or "warning" in line_text.lower():
+                        level = "warning"
+                    elif "✅" in line_text or "exitoso" in line_text.lower() or "completado" in line_text.lower():
+                        level = "success"
+                    else:
+                        level = "info"
 
                     ventas_etl_status["logs"].append({
                         "timestamp": datetime.now().isoformat(),
@@ -1426,7 +1434,15 @@ async def run_etl_background(ubicacion_id: Optional[str] = None):
                     break
                 line_text = line.decode().strip()
                 if line_text:
-                    level = "error" if stream_name == "stderr" else "info"
+                    # Detectar el nivel real del log basado en contenido
+                    if "ERROR" in line_text or "❌" in line_text or "falló" in line_text.lower():
+                        level = "error"
+                    elif "WARNING" in line_text or "⚠️" in line_text or "warning" in line_text.lower():
+                        level = "warning"
+                    elif "✅" in line_text or "exitoso" in line_text.lower() or "completado" in line_text.lower():
+                        level = "success"
+                    else:
+                        level = "info"
 
                     # Detectar progreso de tiendas en el output
                     import re
@@ -1500,11 +1516,6 @@ async def run_etl_background(ubicacion_id: Optional[str] = None):
         if exitoso:
             # Contar registros actualizados CON DETALLE POR TIENDA
             with get_db_connection() as conn:
-                total_registros = conn.execute("""
-                    SELECT COUNT(*) FROM inventario_raw
-                    WHERE DATE(fecha_extraccion) = CURRENT_DATE
-                """).fetchone()[0]
-
                 # Obtener detalle por ubicación
                 ubicaciones_detalle = []
                 if ubicacion_id:
@@ -1553,6 +1564,8 @@ async def run_etl_background(ubicacion_id: Optional[str] = None):
                         })
 
                 ubicaciones_procesadas = [u["id"] for u in ubicaciones_detalle]
+                # Calcular total de registros de las ubicaciones procesadas
+                total_registros = sum(u["registros"] for u in ubicaciones_detalle)
 
             message = f"✅ ETL completado: {len(ubicaciones_procesadas)} ubicaciones, {total_registros:,} registros"
 

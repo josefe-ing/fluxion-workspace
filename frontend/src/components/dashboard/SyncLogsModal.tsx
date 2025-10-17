@@ -226,11 +226,16 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
               } else {
                 setLogs(prev => [...prev, {
                   timestamp: new Date().toISOString(),
-                  level: 'error',
-                  message: `❌ ${ubicacionId} no está disponible. Verifica la VPN y conexión.`
+                  level: 'warning',
+                  message: `⚠️ ${ubicacionId} no respondió al test de conectividad. Intentando sincronización de todas formas...`
                 }]);
-                setIsRunning(false);
-                return;
+                // Inicializar status de esta tienda aunque el test haya fallado
+                setTiendasStatus([{
+                  id: ubicacionId,
+                  nombre: ubicacionId,
+                  status: 'pending',
+                  success: false
+                }]);
               }
             } else {
               setLogs(prev => [...prev, {
