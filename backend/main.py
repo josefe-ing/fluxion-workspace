@@ -1817,16 +1817,36 @@ async def test_connection_generic():
 async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: BackgroundTasks):
     """Inicia el ETL de inventario en background y retorna inmediatamente"""
 
+    # Check si hay un ETL corriendo, pero con timeout de 10 minutos
     if etl_status["running"]:
-        raise HTTPException(status_code=409, detail="ETL ya está en ejecución")
+        # Si ha pasado más de 10 minutos, asumir que está colgado y permitir override
+        last_update = etl_status.get("last_update")
+        if last_update:
+            time_elapsed = datetime.now() - last_update
+            if time_elapsed > timedelta(minutes=10):
+                logger.warning(f"ETL colgado detectado (>10 min), permitiendo override")
+                etl_status["running"] = False
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"ETL ya está en ejecución. Tiempo transcurrido: {time_elapsed.seconds}s"
+                )
+        else:
+            raise HTTPException(status_code=409, detail="ETL ya está en ejecución")
 
-    # Inicializar estado
+    # Inicializar estado COMPLETAMENTE LIMPIO
+    etl_status.clear()
     etl_status["running"] = True
     etl_status["progress"] = 0
-    etl_status["message"] = "Iniciando ETL..."
+    etl_status["message"] = f"Iniciando ETL para {request.ubicacion_id if request.ubicacion_id else 'todas las ubicaciones'}..."
     etl_status["result"] = None
-    etl_status["logs"] = []  # Limpiar logs anteriores
-    etl_status["tiendas_status"] = []  # Limpiar status de tiendas
+    etl_status["logs"] = []
+    etl_status["tiendas_status"] = []
+    etl_status["last_update"] = datetime.now()
+    etl_status["ubicacion_solicitada"] = request.ubicacion_id
+
+    # Log inicial claro
+    logger.info(f"🔄 Iniciando sincronización para: {request.ubicacion_id if request.ubicacion_id else 'TODAS'}")
 
     # Detectar entorno y ejecutar la función correspondiente
     if is_production_environment():
@@ -1844,7 +1864,8 @@ async def trigger_etl_sync(request: ETLSyncRequest, background_tasks: Background
         "success": True,
         "message": message,
         "status": "running",
-        "environment": "production" if is_production_environment() else "development"
+        "environment": "production" if is_production_environment() else "development",
+        "ubicacion_id": request.ubicacion_id
     }
 
 @app.get("/api/etl/logs", tags=["ETL"])
