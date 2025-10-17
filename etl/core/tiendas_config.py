@@ -7,6 +7,16 @@ Actualizado: 2024-09-25
 from typing import Dict, Any
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+# Cargar variables de entorno desde .env
+try:
+    from dotenv import load_dotenv
+    # Buscar .env en el directorio etl (parent del core)
+    env_path = Path(__file__).parent.parent / '.env'
+    load_dotenv(dotenv_path=env_path)
+except ImportError:
+    print("⚠️  python-dotenv no instalado, usando variables de sistema")
 
 # Helper functions para obtener credenciales
 def get_sql_user():
@@ -16,6 +26,29 @@ def get_sql_user():
 def get_sql_pass():
     """Obtiene el password SQL de variables de entorno"""
     return os.getenv("SQL_PASS", "AxPG_25!")
+
+def get_environment():
+    """Detecta si estamos en local o producción AWS"""
+    return os.getenv("ETL_ENVIRONMENT", "local").lower()
+
+def get_server_ip(local_ip: str, prod_ip: str = None):
+    """
+    Retorna la IP correcta según el entorno
+
+    Args:
+        local_ip: IP para entorno local (directo a la tienda)
+        prod_ip: IP para producción AWS (via WireGuard/NAT). Si es None, usa local_ip
+
+    Returns:
+        IP correcta según ETL_ENVIRONMENT
+    """
+    env = get_environment()
+
+    if env == "production" or env == "prod":
+        return prod_ip if prod_ip else local_ip
+
+    # Por defecto, usar local
+    return local_ip
 
 @dataclass
 class TiendaConfig:
@@ -135,7 +168,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_08": TiendaConfig(
         ubicacion_id="tienda_08",
         ubicacion_nombre="BOSQUE",
-        server_ip="10.0.2.244",  # WireGuard bridge with port forwarding to 192.168.150.10
+        server_ip=get_server_ip(
+            local_ip="192.168.150.10",     # IP local directa
+            prod_ip="10.0.2.244"            # WireGuard bridge en AWS
+        ),
         database_name="VAD20",  # BOSQUE usa VAD20, no VAD10
         username=get_sql_user(),
         password=get_sql_pass(),
@@ -238,6 +274,18 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         port=1433,
         activo=True,
         codigo_deposito="1902"
+    ),
+
+    "tienda_20": TiendaConfig(
+        ubicacion_id="tienda_20",
+        ubicacion_nombre="TAZAJAL",
+        server_ip="192.168.220.10",
+        database_name="VAD10",
+        username=get_sql_user(),
+        password=get_sql_pass(),
+        port=1433,
+        activo=False,  # Desactivada hasta confirmar código de depósito
+        codigo_deposito="2002"  # TODO: Confirmar código de depósito
     ),
 
     # CEDIs - Configurados con datos reales
