@@ -50,6 +50,28 @@ def get_server_ip(local_ip: str, prod_ip: str = None):
     # Por defecto, usar local
     return local_ip
 
+def get_server_port(local_port: int, prod_port: int = None):
+    """
+    Retorna el puerto correcto según el entorno
+
+    Args:
+        local_port: Puerto para entorno local (directo a la tienda)
+        prod_port: Puerto para producción AWS (via WireGuard port forwarding). Si es None, usa local_port
+
+    Returns:
+        Puerto correcto según ETL_ENVIRONMENT
+    """
+    env = get_environment()
+
+    if env == "production" or env == "prod":
+        return prod_port if prod_port else local_port
+
+    # Por defecto, usar local
+    return local_port
+
+# IP del WireGuard bridge en producción AWS
+WIREGUARD_BRIDGE_IP = "10.0.2.179"
+
 @dataclass
 class TiendaConfig:
     """Configuración de una tienda"""
@@ -84,11 +106,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_01": TiendaConfig(
         ubicacion_id="tienda_01",
         ubicacion_nombre="PERIFERICO",
-        server_ip="192.168.20.12",
+        server_ip=get_server_ip(
+            local_ip="192.168.20.12",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14301
+        ),
         activo=True,
         codigo_deposito="0102"
     ),
@@ -96,11 +124,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_02": TiendaConfig(
         ubicacion_id="tienda_02",
         ubicacion_nombre="AV. BOLIVAR",
-        server_ip="192.168.30.52",
+        server_ip=get_server_ip(
+            local_ip="192.168.30.52",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14302
+        ),
         activo=True,
         codigo_deposito="0202"
     ),
@@ -108,11 +142,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_03": TiendaConfig(
         ubicacion_id="tienda_03",
         ubicacion_nombre="MAÑONGO",
-        server_ip="192.168.50.20",
+        server_ip=get_server_ip(
+            local_ip="192.168.50.20",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14303
+        ),
         activo=True,
         codigo_deposito="0302"
     ),
@@ -120,11 +160,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_04": TiendaConfig(
         ubicacion_id="tienda_04",
         ubicacion_nombre="SAN DIEGO",
-        server_ip="192.168.140.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.140.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14304
+        ),
         activo=True,
         codigo_deposito="0402"
     ),
@@ -132,11 +178,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_05": TiendaConfig(
         ubicacion_id="tienda_05",
         ubicacion_nombre="VIVIENDA",
-        server_ip="192.168.80.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.80.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14305
+        ),
         activo=True,
         codigo_deposito="0502"
     ),
@@ -144,11 +196,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_06": TiendaConfig(
         ubicacion_id="tienda_06",
         ubicacion_nombre="NAGUANAGUA",
-        server_ip="192.168.40.53",
+        server_ip=get_server_ip(
+            local_ip="192.168.40.53",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14306
+        ),
         activo=True,
         codigo_deposito="0602"
     ),
@@ -156,11 +214,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_07": TiendaConfig(
         ubicacion_id="tienda_07",
         ubicacion_nombre="CENTRO",
-        server_ip="192.168.130.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.130.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14307
+        ),
         activo=True,
         codigo_deposito="0702"
     ),
@@ -183,11 +247,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_09": TiendaConfig(
         ubicacion_id="tienda_09",
         ubicacion_nombre="GUACARA",
-        server_ip="192.168.120.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.120.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14309
+        ),
         activo=True,
         codigo_deposito="0902"
     ),
@@ -195,11 +265,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_10": TiendaConfig(
         ubicacion_id="tienda_10",
         ubicacion_nombre="FERIAS",
-        server_ip="192.168.70.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.70.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14310
+        ),
         activo=True,
         codigo_deposito="1002"
     ),
@@ -207,11 +283,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_11": TiendaConfig(
         ubicacion_id="tienda_11",
         ubicacion_nombre="FLOR AMARILLO",
-        server_ip="192.168.160.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.160.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14311
+        ),
         activo=True,
         codigo_deposito="1102"
     ),
@@ -219,11 +301,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_12": TiendaConfig(
         ubicacion_id="tienda_12",
         ubicacion_nombre="PARAPARAL",
-        server_ip="192.168.170.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.170.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
+        port=get_server_port(
+            local_port=1433,
+            prod_port=14312
+        ),
         activo=True,
         codigo_deposito="1202"
     ),
@@ -231,11 +319,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_13": TiendaConfig(
         ubicacion_id="tienda_13",
         ubicacion_nombre="NAGUANAGUA III",
-        server_ip="192.168.190.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.190.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=14348,
+        port=get_server_port(
+            local_port=14348,
+            prod_port=14313
+        ),
         activo=True,
         codigo_deposito="1302"
     ),
@@ -243,11 +337,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_15": TiendaConfig(
         ubicacion_id="tienda_15",
         ubicacion_nombre="ISABELICA",
-        server_ip="192.168.180.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.180.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
+        port=get_server_port(
+            local_port=1433,
+            prod_port=14315
+        ),
         activo=True,
         codigo_deposito="1502"
     ),
@@ -255,11 +355,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_16": TiendaConfig(
         ubicacion_id="tienda_16",
         ubicacion_nombre="TOCUYITO",
-        server_ip="192.168.110.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.110.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
+        port=get_server_port(
+            local_port=1433,
+            prod_port=14316
+        ),
         activo=True,
         codigo_deposito="1602"
     ),
@@ -267,11 +373,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_19": TiendaConfig(
         ubicacion_id="tienda_19",
         ubicacion_nombre="GUIGUE",
-        server_ip="192.168.210.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.210.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
+        port=get_server_port(
+            local_port=1433,
+            prod_port=14319
+        ),
         activo=True,
         codigo_deposito="1902"
     ),
@@ -279,24 +391,36 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_20": TiendaConfig(
         ubicacion_id="tienda_20",
         ubicacion_nombre="TAZAJAL",
-        server_ip="192.168.220.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.220.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
-        activo=False,  # Desactivada hasta confirmar código de depósito
-        codigo_deposito="2002"  # TODO: Confirmar código de depósito
+        port=get_server_port(
+            local_port=1433,
+            prod_port=14320
+        ),
+        activo=True,
+        codigo_deposito="2001"
     ),
 
     # CEDIs - Configurados con datos reales
     "cedi_seco": TiendaConfig(
         ubicacion_id="cedi_seco",
         ubicacion_nombre="CEDI Seco",
-        server_ip="192.168.90.20",
+        server_ip=get_server_ip(
+            local_ip="192.168.90.20",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
+        port=get_server_port(
+            local_port=1433,
+            prod_port=14401
+        ),
         codigo_deposito="0001",
         activo=True,
         tipo="cedi"
@@ -305,11 +429,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "cedi_frio": TiendaConfig(
         ubicacion_id="cedi_frio",
         ubicacion_nombre="CEDI Frio",
-        server_ip="192.168.170.20",
+        server_ip=get_server_ip(
+            local_ip="192.168.170.20",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
+        port=get_server_port(
+            local_port=1433,
+            prod_port=14402
+        ),
         codigo_deposito="1710",
         activo=True,
         tipo="cedi"
@@ -318,11 +448,17 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "cedi_verde": TiendaConfig(
         ubicacion_id="cedi_verde",
         ubicacion_nombre="CEDI Verde",
-        server_ip="192.168.200.10",
+        server_ip=get_server_ip(
+            local_ip="192.168.200.10",
+            prod_ip=WIREGUARD_BRIDGE_IP
+        ),
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=1433,
+        port=get_server_port(
+            local_port=1433,
+            prod_port=14403
+        ),
         codigo_deposito="1801",
         activo=True,
         tipo="cedi"

@@ -592,7 +592,8 @@ PersistentKeepalive = 25`),
         AWS_REGION: this.region,
         DATABASE_PATH: '/data/fluxion_production.db',  // Use EFS shared storage
         ETL_MODE: 'etl_inventario.py',
-        ETL_ARGS: '--tienda tienda_08',  // Solo BOSQUE para testing (note: --tienda singular)
+        ETL_ARGS: '--todas',  // Todas las tiendas activas (20 ubicaciones)
+        ETL_ENVIRONMENT: 'production',  // Usar IPs y puertos de producción via WireGuard
         RUN_MODE: 'scheduled',
         SENTRY_DSN: process.env.SENTRY_DSN || '',
       },
