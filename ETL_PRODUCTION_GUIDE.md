@@ -47,13 +47,19 @@ Después de ejecutar el ETL, puedes ver los logs:
 
 ```bash
 # Logs del ETL (últimos 10 minutos)
-aws logs tail /aws/ecs/fluxion-etl --follow --since 10m
+aws logs tail FluxionStackV2-FluxionETLTasketlLogGroupEB088C6B-xzaljvRuwjkm --follow --since 10m
 
 # Filtrar solo errores
-aws logs tail /aws/ecs/fluxion-etl --follow --filter-pattern "ERROR"
+aws logs tail FluxionStackV2-FluxionETLTasketlLogGroupEB088C6B-xzaljvRuwjkm --follow --filter-pattern "ERROR"
 
 # Ver logs de una tarea específica
-aws logs tail /aws/ecs/fluxion-etl --follow --format short
+aws logs tail FluxionStackV2-FluxionETLTasketlLogGroupEB088C6B-xzaljvRuwjkm --follow --format short
+```
+
+**Tip:** Puedes guardar el log group en una variable para comandos más cortos:
+```bash
+export ETL_LOG_GROUP="FluxionStackV2-FluxionETLTasketlLogGroupEB088C6B-xzaljvRuwjkm"
+aws logs tail $ETL_LOG_GROUP --follow --since 5m
 ```
 
 ### Verificar Estado de la Tarea
@@ -122,7 +128,7 @@ ETL_ENVIRONMENT=production
 ### Error: Task failed to start
 ```bash
 # Verificar logs de CloudWatch
-aws logs tail /aws/ecs/fluxion-etl --since 30m
+aws logs tail FluxionStackV2-FluxionETLTasketlLogGroupEB088C6B-xzaljvRuwjkm --since 30m
 
 # Verificar security group permite salida
 aws ec2 describe-security-groups --group-ids <SG_ID>
@@ -190,6 +196,8 @@ aws secretsmanager update-secret \
 ## Contacto
 
 Para problemas o preguntas sobre el ETL:
-- Logs: `/aws/ecs/fluxion-etl`
-- Task Definition: `FluxionStackV2FluxionETLTask073145C9:7`
-- Cluster: `fluxion-cluster`
+- **Log Group:** `FluxionStackV2-FluxionETLTasketlLogGroupEB088C6B-xzaljvRuwjkm`
+- **Task Definition:** `FluxionStackV2FluxionETLTask073145C9:7`
+- **Cluster:** `fluxion-cluster`
+- **VPC:** `vpc-0612cd85dfc5a044f`
+- **WireGuard Instance:** `i-03d5aab7603955561`
