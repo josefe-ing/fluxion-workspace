@@ -5,7 +5,8 @@
 set -e
 
 CLUSTER="fluxion-cluster"
-TASK_DEFINITION="FluxionStackV2FluxionETLTask073145C9:7"
+# Get the latest ACTIVE task definition
+TASK_DEFINITION=$(aws ecs list-task-definitions --family-prefix FluxionStackV2FluxionETLTask073145C9 --sort DESC --max-items 1 --status ACTIVE --query 'taskDefinitionArns[0]' --output text | sed 's/.*\///')
 SUBNET=$(aws ec2 describe-subnets --filters "Name=tag:aws:cloudformation:logical-id,Values=FluxionVPCPrivateSubnet1Subnet*" --query 'Subnets[0].SubnetId' --output text)
 SECURITY_GROUP=$(aws ec2 describe-security-groups --filters "Name=tag:aws:cloudformation:logical-id,Values=*ETLSecurityGroup*" --query 'SecurityGroups[0].GroupId' --output text)
 
