@@ -1,5 +1,6 @@
 import ConnectivityPanel from './ConnectivityPanel';
 import InventarioETLPanel from './InventarioETLPanel';
+import VentasETLPanel from './VentasETLPanel';
 
 export default function ETLControlCenter() {
   return (
@@ -21,8 +22,8 @@ export default function ETLControlCenter() {
           {/* 2. Inventario ETL Panel */}
           <InventarioETLPanel />
 
-          {/* 3. TODO: Ventas ETL Panel */}
-          {/* <VentasETLPanel /> */}
+          {/* 3. Ventas ETL Panel */}
+          <VentasETLPanel />
         </div>
       </div>
     </div>

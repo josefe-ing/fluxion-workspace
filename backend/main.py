@@ -2202,6 +2202,80 @@ async def get_ventas_summary():
         logger.error(f"Error obteniendo resumen de ventas: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
+@app.get("/api/ventas/gaps", tags=["Ventas"])
+async def get_ventas_gaps():
+    """
+    Analiza gaps de data de ventas por tienda
+    Retorna: fecha más antigua, más reciente, días atrasados, y gaps detectados
+    """
+    try:
+        with get_db_connection() as conn:
+            # Query para obtener rango de fechas por tienda
+            query = """
+                SELECT
+                    ubicacion_id,
+                    ubicacion_nombre,
+                    COUNT(*) as total_registros,
+                    MIN(fecha)::DATE as fecha_mas_antigua,
+                    MAX(fecha)::DATE as fecha_mas_reciente,
+                    DATE_DIFF('day', MAX(fecha)::DATE, CURRENT_DATE) as dias_atrasados
+                FROM ventas_raw
+                GROUP BY ubicacion_id, ubicacion_nombre
+                ORDER BY ubicacion_id
+            """
+
+            result = conn.execute(query).fetchall()
+
+            gaps_info = []
+            for row in result:
+                ubicacion_id = row[0]
+                ubicacion_nombre = row[1]
+                total_registros = row[2]
+                fecha_mas_antigua = row[3]
+                fecha_mas_reciente = row[4]
+                dias_atrasados = row[5] if row[5] is not None else 0
+
+                # Calcular días esperados vs días con data
+                if fecha_mas_antigua and fecha_mas_reciente:
+                    from datetime import datetime, timedelta
+                    fecha_antigua_dt = datetime.strptime(str(fecha_mas_antigua), '%Y-%m-%d')
+                    fecha_reciente_dt = datetime.strptime(str(fecha_mas_reciente), '%Y-%m-%d')
+                    dias_totales = (fecha_reciente_dt - fecha_antigua_dt).days + 1
+
+                    # Query para contar días únicos con ventas
+                    dias_con_data_query = f"""
+                        SELECT COUNT(DISTINCT fecha::DATE)
+                        FROM ventas_raw
+                        WHERE ubicacion_id = '{ubicacion_id}'
+                    """
+                    dias_con_data = conn.execute(dias_con_data_query).fetchone()[0]
+
+                    gaps_info.append({
+                        "ubicacion_id": ubicacion_id,
+                        "ubicacion_nombre": ubicacion_nombre,
+                        "total_registros": total_registros,
+                        "fecha_mas_antigua": str(fecha_mas_antigua),
+                        "fecha_mas_reciente": str(fecha_mas_reciente),
+                        "dias_atrasados": dias_atrasados,
+                        "dias_totales_periodo": dias_totales,
+                        "dias_con_data": dias_con_data,
+                        "dias_faltantes": dias_totales - dias_con_data,
+                        "completitud_porcentaje": round((dias_con_data / dias_totales * 100), 2) if dias_totales > 0 else 0,
+                        "necesita_actualizacion": dias_atrasados > 1,
+                        "tiene_gaps_historicos": (dias_totales - dias_con_data) > 0
+                    })
+
+            return {
+                "tiendas": gaps_info,
+                "total_tiendas": len(gaps_info),
+                "tiendas_desactualizadas": sum(1 for t in gaps_info if t["necesita_actualizacion"]),
+                "tiendas_con_gaps": sum(1 for t in gaps_info if t["tiene_gaps_historicos"])
+            }
+
+    except Exception as e:
+        logger.error(f"Error analizando gaps de ventas: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 @app.get("/api/ventas/detail", response_model=PaginatedVentasResponse, tags=["Ventas"])
 async def get_ventas_detail(
     ubicacion_id: Optional[str] = None,
