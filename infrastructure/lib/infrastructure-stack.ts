@@ -723,7 +723,7 @@ PersistentKeepalive = 25`),
           'logs:FilterLogEvents',
         ],
         resources: [
-          `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/ecs/FluxionStackV2-FluxionETLTask*:*`,
+          `arn:aws:logs:${this.region}:${this.account}:log-group:FluxionStackV2-FluxionETLTask*:*`,
         ],
       })
     );
@@ -872,7 +872,7 @@ PersistentKeepalive = 25`),
           'logs:FilterLogEvents',
         ],
         resources: [
-          `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/ecs/FluxionStackV2-FluxionVentasETLTask*:*`,
+          `arn:aws:logs:${this.region}:${this.account}:log-group:FluxionStackV2-FluxionVentasETLTask*:*`,
         ],
       })
     );
