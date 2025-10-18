@@ -597,6 +597,11 @@ PersistentKeepalive = 25`),
         RUN_MODE: 'scheduled',
         SENTRY_DSN: process.env.SENTRY_DSN || '',
       },
+      secrets: {
+        // SQL credentials from Secrets Manager
+        SQL_USER: ecs.Secret.fromSecretsManager(sqlCredentials, 'username'),
+        SQL_PASS: ecs.Secret.fromSecretsManager(sqlCredentials, 'password'),
+      },
       stopTimeout: cdk.Duration.minutes(2),
     });
 
@@ -780,6 +785,11 @@ PersistentKeepalive = 25`),
         ETL_ARGS: '--fecha-inicio 2025-01-01 --fecha-fin 2025-12-31 --todas',  // Default args
         RUN_MODE: 'scheduled',
         SENTRY_DSN: process.env.SENTRY_DSN || '',
+      },
+      secrets: {
+        // SQL credentials from Secrets Manager
+        SQL_USER: ecs.Secret.fromSecretsManager(sqlCredentials, 'username'),
+        SQL_PASS: ecs.Secret.fromSecretsManager(sqlCredentials, 'password'),
       },
       stopTimeout: cdk.Duration.minutes(2),  // Fargate max is 120 seconds
     });
