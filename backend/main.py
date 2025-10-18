@@ -1642,107 +1642,101 @@ async def get_etl_status():
 @app.get("/api/etl/check-connectivity", tags=["ETL"])
 async def check_connectivity():
     """Verifica la conectividad a todas las tiendas antes de ejecutar el ETL"""
-    try:
-        test_script = Path(__file__).parent.parent / "etl" / "core" / "test_conectividad_simple.py"
-        etl_venv_python = Path(__file__).parent.parent / "etl" / "venv" / "bin" / "python3"
-        python_cmd = str(etl_venv_python) if etl_venv_python.exists() else "python3"
+    import socket
+    from datetime import datetime
 
-        # Ejecutar el script de conectividad
-        process = await asyncio.create_subprocess_exec(
-            python_cmd, str(test_script),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(test_script.parent)  # Ejecutar en el directorio core
-        )
+    async def test_ip_port(ip: str, port: int, timeout: float = 0.5):
+        """Test IP and port connectivity"""
+        import time
+        start_time = time.time()
 
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=75)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((ip, port))
+            sock.close()
 
-        if process.returncode == 0:
-            # Parsear la salida para extraer información
-            output_lines = stdout.decode().split('\n')
-            tiendas_status = []
+            response_time = (time.time() - start_time) * 1000  # ms
 
-            for line in output_lines:
-                if line.strip() and not line.startswith('=') and not line.startswith('-') and not line.startswith('🔍') and not line.startswith('📊') and not line.startswith('🚀') and not line.startswith('⚠️'):
-                    parts = line.split()
-                    if len(parts) >= 6 and (parts[0].startswith('tienda') or parts[0].startswith('cedi')):
-                        try:
-                            ubicacion_id = parts[0]
+            # result == 0 means successful connection
+            return True, result == 0, response_time
+        except (socket.gaierror, socket.timeout, OSError):
+            response_time = (time.time() - start_time) * 1000
+            return False, False, response_time
 
-                            # Encontrar la IP (formato xxx.xxx.xxx.xxx)
-                            ip_idx = None
-                            for i, part in enumerate(parts):
-                                if '.' in part and all(c.isdigit() or c == '.' for c in part):
-                                    ip_idx = i
-                                    break
-
-                            if ip_idx is None:
-                                continue
-
-                            # Nombre es todo entre ubicacion_id e IP
-                            nombre = ' '.join(parts[1:ip_idx])
-                            ip = parts[ip_idx]
-                            puerto = parts[ip_idx + 1]
-
-                            # Tiempo es el último elemento
-                            tiempo_str = parts[-1].replace('ms', '')
-
-                            # Estado es todo entre puerto y tiempo
-                            estado_parts = parts[ip_idx + 2:-1]
-                            estado_text = ' '.join(estado_parts)
-
-                            # Determinar si es accesible
-                            puerto_ok = '✅' in estado_text or 'OK' in estado_text
-                            ip_ok = '🟡' in estado_text
-                            accesible = puerto_ok or ip_ok
-
-                            # Error message
-                            error_msg = None
-                            if not accesible:
-                                if 'NO REACH' in estado_text or '❌' in estado_text:
-                                    error_msg = "No alcanzable"
-                                else:
-                                    error_msg = "Timeout"
-
-                            tiendas_status.append({
-                                "ubicacion_id": ubicacion_id,
-                                "nombre": nombre,
-                                "accesible": accesible,
-                                "tiempo_respuesta": float(tiempo_str) if tiempo_str.replace('.','').isdigit() else None,
-                                "error": error_msg
-                            })
-                        except (ValueError, IndexError) as e:
-                            logger.warning(f"Error parseando línea: {line} - {str(e)}")
-                            continue
-
-            # Contar tiendas accesibles
-            conectadas = sum(1 for t in tiendas_status if t['accesible'])
-            total = len(tiendas_status)
-
-            return {
-                "success": True,
-                "tiendas": tiendas_status,
-                "resumen": {
-                    "total": total,
-                    "conectadas": conectadas,
-                    "porcentaje": (conectadas / total * 100) if total > 0 else 0
-                }
-            }
-        else:
-            return {
-                "success": False,
-                "error": stderr.decode(),
-                "tiendas": [],
-                "resumen": {"total": 0, "conectadas": 0, "porcentaje": 0}
-            }
-
-    except asyncio.TimeoutError:
-        return {
-            "success": False,
-            "error": "Timeout verificando conectividad",
-            "tiendas": [],
-            "resumen": {"total": 0, "conectadas": 0, "porcentaje": 0}
+    # Hardcoded server IPs and ports from tiendas_config.py
+    TIENDAS_NETWORK = {
+            "tienda_01": {"ip": "192.168.20.12", "port": 14348},
+            "tienda_02": {"ip": "192.168.30.52", "port": 14348},
+            "tienda_03": {"ip": "192.168.50.20", "port": 14348},
+            "tienda_04": {"ip": "192.168.140.10", "port": 14348},
+            "tienda_05": {"ip": "192.168.80.10", "port": 14348},
+            "tienda_06": {"ip": "192.168.40.53", "port": 14348},
+            "tienda_07": {"ip": "192.168.130.10", "port": 14348},
+            "tienda_08": {"ip": "192.168.150.10", "port": 14348},
+            "tienda_09": {"ip": "192.168.120.10", "port": 14348},
+            "tienda_10": {"ip": "192.168.70.10", "port": 14348},
+            "tienda_11": {"ip": "192.168.160.10", "port": 14348},
+            "tienda_12": {"ip": "192.168.170.10", "port": 1433},
+            "tienda_13": {"ip": "192.168.190.10", "port": 14348},
+            "tienda_15": {"ip": "192.168.180.10", "port": 1433},
+            "tienda_16": {"ip": "192.168.110.10", "port": 1433},
+            "tienda_19": {"ip": "192.168.210.10", "port": 1433},
+            "tienda_20": {"ip": "192.168.220.10", "port": 1433},
+            "cedi_seco": {"ip": "192.168.90.20", "port": 1433},
+            "cedi_frio": {"ip": "192.168.170.20", "port": 1433},
+            "cedi_verde": {"ip": "192.168.200.10", "port": 1433},
         }
+
+    try:
+        # Get ubicaciones from database
+        ubicaciones_response = await get_ubicaciones()
+        ubicaciones = ubicaciones_response if isinstance(ubicaciones_response, list) else []
+
+        # Test connectivity for each ubicacion
+        tiendas_status = []
+        for ubicacion in ubicaciones:
+            # Get ubicacion data (could be dict or object)
+            ub_id = ubicacion.id if hasattr(ubicacion, 'id') else ubicacion.get('id')
+            ub_nombre = ubicacion.nombre if hasattr(ubicacion, 'nombre') else ubicacion.get('nombre')
+
+            # Get network info from hardcoded config
+            network_info = TIENDAS_NETWORK.get(ub_id)
+            if not network_info:
+                continue
+
+            ub_server_ip = network_info['ip']
+            ub_port = network_info['port']
+
+            ip_ok, puerto_ok, tiempo = await test_ip_port(ub_server_ip, ub_port)
+
+            accesible = puerto_ok or ip_ok
+            error_msg = None
+            if not accesible:
+                error_msg = "No alcanzable" if not ip_ok else "Puerto cerrado"
+
+            tiendas_status.append({
+                "ubicacion_id": ub_id,
+                "nombre": ub_nombre,
+                "accesible": accesible,
+                "tiempo_respuesta": tiempo,
+                "error": error_msg
+            })
+
+        # Contar tiendas accesibles
+        conectadas = sum(1 for t in tiendas_status if t['accesible'])
+        total = len(tiendas_status)
+
+        return {
+            "success": True,
+            "tiendas": tiendas_status,
+            "resumen": {
+                "total": total,
+                "conectadas": conectadas,
+                "porcentaje": (conectadas / total * 100) if total > 0 else 0
+            }
+        }
+
     except Exception as e:
         logger.error(f"Error verificando conectividad: {str(e)}")
         return {
