@@ -14,7 +14,7 @@ from typing import Dict, List, Tuple
 sys.path.append('.')
 from tiendas_config import TIENDAS_CONFIG
 
-def test_ip_port(ip: str, port: int, timeout: int = 3) -> Tuple[bool, bool, float]:
+def test_ip_port(ip: str, port: int, timeout: float = 0.5) -> Tuple[bool, bool, float]:
     """
     Prueba IP y puerto
     Returns: (ip_reachable, port_open, response_time)

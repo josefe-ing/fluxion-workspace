@@ -9,6 +9,7 @@ export default function Header() {
     { path: '/dashboard', label: 'Inventarios' },
     { path: '/ventas', label: 'Ventas' },
     { path: '/pedidos-sugeridos', label: 'Pedidos' },
+    { path: '/settings/etl', label: 'ETL' },
   ];
 
   const isActive = (path: string) => {
@@ -20,6 +21,9 @@ export default function Header() {
     }
     if (path === '/pedidos-sugeridos') {
       return location.pathname === path || location.pathname.startsWith('/pedidos-sugeridos/');
+    }
+    if (path === '/settings/etl') {
+      return location.pathname === path || location.pathname.startsWith('/settings/');
     }
     return location.pathname === path;
   };

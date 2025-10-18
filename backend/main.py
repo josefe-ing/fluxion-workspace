@@ -1655,7 +1655,7 @@ async def check_connectivity():
             cwd=str(test_script.parent)  # Ejecutar en el directorio core
         )
 
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=75)
 
         if process.returncode == 0:
             # Parsear la salida para extraer información
@@ -1665,26 +1665,58 @@ async def check_connectivity():
             for line in output_lines:
                 if line.strip() and not line.startswith('=') and not line.startswith('-') and not line.startswith('🔍') and not line.startswith('📊') and not line.startswith('🚀') and not line.startswith('⚠️'):
                     parts = line.split()
-                    if len(parts) >= 5 and parts[0].startswith('tienda'):
-                        tienda_id = parts[0]
-                        nombre = ' '.join(parts[1:-4])  # Nombre puede tener espacios
-                        ip = parts[-4]
-                        puerto = parts[-3]
-                        estado_icon = parts[-2]
-                        tiempo = parts[-1].replace('ms', '')
+                    if len(parts) >= 6 and (parts[0].startswith('tienda') or parts[0].startswith('cedi')):
+                        try:
+                            ubicacion_id = parts[0]
 
-                        tiendas_status.append({
-                            "id": tienda_id,
-                            "nombre": nombre,
-                            "ip": ip,
-                            "puerto": puerto,
-                            "conectado": '✅' in estado_icon,
-                            "ip_alcanzable": '✅' in estado_icon or '🟡' in estado_icon,
-                            "tiempo_ms": float(tiempo) if tiempo.replace('.','').isdigit() else 0
-                        })
+                            # Encontrar la IP (formato xxx.xxx.xxx.xxx)
+                            ip_idx = None
+                            for i, part in enumerate(parts):
+                                if '.' in part and all(c.isdigit() or c == '.' for c in part):
+                                    ip_idx = i
+                                    break
 
-            # Contar tiendas conectadas
-            conectadas = sum(1 for t in tiendas_status if t['conectado'])
+                            if ip_idx is None:
+                                continue
+
+                            # Nombre es todo entre ubicacion_id e IP
+                            nombre = ' '.join(parts[1:ip_idx])
+                            ip = parts[ip_idx]
+                            puerto = parts[ip_idx + 1]
+
+                            # Tiempo es el último elemento
+                            tiempo_str = parts[-1].replace('ms', '')
+
+                            # Estado es todo entre puerto y tiempo
+                            estado_parts = parts[ip_idx + 2:-1]
+                            estado_text = ' '.join(estado_parts)
+
+                            # Determinar si es accesible
+                            puerto_ok = '✅' in estado_text or 'OK' in estado_text
+                            ip_ok = '🟡' in estado_text
+                            accesible = puerto_ok or ip_ok
+
+                            # Error message
+                            error_msg = None
+                            if not accesible:
+                                if 'NO REACH' in estado_text or '❌' in estado_text:
+                                    error_msg = "No alcanzable"
+                                else:
+                                    error_msg = "Timeout"
+
+                            tiendas_status.append({
+                                "ubicacion_id": ubicacion_id,
+                                "nombre": nombre,
+                                "accesible": accesible,
+                                "tiempo_respuesta": float(tiempo_str) if tiempo_str.replace('.','').isdigit() else None,
+                                "error": error_msg
+                            })
+                        except (ValueError, IndexError) as e:
+                            logger.warning(f"Error parseando línea: {line} - {str(e)}")
+                            continue
+
+            # Contar tiendas accesibles
+            conectadas = sum(1 for t in tiendas_status if t['accesible'])
             total = len(tiendas_status)
 
             return {
