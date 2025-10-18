@@ -1920,10 +1920,11 @@ async def get_etl_logs():
             logs_client = boto3.client("logs", region_name=os.getenv("AWS_REGION", "us-east-1"))
 
             # Obtener streams que coincidan con el task_id
+            # Nota: Cuando usas logStreamNamePrefix, SOLO puedes ordenar por LogStreamName
             streams_response = logs_client.describe_log_streams(
                 logGroupName=log_group,
                 logStreamNamePrefix=log_stream_prefix,
-                orderBy='LastEventTime',
+                orderBy='LogStreamName',
                 descending=True,
                 limit=1
             )
