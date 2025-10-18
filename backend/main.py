@@ -1929,13 +1929,28 @@ async def get_etl_logs():
             )
 
             if not streams_response.get('logStreams'):
-                # Todavía no hay logs, la tarea está iniciando
+                # Todavía no hay logs, pero verificar si la tarea ya terminó
+                ecs = boto3.client("ecs", region_name=os.getenv("AWS_REGION", "us-east-1"))
+                task_response = ecs.describe_tasks(
+                    cluster=os.getenv("ECS_CLUSTER_NAME", "fluxion-cluster"),
+                    tasks=[etl_status["task_arn"]]
+                )
+
+                task_status = "starting"
+                if task_response.get('tasks'):
+                    last_status = task_response['tasks'][0]['lastStatus']
+                    if last_status == "RUNNING":
+                        task_status = "running"
+                    elif last_status == "STOPPED":
+                        task_status = "completed"
+                        etl_status["running"] = False
+
                 return {
                     "logs": etl_status.get("logs", []),
-                    "status": "starting",
-                    "progress": 0,
+                    "status": task_status,
+                    "progress": 10 if task_status == "starting" else (50 if task_status == "running" else 100),
                     "task_id": task_id,
-                    "message": "Tarea ECS iniciando, esperando primeros logs..."
+                    "message": f"Tarea ECS {task_status}, esperando logs..." if task_status != "completed" else "ETL completado"
                 }
 
             log_stream_name = streams_response['logStreams'][0]['logStreamName']
