@@ -692,12 +692,23 @@ PersistentKeepalive = 25`),
     backendTask.taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
+        actions: ['ecs:RunTask'],
+        resources: [etlTask.taskDefinitionArn],
+      })
+    );
+
+    // Grant Backend permission to describe and stop ETL task instances
+    // Note: DescribeTasks and StopTask require task instance ARN, not task definition ARN
+    backendTask.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
         actions: [
-          'ecs:RunTask',
           'ecs:DescribeTasks',
           'ecs:StopTask',
         ],
-        resources: [etlTask.taskDefinitionArn],
+        resources: [
+          `arn:aws:ecs:${this.region}:${this.account}:task/fluxion-cluster/*`,
+        ],
       })
     );
 
@@ -841,14 +852,15 @@ PersistentKeepalive = 25`),
     backendTask.taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        actions: [
-          'ecs:RunTask',
-          'ecs:DescribeTasks',
-          'ecs:StopTask',
-        ],
+        actions: ['ecs:RunTask'],
         resources: [ventasEtlTask.taskDefinitionArn],
       })
     );
+
+    // Grant Backend permission to describe and stop Ventas ETL task instances
+    // Note: DescribeTasks and StopTask require task instance ARN, not task definition ARN
+    // This permission is already granted above for all tasks in the cluster
+    // (see ecs:DescribeTasks/StopTask on arn:aws:ecs:.../task/fluxion-cluster/*)
 
     // Grant Backend permission to pass Ventas ETL task role (required for ecs:RunTask)
     backendTask.taskRole.addToPrincipalPolicy(
