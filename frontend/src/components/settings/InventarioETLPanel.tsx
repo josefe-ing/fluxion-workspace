@@ -37,6 +37,16 @@ export default function InventarioETLPanel() {
         setLogs(response.data.logs || []);
 
         if (response.data.status === 'completed') {
+          // Do one final poll after a short delay to capture final logs
+          setTimeout(async () => {
+            try {
+              const finalResponse = await http.get('/api/etl/logs');
+              setLogs(finalResponse.data.logs || []);
+            } catch (error) {
+              console.error('Error fetching final logs:', error);
+            }
+          }, 1000);
+
           setIsRunning(false);
           setLastSync(new Date().toISOString());
 
