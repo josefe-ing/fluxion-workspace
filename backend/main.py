@@ -2021,13 +2021,55 @@ async def get_etl_logs():
 
         except Exception as e:
             logger.error(f"Error obteniendo logs de CloudWatch: {str(e)}")
-            # Fallback a logs locales si falla CloudWatch
-            return {
-                "logs": etl_status.get("logs", []),
-                "status": "running" if etl_status["running"] else "completed",
-                "progress": etl_status.get("progress", 0),
-                "error": f"Error obteniendo logs de CloudWatch: {str(e)}"
-            }
+
+            # Aunque falle CloudWatch, verificar el estado real de la tarea ECS
+            try:
+                ecs = boto3.client("ecs", region_name=os.getenv("AWS_REGION", "us-east-1"))
+                task_response = ecs.describe_tasks(
+                    cluster=os.getenv("ECS_CLUSTER_NAME", "fluxion-cluster"),
+                    tasks=[etl_status["task_arn"]]
+                )
+
+                task_status = "running"
+                progress = 50
+                message = "ETL en progreso. Logs disponibles en CloudWatch."
+
+                if task_response.get('tasks'):
+                    last_status = task_response['tasks'][0]['lastStatus']
+                    if last_status == "STOPPED":
+                        task_status = "completed"
+                        progress = 100
+                        etl_status["running"] = False
+
+                        # Verificar exit code
+                        containers = task_response['tasks'][0].get('containers', [])
+                        exit_code = containers[0].get('exitCode', -1) if containers else -1
+
+                        if exit_code == 0:
+                            message = "ETL completado exitosamente. Los logs están disponibles en CloudWatch."
+                        else:
+                            message = f"ETL finalizado con código de salida {exit_code}. Revisar logs en CloudWatch."
+                    elif last_status == "RUNNING":
+                        task_status = "running"
+                        progress = 50
+
+                return {
+                    "logs": etl_status.get("logs", []),
+                    "status": task_status,
+                    "progress": progress,
+                    "task_id": task_id,
+                    "message": message,
+                    "warning": f"No se pudieron obtener logs de CloudWatch: {str(e)}"
+                }
+            except Exception as ecs_error:
+                logger.error(f"Error verificando estado ECS: {str(ecs_error)}")
+                # Fallback total
+                return {
+                    "logs": etl_status.get("logs", []),
+                    "status": "running" if etl_status["running"] else "completed",
+                    "progress": etl_status.get("progress", 0),
+                    "error": f"Error obteniendo logs de CloudWatch: {str(e)}"
+                }
 
     # Modo desarrollo: logs locales
     return {
