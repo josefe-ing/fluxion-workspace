@@ -1997,6 +1997,10 @@ async def get_etl_logs():
             # Combinar logs iniciales con logs de CloudWatch
             all_logs = etl_status.get("logs", []) + cloudwatch_logs
 
+            # IMPORTANTE: Guardar los logs combinados en memoria para persistirlos
+            # Esto asegura que los logs no se pierdan cuando CloudWatch falla o la tarea termina
+            etl_status["logs"] = all_logs
+
             # Verificar si la tarea sigue corriendo
             ecs = boto3.client("ecs", region_name=os.getenv("AWS_REGION", "us-east-1"))
             task_response = ecs.describe_tasks(
