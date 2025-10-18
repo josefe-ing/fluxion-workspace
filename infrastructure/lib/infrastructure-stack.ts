@@ -713,6 +713,21 @@ PersistentKeepalive = 25`),
       })
     );
 
+    // Grant Backend permission to read ETL CloudWatch Logs
+    backendTask.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'logs:DescribeLogStreams',
+          'logs:GetLogEvents',
+          'logs:FilterLogEvents',
+        ],
+        resources: [
+          `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/ecs/FluxionStackV2-FluxionETLTask*:*`,
+        ],
+      })
+    );
+
     // ========================================
     // 10. Ventas ETL Task Definition (Fargate)
     // ========================================
@@ -843,6 +858,21 @@ PersistentKeepalive = 25`),
         resources: [
           ventasEtlTask.taskRole.roleArn,
           ventasEtlTask.executionRole!.roleArn,
+        ],
+      })
+    );
+
+    // Grant Backend permission to read Ventas ETL CloudWatch Logs
+    backendTask.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'logs:DescribeLogStreams',
+          'logs:GetLogEvents',
+          'logs:FilterLogEvents',
+        ],
+        resources: [
+          `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/ecs/FluxionStackV2-FluxionVentasETLTask*:*`,
         ],
       })
     );
