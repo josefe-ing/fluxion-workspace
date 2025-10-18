@@ -30,7 +30,7 @@ class DatabaseConfig:
     # Configuración ETL
     activo: bool = True
     prioridad: int = 1  # 1=alta, 2=media, 3=baja
-    timeout_seconds: int = 30
+    timeout_seconds: int = 90  # Aumentado de 30 a 90 segundos para conexiones via WireGuard
     max_reintentos: int = 3
 
 class ETLConfig:
