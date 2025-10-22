@@ -609,7 +609,7 @@ PersistentKeepalive = 25`),
         SQL_USER: ecs.Secret.fromSecretsManager(sqlCredentials, 'username'),
         SQL_PASS: ecs.Secret.fromSecretsManager(sqlCredentials, 'password'),
       },
-      stopTimeout: cdk.Duration.minutes(5),  // Aumentado para extracciones largas
+      stopTimeout: cdk.Duration.seconds(120),  // Máximo permitido por Fargate
     });
 
     // Mount EFS volume to /data
