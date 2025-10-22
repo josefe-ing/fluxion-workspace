@@ -40,6 +40,9 @@ from auth import (
     auto_bootstrap_admin
 )
 
+# Importar ETL Scheduler
+from etl_scheduler import VentasETLScheduler
+
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,11 +58,33 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     """Execute startup tasks"""
+    global ventas_scheduler
+
     logger.info("🚀 Starting Fluxion AI Backend...")
+
     try:
         auto_bootstrap_admin()
     except Exception as e:
         logger.error(f"⚠️  Auto-bootstrap failed: {e}")
+
+    # Inicializar scheduler de ventas automáticas
+    try:
+        db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
+        ventas_scheduler = VentasETLScheduler(
+            db_path=str(db_path),
+            execution_hour=5,  # 5:00 AM
+            execution_minute=0
+        )
+
+        # Registrar callback para ejecutar ETL
+        ventas_scheduler.set_etl_callback(run_etl_ventas_for_scheduler)
+
+        # Iniciar scheduler
+        ventas_scheduler.start()
+
+        logger.info("✅ Ventas ETL Scheduler iniciado - Ejecución diaria: 5:00 AM")
+    except Exception as e:
+        logger.error(f"⚠️  Error iniciando scheduler de ventas: {e}")
 
 # Configurar CORS para el frontend
 app.add_middleware(
@@ -1013,6 +1038,9 @@ ventas_etl_status = {
     "fecha_inicio": None,
     "fecha_fin": None
 }
+
+# Instancia global del scheduler de ventas
+ventas_scheduler: Optional[VentasETLScheduler] = None
 
 def is_production_environment() -> bool:
     """Detecta si estamos en producción (AWS ECS) o desarrollo (local)"""
@@ -2085,7 +2113,133 @@ async def get_etl_logs():
     }
 
 # ============================================================================
-# ETL VENTAS ENDPOINTS
+# ETL VENTAS SCHEDULER - Callback Function
+# ============================================================================
+
+async def run_etl_ventas_for_scheduler(ubicacion_id: str, fecha_inicio: str, fecha_fin: str) -> Dict:
+    """
+    Función callback para el scheduler de ventas
+    Ejecuta ETL de una tienda específica y retorna resultado
+    """
+    try:
+        logger.info(f"🔄 Scheduler ejecutando ETL: {ubicacion_id} ({fecha_inicio} a {fecha_fin})")
+
+        etl_script = Path(__file__).parent.parent / "etl" / "core" / "etl_ventas.py"
+
+        # Usar Python del venv de ETL si existe
+        etl_venv_python = Path(__file__).parent.parent / "etl" / "venv" / "bin" / "python3"
+        python_cmd = str(etl_venv_python) if etl_venv_python.exists() else "python3"
+
+        # Construir comando
+        command = [
+            python_cmd, str(etl_script),
+            "--tienda", ubicacion_id,
+            "--fecha-inicio", fecha_inicio,
+            "--fecha-fin", fecha_fin
+        ]
+
+        logger.info(f"📝 Ejecutando: {' '.join(command)}")
+
+        # Ejecutar con timeout de 10 minutos por tienda
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
+
+            exitoso = process.returncode == 0
+
+            if exitoso:
+                logger.info(f"✅ {ubicacion_id} completado exitosamente")
+                return {"success": True, "tienda": ubicacion_id}
+            else:
+                logger.error(f"❌ {ubicacion_id} falló: {stderr.decode()[:200]}")
+                return {"success": False, "tienda": ubicacion_id, "error": stderr.decode()[:200]}
+
+        except asyncio.TimeoutError:
+            logger.error(f"⏱️  Timeout ejecutando ETL para {ubicacion_id}")
+            process.kill()
+            return {"success": False, "tienda": ubicacion_id, "error": "Timeout (10 min)"}
+
+    except Exception as e:
+        logger.error(f"❌ Error ejecutando ETL para {ubicacion_id}: {str(e)}")
+        return {"success": False, "tienda": ubicacion_id, "error": str(e)}
+
+# ============================================================================
+# ETL VENTAS SCHEDULER ENDPOINTS
+# ============================================================================
+
+@app.get("/api/etl/scheduler/status", tags=["ETL Scheduler"])
+async def get_scheduler_status():
+    """Obtiene el estado del scheduler automático de ventas"""
+    if not ventas_scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler no inicializado")
+
+    return ventas_scheduler.get_status()
+
+@app.post("/api/etl/scheduler/enable", tags=["ETL Scheduler"])
+async def enable_scheduler():
+    """Habilita el scheduler automático"""
+    if not ventas_scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler no inicializado")
+
+    if not ventas_scheduler.status.enabled:
+        ventas_scheduler.start()
+        return {"success": True, "message": "Scheduler habilitado"}
+
+    return {"success": True, "message": "Scheduler ya está habilitado"}
+
+@app.post("/api/etl/scheduler/disable", tags=["ETL Scheduler"])
+async def disable_scheduler():
+    """Deshabilita el scheduler automático"""
+    if not ventas_scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler no inicializado")
+
+    ventas_scheduler.stop()
+    return {"success": True, "message": "Scheduler deshabilitado"}
+
+@app.post("/api/etl/scheduler/trigger", tags=["ETL Scheduler"])
+async def trigger_scheduler_manual(
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None
+):
+    """
+    Ejecuta el ETL programado manualmente (fuera del horario)
+
+    Args:
+        fecha_inicio: Fecha inicial en formato YYYY-MM-DD (opcional, default: ayer)
+        fecha_fin: Fecha final en formato YYYY-MM-DD (opcional, default: ayer)
+    """
+    if not ventas_scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler no inicializado")
+
+    result = ventas_scheduler.trigger_manual_execution(fecha_inicio, fecha_fin)
+    return result
+
+@app.put("/api/etl/scheduler/config", tags=["ETL Scheduler"])
+async def update_scheduler_config(
+    max_retries: Optional[int] = None,
+    retry_interval_minutes: Optional[int] = None,
+    execution_hour: Optional[int] = None,
+    execution_minute: Optional[int] = None
+):
+    """Actualiza la configuración del scheduler"""
+    if not ventas_scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler no inicializado")
+
+    result = ventas_scheduler.update_config(
+        max_retries=max_retries,
+        retry_interval_minutes=retry_interval_minutes,
+        execution_hour=execution_hour,
+        execution_minute=execution_minute
+    )
+    return result
+
+# ============================================================================
+# ETL VENTAS ENDPOINTS (Manual)
 # ============================================================================
 
 @app.post("/api/etl/sync/ventas", tags=["ETL"])

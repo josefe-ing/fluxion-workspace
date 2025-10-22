@@ -7,7 +7,7 @@
 -- {fecha_fin} - Fecha final del rango
 -- {limite_registros} - Límite de registros para evitar sobrecargar
 
-SELECT
+SELECT TOP {limite_registros}
     -- Información de la transacción
     t.c_Numero AS numero_factura,
     CAST(t.f_Fecha AS DATE) AS fecha,

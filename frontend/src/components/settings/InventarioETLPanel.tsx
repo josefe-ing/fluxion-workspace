@@ -112,20 +112,12 @@ export default function InventarioETLPanel() {
   const cedis = ubicaciones.filter(u => u.tipo === 'cedi');
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+    <div>
       {/* Header */}
       <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 bg-purple-100 rounded-lg flex items-center justify-center">
-              <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">ETL Inventario</h2>
-              <p className="text-sm text-gray-600">Sincronización de inventario en tiempo real</p>
-            </div>
+          <div>
+            <p className="text-sm text-gray-600">Sincronización de inventario en tiempo real desde todas las ubicaciones</p>
           </div>
 
           {lastSync && (

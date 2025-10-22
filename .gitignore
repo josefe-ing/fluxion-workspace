@@ -89,3 +89,8 @@ tmp/
 # ============ CDK / INFRASTRUCTURE ============
 infrastructure/cdk.out/
 cdk.out/
+
+# ETL Reports (temporary files)
+**/reporte_ventas_*.txt
+**/reporte_ventas_*.json
+etl/test_copy_optimization.py
