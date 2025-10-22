@@ -73,9 +73,13 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-.env.production
+# .env.production  # Comentado: ahora se commitea como template sin secretos
 credentials.json
 **/credentials/
+
+# Backend specific env files (commit templates, not actual secrets)
+# backend/.env.development  # Template - can be committed
+# backend/.env.production   # Template - can be committed
 
 # ============ TEMPORARY ============
 temp/

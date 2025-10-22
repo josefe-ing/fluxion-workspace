@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LoginPage } from './components/LoginPage';
+import { LandingPage } from './components/LandingPage';
 import Layout from './components/layout/Layout';
 import InventorySummary from './components/dashboard/InventorySummary';
 import InventoryDashboard from './components/dashboard/InventoryDashboard';
@@ -9,6 +10,7 @@ import SalesDashboard from './components/sales/SalesDashboard';
 import SuggestedOrder from './components/orders/SuggestedOrder';
 import OrderWizard from './components/orders/OrderWizard';
 import ETLControlCenter from './components/settings/ETLControlCenter';
+import { getTenantId } from './utils/tenant';
 
 // Protected Routes Component
 function ProtectedRoutes() {
@@ -35,6 +37,15 @@ function ProtectedRoutes() {
 }
 
 function App() {
+  // Detect if we're on the landing page (no tenant)
+  const tenantId = getTenantId();
+
+  // Show landing page for fluxionia.co and www.fluxionia.co
+  if (!tenantId) {
+    return <LandingPage />;
+  }
+
+  // Show dashboard for tenant subdomains (granja, admin, etc.)
   return (
     <AuthProvider>
       <BrowserRouter>
