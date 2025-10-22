@@ -37,7 +37,7 @@ class VentasMultiTiendaETL:
                                    tienda_id: str,
                                    fecha_inicio: date,
                                    fecha_fin: date,
-                                   limite_registros: int = 10000) -> Dict[str, Any]:
+                                   limite_registros: int = None) -> Dict[str, Any]:
         """Ejecuta el ETL de ventas para una tienda específica"""
         try:
             # Validar configuración de tienda
@@ -61,7 +61,10 @@ class VentasMultiTiendaETL:
             logger.info(f"🏪 Procesando ventas: {config.ubicacion_nombre}")
             logger.info(f"   📡 Conectando a {config.server_ip}:{config.port}")
             logger.info(f"   📅 Período: {fecha_inicio} a {fecha_fin}")
-            logger.info(f"   🔢 Límite: {limite_registros:,} registros")
+            if limite_registros:
+                logger.info(f"   🔢 Límite: {limite_registros:,} registros")
+            else:
+                logger.info(f"   🔢 Sin límite - extrayendo TODOS los registros del período")
 
             # Ejecutar el ETL usando la clase ya existente
             resultado = self.etl_ventas.ejecutar_etl_ventas(
@@ -97,7 +100,7 @@ class VentasMultiTiendaETL:
     def ejecutar_todas_las_tiendas_ventas(self,
                                           fecha_inicio: date,
                                           fecha_fin: date,
-                                          limite_registros: int = 10000,
+                                          limite_registros: int = None,
                                           solo_activas: bool = True) -> List[Dict[str, Any]]:
         """Ejecuta el ETL de ventas para todas las tiendas"""
 
@@ -111,7 +114,10 @@ class VentasMultiTiendaETL:
         logger.info(f"\n🚀 INICIANDO ETL VENTAS MULTI-TIENDA")
         logger.info(f"   📅 Período: {fecha_inicio} a {fecha_fin}")
         logger.info(f"   🏪 Tiendas {tipo_tiendas}: {len(tiendas)}")
-        logger.info(f"   🔢 Límite por tienda: {limite_registros:,} registros")
+        if limite_registros:
+            logger.info(f"   🔢 Límite por tienda: {limite_registros:,} registros")
+        else:
+            logger.info(f"   🔢 Sin límite - extrayendo TODOS los registros por tienda")
         logger.info("=" * 70)
 
         resultados = []
@@ -246,7 +252,7 @@ def main():
     parser.add_argument("--todas", action="store_true", help="Ejecutar para todas las tiendas activas")
     parser.add_argument("--fecha-inicio", help="Fecha inicial (YYYY-MM-DD)")
     parser.add_argument("--fecha-fin", help="Fecha final (YYYY-MM-DD). Por defecto: hoy")
-    parser.add_argument("--limite", type=int, default=10000, help="Límite de registros por tienda (default: 10000)")
+    parser.add_argument("--limite", type=int, default=None, help="Límite de registros por tienda (default: None - sin límite, extrae todo)")
     parser.add_argument("--incluir-inactivas", action="store_true", help="Incluir tiendas inactivas")
     parser.add_argument("--mostrar-tiendas", action="store_true", help="Mostrar tiendas disponibles")
 
@@ -290,12 +296,11 @@ def main():
 
         # Validar rango no muy amplio
         dias_diferencia = (fecha_fin - fecha_inicio).days
-        if dias_diferencia > 7:  # Máximo una semana para pruebas
-            print(f"⚠️ Advertencia: Rango de fechas amplio ({dias_diferencia} días)")
-            respuesta = input("¿Desea continuar? (y/N): ")
-            if respuesta.lower() not in ['y', 'yes', 'si', 's']:
-                print("❌ Proceso cancelado")
-                sys.exit(0)
+        if dias_diferencia > 30:
+            print(f"⚠️ Advertencia: Rango de fechas muy amplio ({dias_diferencia} días)")
+            print(f"⚠️ Esto puede tomar mucho tiempo y consumir muchos recursos")
+            # No pedimos confirmación cuando se ejecuta desde el scheduler
+            # La confirmación debe hacerse en el UI antes de ejecutar
 
     except ValueError:
         print("❌ Error: Formato de fecha inválido. Use YYYY-MM-DD")

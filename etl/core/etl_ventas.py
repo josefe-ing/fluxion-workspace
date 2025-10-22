@@ -41,7 +41,7 @@ class VentasETL:
                            tienda_id: str,
                            fecha_inicio: date,
                            fecha_fin: date,
-                           limite_registros: int = 10000) -> Dict[str, Any]:
+                           limite_registros: int = None) -> Dict[str, Any]:
         """
         Ejecuta el ETL de ventas para una tienda y rango de fechas específicos
 
@@ -49,7 +49,7 @@ class VentasETL:
             tienda_id: ID de la tienda (ej: 'tienda_08')
             fecha_inicio: Fecha inicial del rango
             fecha_fin: Fecha final del rango
-            limite_registros: Límite máximo de registros a procesar
+            limite_registros: Límite máximo de registros a procesar (None = sin límite)
 
         Returns:
             Dict con el resultado del proceso
@@ -75,7 +75,10 @@ class VentasETL:
             logger.info(f"🏪 Procesando ventas: {config.ubicacion_nombre}")
             logger.info(f"   📡 Conectando a {config.server_ip}:{config.port}")
             logger.info(f"   📅 Período: {fecha_inicio} a {fecha_fin}")
-            logger.info(f"   🔢 Límite: {limite_registros:,} registros")
+            if limite_registros:
+                logger.info(f"   🔢 Límite: {limite_registros:,} registros")
+            else:
+                logger.info(f"   🔢 Sin límite - extrayendo TODOS los registros del período")
 
             # Configurar conexión de base de datos
             db_config = DatabaseConfig(
@@ -251,10 +254,10 @@ def main():
     """Función principal del script"""
 
     parser = argparse.ArgumentParser(description="ETL de Ventas - La Granja Mercado")
-    parser.add_argument("--tienda", required=True, help="ID de la tienda (ej: tienda_08)")
-    parser.add_argument("--fecha-inicio", required=True, help="Fecha inicial (YYYY-MM-DD)")
+    parser.add_argument("--tienda", help="ID de la tienda (ej: tienda_08)")
+    parser.add_argument("--fecha-inicio", help="Fecha inicial (YYYY-MM-DD)")
     parser.add_argument("--fecha-fin", help="Fecha final (YYYY-MM-DD). Por defecto: hoy")
-    parser.add_argument("--limite", type=int, default=10000, help="Límite de registros (default: 10000)")
+    parser.add_argument("--limite", type=int, default=None, help="Límite de registros (default: None - sin límite, extrae todo)")
     parser.add_argument("--mostrar-tiendas", action="store_true", help="Mostrar tiendas disponibles")
 
     args = parser.parse_args()
@@ -267,6 +270,10 @@ def main():
             print(f"   {tienda_id}: {config.ubicacion_nombre}")
         print("="*50)
         return
+
+    # Validar que si NO se solicita --mostrar-tiendas, entonces tienda y fecha-inicio son requeridos
+    if not args.tienda or not args.fecha_inicio:
+        parser.error("--tienda y --fecha-inicio son requeridos (a menos que uses --mostrar-tiendas)")
 
     # Validar y convertir fechas
     try:
@@ -283,11 +290,10 @@ def main():
         # Validar rango no muy amplio para evitar sobrecargar
         dias_diferencia = (fecha_fin - fecha_inicio).days
         if dias_diferencia > 30:
-            print("⚠️ Advertencia: Rango de fechas muy amplio (>30 días)")
-            respuesta = input("¿Desea continuar? (y/N): ")
-            if respuesta.lower() not in ['y', 'yes', 'si', 's']:
-                print("❌ Proceso cancelado")
-                sys.exit(0)
+            print(f"⚠️ Advertencia: Rango de fechas muy amplio ({dias_diferencia} días)")
+            print(f"⚠️ Esto puede tomar mucho tiempo y consumir muchos recursos")
+            # No pedimos confirmación cuando se ejecuta desde el scheduler
+            # La confirmación debe hacerse en el UI antes de ejecutar
 
     except ValueError:
         print("❌ Error: Formato de fecha inválido. Use YYYY-MM-DD")
@@ -299,7 +305,10 @@ def main():
     print(f"🚀 Iniciando ETL de Ventas")
     print(f"   🏪 Tienda: {args.tienda}")
     print(f"   📅 Período: {fecha_inicio} a {fecha_fin}")
-    print(f"   🔢 Límite: {args.limite:,} registros")
+    if args.limite:
+        print(f"   🔢 Límite: {args.limite:,} registros")
+    else:
+        print(f"   🔢 Sin límite - extrayendo TODOS los registros")
     print("="*60)
 
     resultado = etl.ejecutar_etl_ventas(

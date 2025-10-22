@@ -581,6 +581,8 @@ PersistentKeepalive = 25`),
     wireguardConfig.grantRead(etlTask.taskRole);
 
     // ETL Container
+    // NOTA: El Dockerfile incluye docker-entrypoint.sh que configura TCP keepalive automáticamente
+    // Ver: etl/docker-entrypoint.sh y etl/Dockerfile
     const etlContainer = etlTask.addContainer('etl', {
       image: ecs.ContainerImage.fromEcrRepository(etlRepo, 'latest'),
       logging: ecs.LogDrivers.awsLogs({
@@ -596,13 +598,18 @@ PersistentKeepalive = 25`),
         ETL_ENVIRONMENT: 'production',  // Usar IPs y puertos de producción via WireGuard
         RUN_MODE: 'scheduled',
         SENTRY_DSN: process.env.SENTRY_DSN || '',
+
+        // TCP Keepalive configuration (complementa la configuración en docker-entrypoint.sh)
+        // El código Python (extractor_ventas.py) usa estos valores automáticamente
+        SQL_ODBC_DRIVER: 'ODBC Driver 17 for SQL Server',
+        VPN_GATEWAY_IP: '192.168.20.1',  // Para test de conectividad en entrypoint
       },
       secrets: {
         // SQL credentials from Secrets Manager
         SQL_USER: ecs.Secret.fromSecretsManager(sqlCredentials, 'username'),
         SQL_PASS: ecs.Secret.fromSecretsManager(sqlCredentials, 'password'),
       },
-      stopTimeout: cdk.Duration.minutes(2),
+      stopTimeout: cdk.Duration.minutes(5),  // Aumentado para extracciones largas
     });
 
     // Mount EFS volume to /data

@@ -58,9 +58,12 @@ COPY core/ ./core/
 COPY scripts/ ./scripts/
 COPY *.py ./
 
+# Copy entrypoint script (configura TCP keepalive automáticamente)
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+
 # Create startup script for production
 COPY startup-etl.sh /app/startup-etl.sh
-RUN chmod +x /app/startup-etl.sh
+RUN chmod +x /app/startup-etl.sh && chmod +x /docker-entrypoint.sh
 
 # Create directories and set ownership
 RUN mkdir -p /data /app/logs && \
@@ -77,6 +80,9 @@ ENV ENVIRONMENT=production
 # Health check (checks if last ETL run was successful)
 HEALTHCHECK --interval=5m --timeout=30s --start-period=2m --retries=3 \
   CMD test -f /app/logs/etl_last_success.flag || exit 1
+
+# Entrypoint que configura TCP keepalive automáticamente
+ENTRYPOINT ["/docker-entrypoint.sh"]
 
 # Default command - use startup script
 CMD ["/app/startup-etl.sh"]

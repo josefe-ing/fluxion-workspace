@@ -32,7 +32,7 @@ logger = logging.getLogger('etl_ventas_historico')
 class VentasETLHistorico:
     """Orquestador para carga histórica masiva de ventas"""
 
-    def __init__(self, chunk_size: int = 50000, max_workers: int = 3):
+    def __init__(self, chunk_size: int = 1000000, max_workers: int = 3):
         self.chunk_size = chunk_size  # Registros por chunk
         self.max_workers = max_workers  # Máximo hilos concurrentes
         self.resultados = []
@@ -353,7 +353,7 @@ def main():
     parser.add_argument("--tiendas", nargs="+", help="IDs de tiendas específicas (ej: tienda_08 tienda_01)")
     parser.add_argument("--fecha-inicio", help="Fecha inicial (YYYY-MM-DD)")
     parser.add_argument("--fecha-fin", help="Fecha final (YYYY-MM-DD)")
-    parser.add_argument("--chunk-size", type=int, default=50000, help="Tamaño de chunk (default: 50000)")
+    parser.add_argument("--chunk-size", type=int, default=1000000, help="Tamaño de chunk para extraer por período (default: 1000000)")
     parser.add_argument("--max-workers", type=int, default=3, help="Máximo hilos paralelos (default: 3)")
     parser.add_argument("--secuencial", action="store_true", help="Procesar secuencialmente (no paralelo)")
     parser.add_argument("--modo-test", action="store_true", help="Modo test: solo 1 mes de 1 tienda")
@@ -415,10 +415,8 @@ def main():
         if dias_diferencia > 730 and not args.modo_test:  # 2 años
             print(f"⚠️ ADVERTENCIA: Período muy extenso ({dias_diferencia} días)")
             print("   Esto podría generar millones de registros y tomar horas/días")
-            respuesta = input("¿Desea continuar? (y/N): ")
-            if respuesta.lower() not in ['y', 'yes', 'si', 's']:
-                print("❌ Proceso cancelado")
-                sys.exit(0)
+            # No pedimos confirmación cuando se ejecuta desde el scheduler
+            # La confirmación debe hacerse en el UI antes de ejecutar
 
     # Ejecutar ETL histórico
     etl_historico = VentasETLHistorico(
