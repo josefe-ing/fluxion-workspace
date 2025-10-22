@@ -41,10 +41,14 @@ fi
 
 # Verificar credenciales SQL (sin mostrar valores)
 echo "🔐 Verificando credenciales SQL..."
-if [ -n "$SQL_USERNAME" ] && [ -n "$SQL_PASSWORD" ]; then
-    echo "✅ Credenciales SQL configuradas"
+# Soporta ambos formatos: SQL_USER/SQL_PASS y SQL_USERNAME/SQL_PASSWORD
+if [ -n "$SQL_USER" ] && [ -n "$SQL_PASS" ]; then
+    echo "✅ Credenciales SQL configuradas (SQL_USER/SQL_PASS)"
+elif [ -n "$SQL_USERNAME" ] && [ -n "$SQL_PASSWORD" ]; then
+    echo "✅ Credenciales SQL configuradas (SQL_USERNAME/SQL_PASSWORD)"
 else
     echo "⚠️  Credenciales SQL no encontradas"
+    echo "   Esperadas: SQL_USER+SQL_PASS o SQL_USERNAME+SQL_PASSWORD"
 fi
 echo ""
 
