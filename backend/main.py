@@ -18,6 +18,9 @@ import os
 from contextlib import contextmanager
 from forecast_pmp import ForecastPMP
 
+# Sentry para monitoreo de errores
+from sentry_config import init_sentry
+
 # AWS SDK for ECS task execution in production
 try:
     import boto3
@@ -43,6 +46,9 @@ from auth import (
 # Importar ETL Scheduler
 from etl_scheduler import VentasETLScheduler
 
+# Importar Tenant Middleware
+from middleware.tenant import TenantMiddleware
+
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,6 +67,9 @@ async def startup_event():
     global ventas_scheduler
 
     logger.info("🚀 Starting Fluxion AI Backend...")
+
+    # Inicializar Sentry
+    init_sentry()
 
     try:
         auto_bootstrap_admin()
@@ -98,12 +107,34 @@ app.add_middleware(
         "https://dynsftz61igf5.cloudfront.net",  # Frontend CloudFront (old)
         "http://fluxion-alb-433331665.us-east-1.elb.amazonaws.com",  # Backend ALB (current)
         "http://fluxion-alb-1002393067.us-east-1.elb.amazonaws.com",  # Backend ALB (old)
-        "http://fluxion-frontend-611395766952.s3-website-us-east-1.amazonaws.com"
+        "http://fluxion-frontend-611395766952.s3-website-us-east-1.amazonaws.com",
+        # Multi-tenant domains
+        "https://fluxionia.co",
+        "https://www.fluxionia.co",
+        "https://granja.fluxionia.co",
+        "https://admin.fluxionia.co",
+        "https://api.fluxionia.co"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-Tenant-ID"],
 )
+
+# Tenant Middleware - Detecta tenant desde hostname o header
+@app.middleware("http")
+async def tenant_middleware(request: Request, call_next):
+    """
+    Middleware que extrae el tenant_id del request y lo agrega al estado
+    """
+    tenant_id = TenantMiddleware.extract_tenant(request)
+    request.state.tenant_id = tenant_id
+
+    # Log tenant detection (solo en desarrollo)
+    if os.getenv("ENVIRONMENT") != "production":
+        logger.info(f"🏢 Request for tenant: {tenant_id or 'default (granja)'} - Path: {request.url.path}")
+
+    response = await call_next(request)
+    return response
 
 # Security Headers Middleware
 @app.middleware("http")
