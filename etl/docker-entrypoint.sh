@@ -6,7 +6,11 @@ echo "================================================"
 
 # Mostrar configuración de red
 echo "📡 Configuración de Red:"
-ip addr show | grep -E 'inet ' | awk '{print "   " $2}' || echo "   No disponible"
+if command -v ip &> /dev/null; then
+    ip addr show | grep -E 'inet ' | awk '{print "   " $2}' 2>/dev/null || echo "   No disponible"
+else
+    hostname -I 2>/dev/null | awk '{print "   " $1}' || echo "   No disponible"
+fi
 echo ""
 
 # Configurar TCP keepalive automáticamente

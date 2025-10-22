@@ -26,11 +26,14 @@ RUN apt-get update && apt-get install -y \
     freetds-dev \
     freetds-bin \
     tdsodbc \
+    iproute2 \
+    iputils-ping \
+    procps \
     && curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
     && ARCH=$(dpkg --print-architecture) \
     && echo "deb [arch=$ARCH signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
-    && (ACCEPT_EULA=Y apt-get install -y msodbcsql18 || echo "Warning: msodbcsql18 not available for $ARCH, using FreeTDS") \
+    && ACCEPT_EULA=Y apt-get install -y msodbcsql17 msodbcsql18 \
     && if [ "$ARCH" = "amd64" ]; then \
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"; \
     else \
