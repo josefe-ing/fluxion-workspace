@@ -56,7 +56,11 @@ add_port_forward 14304 192.168.140.10 14348 "tienda_04 SAN DIEGO"
 add_port_forward 14305 192.168.80.10 14348 "tienda_05 VIVIENDA"
 add_port_forward 14306 192.168.40.53 14348 "tienda_06 NAGUANAGUA"
 add_port_forward 14307 192.168.130.10 14348 "tienda_07 CENTRO"
-# tienda_08 BOSQUE ya existe en 14348
+
+# tienda_08 BOSQUE - acceso directo sin port forwarding (solo MASQUERADE)
+echo "   • tienda_08 BOSQUE: direct access to 192.168.150.10:14348"
+sudo iptables -t nat -A POSTROUTING -p tcp -d 192.168.150.10 --dport 14348 -j MASQUERADE
+
 add_port_forward 14309 192.168.120.10 14348 "tienda_09 GUACARA"
 add_port_forward 14310 192.168.70.10 14348 "tienda_10 FERIAS"
 add_port_forward 14311 192.168.160.10 14348 "tienda_11 FLOR AMARILLO"
