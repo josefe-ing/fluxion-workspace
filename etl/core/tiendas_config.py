@@ -232,10 +232,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_08": TiendaConfig(
         ubicacion_id="tienda_08",
         ubicacion_nombre="BOSQUE",
-        server_ip=get_server_ip(
-            local_ip="192.168.150.10",     # IP local directa
-            prod_ip="10.0.2.244"            # WireGuard bridge en AWS
-        ),
+        server_ip="192.168.150.10",  # Acceso directo via VPN (local y producción)
         database_name="VAD20",  # BOSQUE usa VAD20, no VAD10
         username=get_sql_user(),
         password=get_sql_pass(),
