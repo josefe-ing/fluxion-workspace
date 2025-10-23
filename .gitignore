@@ -70,16 +70,30 @@ Thumbs.db
 *.tmp
 
 # ============ ENVIRONMENT ============
+# IMPORTANT: ALL .env files contain secrets and should NOT be committed!
 .env
 .env.local
+.env.development
+.env.production
+.env.test
+.env.staging
 .env.*.local
-# .env.production  # Comentado: ahora se commitea como template sin secretos
+backend/.env
+backend/.env.development
+backend/.env.production
+backend/.env.test
+backend/.env.staging
+
+# Exception: .env.example files are templates without secrets (safe to commit)
+!.env.example
+!backend/.env.example
+
+# Other credentials
 credentials.json
 **/credentials/
-
-# Backend specific env files (commit templates, not actual secrets)
-# backend/.env.development  # Template - can be committed
-# backend/.env.production   # Template - can be committed
+**/*.pem
+**/*.key
+!**/public.key
 
 # ============ TEMPORARY ============
 temp/
