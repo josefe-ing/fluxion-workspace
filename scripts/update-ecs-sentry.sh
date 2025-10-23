@@ -59,19 +59,19 @@ update_task_def() {
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Backend API"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_task_def "fluxion-backend-task" "fluxion-backend-service"
+update_task_def "FluxionStackV2FluxionBackendTask94E5B2B4" "FluxionStackV2-FluxionBackendServiceE051E4B7-3D0YfNUbXnmp"
+
+# Actualizar ETL Inventario
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ETL Inventario"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+update_task_def "FluxionStackV2FluxionETLTask073145C9" ""
 
 # Actualizar ETL Ventas
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ETL Ventas"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_task_def "fluxion-etl-task" ""
-
-# Actualizar ETL Histórico
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ETL Histórico"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_task_def "fluxion-etl-historico-task" ""
+update_task_def "FluxionStackV2FluxionVentasETLTaskB0C9498F" ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ✅ COMPLETADO"
