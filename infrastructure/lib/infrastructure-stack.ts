@@ -246,6 +246,13 @@ PersistentKeepalive = 25`),
       'fluxion/sql-credentials'
     );
 
+    // Production secrets (SendGrid, etc.) - Import existing secret
+    const productionSecrets = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'ProductionSecrets',
+      'fluxion/production'
+    );
+
     // ========================================
     // 5. ECS Cluster (Fargate only - no EC2 capacity needed)
     // ========================================
@@ -579,6 +586,7 @@ PersistentKeepalive = 25`),
     fileSystem.grantRootAccess(etlTask.taskRole);
     sqlCredentials.grantRead(etlTask.taskRole);
     wireguardConfig.grantRead(etlTask.taskRole);
+    productionSecrets.grantRead(etlTask.taskRole);  // SendGrid credentials for email notifications
 
     // ETL Container
     // NOTA: El Dockerfile incluye docker-entrypoint.sh que configura TCP keepalive automáticamente
@@ -779,6 +787,7 @@ PersistentKeepalive = 25`),
     fileSystem.grantRootAccess(ventasEtlTask.taskRole);
     sqlCredentials.grantRead(ventasEtlTask.taskRole);
     wireguardConfig.grantRead(ventasEtlTask.taskRole);
+    productionSecrets.grantRead(ventasEtlTask.taskRole);  // SendGrid credentials for email notifications
 
     // Ventas ETL Container
     const ventasEtlContainer = ventasEtlTask.addContainer('ventas-etl', {
