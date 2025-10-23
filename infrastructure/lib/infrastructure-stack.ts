@@ -700,12 +700,15 @@ PersistentKeepalive = 25`),
     backendContainer.addEnvironment('ETL_SUBNETS', privateSubnets.join(','));
     backendContainer.addEnvironment('ETL_SECURITY_GROUPS', etlSecurityGroup.securityGroupId);
 
-    // Grant Backend permission to run ETL tasks
+    // Grant Backend permission to run ETL tasks (all revisions)
     backendTask.taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['ecs:RunTask'],
-        resources: [etlTask.taskDefinitionArn],
+        resources: [
+          // Allow all revisions of the ETL task definition
+          `arn:aws:ecs:${this.region}:${this.account}:task-definition/${etlTask.family}:*`,
+        ],
       })
     );
 
@@ -865,12 +868,15 @@ PersistentKeepalive = 25`),
     // Add Ventas ETL configuration to Backend container environment
     backendContainer.addEnvironment('VENTAS_TASK_DEFINITION', ventasEtlTask.taskDefinitionArn);
 
-    // Grant Backend permission to run Ventas ETL tasks
+    // Grant Backend permission to run Ventas ETL tasks (all revisions)
     backendTask.taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['ecs:RunTask'],
-        resources: [ventasEtlTask.taskDefinitionArn],
+        resources: [
+          // Allow all revisions of the Ventas ETL task definition
+          `arn:aws:ecs:${this.region}:${this.account}:task-definition/${ventasEtlTask.family}:*`,
+        ],
       })
     );
 
