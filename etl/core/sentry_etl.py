@@ -1,6 +1,9 @@
 """
 Integración de Sentry para ETL - Monitoreo y Tracking
 Provee funciones helper para instrumentar ETLs con Sentry
+
+Este módulo ahora incluye soporte para Cron Monitors.
+Para monitoreo de cron jobs, usa sentry_cron_monitors.py
 """
 import os
 import sys
@@ -18,6 +21,13 @@ try:
     SENTRY_AVAILABLE = True
 except ImportError:
     SENTRY_AVAILABLE = False
+
+# Import cron monitors if available
+try:
+    from sentry_cron_monitors import cron_monitor, cron_monitor_decorator
+    CRON_MONITORS_AVAILABLE = True
+except ImportError:
+    CRON_MONITORS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +77,11 @@ class SentryETLMonitor:
     """
     Context manager para monitorear ejecuciones de ETL con Sentry
 
+    NOTA: Para monitoreo de cron jobs (detectar ejecuciones faltantes, timeouts),
+    usa sentry_cron_monitors.cron_monitor() en su lugar.
+
+    Este monitor es útil para tracking de performance y métricas custom.
+
     Uso:
         with SentryETLMonitor(
             etl_name="ventas_historico",
@@ -83,6 +98,12 @@ class SentryETLMonitor:
 
             # Reportar éxito
             monitor.set_success(registros_procesados=1000000)
+
+    Para combinar con Cron Monitors:
+        with cron_monitor("etl_ventas_historico"):
+            with SentryETLMonitor("ventas_historico") as monitor:
+                # Tu código
+                pass
     """
 
     def __init__(

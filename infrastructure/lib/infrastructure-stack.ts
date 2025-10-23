@@ -14,6 +14,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 
 export class InfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -251,6 +252,20 @@ PersistentKeepalive = 25`),
       this,
       'ProductionSecrets',
       'fluxion/production'
+    );
+
+    // ========================================
+    // Sentry Configuration for ETL Monitoring
+    // ========================================
+    // Sentry DSN for ETL cron monitors (project: etl-process)
+    // Created via: aws ssm put-parameter --name "/fluxion/etl/sentry-dsn" --type "SecureString" --value "..."
+    const sentryDsnParameter = ssm.StringParameter.fromSecureStringParameterAttributes(
+      this,
+      'SentryDsnParameter',
+      {
+        parameterName: '/fluxion/etl/sentry-dsn',
+        version: 1,
+      }
     );
 
     // ========================================
@@ -588,6 +603,9 @@ PersistentKeepalive = 25`),
     wireguardConfig.grantRead(etlTask.taskRole);
     productionSecrets.grantRead(etlTask.taskRole);  // SendGrid credentials for email notifications
 
+    // Grant permission to read Sentry DSN from SSM Parameter Store
+    sentryDsnParameter.grantRead(etlTask.taskRole);
+
     // ETL Container
     // NOTA: El Dockerfile incluye docker-entrypoint.sh que configura TCP keepalive automáticamente
     // Ver: etl/docker-entrypoint.sh y etl/Dockerfile
@@ -605,7 +623,10 @@ PersistentKeepalive = 25`),
         ETL_ARGS: '--todas',  // Todas las tiendas activas (20 ubicaciones)
         ETL_ENVIRONMENT: 'production',  // Usar IPs y puertos de producción via WireGuard
         RUN_MODE: 'scheduled',
-        SENTRY_DSN: process.env.SENTRY_DSN || '',
+
+        // Sentry Monitoring Configuration
+        SENTRY_ENVIRONMENT: 'production',
+        SENTRY_TRACES_SAMPLE_RATE: '0.1',
 
         // TCP Keepalive configuration (complementa la configuración en docker-entrypoint.sh)
         // El código Python (extractor_ventas.py) usa estos valores automáticamente
@@ -616,6 +637,9 @@ PersistentKeepalive = 25`),
         // SQL credentials from Secrets Manager
         SQL_USER: ecs.Secret.fromSecretsManager(sqlCredentials, 'username'),
         SQL_PASS: ecs.Secret.fromSecretsManager(sqlCredentials, 'password'),
+
+        // Sentry DSN from SSM Parameter Store
+        SENTRY_DSN: ecs.Secret.fromSsmParameter(sentryDsnParameter),
       },
       stopTimeout: cdk.Duration.seconds(120),  // Máximo permitido por Fargate
     });
@@ -789,6 +813,9 @@ PersistentKeepalive = 25`),
     wireguardConfig.grantRead(ventasEtlTask.taskRole);
     productionSecrets.grantRead(ventasEtlTask.taskRole);  // SendGrid credentials for email notifications
 
+    // Grant permission to read Sentry DSN from SSM Parameter Store
+    sentryDsnParameter.grantRead(ventasEtlTask.taskRole);
+
     // Ventas ETL Container
     const ventasEtlContainer = ventasEtlTask.addContainer('ventas-etl', {
       image: ecs.ContainerImage.fromEcrRepository(etlRepo, 'latest'),
@@ -803,12 +830,18 @@ PersistentKeepalive = 25`),
         ETL_MODE: 'etl_ventas_multi_tienda.py',
         ETL_ARGS: '--fecha-inicio 2025-01-01 --fecha-fin 2025-12-31 --todas',  // Default args
         RUN_MODE: 'scheduled',
-        SENTRY_DSN: process.env.SENTRY_DSN || '',
+
+        // Sentry Monitoring Configuration
+        SENTRY_ENVIRONMENT: 'production',
+        SENTRY_TRACES_SAMPLE_RATE: '0.1',
       },
       secrets: {
         // SQL credentials from Secrets Manager
         SQL_USER: ecs.Secret.fromSecretsManager(sqlCredentials, 'username'),
         SQL_PASS: ecs.Secret.fromSecretsManager(sqlCredentials, 'password'),
+
+        // Sentry DSN from SSM Parameter Store
+        SENTRY_DSN: ecs.Secret.fromSsmParameter(sentryDsnParameter),
       },
       stopTimeout: cdk.Duration.minutes(2),  // Fargate max is 120 seconds
     });
