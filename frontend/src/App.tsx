@@ -9,6 +9,7 @@ import SalesSummary from './components/sales/SalesSummary';
 import SalesDashboard from './components/sales/SalesDashboard';
 import SuggestedOrder from './components/orders/SuggestedOrder';
 import OrderWizard from './components/orders/OrderWizard';
+import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import ETLControlCenter from './components/settings/ETLControlCenter';
 import { getTenantId } from './utils/tenant';
 
@@ -30,6 +31,7 @@ function ProtectedRoutes() {
         <Route path="ventas/:ubicacionId" element={<SalesDashboard />} />
         <Route path="pedidos-sugeridos" element={<SuggestedOrder />} />
         <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} />
+        <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
         <Route path="settings/etl" element={<ETLControlCenter />} />
       </Route>
     </Routes>
