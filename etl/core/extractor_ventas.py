@@ -13,8 +13,6 @@ import logging
 from pathlib import Path
 import time
 import re
-from sqlalchemy import create_engine, pool
-from urllib.parse import quote_plus
 
 from config import ETLConfig
 
@@ -39,7 +37,7 @@ class VentasExtractor:
 
     def _create_connection_string(self, config) -> str:
         """Crea la cadena de conexión para SQL Server (pyodbc)"""
-        # Determinar driver ODBC disponible (prioritize msodbcsql18, fallback to FreeTDS)
+        # SIMPLIFICADO: Usar EXACTAMENTE la misma configuración que inventario (que funciona)
         odbc_driver = os.environ.get('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server')
 
         return (
@@ -48,12 +46,8 @@ class VentasExtractor:
             f"DATABASE={config.database_name};"
             f"UID={config.username};"
             f"PWD={config.password};"
-            f"Encrypt=no;"
             f"TrustServerCertificate=yes;"
-            f"Connection Timeout=600;"
-            f"Query Timeout=600;"
-            f"PacketSize=32767;"  # Máximo tamaño de paquete para mejor throughput
-            f"MARS_Connection=yes;"  # Multiple Active Result Sets
+            f"Connection Timeout={config.timeout_seconds};"
         )
 
     def _create_sqlalchemy_engine(self, config):
@@ -225,84 +219,25 @@ class VentasExtractor:
 
                 inicio = datetime.now()
 
-                # SI NO HAY LÍMITE: ejecutar query directo usando SQLAlchemy
-                # SQLAlchemy maneja mejor las reconexiones y timeouts que pyodbc directo
-                if not limite_registros:
-                    self.logger.info(f"   🚀 Extracción con SQLAlchemy (sin límite, mejor manejo de conexiones)")
+                # SIMPLIFICADO: Usar pyodbc simple, igual que inventario
+                self.logger.info(f"   🚀 Extracción con pyodbc simple (como inventario ETL)")
 
-                    # Crear engine de SQLAlchemy
-                    engine = self._create_sqlalchemy_engine(config)
+                # Crear conexión simple
+                connection_string = self._create_connection_string(config)
+                conn = pyodbc.connect(connection_string, timeout=config.timeout_seconds)
+                conn.autocommit = True
 
-                    # Ejecutar query directo SIN agregar OFFSET/FETCH
-                    query_final = re.sub(r'SELECT\s+TOP\s+\d+', 'SELECT', query_base, flags=re.IGNORECASE)
+                self.logger.info(f"   ✅ Conexión establecida")
+                self.logger.info(f"   📥 Ejecutando query de ventas...")
 
-                    self.logger.info(f"   📥 Ejecutando query con SQLAlchemy (chunksize=50000)...")
+                # Remover TOP del query si existe
+                query_final = re.sub(r'SELECT\s+TOP\s+\d+', 'SELECT', query_base, flags=re.IGNORECASE)
 
-                    # Usar chunksize en pandas con SQLAlchemy
-                    # SQLAlchemy tiene mejor manejo de errores y reconexiones
-                    chunks = []
-                    chunk_num = 0
+                # Ejecutar query simple - IGUAL que inventario
+                df = pd.read_sql_query(query_final, conn)
+                conn.close()
 
-                    try:
-                        for chunk in pd.read_sql_query(query_final, engine, chunksize=50000):
-                            chunk_num += 1
-                            chunks.append(chunk)
-                            self.logger.info(f"   📦 Chunk {chunk_num}: {len(chunk):,} registros leídos (total: {sum(len(c) for c in chunks):,})")
-                    finally:
-                        engine.dispose()  # Cerrar todas las conexiones
-
-                    if chunks:
-                        df = pd.concat(chunks, ignore_index=True)
-                        self.logger.info(f"   ✅ Extracción completa: {len(df):,} registros")
-                    else:
-                        df = pd.DataFrame()
-
-                # SI HAY LÍMITE: usar chunking con OFFSET/FETCH
-                else:
-                    self.logger.info(f"   🔄 Usando chunking con OFFSET/FETCH (con límite de {limite_registros:,})")
-
-                    chunks = []
-                    chunk_size = 20000  # 20k registros por chunk
-                    offset = 0
-                    chunk_count = 0
-                    max_registros = limite_registros
-
-                    while offset < max_registros:
-                        chunk_count += 1
-                        fetch_size = min(chunk_size, max_registros - offset)
-
-                        self.logger.info(f"   📦 Extrayendo chunk {chunk_count} (offset={offset:,}, size={fetch_size:,})...")
-
-                        chunk_df = self._extract_chunk_with_offset(
-                            config=config,
-                            query_base=query_base,
-                            offset=offset,
-                            fetch_size=fetch_size
-                        )
-
-                        if chunk_df is None or len(chunk_df) == 0:
-                            self.logger.info(f"   ✅ Fin de datos en chunk {chunk_count}")
-                            break
-
-                        chunks.append(chunk_df)
-                        self.logger.info(f"   ✅ Chunk {chunk_count}: {len(chunk_df):,} registros extraídos")
-
-                        offset += len(chunk_df)
-
-                        # Si obtuvimos menos registros que el fetch_size, terminamos
-                        if len(chunk_df) < fetch_size:
-                            self.logger.info(f"   ✅ Último chunk completado")
-                            break
-
-                        # Pequeña pausa entre chunks
-                        time.sleep(0.5)
-
-                    # Concatenar todos los chunks
-                    if chunks:
-                        df = pd.concat(chunks, ignore_index=True)
-                        self.logger.info(f"   ✅ Todos los chunks concatenados: {len(df):,} registros totales")
-                    else:
-                        df = pd.DataFrame()
+                self.logger.info(f"   ✅ Query completado: {len(df):,} registros extraídos")
 
                 fin = datetime.now()
                 duracion = (fin - inicio).total_seconds()
