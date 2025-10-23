@@ -2170,53 +2170,75 @@ async def get_etl_logs():
 async def run_etl_ventas_for_scheduler(ubicacion_id: str, fecha_inicio: str, fecha_fin: str) -> Dict:
     """
     Función callback para el scheduler de ventas
-    Ejecuta ETL de una tienda específica y retorna resultado
+    Lanza ETL de una tienda específica como ECS task y retorna resultado
     """
     try:
         logger.info(f"🔄 Scheduler ejecutando ETL: {ubicacion_id} ({fecha_inicio} a {fecha_fin})")
 
-        etl_script = Path(__file__).parent.parent / "etl" / "core" / "etl_ventas.py"
+        if not BOTO3_AVAILABLE:
+            logger.error("❌ boto3 no disponible - no se puede lanzar ETL")
+            return {"success": False, "tienda": ubicacion_id, "error": "boto3 not available"}
 
-        # Usar Python del venv de ETL si existe
-        etl_venv_python = Path(__file__).parent.parent / "etl" / "venv" / "bin" / "python3"
-        python_cmd = str(etl_venv_python) if etl_venv_python.exists() else "python3"
+        # Configuración de ECS
+        cluster_name = os.getenv("ECS_CLUSTER_NAME", "fluxion-cluster")
+        task_definition = os.getenv("VENTAS_TASK_DEFINITION")
+        subnets = os.getenv("ETL_SUBNETS", "").split(",")
+        security_groups = os.getenv("ETL_SECURITY_GROUPS", "").split(",")
+        aws_region = os.getenv("AWS_REGION", "us-east-1")
 
-        # Construir comando
-        command = [
-            python_cmd, str(etl_script),
+        if not task_definition:
+            logger.error("❌ VENTAS_TASK_DEFINITION no configurado")
+            return {"success": False, "tienda": ubicacion_id, "error": "VENTAS_TASK_DEFINITION not set"}
+
+        # Construir comando para el contenedor ECS
+        etl_command = [
+            "python3", "/app/etl_ventas_multi_tienda.py",
             "--tienda", ubicacion_id,
             "--fecha-inicio", fecha_inicio,
             "--fecha-fin", fecha_fin
         ]
 
-        logger.info(f"📝 Ejecutando: {' '.join(command)}")
+        logger.info(f"📝 Lanzando ECS task: {' '.join(etl_command)}")
 
-        # Ejecutar con timeout de 10 minutos por tienda
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+        # Lanzar tarea ECS
+        ecs = boto3.client('ecs', region_name=aws_region)
+
+        response = ecs.run_task(
+            cluster=cluster_name,
+            taskDefinition=task_definition,
+            launchType="FARGATE",
+            networkConfiguration={
+                "awsvpcConfiguration": {
+                    "subnets": subnets,
+                    "securityGroups": security_groups,
+                    "assignPublicIp": "DISABLED"
+                }
+            },
+            overrides={
+                "containerOverrides": [{
+                    "name": "ventas-etl",
+                    "command": etl_command
+                }]
+            },
+            propagateTags="TASK_DEFINITION"
         )
 
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
-
-            exitoso = process.returncode == 0
-
-            if exitoso:
-                logger.info(f"✅ {ubicacion_id} completado exitosamente")
-                return {"success": True, "tienda": ubicacion_id}
-            else:
-                logger.error(f"❌ {ubicacion_id} falló: {stderr.decode()[:200]}")
-                return {"success": False, "tienda": ubicacion_id, "error": stderr.decode()[:200]}
-
-        except asyncio.TimeoutError:
-            logger.error(f"⏱️  Timeout ejecutando ETL para {ubicacion_id}")
-            process.kill()
-            return {"success": False, "tienda": ubicacion_id, "error": "Timeout (10 min)"}
+        if response.get("tasks"):
+            task_arn = response["tasks"][0]["taskArn"]
+            task_id = task_arn.split("/")[-1]
+            logger.info(f"✅ ECS task lanzado: {task_id}")
+            return {"success": True, "tienda": ubicacion_id, "task_id": task_id}
+        elif response.get("failures"):
+            failure = response["failures"][0]
+            error_msg = failure.get("reason", "Unknown failure")
+            logger.error(f"❌ {ubicacion_id} falló: {error_msg}")
+            return {"success": False, "tienda": ubicacion_id, "error": error_msg}
+        else:
+            logger.error(f"❌ {ubicacion_id} - respuesta inesperada de ECS")
+            return {"success": False, "tienda": ubicacion_id, "error": "Unexpected ECS response"}
 
     except Exception as e:
-        logger.error(f"❌ Error ejecutando ETL para {ubicacion_id}: {str(e)}")
+        logger.error(f"❌ Error lanzando ETL para {ubicacion_id}: {str(e)}")
         return {"success": False, "tienda": ubicacion_id, "error": str(e)}
 
 # ============================================================================
