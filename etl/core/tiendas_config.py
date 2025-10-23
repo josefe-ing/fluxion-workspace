@@ -14,7 +14,9 @@ try:
     from dotenv import load_dotenv
     # Buscar .env en el directorio etl (parent del core)
     env_path = Path(__file__).parent.parent / '.env'
-    load_dotenv(dotenv_path=env_path)
+    # override=False: NO sobrescribir variables de entorno existentes (de ECS)
+    # Esto permite que ETL_ENVIRONMENT de la task definition prevalezca sobre .env local
+    load_dotenv(dotenv_path=env_path, override=False)
 except ImportError:
     print("⚠️  python-dotenv no instalado, usando variables de sistema")
 
