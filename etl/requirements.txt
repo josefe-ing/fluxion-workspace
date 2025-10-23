@@ -4,3 +4,4 @@ sqlalchemy==2.0.25
 python-dotenv==1.0.1
 pandas==2.2.2
 pyarrow>=21.0.0
+sendgrid==6.11.0
