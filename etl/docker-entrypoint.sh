@@ -62,6 +62,34 @@ else
 fi
 echo ""
 
+# Cargar SendGrid credentials desde AWS Secrets Manager (solo en producción)
+if [ "$ENVIRONMENT" = "production" ] && [ -n "$AWS_REGION" ]; then
+    echo "📧 Cargando credenciales de SendGrid desde AWS Secrets Manager..."
+
+    SENDGRID_SECRET=$(aws secretsmanager get-secret-value \
+        --secret-id fluxion/production \
+        --region "$AWS_REGION" \
+        --query SecretString \
+        --output text 2>&1)
+
+    if [ $? -eq 0 ]; then
+        export SENDGRID_API_KEY=$(echo "$SENDGRID_SECRET" | grep -o '"SENDGRID_API_KEY":"[^"]*"' | cut -d'"' -f4)
+        export SENDGRID_FROM_EMAIL=$(echo "$SENDGRID_SECRET" | grep -o '"SENDGRID_FROM_EMAIL":"[^"]*"' | cut -d'"' -f4)
+        export NOTIFICATION_EMAILS=$(echo "$SENDGRID_SECRET" | grep -o '"NOTIFICATION_EMAILS":"[^"]*"' | cut -d'"' -f4)
+
+        if [ -n "$SENDGRID_API_KEY" ]; then
+            echo "✅ SendGrid API key cargado exitosamente"
+            [ -n "$SENDGRID_FROM_EMAIL" ] && echo "   From: $SENDGRID_FROM_EMAIL"
+            [ -n "$NOTIFICATION_EMAILS" ] && echo "   To: $NOTIFICATION_EMAILS"
+        else
+            echo "⚠️  SendGrid API key no encontrado en secrets"
+        fi
+    else
+        echo "⚠️  No se pudo cargar SendGrid secrets"
+    fi
+    echo ""
+fi
+
 echo "================================================"
 echo "🎯 Ejecutando comando: $@"
 echo "================================================"
