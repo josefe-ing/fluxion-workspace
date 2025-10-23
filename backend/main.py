@@ -2170,7 +2170,10 @@ async def get_etl_logs():
 async def run_etl_ventas_for_scheduler(ubicacion_id: str, fecha_inicio: str, fecha_fin: str) -> Dict:
     """
     Función callback para el scheduler de ventas
-    Lanza ETL de una tienda específica como ECS task y retorna resultado
+    Lanza ETL como ECS task - puede ser para una tienda específica o todas las tiendas
+
+    Si ubicacion_id == "--todas", lanza ETL para todas las tiendas (con email de notificación)
+    Si ubicacion_id es un ID específico, lanza solo esa tienda (sin email)
     """
     try:
         logger.info(f"🔄 Scheduler ejecutando ETL: {ubicacion_id} ({fecha_inicio} a {fecha_fin})")
@@ -2191,14 +2194,25 @@ async def run_etl_ventas_for_scheduler(ubicacion_id: str, fecha_inicio: str, fec
             return {"success": False, "tienda": ubicacion_id, "error": "VENTAS_TASK_DEFINITION not set"}
 
         # Construir comando para el contenedor ECS
-        etl_command = [
-            "python3", "/app/etl_ventas_multi_tienda.py",
-            "--tienda", ubicacion_id,
-            "--fecha-inicio", fecha_inicio,
-            "--fecha-fin", fecha_fin
-        ]
+        # Si ubicacion_id es "--todas", usar flag --todas en lugar de --tienda
+        if ubicacion_id == "--todas":
+            etl_command = [
+                "python3", "/app/etl_ventas_multi_tienda.py",
+                "--todas",
+                "--fecha-inicio", fecha_inicio,
+                "--fecha-fin", fecha_fin
+            ]
+            logger.info(f"📝 Lanzando ETL multi-tienda (TODAS las tiendas)")
+        else:
+            etl_command = [
+                "python3", "/app/etl_ventas_multi_tienda.py",
+                "--tienda", ubicacion_id,
+                "--fecha-inicio", fecha_inicio,
+                "--fecha-fin", fecha_fin
+            ]
+            logger.info(f"📝 Lanzando ETL para tienda: {ubicacion_id}")
 
-        logger.info(f"📝 Lanzando ECS task: {' '.join(etl_command)}")
+        logger.info(f"📝 Comando ECS: {' '.join(etl_command)}")
 
         # Lanzar tarea ECS
         ecs = boto3.client('ecs', region_name=aws_region)

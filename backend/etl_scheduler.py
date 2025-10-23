@@ -224,42 +224,26 @@ class VentasETLScheduler:
                     monitor.__exit__(None, None, None)
                 return
 
-            logger.info(f"🏪 Procesando {len(tiendas)} tiendas")
+            logger.info(f"🏪 Lanzando ETL para {len(tiendas)} tiendas en un solo task")
 
-            # Ejecutar ETL para cada tienda
-            for tienda_id in tiendas:
-                if not self.status.enabled:
-                    logger.info("🛑 Scheduler detenido durante ejecución")
-                    if monitor:
-                        monitor.add_breadcrumb("Scheduler detenido manualmente", level="warning")
-                    break
+            # Ejecutar ETL una vez con --todas (como el scheduler de inventario)
+            # Esto permite que el ETL script envíe email de notificación consolidado
+            success = self._execute_etl_all_stores(fecha_inicio, fecha_fin)
 
-                logger.info(f"🔄 Procesando {tienda_id}...")
+            if success:
+                self.status.daily_summary["exitosas"] = len(tiendas)
+                self.status.daily_summary["tiendas_exitosas"] = tiendas
+                logger.info(f"✅ ETL multi-tienda completado exitosamente")
 
-                success = self._execute_etl_for_store(tienda_id, fecha_inicio, fecha_fin)
+                if monitor:
+                    monitor.add_breadcrumb(f"ETL completado para {len(tiendas)} tiendas", level="info")
+            else:
+                self.status.daily_summary["fallidas"] = len(tiendas)
+                self.status.daily_summary["tiendas_fallidas"] = tiendas
+                logger.error(f"❌ ETL multi-tienda falló")
 
-                if success:
-                    self.status.daily_summary["exitosas"] += 1
-                    self.status.daily_summary["tiendas_exitosas"].append(tienda_id)
-                    logger.info(f"✅ {tienda_id} procesada exitosamente")
-
-                    if monitor:
-                        monitor.add_breadcrumb(f"Tienda {tienda_id} exitosa", level="info")
-                else:
-                    self.status.daily_summary["fallidas"] += 1
-                    self.status.daily_summary["tiendas_fallidas"].append(tienda_id)
-
-                    # Agregar a la cola de reintentos
-                    self.status.retry_config.failed_stores[tienda_id] = 0
-                    self.status.retry_config.pending_retries.add(tienda_id)
-
-                    logger.warning(f"❌ {tienda_id} falló - programada para reintento")
-
-                    if monitor:
-                        monitor.add_breadcrumb(f"Tienda {tienda_id} falló", level="error")
-
-                # Pequeña pausa entre tiendas
-                threading.Event().wait(2)
+                if monitor:
+                    monitor.add_breadcrumb("ETL falló", level="error")
 
             self.status.daily_summary["fin"] = datetime.now().isoformat()
 
@@ -386,6 +370,41 @@ class VentasETLScheduler:
 
         except Exception as e:
             logger.error(f"❌ Error ejecutando ETL para {tienda_id}: {str(e)}")
+            return False
+
+    def _execute_etl_all_stores(self, fecha_inicio: date, fecha_fin: date) -> bool:
+        """
+        Ejecuta ETL para TODAS las tiendas en un solo task (con --todas)
+        Esto permite que el script ETL genere un reporte consolidado y envíe email
+
+        Similar a como funciona el ETL de inventario
+
+        Retorna True si es exitoso, False si falla
+        """
+        if not self.etl_callback:
+            logger.error("❌ ETL callback no configurado")
+            return False
+
+        try:
+            # Llamar al callback con "--todas" en lugar de tienda específica
+            # El callback debe detectar esto y usar el flag --todas
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            result = loop.run_until_complete(
+                self.etl_callback(
+                    "--todas",  # Pasamos "--todas" como ubicacion_id
+                    fecha_inicio.isoformat(),
+                    fecha_fin.isoformat()
+                )
+            )
+
+            loop.close()
+
+            return result.get("success", False)
+
+        except Exception as e:
+            logger.error(f"❌ Error ejecutando ETL multi-tienda: {str(e)}")
             return False
 
     def get_status(self) -> Dict:
