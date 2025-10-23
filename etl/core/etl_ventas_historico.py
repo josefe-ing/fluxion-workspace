@@ -19,8 +19,26 @@ import threading
 # Agregar el directorio actual al path
 sys.path.append(str(Path(__file__).parent))
 
+# Agregar el directorio backend al path para imports
+sys.path.append(str(Path(__file__).parent.parent.parent / 'backend'))
+
 from tiendas_config import TIENDAS_CONFIG, get_tiendas_activas
 from etl_ventas import VentasETL
+
+# Import Sentry ETL monitoring
+try:
+    from sentry_etl import init_sentry_for_etl, SentryETLMonitor, capture_etl_error
+    SENTRY_AVAILABLE = True
+except ImportError:
+    SENTRY_AVAILABLE = False
+    print("⚠️ Sentry ETL module not available")
+
+# Import email notifier (only in production)
+try:
+    from etl_notifier import send_etl_notification
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
 
 # Configurar logging más detallado para proceso masivo
 logging.basicConfig(
@@ -103,9 +121,24 @@ class VentasETLHistorico:
         thread_name = threading.current_thread().name
         logger.info(f"[{thread_name}] 🔄 Procesando {tienda_id} - {fecha_inicio} a {fecha_fin}")
 
+        # Monitoreo de Sentry para esta tienda/período
+        monitor = None
+        if SENTRY_AVAILABLE:
+            monitor = SentryETLMonitor(
+                etl_name="ventas_historico_periodo",
+                tienda_id=tienda_id,
+                fecha_inicio=str(fecha_inicio),
+                fecha_fin=str(fecha_fin),
+                extra_context={"chunk_size": chunk_size, "thread": thread_name}
+            )
+            monitor.__enter__()
+
         try:
             config = TIENDAS_CONFIG[tienda_id]
             etl = VentasETL()
+
+            if monitor:
+                monitor.add_breadcrumb("Iniciando extracción de datos")
 
             inicio_proceso = time.time()
 
@@ -118,7 +151,8 @@ class VentasETLHistorico:
             )
 
             fin_proceso = time.time()
-            resultado['tiempo_proceso'] = fin_proceso - inicio_proceso
+            tiempo_proceso = fin_proceso - inicio_proceso
+            resultado['tiempo_proceso'] = tiempo_proceso
             resultado['chunk_size'] = chunk_size
             resultado['thread'] = thread_name
 
@@ -129,12 +163,38 @@ class VentasETLHistorico:
                 else:
                     self.stats_globales['errores_totales'] += 1
 
-                logger.info(f"[{thread_name}] ✅ {tienda_id} completado: {resultado.get('registros_cargados', 0):,} registros en {resultado['tiempo_proceso']:.1f}s")
+                logger.info(f"[{thread_name}] ✅ {tienda_id} completado: {resultado.get('registros_cargados', 0):,} registros en {tiempo_proceso:.1f}s")
+
+            # Reportar métricas a Sentry
+            if monitor:
+                monitor.add_metric("registros_cargados", resultado.get('registros_cargados', 0))
+                monitor.add_metric("tiempo_proceso", tiempo_proceso)
+
+                if resultado['success']:
+                    monitor.set_success(
+                        registros_cargados=resultado.get('registros_cargados', 0),
+                        tiempo_proceso=tiempo_proceso
+                    )
 
             return resultado
 
         except Exception as e:
             logger.error(f"[{thread_name}] ❌ Error procesando {tienda_id}: {str(e)}")
+
+            # Capturar error en Sentry
+            if SENTRY_AVAILABLE:
+                capture_etl_error(
+                    error=e,
+                    etl_name="ventas_historico_periodo",
+                    tienda_id=tienda_id,
+                    context={
+                        "fecha_inicio": str(fecha_inicio),
+                        "fecha_fin": str(fecha_fin),
+                        "chunk_size": chunk_size,
+                        "thread": thread_name
+                    }
+                )
+
             return {
                 'tienda_id': tienda_id,
                 'success': False,
@@ -142,6 +202,10 @@ class VentasETLHistorico:
                 'periodo': f"{fecha_inicio} - {fecha_fin}",
                 'thread': thread_name
             }
+
+        finally:
+            if monitor:
+                monitor.__exit__(None, None, None)
 
     def ejecutar_carga_historica_completa(self,
                                         tiendas: List[str] = None,
@@ -290,6 +354,72 @@ class VentasETLHistorico:
             stats_tiendas[tienda]['registros_total'] += resultado.get('registros_cargados', 0)
             stats_tiendas[tienda]['tiempo_total'] += resultado.get('tiempo_proceso', 0)
 
+        # Agregar errores por tienda para el reporte
+        errores_tiendas = {}
+        for resultado in fallidos:
+            tienda = resultado['tienda_id']
+            if tienda not in errores_tiendas:
+                errores_tiendas[tienda] = []
+            errores_tiendas[tienda].append({
+                'periodo': resultado.get('periodo', 'N/A'),
+                'mensaje': resultado['message']
+            })
+
+        # Send email notification (only in production)
+        if NOTIFICATIONS_AVAILABLE:
+            try:
+                # Convert stats_tiendas to the format expected by send_etl_notification
+                tiendas_results = []
+
+                # Get all unique tiendas from both successful and failed results
+                all_tiendas = set(stats_tiendas.keys()) | set(errores_tiendas.keys())
+
+                for tienda_id in all_tiendas:
+                    config = TIENDAS_CONFIG.get(tienda_id)
+                    nombre = config.ubicacion_nombre if config else tienda_id
+
+                    # Check if this tienda has any failures
+                    has_failures = tienda_id in errores_tiendas
+                    stats = stats_tiendas.get(tienda_id, {})
+
+                    result = {
+                        'tienda_id': tienda_id,
+                        'nombre': nombre,
+                        'success': not has_failures and stats.get('periodos_exitosos', 0) > 0,
+                        'registros': stats.get('registros_total', 0),
+                        'tiempo_proceso': stats.get('tiempo_total', 0),
+                    }
+
+                    # Add error message if there are failures
+                    if has_failures:
+                        errores = errores_tiendas[tienda_id]
+                        result['message'] = f"{len(errores)} período(s) fallido(s): " + "; ".join([e['periodo'] for e in errores[:3]])
+                    else:
+                        result['message'] = f"{stats.get('periodos_exitosos', 0)} período(s) procesado(s)"
+
+                    tiendas_results.append(result)
+
+                # Calculate global summary
+                global_summary = {
+                    'Ejecución': 'Paralela' if self.max_workers > 1 else 'Secuencial',
+                    'Total registros': f"{total_registros:,}",
+                    'Velocidad promedio': f"{total_registros / max(self.stats_globales['tiempo_total'], 1):.0f} reg/s",
+                    'Tiendas procesadas': f"{len(stats_tiendas)}",
+                    'Períodos totales': f"{len(exitosos)}"
+                }
+
+                send_etl_notification(
+                    etl_name='ETL Ventas Históricas',
+                    etl_type='ventas',
+                    start_time=self.stats_globales['inicio'],
+                    end_time=self.stats_globales['fin'],
+                    tiendas_results=tiendas_results,
+                    global_summary=global_summary
+                )
+                logger.info("📧 Email notification sent successfully")
+            except Exception as e:
+                logger.error(f"Error sending email notification: {e}")
+
         return {
             'success': len(fallidos) == 0,
             'estadisticas_globales': self.stats_globales,
@@ -348,6 +478,11 @@ class VentasETLHistorico:
 
 def main():
     """Función principal del script"""
+
+    # Inicializar Sentry para ETL
+    if SENTRY_AVAILABLE:
+        init_sentry_for_etl()
+        logger.info("✅ Sentry ETL monitoring habilitado")
 
     parser = argparse.ArgumentParser(description="ETL de Ventas - Carga Histórica Masiva")
     parser.add_argument("--tiendas", nargs="+", help="IDs de tiendas específicas (ej: tienda_08 tienda_01)")
