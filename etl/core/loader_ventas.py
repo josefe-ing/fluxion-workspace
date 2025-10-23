@@ -243,8 +243,9 @@ class VentasLoader:
         try:
             conn = self.get_connection()
 
-            # Eliminar datos existentes para el rango de fechas y ubicaciones que se van a cargar
+            # Eliminar datos existentes SOLO del período específico (sin COUNT costoso)
             # Esto previene duplicados al re-ejecutar el ETL
+            # Respeta históricos: solo elimina/reemplaza datos del rango de fechas actual
             ubicaciones = df['ubicacion_id'].unique().tolist()
             fecha_min = df['fecha'].min()
             fecha_max = df['fecha'].max()
@@ -252,30 +253,22 @@ class VentasLoader:
             if ubicaciones and fecha_min and fecha_max:
                 ubicaciones_str = "', '".join(ubicaciones)
 
-                # Contar registros existentes ANTES de eliminar
-                count_eliminados = conn.execute(f"""
-                    SELECT COUNT(*) FROM ventas_raw
-                    WHERE ubicacion_id IN ('{ubicaciones_str}')
-                    AND fecha >= '{fecha_min}'
-                    AND fecha <= '{fecha_max}'
-                """).fetchone()[0]
+                # DELETE directo sin COUNT previo (más rápido y no bloquea)
+                # Solo elimina registros del período específico que se va a cargar
+                delete_query = f"""
+                DELETE FROM ventas_raw
+                WHERE ubicacion_id IN ('{ubicaciones_str}')
+                  AND fecha >= '{fecha_min}'
+                  AND fecha <= '{fecha_max}'
+                """
 
-                # Eliminar registros existentes
-                if count_eliminados > 0:
-                    delete_query = f"""
-                    DELETE FROM ventas_raw
-                    WHERE ubicacion_id IN ('{ubicaciones_str}')
-                      AND fecha >= '{fecha_min}'
-                      AND fecha <= '{fecha_max}'
-                    """
-                    conn.execute(delete_query)
+                self.logger.info(f"🗑️  Eliminando registros existentes del período (si existen):")
+                self.logger.info(f"   Ubicaciones: {ubicaciones}")
+                self.logger.info(f"   Período: {fecha_min} a {fecha_max}")
 
-                    self.logger.info(f"🗑️  Eliminados registros existentes para prevenir duplicados:")
-                    self.logger.info(f"   Ubicaciones: {ubicaciones}")
-                    self.logger.info(f"   Período: {fecha_min} a {fecha_max}")
-                    self.logger.info(f"   Total eliminado: {count_eliminados:,} registros")
-                else:
-                    self.logger.info(f"✨ No hay registros previos para este período - carga inicial")
+                conn.execute(delete_query)
+
+                self.logger.info(f"✅ DELETE completado - listo para insertar datos actualizados")
 
             # Agregar fecha de carga
             df['fecha_carga'] = datetime.now()
