@@ -68,7 +68,7 @@ export async function enviarParaAprobacion(pedidoId: string): Promise<{
   message: string;
   estado_nuevo: string;
 }> {
-  const response = await http.post(`/api/pedidos-sugeridos/${pedidoId}/enviar-aprobacion`);
+  const response = await http.post(`/api/pedidos-sugeridos/${pedidoId}/enviar-aprobacion`, {});
   return response.data;
 }
 
