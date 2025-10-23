@@ -43,12 +43,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/pedidos-sugeridos", tags=["Pedidos Sugeridos - Workflow"])
 
-# TODO: Replace with actual DB connection dependency
-DB_PATH = "data/fluxion_production.db"
+# Database path - relative to project root
+from pathlib import Path
+DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "fluxion_production.db"
+
+# Debug logging
+logger.info(f"📂 DB_PATH configurado: {DB_PATH}")
+logger.info(f"📂 DB_PATH existe: {DB_PATH.exists()}")
 
 
 def get_db():
     """Get database connection"""
+    logger.info(f"📂 Intentando conectar a: {DB_PATH}")
     conn = duckdb.connect(str(DB_PATH), read_only=False)
     try:
         yield conn
@@ -59,87 +65,103 @@ def get_db():
 # =====================================================================================
 # CALCULAR PEDIDO SUGERIDO CON DEVOLUCIONES
 # =====================================================================================
+# NOTA: Este endpoint está comentado temporalmente para no sobrescribir el endpoint
+# /api/pedidos-sugeridos/calcular de main.py que ya funciona.
+# Se habilitará cuando integremos devoluciones en Paso 2.
 
-@router.post("/calcular", response_model=CalcularPedidoResponse)
-async def calcular_pedido_con_devoluciones(
-    request: CalcularPedidoRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db)
-):
-    """
-    Calcula pedido sugerido con productos a recibir Y devoluciones sugeridas
-
-    Pasos:
-    1. Calcula productos a pedir (basado en ventas, stock, forecast)
-    2. Si incluir_devoluciones=True, calcula productos a devolver (exceso de stock)
-    3. Retorna ambas listas con totales
-
-    **Este endpoint NO guarda nada en DB, solo calcula y retorna**
-    """
-    try:
-        logger.info(f"📊 Calculando pedido: {request.tienda_destino_nombre} (incluir_devoluciones={request.incluir_devoluciones})")
-
-        # ===== PASO 1: CALCULAR PRODUCTOS A RECIBIR =====
-        # TODO: Implement product calculation logic
-        # For now, returning empty list as placeholder
-        productos_recibir = []
-
-        # ===== PASO 2: CALCULAR DEVOLUCIONES SI ESTÁ HABILITADO =====
-        productos_devolver = []
-        if request.incluir_devoluciones:
-            logger.info("🔄 Calculando devoluciones sugeridas...")
-            devoluciones_raw = calcular_devoluciones_sugeridas(
-                conn=conn,
-                tienda_id=request.tienda_destino_id,
-                cedi_origen_id=request.cedi_origen_id,
-                umbral_minimo_bultos=1.0
-            )
-
-            # Aplicar reglas de exclusión si es necesario
-            devoluciones_filtradas = aplicar_reglas_exclusion(
-                devoluciones=devoluciones_raw,
-                productos_excluir=[],  # TODO: Get from config
-                categorias_excluir=[]  # TODO: Get from config
-            )
-
-            # Convertir a Pydantic models
-            for dev in devoluciones_filtradas:
-                productos_devolver.append(ProductoDevolucionSugeridaCalculada(**dev))
-
-        # ===== PASO 3: CALCULAR TOTALES =====
-        total_productos_recibir = len(productos_recibir)
-        total_bultos_recibir = sum(p.cantidad_sugerida_bultos for p in productos_recibir)
-        total_unidades_recibir = sum(p.cantidad_sugerida_unidades for p in productos_recibir)
-
-        total_productos_devolver = len(productos_devolver)
-        total_bultos_devolver = sum(p.devolucion_sugerida_bultos for p in productos_devolver)
-        total_unidades_devolver = sum(p.devolucion_sugerida_unidades for p in productos_devolver)
-
-        logger.info(f"✅ Calculado: {total_productos_recibir} productos a recibir, {total_productos_devolver} a devolver")
-
-        return CalcularPedidoResponse(
-            productos_recibir=productos_recibir,
-            productos_devolver=productos_devolver,
-            total_productos_recibir=total_productos_recibir,
-            total_bultos_recibir=total_bultos_recibir,
-            total_unidades_recibir=total_unidades_recibir,
-            total_productos_devolver=total_productos_devolver,
-            total_bultos_devolver=total_bultos_devolver,
-            total_unidades_devolver=total_unidades_devolver,
-            cedi_origen_id=request.cedi_origen_id,
-            cedi_origen_nombre=request.cedi_origen_nombre,
-            tienda_destino_id=request.tienda_destino_id,
-            tienda_destino_nombre=request.tienda_destino_nombre,
-            dias_cobertura=request.dias_cobertura
-        )
-
-    except Exception as e:
-        logger.error(f"❌ Error calculando pedido: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error calculando pedido: {str(e)}")
+# @router.post("/calcular", response_model=CalcularPedidoResponse)
+# async def calcular_pedido_con_devoluciones(
+#     request: CalcularPedidoRequest,
+#     conn: duckdb.DuckDBPyConnection = Depends(get_db)
+# ):
+#     """
+#     Calcula pedido sugerido con productos a recibir Y devoluciones sugeridas
+#
+#     Pasos:
+#     1. Calcula productos a pedir (basado en ventas, stock, forecast)
+#     2. Si incluir_devoluciones=True, calcula productos a devolver (exceso de stock)
+#     3. Retorna ambas listas con totales
+#
+#     **Este endpoint NO guarda nada en DB, solo calcula y retorna**
+#     """
+#     try:
+#         logger.info(f"📊 Calculando pedido: {request.tienda_destino_nombre} (incluir_devoluciones={request.incluir_devoluciones})")
+#
+#         # ===== PASO 1: CALCULAR PRODUCTOS A RECIBIR =====
+#         # TODO: Implement product calculation logic
+#         # For now, returning empty list as placeholder
+#         productos_recibir = []
+#
+#         # ===== PASO 2: CALCULAR DEVOLUCIONES SI ESTÁ HABILITADO =====
+#         productos_devolver = []
+#         if request.incluir_devoluciones:
+#             logger.info("🔄 Calculando devoluciones sugeridas...")
+#             devoluciones_raw = calcular_devoluciones_sugeridas(
+#                 conn=conn,
+#                 tienda_id=request.tienda_destino_id,
+#                 cedi_origen_id=request.cedi_origen_id,
+#                 umbral_minimo_bultos=1.0
+#             )
+#
+#             # Aplicar reglas de exclusión si es necesario
+#             devoluciones_filtradas = aplicar_reglas_exclusion(
+#                 devoluciones=devoluciones_raw,
+#                 productos_excluir=[],  # TODO: Get from config
+#                 categorias_excluir=[]  # TODO: Get from config
+#             )
+#
+#             # Convertir a Pydantic models
+#             for dev in devoluciones_filtradas:
+#                 productos_devolver.append(ProductoDevolucionSugeridaCalculada(**dev))
+#
+#         # ===== PASO 3: CALCULAR TOTALES =====
+#         total_productos_recibir = len(productos_recibir)
+#         total_bultos_recibir = sum(p.cantidad_sugerida_bultos for p in productos_recibir)
+#         total_unidades_recibir = sum(p.cantidad_sugerida_unidades for p in productos_recibir)
+#
+#         total_productos_devolver = len(productos_devolver)
+#         total_bultos_devolver = sum(p.devolucion_sugerida_bultos for p in productos_devolver)
+#         total_unidades_devolver = sum(p.devolucion_sugerida_unidades for p in productos_devolver)
+#
+#         logger.info(f"✅ Calculado: {total_productos_recibir} productos a recibir, {total_productos_devolver} a devolver")
+#
+#         return CalcularPedidoResponse(
+#             productos_recibir=productos_recibir,
+#             productos_devolver=productos_devolver,
+#             total_productos_recibir=total_productos_recibir,
+#             total_bultos_recibir=total_bultos_recibir,
+#             total_unidades_recibir=total_unidades_recibir,
+#             total_productos_devolver=total_productos_devolver,
+#             total_bultos_devolver=total_bultos_devolver,
+#             total_unidades_devolver=total_unidades_devolver,
+#             cedi_origen_id=request.cedi_origen_id,
+#             cedi_origen_nombre=request.cedi_origen_nombre,
+#             tienda_destino_id=request.tienda_destino_id,
+#             tienda_destino_nombre=request.tienda_destino_nombre,
+#             dias_cobertura=request.dias_cobertura
+#         )
+#
+#     except Exception as e:
+#         logger.error(f"❌ Error calculando pedido: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"Error calculando pedido: {str(e)}")
 
 
 # =====================================================================================
 # GUARDAR PEDIDO (estado: borrador)
 # =====================================================================================
+
+# Endpoint principal (alias) - para compatibilidad con frontend
+@router.post("/", response_model=PedidoGuardadoResponse)
+async def crear_pedido(
+    request: GuardarPedidoRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db)
+):
+    """
+    Alias de /guardar para compatibilidad con frontend
+    POST /api/pedidos-sugeridos
+    """
+    return await guardar_pedido(request, conn)
+
 
 @router.post("/guardar", response_model=PedidoGuardadoResponse)
 async def guardar_pedido(
@@ -442,14 +464,18 @@ async def listar_pedidos(
         for row in result:
             # Calculate porcentaje_avance
             estado_pedido = row[6]
-            if estado_pedido == EstadoPedido.FINALIZADO:
+            if estado_pedido == EstadoPedido.RECIBIDO:
                 porcentaje = 100
-            elif estado_pedido == EstadoPedido.APROBADO_GERENTE:
-                porcentaje = 75
-            elif estado_pedido == EstadoPedido.PENDIENTE_APROBACION_GERENTE:
+            elif estado_pedido == EstadoPedido.EN_TRANSITO:
+                porcentaje = 80
+            elif estado_pedido == EstadoPedido.EN_PREPARACION:
+                porcentaje = 60
+            elif estado_pedido == EstadoPedido.APROBADO:
                 porcentaje = 50
+            elif estado_pedido == EstadoPedido.SOLICITADO:
+                porcentaje = 30
             elif estado_pedido == EstadoPedido.BORRADOR:
-                porcentaje = 25
+                porcentaje = 10
             else:
                 porcentaje = 0
 
@@ -465,9 +491,9 @@ async def listar_pedidos(
                 tipo_pedido=row[8],
                 total_productos=row[9],
                 total_lineas=row[10],
-                total_bultos=row[11],
-                total_unidades=row[12],
-                total_peso_kg=row[13],
+                total_bultos=float(row[11]) if row[11] else 0.0,
+                total_unidades=float(row[12]) if row[12] else 0.0,
+                total_peso_kg=float(row[13]) if row[13] else 0.0,
                 fecha_entrega_solicitada=row[14],
                 fecha_aprobacion=row[15],
                 fecha_recepcion=row[16],
@@ -496,8 +522,85 @@ async def obtener_pedido(
     Obtiene pedido completo con todos los productos y devoluciones
     """
     try:
-        # TODO: Implement full pedido retrieval with productos and devoluciones
-        raise HTTPException(status_code=501, detail="Not implemented yet")
+        # Obtener pedido principal
+        pedido_row = conn.execute("""
+            SELECT
+                id, numero_pedido, fecha_pedido, fecha_creacion,
+                cedi_origen_id, cedi_origen_nombre,
+                tienda_destino_id, tienda_destino_nombre,
+                estado, prioridad, tipo_pedido,
+                total_productos, total_bultos, total_unidades,
+                tiene_devoluciones, total_productos_devolucion,
+                total_bultos_devolucion, total_unidades_devolucion,
+                dias_cobertura, observaciones,
+                usuario_creador, fecha_modificacion
+            FROM pedidos_sugeridos
+            WHERE id = ?
+        """, [pedido_id]).fetchone()
+
+        if not pedido_row:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+        # Obtener productos del pedido
+        productos_rows = conn.execute("""
+            SELECT
+                codigo_producto, descripcion_producto,
+                cantidad_bultos, cantidad_pedida_bultos, total_unidades,
+                cantidad_sugerida_bultos, clasificacion_abc, razon_pedido,
+                prom_ventas_8sem_unid, prom_ventas_8sem_bultos,
+                stock_tienda, stock_total, comentario_gerente, incluido
+            FROM pedidos_sugeridos_detalle
+            WHERE pedido_id = ?
+            ORDER BY linea_numero
+        """, [pedido_id]).fetchall()
+
+        # Construir lista de productos
+        productos = []
+        for prod_row in productos_rows:
+            productos.append({
+                "codigo_producto": prod_row[0],
+                "descripcion_producto": prod_row[1],
+                "cantidad_bultos": float(prod_row[2]) if prod_row[2] else 0.0,
+                "cantidad_pedida_bultos": float(prod_row[3]) if prod_row[3] else 0.0,
+                "total_unidades": float(prod_row[4]) if prod_row[4] else 0.0,
+                "cantidad_sugerida_bultos": float(prod_row[5]) if prod_row[5] else 0.0,
+                "clasificacion_abc": prod_row[6],
+                "razon_pedido": prod_row[7],
+                "prom_ventas_8sem_unid": float(prod_row[8]) if prod_row[8] else 0.0,
+                "prom_ventas_8sem_bultos": float(prod_row[9]) if prod_row[9] else 0.0,
+                "stock_tienda": float(prod_row[10]) if prod_row[10] else 0.0,
+                "stock_total": float(prod_row[11]) if prod_row[11] else 0.0,
+                "comentario_gerente": prod_row[12],
+                "incluido": prod_row[13]
+            })
+
+        # Construir respuesta
+        return {
+            "id": pedido_row[0],
+            "numero_pedido": pedido_row[1],
+            "fecha_pedido": pedido_row[2],
+            "fecha_creacion": pedido_row[3],
+            "cedi_origen_id": pedido_row[4],
+            "cedi_origen_nombre": pedido_row[5],
+            "tienda_destino_id": pedido_row[6],
+            "tienda_destino_nombre": pedido_row[7],
+            "estado": pedido_row[8],
+            "prioridad": pedido_row[9],
+            "tipo_pedido": pedido_row[10],
+            "total_productos": pedido_row[11],
+            "total_bultos": float(pedido_row[12]) if pedido_row[12] else 0.0,
+            "total_unidades": float(pedido_row[13]) if pedido_row[13] else 0.0,
+            "tiene_devoluciones": pedido_row[14],
+            "total_productos_devolucion": pedido_row[15],
+            "total_bultos_devolucion": float(pedido_row[16]) if pedido_row[16] else 0.0,
+            "total_unidades_devolucion": float(pedido_row[17]) if pedido_row[17] else 0.0,
+            "dias_cobertura": pedido_row[18],
+            "observaciones": pedido_row[19],
+            "usuario_creador": pedido_row[20],
+            "fecha_modificacion": pedido_row[21],
+            "productos": productos,
+            "devoluciones": []  # Por ahora vacío
+        }
 
     except HTTPException:
         raise

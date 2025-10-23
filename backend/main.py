@@ -49,6 +49,9 @@ from etl_scheduler import VentasETLScheduler
 # Importar Tenant Middleware
 from middleware.tenant import TenantMiddleware
 
+# Importar routers
+from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
+
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -120,6 +123,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-Tenant-ID"],
 )
 
+# Registrar routers
+app.include_router(pedidos_sugeridos_router)
+
 # Tenant Middleware - Detecta tenant desde hostname o header
 @app.middleware("http")
 async def tenant_middleware(request: Request, call_next):
@@ -176,8 +182,8 @@ def get_db_connection():
 
     conn = None
     try:
-        # Crear conexión read-only (soporta múltiples lecturas simultáneas)
-        conn = duckdb.connect(str(DB_PATH), read_only=True)
+        # Crear conexión read-write para soportar operaciones de escritura (usuarios, pedidos)
+        conn = duckdb.connect(str(DB_PATH), read_only=False)
         yield conn
     finally:
         if conn:
@@ -3219,8 +3225,8 @@ class ProductoGuardarPedido(BaseModel):
     codigo_producto: str
     descripcion_producto: str
     cantidad_bultos: float
-    cantidad_pedida_bultos: int
-    cantidad_sugerida_bultos: int
+    cantidad_pedida_bultos: float  # Cambiado de int a float para aceptar decimales
+    cantidad_sugerida_bultos: float  # Cambiado de int a float para aceptar decimales
     clasificacion_abc: Optional[str]
     razon_pedido: str
     incluido: bool
@@ -3307,10 +3313,11 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
                         id, pedido_id, linea_numero, codigo_producto, descripcion_producto,
                         cantidad_bultos, cantidad_pedida_bultos, cantidad_pedida_unidades,
                         cantidad_sugerida_bultos, cantidad_sugerida_unidades,
+                        total_unidades,
                         clasificacion_abc, razon_pedido, incluido,
                         prom_ventas_8sem_unid, prom_ventas_8sem_bultos,
                         stock_tienda, stock_total
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, [
                     detalle_id, pedido_id, idx + 1,
                     producto.codigo_producto, producto.descripcion_producto,
@@ -3319,6 +3326,7 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
                     float(producto.cantidad_pedida_bultos * producto.cantidad_bultos),
                     int(producto.cantidad_sugerida_bultos),
                     float(producto.cantidad_sugerida_bultos * producto.cantidad_bultos),
+                    float(producto.cantidad_pedida_bultos * producto.cantidad_bultos),  # total_unidades
                     producto.clasificacion_abc, producto.razon_pedido, producto.incluido,
                     float(producto.prom_ventas_8sem_unid), float(producto.prom_ventas_8sem_bultos),
                     float(producto.stock_tienda), float(producto.stock_total)

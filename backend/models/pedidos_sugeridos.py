@@ -525,9 +525,9 @@ class PedidoSugeridoResumen(BaseModel):
     # Totales
     total_productos: int
     total_lineas: int
-    total_bultos: Decimal
-    total_unidades: Decimal
-    total_peso_kg: Optional[Decimal] = None
+    total_bultos: float
+    total_unidades: float
+    total_peso_kg: Optional[float] = None
 
     # Fechas importantes
     fecha_entrega_solicitada: Optional[date] = None
