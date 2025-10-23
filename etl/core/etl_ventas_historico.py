@@ -19,8 +19,18 @@ import threading
 # Agregar el directorio actual al path
 sys.path.append(str(Path(__file__).parent))
 
+# Agregar el directorio backend al path para imports
+sys.path.append(str(Path(__file__).parent.parent.parent / 'backend'))
+
 from tiendas_config import TIENDAS_CONFIG, get_tiendas_activas
 from etl_ventas import VentasETL
+
+# Import email notifier (only in production)
+try:
+    from etl_notifier import send_etl_notification
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
 
 # Configurar logging más detallado para proceso masivo
 logging.basicConfig(
@@ -289,6 +299,72 @@ class VentasETLHistorico:
             stats_tiendas[tienda]['periodos_exitosos'] += 1
             stats_tiendas[tienda]['registros_total'] += resultado.get('registros_cargados', 0)
             stats_tiendas[tienda]['tiempo_total'] += resultado.get('tiempo_proceso', 0)
+
+        # Agregar errores por tienda para el reporte
+        errores_tiendas = {}
+        for resultado in fallidos:
+            tienda = resultado['tienda_id']
+            if tienda not in errores_tiendas:
+                errores_tiendas[tienda] = []
+            errores_tiendas[tienda].append({
+                'periodo': resultado.get('periodo', 'N/A'),
+                'mensaje': resultado['message']
+            })
+
+        # Send email notification (only in production)
+        if NOTIFICATIONS_AVAILABLE:
+            try:
+                # Convert stats_tiendas to the format expected by send_etl_notification
+                tiendas_results = []
+
+                # Get all unique tiendas from both successful and failed results
+                all_tiendas = set(stats_tiendas.keys()) | set(errores_tiendas.keys())
+
+                for tienda_id in all_tiendas:
+                    config = TIENDAS_CONFIG.get(tienda_id)
+                    nombre = config.ubicacion_nombre if config else tienda_id
+
+                    # Check if this tienda has any failures
+                    has_failures = tienda_id in errores_tiendas
+                    stats = stats_tiendas.get(tienda_id, {})
+
+                    result = {
+                        'tienda_id': tienda_id,
+                        'nombre': nombre,
+                        'success': not has_failures and stats.get('periodos_exitosos', 0) > 0,
+                        'registros': stats.get('registros_total', 0),
+                        'tiempo_proceso': stats.get('tiempo_total', 0),
+                    }
+
+                    # Add error message if there are failures
+                    if has_failures:
+                        errores = errores_tiendas[tienda_id]
+                        result['message'] = f"{len(errores)} período(s) fallido(s): " + "; ".join([e['periodo'] for e in errores[:3]])
+                    else:
+                        result['message'] = f"{stats.get('periodos_exitosos', 0)} período(s) procesado(s)"
+
+                    tiendas_results.append(result)
+
+                # Calculate global summary
+                global_summary = {
+                    'Ejecución': 'Paralela' if self.max_workers > 1 else 'Secuencial',
+                    'Total registros': f"{total_registros:,}",
+                    'Velocidad promedio': f"{total_registros / max(self.stats_globales['tiempo_total'], 1):.0f} reg/s",
+                    'Tiendas procesadas': f"{len(stats_tiendas)}",
+                    'Períodos totales': f"{len(exitosos)}"
+                }
+
+                send_etl_notification(
+                    etl_name='ETL Ventas Históricas',
+                    etl_type='ventas',
+                    start_time=self.stats_globales['inicio'],
+                    end_time=self.stats_globales['fin'],
+                    tiendas_results=tiendas_results,
+                    global_summary=global_summary
+                )
+                logger.info("📧 Email notification sent successfully")
+            except Exception as e:
+                logger.error(f"Error sending email notification: {e}")
 
         return {
             'success': len(fallidos) == 0,
