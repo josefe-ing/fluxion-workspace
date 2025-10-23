@@ -73,9 +73,10 @@ if [ "$ENVIRONMENT" = "production" ] && [ -n "$AWS_REGION" ]; then
         --output text 2>&1)
 
     if [ $? -eq 0 ]; then
-        export SENDGRID_API_KEY=$(echo "$SENDGRID_SECRET" | grep -o '"SENDGRID_API_KEY":"[^"]*"' | cut -d'"' -f4)
-        export SENDGRID_FROM_EMAIL=$(echo "$SENDGRID_SECRET" | grep -o '"SENDGRID_FROM_EMAIL":"[^"]*"' | cut -d'"' -f4)
-        export NOTIFICATION_EMAILS=$(echo "$SENDGRID_SECRET" | grep -o '"NOTIFICATION_EMAILS":"[^"]*"' | cut -d'"' -f4)
+        # Use Python to parse JSON (more reliable than grep for complex strings)
+        export SENDGRID_API_KEY=$(echo "$SENDGRID_SECRET" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('SENDGRID_API_KEY', ''))")
+        export SENDGRID_FROM_EMAIL=$(echo "$SENDGRID_SECRET" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('SENDGRID_FROM_EMAIL', ''))")
+        export NOTIFICATION_EMAILS=$(echo "$SENDGRID_SECRET" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('NOTIFICATION_EMAILS', ''))")
 
         if [ -n "$SENDGRID_API_KEY" ]; then
             echo "✅ SendGrid API key cargado exitosamente"
