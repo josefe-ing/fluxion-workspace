@@ -170,6 +170,23 @@ jobs:
         working-directory: ./infrastructure
         run: npx cdk deploy --require-approval never
 
+      - name: Force Backend Service Update
+        run: |
+          echo "Forcing ECS service to use new Docker image..."
+          aws ecs update-service \
+            --cluster fluxion-cluster \
+            --service FluxionStackV2-FluxionBackendServiceE051E4B7-3D0YfNUbXnmp \
+            --force-new-deployment \
+            --query 'service.serviceName' \
+            --output text
+
+      - name: Wait for Backend Service to Stabilize
+        run: |
+          echo "Waiting for backend service to stabilize (max 5 minutes)..."
+          aws ecs wait services-stable \
+            --cluster fluxion-cluster \
+            --services FluxionStackV2-FluxionBackendServiceE051E4B7-3D0YfNUbXnmp
+
       - name: Get Stack Outputs
         id: stack-outputs
         run: |
@@ -256,8 +273,25 @@ jobs:
       - name: Check Backend Health
         run: |
           echo "Checking backend health..."
-          sleep 10  # Wait for service to be ready
-          curl -f ${{ needs.deploy-infrastructure.outputs.backend-url }} || exit 1
+          sleep 30  # Wait for service to be fully ready
+
+          # Retry health check up to 5 times
+          max_retries=5
+          retry_count=0
+
+          while [ $retry_count -lt $max_retries ]; do
+            if curl -f ${{ needs.deploy-infrastructure.outputs.backend-url }}; then
+              echo "✅ Backend is healthy!"
+              exit 0
+            fi
+
+            retry_count=$((retry_count + 1))
+            echo "Health check failed. Retry $retry_count/$max_retries..."
+            sleep 10
+          done
+
+          echo "❌ Backend health check failed after $max_retries attempts"
+          exit 1
 
       - name: Notify Success
         if: success()
