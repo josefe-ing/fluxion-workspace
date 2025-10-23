@@ -377,6 +377,26 @@ async def health_check():
         "database": "DuckDB Connected" if DB_PATH.exists() else "Database Missing"
     }
 
+@app.get("/test-sentry", tags=["Health"])
+async def test_sentry():
+    """
+    Endpoint de prueba para verificar integración de Sentry
+    SOLO PARA DESARROLLO - Remover en producción
+    """
+    import sentry_sdk
+
+    # Enviar un mensaje de prueba
+    sentry_sdk.capture_message("Test message from Fluxion Backend API endpoint")
+
+    # Generar un error de prueba (comentado por defecto)
+    # raise HTTPException(status_code=500, detail="Error de prueba para Sentry")
+
+    return {
+        "status": "OK",
+        "message": "Sentry test message sent",
+        "tip": "Descomentar la línea 390 para probar captura de errores"
+    }
+
 # =====================================================================================
 # ENDPOINTS DE AUTENTICACIÓN
 # =====================================================================================
