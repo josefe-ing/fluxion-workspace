@@ -48,10 +48,11 @@ fluxion-workspace/
 
 ### Tech Stack
 
-- **Backend:** Python 3.x + FastAPI + DuckDB
+- **Backend:** Python 3.14.0 + FastAPI 0.119+ + DuckDB 1.4+
 - **Frontend:** React + TypeScript + Vite
 - **Database:** DuckDB (embedded, file-based OLAP database)
 - **ETL:** Python scripts for data extraction
+- **Security:** All dependencies updated as of Oct 2025 (see PYTHON_UPGRADE_REPORT.md)
 
 ## Common Development Commands
 

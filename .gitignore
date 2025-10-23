@@ -98,3 +98,4 @@ cdk.out/
 **/reporte_ventas_*.txt
 **/reporte_ventas_*.json
 etl/test_copy_optimization.py
+venv_old_python39/
