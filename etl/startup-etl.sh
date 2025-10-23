@@ -45,6 +45,38 @@ else
     echo "   Using credentials from environment variables"
 fi
 
+# Load SendGrid API key and notification settings from Secrets Manager
+echo ""
+echo "📧 Loading SendGrid credentials from AWS Secrets Manager..."
+
+if [ -n "$AWS_REGION" ]; then
+    SENDGRID_SECRET=$(aws secretsmanager get-secret-value \
+        --secret-id fluxion/production \
+        --region "$AWS_REGION" \
+        --query SecretString \
+        --output text 2>&1)
+
+    if [ $? -eq 0 ]; then
+        export SENDGRID_API_KEY=$(echo "$SENDGRID_SECRET" | grep -o '"SENDGRID_API_KEY":"[^"]*"' | cut -d'"' -f4)
+        export SENDGRID_FROM_EMAIL=$(echo "$SENDGRID_SECRET" | grep -o '"SENDGRID_FROM_EMAIL":"[^"]*"' | cut -d'"' -f4)
+        export NOTIFICATION_EMAILS=$(echo "$SENDGRID_SECRET" | grep -o '"NOTIFICATION_EMAILS":"[^"]*"' | cut -d'"' -f4)
+
+        if [ -n "$SENDGRID_API_KEY" ]; then
+            echo "✅ SendGrid API key loaded successfully"
+            [ -n "$SENDGRID_FROM_EMAIL" ] && echo "   From: $SENDGRID_FROM_EMAIL"
+            [ -n "$NOTIFICATION_EMAILS" ] && echo "   To: $NOTIFICATION_EMAILS"
+        else
+            echo "⚠️  Warning: SendGrid API key not found in secrets"
+            echo "   Email notifications will be disabled"
+        fi
+    else
+        echo "⚠️  Warning: Could not fetch SendGrid secrets"
+        echo "   Email notifications will be disabled"
+    fi
+else
+    echo "⚠️  AWS_REGION not set, skipping SendGrid secrets"
+fi
+
 # ========================================
 # 2. Verify Database Connection
 # ========================================
