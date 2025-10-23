@@ -155,6 +155,16 @@ fi
 # 5. Run ETL with arguments
 # ========================================
 echo ""
+
+# Para ETL de ventas programado, calcular fecha de ayer automáticamente
+# si no se proporcionaron fechas específicas en ETL_ARGS
+if [[ "$ETL_SCRIPT" == "etl_ventas_multi_tienda.py" ]] && [[ ! "$ETL_ARGS" =~ "--fecha-inicio" ]]; then
+    AYER=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v -1d +%Y-%m-%d 2>/dev/null)
+    ETL_ARGS="--todas --fecha-inicio $AYER --fecha-fin $AYER"
+    echo "📅 ETL de ventas programado - calculando fecha automáticamente"
+    echo "   Fecha calculada: $AYER (ayer)"
+fi
+
 echo "▶️  Executing: python3 $ETL_SCRIPT $ETL_ARGS"
 echo "========================================"
 echo ""

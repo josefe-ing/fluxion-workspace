@@ -829,7 +829,7 @@ PersistentKeepalive = 25`),
         AWS_REGION: this.region,
         DATABASE_PATH: '/data/fluxion_production.db',  // Use EFS shared storage
         ETL_MODE: 'etl_ventas_multi_tienda.py',
-        ETL_ARGS: '--fecha-inicio 2025-01-01 --fecha-fin 2025-12-31 --todas',  // Default args
+        ETL_ARGS: '--todas',  // startup-etl.sh calculará fecha de ayer automáticamente
         RUN_MODE: 'scheduled',
 
         // Sentry Monitoring Configuration
