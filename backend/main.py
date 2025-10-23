@@ -493,22 +493,22 @@ async def init_database():
 
             logger.info("Tabla usuarios creada/verificada exitosamente")
 
-            # Now create admin user
-            import uuid
-            from passlib.context import CryptContext
+            # Check if admin user already exists
+            existing = conn.execute("SELECT COUNT(*) FROM usuarios WHERE username = 'admin'").fetchone()[0]
 
-            pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-            user_id = str(uuid.uuid4())
-            password_hash = pwd_context.hash("admin123")
-
-            conn.execute("""
-                INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """, (user_id, "admin", password_hash, "Administrador", "admin@fluxion.ai", True))
-
-            logger.info("Usuario admin creado exitosamente")
-
-            return {"message": "Database initialized and admin user created successfully", "username": "admin"}
+            if existing == 0:
+                # Create admin user using the create_user function
+                admin_user = create_user(
+                    username="admin",
+                    password="admin123",
+                    nombre_completo="Administrador",
+                    email="admin@fluxion.ai"
+                )
+                logger.info("Usuario admin creado exitosamente")
+                return {"message": "Database initialized and admin user created successfully", "username": "admin"}
+            else:
+                logger.info("Usuario admin ya existe")
+                return {"message": "Database initialized successfully (admin already exists)", "username": "admin"}
 
     except Exception as e:
         logger.error(f"Error en init-db: {e}")
