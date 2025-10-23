@@ -25,20 +25,30 @@ from core.extractor import SQLServerExtractor
 from core.transformer import InventoryTransformer
 from core.loader import DuckDBLoader
 
-# Import email notifier (only in production)
-try:
-    from etl_notifier import send_etl_notification
-    NOTIFICATIONS_AVAILABLE = True
-except ImportError:
-    NOTIFICATIONS_AVAILABLE = False
-    logger.warning("Email notifications not available (etl_notifier not found)")
-
-# Configurar logging
+# Configurar logging PRIMERO (antes de usarlo)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('etl_multi_tienda')
+
+# Import Sentry ETL monitoring
+try:
+    from sentry_etl import init_sentry_for_etl, SentryETLMonitor, capture_etl_error
+    SENTRY_AVAILABLE = True
+    logger.info("✅ Sentry ETL monitoring available")
+except ImportError:
+    SENTRY_AVAILABLE = False
+    logger.warning("⚠️ Sentry ETL module not available")
+
+# Import email notifier (only in production)
+try:
+    from etl_notifier import send_etl_notification
+    NOTIFICATIONS_AVAILABLE = True
+    logger.info("✅ Email notifications available")
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
+    logger.warning("⚠️ Email notifications not available (etl_notifier not found)")
 
 
 class MultiTiendaETL:
@@ -53,6 +63,16 @@ class MultiTiendaETL:
     def ejecutar_etl_tienda(self, tienda_id: str) -> Dict[str, Any]:
         """Ejecuta el ETL para una tienda específica"""
         start_time = time.time()
+
+        # Monitoreo de Sentry para este ETL
+        monitor = None
+        if SENTRY_AVAILABLE:
+            monitor = SentryETLMonitor(
+                etl_name="inventario_tienda",
+                tienda_id=tienda_id,
+                extra_context={"etl_type": "inventario"}
+            )
+            monitor.__enter__()
 
         try:
             # Obtener configuración
@@ -138,6 +158,14 @@ class MultiTiendaETL:
 
             if result["success"]:
                 logger.info(f"   ✅ Cargados: {result['stats']['insertados']} registros")
+
+                # Reportar métricas a Sentry
+                if monitor:
+                    tiempo_proceso = time.time() - start_time
+                    monitor.add_metric("registros_cargados", result['stats']['insertados'])
+                    monitor.add_metric("tiempo_proceso", tiempo_proceso)
+                    monitor.set_success(registros_cargados=result['stats']['insertados'])
+
                 return {
                     "tienda_id": tienda_id,
                     "nombre": config.ubicacion_nombre,
@@ -159,6 +187,16 @@ class MultiTiendaETL:
 
         except Exception as e:
             logger.error(f"❌ Error procesando {tienda_id}: {str(e)}")
+
+            # Capturar error en Sentry
+            if SENTRY_AVAILABLE:
+                capture_etl_error(
+                    error=e,
+                    etl_name="inventario_tienda",
+                    tienda_id=tienda_id,
+                    context={"etl_type": "inventario"}
+                )
+
             return {
                 "tienda_id": tienda_id,
                 "nombre": TIENDAS_CONFIG.get(tienda_id).ubicacion_nombre if tienda_id in TIENDAS_CONFIG else tienda_id,
@@ -167,6 +205,10 @@ class MultiTiendaETL:
                 "registros": 0,
                 "tiempo_proceso": time.time() - start_time
             }
+
+        finally:
+            if monitor:
+                monitor.__exit__(None, None, None)
 
     def ejecutar_todas_las_tiendas(self, paralelo: bool = False) -> List[Dict[str, Any]]:
         """Ejecuta el ETL para todas las tiendas activas"""
@@ -243,6 +285,12 @@ class MultiTiendaETL:
 
 def main():
     """Función principal"""
+
+    # Inicializar Sentry para ETL
+    if SENTRY_AVAILABLE:
+        init_sentry_for_etl()
+        logger.info("✅ Sentry ETL monitoring inicializado")
+
     parser = argparse.ArgumentParser(description='ETL Multi-Tienda para La Granja Mercado')
     parser.add_argument('--tienda', type=str, help='ID de tienda específica (ej: tienda_01)')
     parser.add_argument('--todas', action='store_true', help='Ejecutar para todas las tiendas activas')
