@@ -1253,7 +1253,10 @@ async def run_etl_ventas_production(ubicacion_id: Optional[str] = None, fecha_in
         # Construir comando ETL de ventas
         etl_command = ["python3", "/app/etl_ventas_multi_tienda.py"]
 
-        if ubicacion_id:
+        if ubicacion_id == "--todas":
+            etl_command.append("--todas")
+            ventas_etl_status["message"] = "Lanzando ETL de ventas para todas las tiendas en ECS..."
+        elif ubicacion_id:
             etl_command.extend(["--tienda", ubicacion_id])
             ventas_etl_status["message"] = f"Lanzando ETL de ventas para {ubicacion_id} en ECS..."
         else:
