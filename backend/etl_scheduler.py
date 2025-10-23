@@ -14,6 +14,9 @@ import duckdb
 from pathlib import Path
 import sys
 
+# Configure logger FIRST before any code that uses it
+logger = logging.getLogger(__name__)
+
 # Agregar path de ETL core para imports
 sys.path.append(str(Path(__file__).parent.parent / 'etl' / 'core'))
 
@@ -29,8 +32,6 @@ try:
 except ImportError:
     SENTRY_AVAILABLE = False
     logger.warning("⚠️  Sentry ETL module not available - monitoring disabled")
-
-logger = logging.getLogger(__name__)
 
 @dataclass
 class RetryConfig:
