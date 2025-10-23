@@ -284,109 +284,101 @@ class VentasLoader:
             errores = 0
 
             # =================================================================
-            # OPTIMIZACIÓN: Usar COPY con Parquet (10-100x más rápido)
+            # CARGA POR LOTES: Igual que inventario ETL (probado y funcional)
             # =================================================================
-            self.logger.info("🚀 Usando método optimizado COPY con Parquet")
+            self.logger.info("🚀 Usando carga por lotes (método probado de inventario)")
 
-            try:
-                # Preparar DataFrame completo para inserción
-                df_prep = df.copy()
+            # Preparar DataFrame completo para inserción
+            df_prep = df.copy()
 
-                # Convertir columnas categóricas a string antes de fillna
-                for col in df_prep.columns:
-                    if df_prep[col].dtype.name == 'category':
-                        df_prep[col] = df_prep[col].astype(str)
+            # Convertir columnas categóricas a string antes de fillna
+            for col in df_prep.columns:
+                if df_prep[col].dtype.name == 'category':
+                    df_prep[col] = df_prep[col].astype(str)
 
-                # Limpiar valores NaN y preparar datos
-                text_columns = [
-                    'numero_factura', 'ubicacion_id', 'ubicacion_nombre', 'linea',
-                    'fecha', 'hora', 'fecha_hora_completa', 'ano', 'mes', 'dia',
-                    'dia_semana', 'nombre_dia', 'nombre_mes', 'turno', 'periodo_dia', 'tipo_dia',
-                    'codigo_transaccion', 'codigo_producto', 'descripcion_producto',
-                    'marca_producto', 'modelo_producto', 'cuadrante_producto', 'presentacion_producto',
-                    'categoria_producto', 'grupo_producto', 'subgrupo_producto',
-                    'categoria_especial', 'categoria_precio', 'tipo_venta',
-                    'tipo_peso', 'es_peso_variable', 'producto_alta_rotacion',
-                    'venta_alto_valor', 'tamano_transaccion',
-                    'fecha_extraccion', 'fecha_transformacion', 'version_transformacion', 'fecha_carga'
-                ]
+            # Limpiar valores NaN y preparar datos
+            text_columns = [
+                'numero_factura', 'ubicacion_id', 'ubicacion_nombre', 'linea',
+                'fecha', 'hora', 'fecha_hora_completa', 'ano', 'mes', 'dia',
+                'dia_semana', 'nombre_dia', 'nombre_mes', 'turno', 'periodo_dia', 'tipo_dia',
+                'codigo_transaccion', 'codigo_producto', 'descripcion_producto',
+                'marca_producto', 'modelo_producto', 'cuadrante_producto', 'presentacion_producto',
+                'categoria_producto', 'grupo_producto', 'subgrupo_producto',
+                'categoria_especial', 'categoria_precio', 'tipo_venta',
+                'tipo_peso', 'es_peso_variable', 'producto_alta_rotacion',
+                'venta_alto_valor', 'tamano_transaccion',
+                'fecha_extraccion', 'fecha_transformacion', 'version_transformacion', 'fecha_carga'
+            ]
 
-                numeric_columns = [
-                    'cantidad_vendida', 'cantidad_bultos', 'peso_unitario', 'volumen_unitario',
-                    'peso_calculado', 'peso_total_vendido', 'volumen_total_vendido',
-                    'costo_unitario', 'precio_unitario', 'impuesto_porcentaje', 'precio_por_kg',
-                    'costo_total', 'venta_total', 'utilidad_bruta', 'margen_bruto_pct',
-                    'impuesto_total', 'venta_sin_impuesto'
-                ]
+            numeric_columns = [
+                'cantidad_vendida', 'cantidad_bultos', 'peso_unitario', 'volumen_unitario',
+                'peso_calculado', 'peso_total_vendido', 'volumen_total_vendido',
+                'costo_unitario', 'precio_unitario', 'impuesto_porcentaje', 'precio_por_kg',
+                'costo_total', 'venta_total', 'utilidad_bruta', 'margen_bruto_pct',
+                'impuesto_total', 'venta_sin_impuesto'
+            ]
 
-                # Aplicar limpieza
-                for col in df_prep.columns:
-                    if col in text_columns:
-                        df_prep[col] = df_prep[col].fillna('').astype(str).replace('nan', '')
-                    elif col in numeric_columns:
-                        # Mantener como numérico pero reemplazar NaN con None
-                        df_prep[col] = df_prep[col].replace('nan', None).replace('None', None)
+            # Aplicar limpieza
+            for col in df_prep.columns:
+                if col in text_columns:
+                    df_prep[col] = df_prep[col].fillna('').astype(str).replace('nan', '')
+                elif col in numeric_columns:
+                    # Mantener como numérico pero reemplazar NaN con None
+                    df_prep[col] = df_prep[col].replace('nan', None).replace('None', None)
 
-                # Seleccionar columnas en orden correcto
-                table_columns = [
-                    'numero_factura', 'ubicacion_id', 'ubicacion_nombre', 'linea',
-                    'fecha', 'hora', 'fecha_hora_completa', 'ano', 'mes', 'dia',
-                    'dia_semana', 'nombre_dia', 'nombre_mes', 'turno', 'periodo_dia', 'tipo_dia',
-                    'codigo_transaccion', 'codigo_producto', 'descripcion_producto',
-                    'marca_producto', 'modelo_producto', 'cuadrante_producto', 'presentacion_producto',
-                    'categoria_producto', 'grupo_producto', 'subgrupo_producto',
-                    'categoria_especial', 'categoria_precio', 'tipo_venta',
-                    'cantidad_vendida', 'cantidad_bultos', 'peso_unitario', 'volumen_unitario',
-                    'peso_calculado', 'peso_total_vendido', 'volumen_total_vendido', 'tipo_peso',
-                    'costo_unitario', 'precio_unitario', 'impuesto_porcentaje', 'precio_por_kg',
-                    'costo_total', 'venta_total', 'utilidad_bruta', 'margen_bruto_pct',
-                    'impuesto_total', 'venta_sin_impuesto',
-                    'es_peso_variable', 'producto_alta_rotacion', 'venta_alto_valor', 'tamano_transaccion',
-                    'fecha_extraccion', 'fecha_transformacion', 'version_transformacion'
-                ]
+            # Seleccionar columnas en orden correcto
+            table_columns = [
+                'numero_factura', 'ubicacion_id', 'ubicacion_nombre', 'linea',
+                'fecha', 'hora', 'fecha_hora_completa', 'ano', 'mes', 'dia',
+                'dia_semana', 'nombre_dia', 'nombre_mes', 'turno', 'periodo_dia', 'tipo_dia',
+                'codigo_transaccion', 'codigo_producto', 'descripcion_producto',
+                'marca_producto', 'modelo_producto', 'cuadrante_producto', 'presentacion_producto',
+                'categoria_producto', 'grupo_producto', 'subgrupo_producto',
+                'categoria_especial', 'categoria_precio', 'tipo_venta',
+                'cantidad_vendida', 'cantidad_bultos', 'peso_unitario', 'volumen_unitario',
+                'peso_calculado', 'peso_total_vendido', 'volumen_total_vendido', 'tipo_peso',
+                'costo_unitario', 'precio_unitario', 'impuesto_porcentaje', 'precio_por_kg',
+                'costo_total', 'venta_total', 'utilidad_bruta', 'margen_bruto_pct',
+                'impuesto_total', 'venta_sin_impuesto',
+                'es_peso_variable', 'producto_alta_rotacion', 'venta_alto_valor', 'tamano_transaccion',
+                'fecha_extraccion', 'fecha_transformacion', 'version_transformacion'
+            ]
 
-                available_columns = [col for col in table_columns if col in df_prep.columns]
-                df_final = df_prep[available_columns].copy()
+            available_columns = [col for col in table_columns if col in df_prep.columns]
+            df_final = df_prep[available_columns].copy()
 
-                # Generar archivo Parquet temporal
-                temp_file = f'/tmp/ventas_bulk_{uuid.uuid4()}.parquet'
-                self.logger.info(f"📝 Escribiendo {len(df_final):,} registros a Parquet temporal...")
+            # Procesar por lotes (igual que inventario)
+            batch_size = 5000
+            total_batches = (len(df_final) + batch_size - 1) // batch_size
 
-                tiempo_parquet_inicio = datetime.now()
-                df_final.to_parquet(temp_file, index=False, engine='pyarrow', compression='snappy')
-                tiempo_parquet = (datetime.now() - tiempo_parquet_inicio).total_seconds()
+            for i in range(0, len(df_final), batch_size):
+                batch_df = df_final.iloc[i:i+batch_size].copy()
+                current_batch = (i // batch_size) + 1
 
-                file_size_mb = os.path.getsize(temp_file) / (1024 * 1024)
-                self.logger.info(f"✅ Parquet creado: {file_size_mb:.2f} MB en {tiempo_parquet:.2f}s")
+                try:
+                    self.logger.info(f"🔄 Procesando lote {current_batch}/{total_batches} ({len(batch_df)} registros)")
 
-                # Insertar desde Parquet usando COPY (bulk insert)
-                self.logger.info(f"💾 Ejecutando COPY bulk desde Parquet a DuckDB...")
-                tiempo_copy_inicio = datetime.now()
+                    conn.execute("BEGIN TRANSACTION")
 
-                insert_query = f"""
-                INSERT INTO ventas_raw ({', '.join(available_columns)})
-                SELECT * FROM read_parquet('{temp_file}')
-                """
+                    # Registrar DataFrame temporal en DuckDB
+                    conn.register('batch_data', batch_df)
 
-                conn.execute(insert_query)
-                registros_insertados = len(df_final)
+                    # Insertar datos usando SELECT FROM batch_data
+                    columns_str = ', '.join(available_columns)
+                    conn.execute(f"""
+                        INSERT INTO ventas_raw ({columns_str})
+                        SELECT {columns_str} FROM batch_data
+                    """)
 
-                tiempo_copy = (datetime.now() - tiempo_copy_inicio).total_seconds()
-                self.logger.info(f"✅ COPY completado: {registros_insertados:,} registros en {tiempo_copy:.2f}s")
-                self.logger.info(f"⚡ Velocidad: {registros_insertados/tiempo_copy:.0f} registros/segundo")
+                    conn.execute("COMMIT")
+                    registros_insertados += len(batch_df)
 
-                # Limpiar archivo temporal
-                os.remove(temp_file)
-                self.logger.info(f"🗑️  Archivo temporal eliminado")
+                    self.logger.info(f"✅ Lote {current_batch}/{total_batches} completado")
 
-            except Exception as e:
-                errores = len(df)
-                registros_insertados = 0
-                self.logger.error(f"❌ Error en COPY optimizado: {str(e)}")
-                self.logger.error(f"   Fallback: Intentando método tradicional por lotes...")
-
-                # FALLBACK: Si falla COPY, usar método tradicional
-                # (código original aquí como respaldo, pero normalmente no se ejecuta)
+                except Exception as e:
+                    conn.execute("ROLLBACK")
+                    errores += len(batch_df)
+                    self.logger.error(f"❌ Error en lote {current_batch}: {str(e)}")
 
             # ETL enfocado solo en extracción y carga - sin procesamiento adicional
 
