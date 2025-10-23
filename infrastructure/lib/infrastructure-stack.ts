@@ -825,6 +825,7 @@ PersistentKeepalive = 25`),
       }),
       environment: {
         ENVIRONMENT: 'production',
+        ETL_ENVIRONMENT: 'production',  // Used by tiendas_config.py to select VPN/production IPs
         AWS_REGION: this.region,
         DATABASE_PATH: '/data/fluxion_production.db',  // Use EFS shared storage
         ETL_MODE: 'etl_ventas_multi_tienda.py',
