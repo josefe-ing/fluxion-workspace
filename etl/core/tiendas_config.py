@@ -484,6 +484,16 @@ def get_tiendas_activas() -> Dict[str, TiendaConfig]:
     """Retorna solo las tiendas activas"""
     return {k: v for k, v in TIENDAS_CONFIG.items() if v.activo}
 
+def get_tiendas_con_ventas() -> Dict[str, TiendaConfig]:
+    """
+    Retorna solo las tiendas activas que tienen ventas (excluye CEDIs)
+    Los CEDIs son centros de distribución sin ventas
+    """
+    return {
+        k: v for k, v in TIENDAS_CONFIG.items()
+        if v.activo and v.tipo != "cedi"
+    }
+
 def listar_tiendas():
     """Lista todas las tiendas configuradas"""
     print("\n🏪 TIENDAS CONFIGURADAS:")

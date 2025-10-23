@@ -15,7 +15,7 @@ import logging
 # Agregar el directorio core al path
 sys.path.append(str(Path(__file__).parent / 'core'))
 
-from core.tiendas_config import TIENDAS_CONFIG, get_tiendas_activas
+from core.tiendas_config import TIENDAS_CONFIG, get_tiendas_activas, get_tiendas_con_ventas
 from core.etl_ventas import VentasETL
 
 # Configurar logging
@@ -102,11 +102,15 @@ class VentasMultiTiendaETL:
                                           fecha_fin: date,
                                           limite_registros: int = None,
                                           solo_activas: bool = True) -> List[Dict[str, Any]]:
-        """Ejecuta el ETL de ventas para todas las tiendas"""
+        """
+        Ejecuta el ETL de ventas para todas las tiendas
+
+        NOTA: Solo procesa tiendas con ventas (excluye CEDIs - centros de distribución)
+        """
 
         if solo_activas:
-            tiendas = get_tiendas_activas()
-            tipo_tiendas = "activas"
+            tiendas = get_tiendas_con_ventas()  # Excluye CEDIs automáticamente
+            tipo_tiendas = "con ventas (excluye CEDIs)"
         else:
             tiendas = TIENDAS_CONFIG
             tipo_tiendas = "configuradas"
