@@ -12,6 +12,23 @@ import threading
 from dataclasses import dataclass, field
 import duckdb
 from pathlib import Path
+import sys
+
+# Agregar path de ETL core para imports
+sys.path.append(str(Path(__file__).parent.parent / 'etl' / 'core'))
+
+# Importar módulo de Sentry para ETL
+try:
+    from sentry_etl import (
+        init_sentry_for_etl,
+        SentryETLMonitor,
+        capture_etl_error,
+        track_etl_retry
+    )
+    SENTRY_AVAILABLE = True
+except ImportError:
+    SENTRY_AVAILABLE = False
+    logger.warning("⚠️  Sentry ETL module not available - monitoring disabled")
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +68,11 @@ class VentasETLScheduler:
 
         # Callbacks para ejecutar ETL (se inyectan desde main.py)
         self.etl_callback = None
+
+        # Inicializar Sentry para ETL
+        if SENTRY_AVAILABLE:
+            init_sentry_for_etl()
+            logger.info("✅ Sentry ETL monitoring habilitado")
 
         logger.info(f"📅 VentasETLScheduler inicializado - Ejecución diaria: {self.execution_time}")
 
@@ -171,6 +193,17 @@ class VentasETLScheduler:
         self.status.retry_config.failed_stores.clear()
         self.status.retry_config.pending_retries.clear()
 
+        # Monitoreo de Sentry para toda la ejecución del scheduler
+        monitor = None
+        if SENTRY_AVAILABLE:
+            monitor = SentryETLMonitor(
+                etl_name="ventas_scheduler_daily",
+                fecha_inicio=str(fecha_inicio),
+                fecha_fin=str(fecha_fin),
+                extra_context={"execution_time": self.execution_time.isoformat()}
+            )
+            monitor.__enter__()
+
         try:
             logger.info(f"📅 Procesando ventas del: {fecha_inicio} al {fecha_fin}")
 
@@ -178,9 +211,16 @@ class VentasETLScheduler:
             tiendas = self._get_all_tiendas()
             self.status.daily_summary["total_tiendas"] = len(tiendas)
 
+            if monitor:
+                monitor.add_metric("total_tiendas", len(tiendas))
+                monitor.add_breadcrumb(f"Iniciando procesamiento de {len(tiendas)} tiendas")
+
             if not tiendas:
                 logger.warning("⚠️  No se encontraron tiendas para procesar")
                 self.status.is_running = False
+                if monitor:
+                    monitor.add_breadcrumb("No se encontraron tiendas", level="warning")
+                    monitor.__exit__(None, None, None)
                 return
 
             logger.info(f"🏪 Procesando {len(tiendas)} tiendas")
@@ -189,6 +229,8 @@ class VentasETLScheduler:
             for tienda_id in tiendas:
                 if not self.status.enabled:
                     logger.info("🛑 Scheduler detenido durante ejecución")
+                    if monitor:
+                        monitor.add_breadcrumb("Scheduler detenido manualmente", level="warning")
                     break
 
                 logger.info(f"🔄 Procesando {tienda_id}...")
@@ -199,6 +241,9 @@ class VentasETLScheduler:
                     self.status.daily_summary["exitosas"] += 1
                     self.status.daily_summary["tiendas_exitosas"].append(tienda_id)
                     logger.info(f"✅ {tienda_id} procesada exitosamente")
+
+                    if monitor:
+                        monitor.add_breadcrumb(f"Tienda {tienda_id} exitosa", level="info")
                 else:
                     self.status.daily_summary["fallidas"] += 1
                     self.status.daily_summary["tiendas_fallidas"].append(tienda_id)
@@ -209,6 +254,9 @@ class VentasETLScheduler:
 
                     logger.warning(f"❌ {tienda_id} falló - programada para reintento")
 
+                    if monitor:
+                        monitor.add_breadcrumb(f"Tienda {tienda_id} falló", level="error")
+
                 # Pequeña pausa entre tiendas
                 threading.Event().wait(2)
 
@@ -218,11 +266,24 @@ class VentasETLScheduler:
                        f"{self.status.daily_summary['exitosas']} exitosas, "
                        f"{self.status.daily_summary['fallidas']} fallidas")
 
+            # Reportar métricas finales a Sentry
+            if monitor:
+                monitor.add_metric("tiendas_exitosas", self.status.daily_summary["exitosas"])
+                monitor.add_metric("tiendas_fallidas", self.status.daily_summary["fallidas"])
+                monitor.set_success(
+                    tiendas_procesadas=self.status.daily_summary["exitosas"],
+                    tiendas_fallidas=self.status.daily_summary["fallidas"]
+                )
+
         except Exception as e:
             logger.error(f"❌ Error ejecutando ETL: {str(e)}")
+            if monitor:
+                monitor.add_breadcrumb(f"Error crítico: {str(e)}", level="error")
 
         finally:
             self.status.is_running = False
+            if monitor:
+                monitor.__exit__(None, None, None)
 
     def _execute_daily_etl(self):
         """Ejecuta ETL para todas las tiendas del día anterior"""

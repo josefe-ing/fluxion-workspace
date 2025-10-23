@@ -25,6 +25,14 @@ sys.path.append(str(Path(__file__).parent.parent.parent / 'backend'))
 from tiendas_config import TIENDAS_CONFIG, get_tiendas_activas
 from etl_ventas import VentasETL
 
+# Import Sentry ETL monitoring
+try:
+    from sentry_etl import init_sentry_for_etl, SentryETLMonitor, capture_etl_error
+    SENTRY_AVAILABLE = True
+except ImportError:
+    SENTRY_AVAILABLE = False
+    print("⚠️ Sentry ETL module not available")
+
 # Import email notifier (only in production)
 try:
     from etl_notifier import send_etl_notification
@@ -113,9 +121,24 @@ class VentasETLHistorico:
         thread_name = threading.current_thread().name
         logger.info(f"[{thread_name}] 🔄 Procesando {tienda_id} - {fecha_inicio} a {fecha_fin}")
 
+        # Monitoreo de Sentry para esta tienda/período
+        monitor = None
+        if SENTRY_AVAILABLE:
+            monitor = SentryETLMonitor(
+                etl_name="ventas_historico_periodo",
+                tienda_id=tienda_id,
+                fecha_inicio=str(fecha_inicio),
+                fecha_fin=str(fecha_fin),
+                extra_context={"chunk_size": chunk_size, "thread": thread_name}
+            )
+            monitor.__enter__()
+
         try:
             config = TIENDAS_CONFIG[tienda_id]
             etl = VentasETL()
+
+            if monitor:
+                monitor.add_breadcrumb("Iniciando extracción de datos")
 
             inicio_proceso = time.time()
 
@@ -128,7 +151,8 @@ class VentasETLHistorico:
             )
 
             fin_proceso = time.time()
-            resultado['tiempo_proceso'] = fin_proceso - inicio_proceso
+            tiempo_proceso = fin_proceso - inicio_proceso
+            resultado['tiempo_proceso'] = tiempo_proceso
             resultado['chunk_size'] = chunk_size
             resultado['thread'] = thread_name
 
@@ -139,12 +163,38 @@ class VentasETLHistorico:
                 else:
                     self.stats_globales['errores_totales'] += 1
 
-                logger.info(f"[{thread_name}] ✅ {tienda_id} completado: {resultado.get('registros_cargados', 0):,} registros en {resultado['tiempo_proceso']:.1f}s")
+                logger.info(f"[{thread_name}] ✅ {tienda_id} completado: {resultado.get('registros_cargados', 0):,} registros en {tiempo_proceso:.1f}s")
+
+            # Reportar métricas a Sentry
+            if monitor:
+                monitor.add_metric("registros_cargados", resultado.get('registros_cargados', 0))
+                monitor.add_metric("tiempo_proceso", tiempo_proceso)
+
+                if resultado['success']:
+                    monitor.set_success(
+                        registros_cargados=resultado.get('registros_cargados', 0),
+                        tiempo_proceso=tiempo_proceso
+                    )
 
             return resultado
 
         except Exception as e:
             logger.error(f"[{thread_name}] ❌ Error procesando {tienda_id}: {str(e)}")
+
+            # Capturar error en Sentry
+            if SENTRY_AVAILABLE:
+                capture_etl_error(
+                    error=e,
+                    etl_name="ventas_historico_periodo",
+                    tienda_id=tienda_id,
+                    context={
+                        "fecha_inicio": str(fecha_inicio),
+                        "fecha_fin": str(fecha_fin),
+                        "chunk_size": chunk_size,
+                        "thread": thread_name
+                    }
+                )
+
             return {
                 'tienda_id': tienda_id,
                 'success': False,
@@ -152,6 +202,10 @@ class VentasETLHistorico:
                 'periodo': f"{fecha_inicio} - {fecha_fin}",
                 'thread': thread_name
             }
+
+        finally:
+            if monitor:
+                monitor.__exit__(None, None, None)
 
     def ejecutar_carga_historica_completa(self,
                                         tiendas: List[str] = None,
@@ -424,6 +478,11 @@ class VentasETLHistorico:
 
 def main():
     """Función principal del script"""
+
+    # Inicializar Sentry para ETL
+    if SENTRY_AVAILABLE:
+        init_sentry_for_etl()
+        logger.info("✅ Sentry ETL monitoring habilitado")
 
     parser = argparse.ArgumentParser(description="ETL de Ventas - Carga Histórica Masiva")
     parser.add_argument("--tiendas", nargs="+", help="IDs de tiendas específicas (ej: tienda_08 tienda_01)")
