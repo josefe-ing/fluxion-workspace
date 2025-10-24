@@ -199,6 +199,33 @@ class VentasLoader:
 
             conn.execute(productos_top)
 
+            # Crear índices para optimizar DELETE y queries
+            self.logger.info("📊 Creando/verificando índices...")
+            try:
+                # Índice compuesto para DELETE rápido
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ventas_ubicacion_fecha
+                    ON ventas_raw(ubicacion_id, fecha)
+                """)
+                self.logger.info("   ✅ Índice idx_ventas_ubicacion_fecha creado")
+
+                # Índice para queries por fecha
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ventas_fecha
+                    ON ventas_raw(fecha)
+                """)
+                self.logger.info("   ✅ Índice idx_ventas_fecha creado")
+
+                # Índice para queries por ubicación
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ventas_ubicacion
+                    ON ventas_raw(ubicacion_id)
+                """)
+                self.logger.info("   ✅ Índice idx_ventas_ubicacion creado")
+
+            except Exception as idx_error:
+                self.logger.warning(f"   ⚠️ Error creando índices (puede ser que ya existan): {idx_error}")
+
             conn.close()
             self.logger.info("✅ Tablas de ventas creadas/verificadas exitosamente")
             return True
