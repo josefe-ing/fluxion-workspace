@@ -111,6 +111,7 @@ def get_password_hash(password: str) -> str:
 def authenticate_user(username: str, password: str) -> Optional[Usuario]:
     """Autentica un usuario verificando username y password"""
     try:
+        # Primero: SELECT con conexión read-only
         with get_auth_db_connection() as conn:
             result = conn.execute("""
                 SELECT id, username, password_hash, nombre_completo, email, activo
@@ -127,20 +128,25 @@ def authenticate_user(username: str, password: str) -> Optional[Usuario]:
             if not verify_password(password, password_hash):
                 return None
 
-            # Actualizar último login
-            conn.execute("""
-                UPDATE usuarios
-                SET ultimo_login = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (user_id,))
+        # Segundo: UPDATE con conexión read-write (separada)
+        try:
+            with get_auth_db_connection_write() as conn_write:
+                conn_write.execute("""
+                    UPDATE usuarios
+                    SET ultimo_login = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (user_id,))
+        except Exception as update_error:
+            # Log el error pero no fallar el login
+            print(f"Warning: No se pudo actualizar ultimo_login: {update_error}")
 
-            return Usuario(
-                id=user_id,
-                username=username,
-                nombre_completo=nombre_completo,
-                email=email,
-                activo=activo
-            )
+        return Usuario(
+            id=user_id,
+            username=username,
+            nombre_completo=nombre_completo,
+            email=email,
+            activo=activo
+        )
     except Exception as e:
         print(f"Error en authenticate_user: {e}")
         return None
