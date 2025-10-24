@@ -71,9 +71,10 @@ def get_server_port(local_port: int, prod_port: int = None):
     # Por defecto, usar local
     return local_port
 
-# IP del WireGuard bridge en producción AWS
-# WireGuard EC2 Instance: i-089ec164ad71fcf15 (FluxionStackV2/WireGuardBridge)
-WIREGUARD_BRIDGE_IP = "10.0.2.43"
+# NOTA: En producción, las ECS tasks se conectan directamente a las IPs 192.168.x.x
+# El routing del VPC automáticamente envía ese tráfico a través del WireGuard bridge (10.0.2.43)
+# NO se necesita usar la IP del bridge explícitamente - el VPC route table lo maneja transparentemente
+# Ver: docs/infrastructure/vpn-setup-complete.md y ETL_VPN_DIAGNOSIS_COMPLETE.md
 
 @dataclass
 class TiendaConfig:
@@ -109,17 +110,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_01": TiendaConfig(
         ubicacion_id="tienda_01",
         ubicacion_nombre="PERIFERICO",
-        server_ip=get_server_ip(
-            local_ip="192.168.20.12",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.20.12",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14301
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="0102"
     ),
@@ -127,17 +122,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_02": TiendaConfig(
         ubicacion_id="tienda_02",
         ubicacion_nombre="AV. BOLIVAR",
-        server_ip=get_server_ip(
-            local_ip="192.168.30.52",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.30.52",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14302
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="0202"
     ),
@@ -145,17 +134,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_03": TiendaConfig(
         ubicacion_id="tienda_03",
         ubicacion_nombre="MAÑONGO",
-        server_ip=get_server_ip(
-            local_ip="192.168.50.20",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.50.20",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14303
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="0302"
     ),
@@ -163,17 +146,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_04": TiendaConfig(
         ubicacion_id="tienda_04",
         ubicacion_nombre="SAN DIEGO",
-        server_ip=get_server_ip(
-            local_ip="192.168.140.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.140.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14304
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="0402"
     ),
@@ -181,17 +158,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_05": TiendaConfig(
         ubicacion_id="tienda_05",
         ubicacion_nombre="VIVIENDA",
-        server_ip=get_server_ip(
-            local_ip="192.168.80.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.80.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14305
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="0502"
     ),
@@ -199,17 +170,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_06": TiendaConfig(
         ubicacion_id="tienda_06",
         ubicacion_nombre="NAGUANAGUA",
-        server_ip=get_server_ip(
-            local_ip="192.168.40.53",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.40.53",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14306
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="0602"
     ),
@@ -217,17 +182,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_07": TiendaConfig(
         ubicacion_id="tienda_07",
         ubicacion_nombre="CENTRO",
-        server_ip=get_server_ip(
-            local_ip="192.168.130.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.130.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14307
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="0702"
     ),
@@ -247,17 +206,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_09": TiendaConfig(
         ubicacion_id="tienda_09",
         ubicacion_nombre="GUACARA",
-        server_ip=get_server_ip(
-            local_ip="192.168.120.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.120.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14309
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="0902"
     ),
@@ -265,17 +218,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_10": TiendaConfig(
         ubicacion_id="tienda_10",
         ubicacion_nombre="FERIAS",
-        server_ip=get_server_ip(
-            local_ip="192.168.70.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.70.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14310
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="1002"
     ),
@@ -283,17 +230,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_11": TiendaConfig(
         ubicacion_id="tienda_11",
         ubicacion_nombre="FLOR AMARILLO",
-        server_ip=get_server_ip(
-            local_ip="192.168.160.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.160.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14311
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="1102"
     ),
@@ -301,17 +242,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_12": TiendaConfig(
         ubicacion_id="tienda_12",
         ubicacion_nombre="PARAPARAL",
-        server_ip=get_server_ip(
-            local_ip="192.168.170.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.170.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=1433,
-            prod_port=14312
-        ),
+        port=1433,
         activo=True,
         codigo_deposito="1202"
     ),
@@ -319,17 +254,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_13": TiendaConfig(
         ubicacion_id="tienda_13",
         ubicacion_nombre="NAGUANAGUA III",
-        server_ip=get_server_ip(
-            local_ip="192.168.190.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.190.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=14348,
-            prod_port=14313
-        ),
+        port=14348,
         activo=True,
         codigo_deposito="1302"
     ),
@@ -337,17 +266,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_15": TiendaConfig(
         ubicacion_id="tienda_15",
         ubicacion_nombre="ISABELICA",
-        server_ip=get_server_ip(
-            local_ip="192.168.180.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.180.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=1433,
-            prod_port=14315
-        ),
+        port=1433,
         activo=True,
         codigo_deposito="1502"
     ),
@@ -355,17 +278,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_16": TiendaConfig(
         ubicacion_id="tienda_16",
         ubicacion_nombre="TOCUYITO",
-        server_ip=get_server_ip(
-            local_ip="192.168.110.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.110.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=1433,
-            prod_port=14316
-        ),
+        port=1433,
         activo=True,
         codigo_deposito="1602"
     ),
@@ -373,17 +290,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_19": TiendaConfig(
         ubicacion_id="tienda_19",
         ubicacion_nombre="GUIGUE",
-        server_ip=get_server_ip(
-            local_ip="192.168.210.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.210.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=1433,
-            prod_port=14319
-        ),
+        port=1433,
         activo=True,
         codigo_deposito="1902"
     ),
@@ -391,17 +302,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_20": TiendaConfig(
         ubicacion_id="tienda_20",
         ubicacion_nombre="TAZAJAL",
-        server_ip=get_server_ip(
-            local_ip="192.168.220.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.220.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=1433,
-            prod_port=14320
-        ),
+        port=1433,
         activo=True,
         codigo_deposito="2001"
     ),
@@ -410,17 +315,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "cedi_seco": TiendaConfig(
         ubicacion_id="cedi_seco",
         ubicacion_nombre="CEDI Seco",
-        server_ip=get_server_ip(
-            local_ip="192.168.90.20",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.90.20",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=1433,
-            prod_port=14401
-        ),
+        port=1433,
         codigo_deposito="0001",
         activo=True,
         tipo="cedi"
@@ -429,17 +328,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "cedi_frio": TiendaConfig(
         ubicacion_id="cedi_frio",
         ubicacion_nombre="CEDI Frio",
-        server_ip=get_server_ip(
-            local_ip="192.168.170.20",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.170.20",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=1433,
-            prod_port=14402
-        ),
+        port=1433,
         codigo_deposito="1710",
         activo=True,
         tipo="cedi"
@@ -448,17 +341,11 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "cedi_verde": TiendaConfig(
         ubicacion_id="cedi_verde",
         ubicacion_nombre="CEDI Verde",
-        server_ip=get_server_ip(
-            local_ip="192.168.200.10",
-            prod_ip=WIREGUARD_BRIDGE_IP
-        ),
+        server_ip="192.168.200.10",  # VPC routing handles WireGuard automatically
         database_name="VAD10",
         username=get_sql_user(),
         password=get_sql_pass(),
-        port=get_server_port(
-            local_port=1433,
-            prod_port=14403
-        ),
+        port=1433,
         codigo_deposito="1801",
         activo=True,
         tipo="cedi"
