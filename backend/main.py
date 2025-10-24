@@ -176,13 +176,34 @@ DB_PATH = Path(os.getenv('DATABASE_PATH', str(Path(__file__).parent.parent / "da
 
 @contextmanager
 def get_db_connection():
-    """Context manager para conexiones DuckDB con auto-close"""
+    """
+    Context manager para conexiones DuckDB READ-ONLY (para queries de lectura)
+    Permite múltiples lectores simultáneos y no bloquea ETL
+    """
     if not DB_PATH.exists():
         raise HTTPException(status_code=500, detail="Base de datos no encontrada")
 
     conn = None
     try:
-        # Crear conexión read-write para soportar operaciones de escritura (usuarios, pedidos)
+        # Conexión read-only: permite múltiples lectores y no bloquea ETL
+        conn = duckdb.connect(str(DB_PATH), read_only=True)
+        yield conn
+    finally:
+        if conn:
+            conn.close()
+
+@contextmanager
+def get_db_connection_write():
+    """
+    Context manager para conexiones DuckDB READ-WRITE (para escrituras)
+    Solo usar cuando realmente necesites INSERT/UPDATE/DELETE
+    """
+    if not DB_PATH.exists():
+        raise HTTPException(status_code=500, detail="Base de datos no encontrada")
+
+    conn = None
+    try:
+        # Conexión read-write: solo para operaciones de escritura
         conn = duckdb.connect(str(DB_PATH), read_only=False)
         yield conn
     finally:
@@ -475,7 +496,8 @@ async def init_database():
     Endpoint temporal para setup inicial de BD
     """
     try:
-        with get_db_connection() as conn:
+        # Usar conexión de escritura para CREATE TABLE
+        with get_db_connection_write() as conn:
             # Crear tabla usuarios
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS usuarios (
@@ -524,26 +546,26 @@ async def bootstrap_admin():
     SOLO FUNCIONA SI NO HAY USUARIOS EN LA BD
     """
     try:
+        # Verificar con read-only connection
         with get_db_connection() as conn:
-            # Verificar si ya hay usuarios
             count = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
 
-            if count > 0:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Ya existen usuarios en el sistema. Use /api/auth/register para crear nuevos usuarios."
-                )
-
-            # Crear usuario admin
-            admin_user = create_user(
-                username="admin",
-                password="admin123",
-                nombre_completo="Administrador",
-                email="admin@fluxion.ai"
+        if count > 0:
+            raise HTTPException(
+                status_code=403,
+                detail="Ya existen usuarios en el sistema. Use /api/auth/register para crear nuevos usuarios."
             )
 
-            logger.info("Usuario admin creado via bootstrap")
-            return admin_user
+        # Crear usuario admin (create_user ya usa write connection)
+        admin_user = create_user(
+            username="admin",
+            password="admin123",
+            nombre_completo="Administrador",
+            email="admin@fluxion.ai"
+        )
+
+        logger.info("Usuario admin creado via bootstrap")
+        return admin_user
 
     except HTTPException:
         raise
@@ -3268,12 +3290,8 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
         pedido_id = str(uuid.uuid4())
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-        # Conectar a base de datos con escritura
-        # Note: guardar_pedido_sugerido needs write access, so we can't use the read-only context manager
-        # We'll connect directly but still use proper cleanup
-        conn = duckdb.connect(str(DB_PATH), read_only=False)
-
-        try:
+        # Usar context manager con conexión de escritura
+        with get_db_connection_write() as conn:
             # Obtener último número de pedido para generar secuencia
             result = conn.execute("SELECT MAX(numero_pedido) as ultimo FROM pedidos_sugeridos").fetchone()
             ultimo_numero = result[0] if result[0] else "PED-0000"
@@ -3342,8 +3360,6 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
                 total_bultos=float(total_bultos),
                 fecha_creacion=timestamp
             )
-        finally:
-            conn.close()
 
     except Exception as e:
         logger.error(f"Error guardando pedido sugerido: {str(e)}")

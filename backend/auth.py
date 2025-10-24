@@ -60,7 +60,10 @@ class CreateUserRequest(BaseModel):
 
 @contextmanager
 def get_auth_db_connection():
-    """Context manager para conexiones DuckDB de autenticación"""
+    """
+    Context manager para conexiones DuckDB READ-ONLY (para autenticación y lectura de usuarios)
+    Permite múltiples lectores simultáneos y no bloquea ETL
+    """
     if not DB_PATH.exists():
         raise HTTPException(
             status_code=500,
@@ -69,6 +72,28 @@ def get_auth_db_connection():
 
     conn = None
     try:
+        # Conexión read-only: para autenticación y lectura de usuarios
+        conn = duckdb.connect(str(DB_PATH), read_only=True)
+        yield conn
+    finally:
+        if conn:
+            conn.close()
+
+@contextmanager
+def get_auth_db_connection_write():
+    """
+    Context manager para conexiones DuckDB READ-WRITE (para crear usuarios)
+    Solo usar cuando necesites INSERT/UPDATE en tabla usuarios
+    """
+    if not DB_PATH.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="Base de datos no encontrada"
+        )
+
+    conn = None
+    try:
+        # Conexión read-write: solo para crear/modificar usuarios
         conn = duckdb.connect(str(DB_PATH), read_only=False)
         yield conn
     finally:
@@ -182,7 +207,8 @@ def create_user(username: str, password: str, nombre_completo: Optional[str] = N
     import uuid
 
     try:
-        with get_auth_db_connection() as conn:
+        # Usar conexión de escritura para crear usuarios
+        with get_auth_db_connection_write() as conn:
             # Verificar si el usuario ya existe
             existing = conn.execute("""
                 SELECT COUNT(*) FROM usuarios WHERE username = ?
@@ -226,12 +252,13 @@ def auto_bootstrap_admin():
     """
     import uuid
     try:
+        # First check with read-only connection
         with get_auth_db_connection() as conn:
-            # Check if any users exist
             count = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
 
-            if count == 0:
-                # No users exist - create admin
+        if count == 0:
+            # No users exist - create admin with write connection
+            with get_auth_db_connection_write() as conn:
                 user_id = str(uuid.uuid4())
                 password_hash = get_password_hash("admin123")
 
@@ -242,9 +269,9 @@ def auto_bootstrap_admin():
 
                 print("✅ Auto-bootstrap: Admin user created (username: admin, password: admin123)")
                 return True
-            else:
-                print(f"✅ Database has {count} user(s) - skipping auto-bootstrap")
-                return False
+        else:
+            print(f"✅ Database has {count} user(s) - skipping auto-bootstrap")
+            return False
     except Exception as e:
         print(f"⚠️  Auto-bootstrap failed: {e}")
         return False
