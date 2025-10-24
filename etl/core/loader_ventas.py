@@ -241,7 +241,16 @@ class VentasLoader:
             }
 
         try:
+            self.logger.info("🔌 Obteniendo conexión a DuckDB...")
             conn = self.get_connection()
+            self.logger.info(f"✅ Conexión establecida a {self.db_path}")
+
+            # Verificar estado de la base de datos
+            try:
+                result = conn.execute("SELECT COUNT(*) as count FROM ventas_raw").fetchone()
+                self.logger.info(f"📊 Registros existentes en ventas_raw: {result[0]:,}")
+            except Exception as e:
+                self.logger.warning(f"⚠️ No se pudo contar registros existentes (tabla nueva?): {e}")
 
             # Eliminar datos existentes SOLO del período específico (sin COUNT costoso)
             # Esto previene duplicados al re-ejecutar el ETL
@@ -265,8 +274,13 @@ class VentasLoader:
                 self.logger.info(f"🗑️  Eliminando registros existentes del período (si existen):")
                 self.logger.info(f"   Ubicaciones: {ubicaciones}")
                 self.logger.info(f"   Período: {fecha_min} a {fecha_max}")
+                self.logger.info(f"   Query: {delete_query[:200]}...")
 
+                delete_start = datetime.now()
+                self.logger.info(f"   🚀 Ejecutando DELETE...")
                 conn.execute(delete_query)
+                delete_duration = (datetime.now() - delete_start).total_seconds()
+                self.logger.info(f"   ✅ DELETE completado en {delete_duration:.2f}s")
 
                 self.logger.info(f"✅ DELETE completado - listo para insertar datos actualizados")
 
@@ -350,37 +364,61 @@ class VentasLoader:
 
                 try:
                     self.logger.info(f"🔄 Procesando lote {current_batch}/{total_batches} ({len(batch_df)} registros)")
+                    self.logger.info(f"   📊 Memoria del batch: {batch_df.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB")
 
+                    self.logger.info(f"   🔓 Iniciando transacción...")
                     conn.execute("BEGIN TRANSACTION")
+                    self.logger.info(f"   ✅ Transacción iniciada")
 
                     # Registrar DataFrame temporal en DuckDB
+                    self.logger.info(f"   📝 Registrando batch_data en DuckDB...")
                     conn.register('batch_data', batch_df)
+                    self.logger.info(f"   ✅ batch_data registrado - {len(batch_df)} filas")
 
                     # Insertar datos usando SELECT FROM batch_data
                     columns_str = ', '.join(available_columns)
+                    self.logger.info(f"   💾 Ejecutando INSERT de {len(batch_df)} registros...")
+                    insert_start = datetime.now()
                     conn.execute(f"""
                         INSERT INTO ventas_raw ({columns_str})
                         SELECT {columns_str} FROM batch_data
                     """)
+                    insert_duration = (datetime.now() - insert_start).total_seconds()
+                    self.logger.info(f"   ✅ INSERT completado en {insert_duration:.2f}s")
 
+                    self.logger.info(f"   🔒 Haciendo COMMIT...")
                     conn.execute("COMMIT")
                     registros_insertados += len(batch_df)
+                    self.logger.info(f"   ✅ COMMIT exitoso")
 
-                    self.logger.info(f"✅ Lote {current_batch}/{total_batches} completado")
+                    self.logger.info(f"✅ Lote {current_batch}/{total_batches} completado - Total insertados: {registros_insertados:,}")
 
                 except Exception as e:
-                    conn.execute("ROLLBACK")
-                    errores += len(batch_df)
                     self.logger.error(f"❌ Error en lote {current_batch}: {str(e)}")
+                    self.logger.error(f"   Tipo de error: {type(e).__name__}")
+                    self.logger.error(f"   Intentando ROLLBACK...")
+                    try:
+                        conn.execute("ROLLBACK")
+                        self.logger.info(f"   ✅ ROLLBACK exitoso")
+                    except Exception as rollback_error:
+                        self.logger.error(f"   ❌ Error en ROLLBACK: {str(rollback_error)}")
+                    errores += len(batch_df)
+                    self.logger.error(f"   Total errores acumulados: {errores}")
 
             # ETL enfocado solo en extracción y carga - sin procesamiento adicional
 
+            self.logger.info(f"🧹 Cerrando conexión principal...")
             conn.close()
+            self.logger.info(f"✅ Conexión cerrada")
 
             fin = datetime.now()
             duracion = (fin - inicio).total_seconds()
+            self.logger.info(f"⏱️  Duración total de carga: {duracion:.2f}s")
+            self.logger.info(f"📊 Registros insertados: {registros_insertados:,}")
+            self.logger.info(f"❌ Errores: {errores}")
 
             # Registrar en log de ETL (after calculating duration)
+            self.logger.info(f"📝 Registrando en log de ETL...")
             conn_log = self.get_connection()
             self._registrar_etl_log(conn_log, etl_id, {
                 "tipo": "ventas",
