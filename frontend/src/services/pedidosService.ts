@@ -48,7 +48,7 @@ export async function listarPedidos(filtros?: {
   if (filtros?.tienda_id) params.append('tienda_id', filtros.tienda_id);
 
   const query = params.toString() ? `?${params.toString()}` : '';
-  const response = await http.get(`/api/pedidos-sugeridos${query}`);
+  const response = await http.get(`/api/pedidos-sugeridos/${query}`);
   return response.data;
 }
 
