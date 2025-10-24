@@ -1,0 +1,155 @@
+/* Maintenance Page Styles */
+
+.maintenance-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+}
+
+.maintenance-card {
+  background: white;
+  border-radius: 16px;
+  padding: 48px 32px;
+  max-width: 600px;
+  width: 100%;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  text-align: center;
+}
+
+.maintenance-icon {
+  font-size: 80px;
+  margin-bottom: 24px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+.maintenance-title {
+  font-size: 32px;
+  font-weight: 700;
+  color: #2d3748;
+  margin: 0 0 16px 0;
+}
+
+.maintenance-subtitle {
+  font-size: 18px;
+  color: #4a5568;
+  line-height: 1.6;
+  margin: 0 0 32px 0;
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: 8px;
+  background-color: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 32px 0;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  animation: loading 2s ease-in-out infinite;
+}
+
+@keyframes loading {
+  0% {
+    width: 0%;
+  }
+  50% {
+    width: 70%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.estimated-time {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.clock-icon {
+  font-size: 24px;
+}
+
+.estimated-time-text {
+  font-size: 16px;
+  color: #2d3748;
+  font-weight: 600;
+}
+
+.info-box {
+  background-color: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.info-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.trending-icon {
+  font-size: 20px;
+}
+
+.info-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.info-text {
+  font-size: 14px;
+  color: #4a5568;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.maintenance-footer {
+  font-size: 12px;
+  color: #718096;
+  margin: 0;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .maintenance-card {
+    padding: 32px 24px;
+  }
+
+  .maintenance-title {
+    font-size: 24px;
+  }
+
+  .maintenance-subtitle {
+    font-size: 16px;
+  }
+
+  .maintenance-icon {
+    font-size: 60px;
+  }
+}

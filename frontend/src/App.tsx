@@ -1,9 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+// import { useState, useEffect } from 'react';  // Deshabilitado temporalmente
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LoginPage } from './components/LoginPage';
 import { LandingPage } from './components/LandingPage';
-import { MaintenancePage } from './components/MaintenancePage';
+// import { MaintenancePage } from './components/MaintenancePage';  // Descomentar el lunes
 import Layout from './components/layout/Layout';
 import InventorySummary from './components/dashboard/InventorySummary';
 import InventoryDashboard from './components/dashboard/InventoryDashboard';
@@ -14,7 +14,7 @@ import OrderWizard from './components/orders/OrderWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import ETLControlCenter from './components/settings/ETLControlCenter';
 import { getTenantId } from './utils/tenant';
-import { checkMaintenanceStatus } from './services/maintenanceService';
+// import { checkMaintenanceStatus } from './services/maintenanceService';  // Descomentar el lunes
 
 // Protected Routes Component
 function ProtectedRoutes() {
@@ -42,11 +42,17 @@ function ProtectedRoutes() {
 }
 
 function App() {
-  const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
-  const [isCheckingMaintenance, setIsCheckingMaintenance] = useState(true);
-
   // Detect if we're on the landing page (no tenant)
   const tenantId = getTenantId();
+
+  // ===================================================================
+  // MAINTENANCE WINDOW: DESHABILITADO TEMPORALMENTE PARA DESARROLLO
+  // ===================================================================
+  // Descomentar el lunes cuando se configure el scheduler nocturno
+  // ===================================================================
+  /*
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
+  const [isCheckingMaintenance, setIsCheckingMaintenance] = useState(true);
 
   // Check maintenance status on mount and every 2 minutes
   useEffect(() => {
@@ -72,11 +78,6 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Show landing page for fluxionia.co and www.fluxionia.co
-  if (!tenantId) {
-    return <LandingPage />;
-  }
-
   // Show loading while checking maintenance status
   if (isCheckingMaintenance) {
     return null; // or a loading spinner
@@ -85,6 +86,13 @@ function App() {
   // Show maintenance page if system is in maintenance window
   if (isMaintenanceMode) {
     return <MaintenancePage estimatedEndTime="6:00 AM" />;
+  }
+  */
+  // ===================================================================
+
+  // Show landing page for fluxionia.co and www.fluxionia.co
+  if (!tenantId) {
+    return <LandingPage />;
   }
 
   // Show dashboard for tenant subdomains (granja, admin, etc.)
