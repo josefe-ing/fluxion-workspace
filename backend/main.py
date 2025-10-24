@@ -17,6 +17,7 @@ import asyncio
 import os
 from contextlib import contextmanager
 from forecast_pmp import ForecastPMP
+from zoneinfo import ZoneInfo
 
 # Sentry para monitoreo de errores
 from sentry_config import init_sentry
@@ -402,6 +403,45 @@ async def health_check():
         "service": "Fluxion AI - La Granja Mercado API",
         "timestamp": datetime.now().isoformat(),
         "database": "DuckDB Connected" if DB_PATH.exists() else "Database Missing"
+    }
+
+@app.get("/maintenance-status", tags=["Health"])
+async def get_maintenance_status():
+    """
+    Verifica si el sistema está en ventana de mantenimiento
+    Ventana: 1:00 AM - 6:00 AM (Venezuela Time UTC-4)
+    """
+    # Obtener hora actual en Venezuela (UTC-4)
+    venezuela_tz = ZoneInfo("America/Caracas")
+    now_venezuela = datetime.now(venezuela_tz)
+
+    current_hour = now_venezuela.hour
+    current_minute = now_venezuela.minute
+
+    # Ventana de mantenimiento: 1:00 AM - 6:00 AM
+    MAINTENANCE_START_HOUR = 1
+    MAINTENANCE_END_HOUR = 6
+
+    is_maintenance = (
+        current_hour >= MAINTENANCE_START_HOUR and
+        current_hour < MAINTENANCE_END_HOUR
+    )
+
+    # Calcular tiempo restante si está en mantenimiento
+    minutes_remaining = None
+    if is_maintenance:
+        # Minutos hasta las 6:00 AM
+        minutes_until_6am = (MAINTENANCE_END_HOUR - current_hour) * 60 - current_minute
+        minutes_remaining = minutes_until_6am
+
+    return {
+        "is_maintenance": is_maintenance,
+        "current_time": now_venezuela.strftime("%H:%M:%S"),
+        "maintenance_window": "1:00 AM - 6:00 AM",
+        "timezone": "America/Caracas (UTC-4)",
+        "estimated_end_time": "6:00 AM",
+        "minutes_remaining": minutes_remaining,
+        "message": "Estamos recolectando la data. Sistema disponible después de las 6:00 AM" if is_maintenance else "Sistema operativo"
     }
 
 @app.get("/test-sentry", tags=["Health"])
