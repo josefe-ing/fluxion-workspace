@@ -72,7 +72,8 @@ def get_server_port(local_port: int, prod_port: int = None):
     return local_port
 
 # IP del WireGuard bridge en producción AWS
-WIREGUARD_BRIDGE_IP = "10.0.2.179"
+# WireGuard EC2 Instance: i-089ec164ad71fcf15 (FluxionStackV2/WireGuardBridge)
+WIREGUARD_BRIDGE_IP = "10.0.2.43"
 
 @dataclass
 class TiendaConfig:
