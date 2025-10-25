@@ -10,6 +10,7 @@ import StockMaximoModal from './StockMaximoModal';
 import StockDiasModal from './StockDiasModal';
 import PedidoSugeridoModal from './PedidoSugeridoModal';
 import ProyeccionModal from './ProyeccionModal';
+import CriticidadModal from './CriticidadModal';
 import { formatNumber } from '../../utils/formatNumber';
 
 interface Props {
@@ -67,6 +68,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [selectedProductoPedido, setSelectedProductoPedido] = useState<ProductoPedido | null>(null);
   const [proyeccionModalOpen, setProyeccionModalOpen] = useState(false);
   const [selectedProductoProyeccion, setSelectedProductoProyeccion] = useState<ProductoPedido | null>(null);
+  const [criticidadModalOpen, setCriticidadModalOpen] = useState(false);
+  const [selectedProductoCriticidad, setSelectedProductoCriticidad] = useState<ProductoPedido | null>(null);
 
   useEffect(() => {
     cargarStockParams();
@@ -204,6 +207,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const handleProyeccionClick = (producto: ProductoPedido) => {
     setSelectedProductoProyeccion(producto);
     setProyeccionModalOpen(true);
+  };
+
+  const handleCriticidadClick = (producto: ProductoPedido) => {
+    setSelectedProductoCriticidad(producto);
+    setCriticidadModalOpen(true);
   };
 
   const cargarStockParams = async () => {
@@ -861,12 +869,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         }
 
                         return (
-                          <span
-                            className={color}
-                            title={`${nivel} - Criticidad: ${criticidad}\nStock: ${diasStockActual.toFixed(1)}d | Min: ${diasMinimo.toFixed(1)}d | Reorden: ${diasReorden.toFixed(1)}d | Max: ${diasMaximo.toFixed(1)}d`}
+                          <button
+                            onClick={() => handleCriticidadClick(producto)}
+                            className={`${color} hover:underline cursor-pointer transition-colors font-bold`}
+                            title={`Click para ver cálculo de Criticidad\n${nivel} - Criticidad: ${criticidad}\nStock: ${diasStockActual.toFixed(1)}d | Min: ${diasMinimo.toFixed(1)}d | Reorden: ${diasReorden.toFixed(1)}d | Max: ${diasMaximo.toFixed(1)}d`}
                           >
                             {texto}
-                          </span>
+                          </button>
                         );
                       })() : '-'}
                     </td>
@@ -1170,6 +1179,39 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             cantidad_bultos: selectedProductoProyeccion.cantidad_bultos,
           }}
           forecastDiarioBultos={forecastData[selectedProductoProyeccion.codigo_producto]}
+        />
+      )}
+
+      {/* Modal de Criticidad */}
+      {selectedProductoCriticidad && stockParams && (
+        <CriticidadModal
+          isOpen={criticidadModalOpen}
+          onClose={() => setCriticidadModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoCriticidad.codigo_producto,
+            descripcion_producto: selectedProductoCriticidad.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoCriticidad.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoCriticidad.cantidad_bultos,
+            stock_tienda: selectedProductoCriticidad.stock_tienda,
+            stock_en_transito: selectedProductoCriticidad.stock_en_transito,
+          }}
+          stockParams={{
+            stock_min_mult_a: stockParams.stock_min_mult_a,
+            stock_min_mult_ab: stockParams.stock_min_mult_ab,
+            stock_min_mult_b: stockParams.stock_min_mult_b,
+            stock_min_mult_bc: stockParams.stock_min_mult_bc,
+            stock_min_mult_c: stockParams.stock_min_mult_c,
+            stock_seg_mult_a: stockParams.stock_seg_mult_a,
+            stock_seg_mult_ab: stockParams.stock_seg_mult_ab,
+            stock_seg_mult_b: stockParams.stock_seg_mult_b,
+            stock_seg_mult_bc: stockParams.stock_seg_mult_bc,
+            stock_seg_mult_c: stockParams.stock_seg_mult_c,
+            stock_max_mult_a: stockParams.stock_max_mult_a,
+            stock_max_mult_ab: stockParams.stock_max_mult_ab,
+            stock_max_mult_b: stockParams.stock_max_mult_b,
+            stock_max_mult_bc: stockParams.stock_max_mult_bc,
+            stock_max_mult_c: stockParams.stock_max_mult_c,
+          }}
         />
       )}
     </div>
