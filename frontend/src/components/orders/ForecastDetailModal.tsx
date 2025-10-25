@@ -26,8 +26,10 @@ export default function ForecastDetailModal({
   descripcionProducto,
   forecasts
 }: ForecastDetailModalProps) {
-  const totalUnidades = forecasts.reduce((sum, f) => sum + f.forecast_unidades, 0);
-  const totalBultos = forecasts.reduce((sum, f) => sum + f.forecast_bultos, 0);
+  // Validar que forecasts sea un array
+  const forecastsArray = Array.isArray(forecasts) ? forecasts : [];
+  const totalUnidades = forecastsArray.reduce((sum, f) => sum + f.forecast_unidades, 0);
+  const totalBultos = forecastsArray.reduce((sum, f) => sum + f.forecast_bultos, 0);
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
@@ -119,7 +121,7 @@ export default function ForecastDetailModal({
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {forecasts.map((forecast, index) => (
+                      {forecastsArray.map((forecast, index) => (
                         <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                           <td className="px-4 py-3 whitespace-nowrap">
                             <div className="flex items-center">
@@ -178,7 +180,7 @@ export default function ForecastDetailModal({
                   <h4 className="text-sm font-semibold text-gray-900 mb-3">Distribución Visual (Bultos/Día)</h4>
                   <div className="space-y-2">
                     {forecasts.map((forecast, index) => {
-                      const maxBultos = Math.max(...forecasts.map(f => f.forecast_bultos));
+                      const maxBultos = Math.max(...forecastsArray.map(f => f.forecast_bultos));
                       const percentage = (forecast.forecast_bultos / maxBultos) * 100;
 
                       return (

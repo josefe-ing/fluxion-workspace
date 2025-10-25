@@ -3142,6 +3142,67 @@ async def get_forecast_producto(
         raise HTTPException(status_code=500, detail=f"Error calculando forecast: {str(e)}")
 
 
+@app.get("/api/ventas/producto/{codigo_producto}/ultimos-20-dias", tags=["Ventas"])
+async def get_ventas_ultimos_20_dias(
+    codigo_producto: str,
+    ubicacion_id: str
+):
+    """
+    Obtiene el detalle de ventas diarias de un producto para los últimos 20 días.
+
+    Retorna fecha, día de la semana y cantidad vendida para cada día.
+    Usado para mostrar el detalle del cálculo del promedio de 20 días.
+
+    Args:
+        codigo_producto: Código del producto
+        ubicacion_id: ID de la ubicación (tienda)
+
+    Returns:
+        ventas: Lista de ventas diarias con fecha, dia_semana y cantidad_vendida
+    """
+    try:
+        with get_db_connection() as conn:
+            # Obtener la fecha máxima disponible en ventas
+            fecha_max_result = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()
+            fecha_max = fecha_max_result[0] if fecha_max_result else None
+
+            if not fecha_max:
+                return {"ventas": []}
+
+            # Calcular fecha inicial (20 días atrás)
+            query = """
+                SELECT
+                    fecha,
+                    dia_semana,
+                    SUM(CAST(cantidad_vendida AS DECIMAL)) as cantidad_vendida
+                FROM ventas_raw
+                WHERE codigo_producto = ?
+                    AND ubicacion_id = ?
+                    AND fecha >= CAST(CAST(? AS DATE) - INTERVAL 20 DAY AS VARCHAR)
+                    AND fecha <= ?
+                GROUP BY fecha, dia_semana
+                ORDER BY fecha ASC
+            """
+
+            result = conn.execute(query, [codigo_producto, ubicacion_id, fecha_max, fecha_max]).fetchall()
+
+            ventas = []
+            for row in result:
+                ventas.append({
+                    "fecha": row[0],
+                    "dia_semana": row[1],
+                    "cantidad_vendida": float(row[2]) if row[2] else 0
+                })
+
+            logger.info(f"✅ Obtenidos {len(ventas)} días de ventas para {codigo_producto} en {ubicacion_id}")
+
+            return {"ventas": ventas}
+
+    except Exception as e:
+        logger.error(f"Error obteniendo ventas últimos 20 días: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error obteniendo ventas: {str(e)}")
+
+
 # ========== ENDPOINTS PEDIDOS SUGERIDOS ==========
 
 @app.post("/api/pedidos-sugeridos/calcular", response_model=List[ProductoPedidoSugerido], tags=["Pedidos Sugeridos"])

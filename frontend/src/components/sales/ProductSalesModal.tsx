@@ -163,6 +163,12 @@ interface ForecastResponse {
   metodo?: string;
 }
 
+interface VentaDiaria20D {
+  fecha: string;
+  dia_semana: string;
+  cantidad_vendida: number;
+}
+
 // Colores para las líneas de cada tienda
 const COLORES_TIENDAS: { [key: string]: string } = {
   'tienda_01': '#3b82f6', // Azul
@@ -188,6 +194,27 @@ export default function ProductSalesModal({
   const [selectedTiendas, setSelectedTiendas] = useState<Set<string>>(new Set());
   const [semanas, setSemanas] = useState<number>(8); // Default: 8 semanas
   const [forecastData, setForecastData] = useState<{ [tiendaId: string]: ForecastResponse }>({});
+  const [ventas20Dias, setVentas20Dias] = useState<VentaDiaria20D[]>([]);
+  const [loading20D, setLoading20D] = useState(false);
+
+  // Cargar datos de 20 días para el cálculo educativo
+  const fetch20DiasData = useCallback(async () => {
+    if (!currentUbicacionId) return;
+
+    try {
+      setLoading20D(true);
+      const response = await http.get(
+        `/api/ventas/producto/${codigoProducto}/ultimos-20-dias?ubicacion_id=${currentUbicacionId}`
+      );
+      if (response.data.ventas) {
+        setVentas20Dias(response.data.ventas);
+      }
+    } catch (error) {
+      console.error('Error cargando datos de 20 días:', error);
+    } finally {
+      setLoading20D(false);
+    }
+  }, [codigoProducto, currentUbicacionId]);
 
   // Declarar fetchForecastsData primero (antes de usarla en fetchVentasData)
   const fetchForecastsData = useCallback(async (tiendas: string[]) => {
@@ -237,12 +264,17 @@ export default function ProductSalesModal({
       // Cargar forecasts para todas las tiendas disponibles
       await fetchForecastsData(response.data.tiendas_disponibles);
 
+      // Cargar datos de 20 días si hay ubicación actual
+      if (currentUbicacionId) {
+        await fetch20DiasData();
+      }
+
     } catch (error) {
       console.error('Error fetching sales data:', error);
     } finally {
       setLoading(false);
     }
-  }, [codigoProducto, semanas, currentUbicacionId, fetchForecastsData]);
+  }, [codigoProducto, semanas, currentUbicacionId, fetchForecastsData, fetch20DiasData]);
 
   useEffect(() => {
     if (isOpen && codigoProducto) {
@@ -572,6 +604,138 @@ export default function ProductSalesModal({
                         </button>
                       </div>
                     </div>
+
+                    {/* Sección Educativa: Cálculo del Promedio 20 Días */}
+                    {currentUbicacionId && ventas20Dias.length > 0 && (
+                      <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                        <div className="flex items-center gap-2 mb-4">
+                          <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                          </svg>
+                          <h4 className="text-sm font-semibold text-purple-900">
+                            📊 Cálculo del Promedio 20 Días (Tienda Actual)
+                          </h4>
+                        </div>
+
+                        {loading20D ? (
+                          <div className="flex justify-center py-4">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                          </div>
+                        ) : (
+                          <>
+                            {/* Estadísticas Principales */}
+                            <div className="grid grid-cols-3 gap-3 mb-4">
+                              <div className="bg-white rounded-lg p-3 text-center border border-purple-100">
+                                <div className="text-xs text-gray-600 mb-1">Total Vendido</div>
+                                <div className="text-2xl font-bold text-purple-700">
+                                  {ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0).toFixed(0)}
+                                </div>
+                                <div className="text-xs text-gray-500">unidades en {ventas20Dias.length} días</div>
+                              </div>
+                              <div className="bg-green-50 rounded-lg p-3 text-center border border-green-200">
+                                <div className="text-xs text-gray-600 mb-1">Día Máximo</div>
+                                <div className="text-2xl font-bold text-green-700">
+                                  {Math.max(...ventas20Dias.map(v => v.cantidad_vendida)).toFixed(0)}
+                                </div>
+                                <div className="text-xs text-gray-500">bultos en un día</div>
+                              </div>
+                              <div className="bg-orange-50 rounded-lg p-3 text-center border border-orange-200">
+                                <div className="text-xs text-gray-600 mb-1">Día Mínimo</div>
+                                <div className="text-2xl font-bold text-orange-700">
+                                  {Math.min(...ventas20Dias.map(v => v.cantidad_vendida)).toFixed(0)}
+                                </div>
+                                <div className="text-xs text-gray-500">bultos en un día</div>
+                              </div>
+                            </div>
+
+                            {/* Fórmula del cálculo */}
+                            <div className="bg-white rounded-lg p-4 border border-purple-200 mb-4">
+                              <h5 className="text-xs font-semibold text-gray-700 mb-3">📐 Cómo se Calcula:</h5>
+                              <div className="space-y-3 text-sm">
+                                <div className="flex items-start gap-3">
+                                  <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">1</div>
+                                  <div>
+                                    <div className="font-medium text-gray-800">Sumar todas las ventas de los últimos 20 días</div>
+                                    <div className="text-xs text-gray-600 mt-1 font-mono bg-gray-50 px-2 py-1 rounded">
+                                      Total = {ventas20Dias.map(v => v.cantidad_vendida.toFixed(0)).join(' + ')}...
+                                    </div>
+                                    <div className="text-xs text-purple-700 font-semibold mt-1">
+                                      Total = {ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0).toFixed(0)} unidades
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex items-start gap-3">
+                                  <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">2</div>
+                                  <div>
+                                    <div className="font-medium text-gray-800">Dividir entre el número de días</div>
+                                    <div className="text-xs text-gray-600 mt-1 font-mono bg-gray-50 px-2 py-1 rounded">
+                                      Promedio = {ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0).toFixed(0)} ÷ {ventas20Dias.length}
+                                    </div>
+                                    <div className="text-xs text-purple-700 font-semibold mt-1">
+                                      Promedio = {(ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0) / ventas20Dias.length).toFixed(2)} unidades/día
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Mini tabla de últimos días */}
+                            <details className="bg-white rounded-lg border border-purple-200">
+                              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-purple-900 hover:bg-purple-50 rounded-lg">
+                                📅 Ver Detalle Día por Día (últimos 20 días)
+                              </summary>
+                              <div className="p-4 max-h-64 overflow-y-auto">
+                                <table className="w-full text-xs">
+                                  <thead className="bg-purple-100 sticky top-0">
+                                    <tr>
+                                      <th className="px-2 py-2 text-left">Fecha</th>
+                                      <th className="px-2 py-2 text-left">Día</th>
+                                      <th className="px-2 py-2 text-right">Unidades</th>
+                                      <th className="px-2 py-2 text-left">Visual</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {ventas20Dias.map((venta, idx) => {
+                                      const maxVenta = Math.max(...ventas20Dias.map(v => v.cantidad_vendida));
+                                      const porcentaje = maxVenta > 0 ? (venta.cantidad_vendida / maxVenta) * 100 : 0;
+                                      const esMax = venta.cantidad_vendida === maxVenta;
+                                      const esMin = venta.cantidad_vendida === Math.min(...ventas20Dias.map(v => v.cantidad_vendida));
+
+                                      return (
+                                        <tr key={idx} className={`border-b border-gray-100 ${esMax ? 'bg-green-50' : esMin ? 'bg-orange-50' : ''}`}>
+                                          <td className="px-2 py-1 font-mono">
+                                            {new Date(venta.fecha).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' })}
+                                          </td>
+                                          <td className="px-2 py-1 text-gray-600">{venta.dia_semana}</td>
+                                          <td className="px-2 py-1 text-right font-semibold">{venta.cantidad_vendida.toFixed(0)}</td>
+                                          <td className="px-2 py-1">
+                                            <div className="w-full bg-gray-200 rounded-full h-2">
+                                              <div
+                                                className="bg-purple-600 h-2 rounded-full"
+                                                style={{ width: `${porcentaje}%` }}
+                                              ></div>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                  <tfoot className="bg-purple-100 sticky bottom-0">
+                                    <tr className="font-bold">
+                                      <td colSpan={2} className="px-2 py-2 text-left">PROMEDIO</td>
+                                      <td className="px-2 py-2 text-right text-purple-700">
+                                        {(ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0) / ventas20Dias.length).toFixed(1)}
+                                      </td>
+                                      <td className="px-2 py-2 text-purple-700 text-xs">unidades/día</td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+                            </details>
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     {/* Gráfico */}
                     <div className="h-96 relative">

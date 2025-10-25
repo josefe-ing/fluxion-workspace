@@ -357,6 +357,7 @@ class ForecastPMP:
         unid_bulto = bulto_result[0] if bulto_result and bulto_result[0] else 1.0
 
         forecast_bultos = forecast_unidades / unid_bulto if unid_bulto > 0 else 0.0
+        forecast_diario_bultos = forecast_diario / unid_bulto if unid_bulto > 0 else 0.0
 
         return {
             "ubicacion_id": ubicacion_id,
@@ -367,6 +368,8 @@ class ForecastPMP:
             "version_modelo": "v1.0",
             "forecast_unidades": round(forecast_unidades, 2),
             "forecast_bultos": round(forecast_bultos, 2),
+            "forecast_diario_unidades": round(forecast_diario, 2),
+            "forecast_diario_bultos": round(forecast_diario_bultos, 2),
             "forecast_min": round(forecast_min, 2),
             "forecast_max": round(forecast_max, 2),
             "ventana_dias": params["ventana_dias"],

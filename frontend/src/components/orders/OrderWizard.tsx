@@ -97,43 +97,42 @@ export default function OrderWizard() {
   };
 
   return (
-    <div className="space-y-6 w-full max-w-none px-4">
-      {/* Breadcrumb / Steps */}
-      <nav aria-label="Progress" className="pb-20">
-        <ol className="flex items-center justify-center gap-x-32">
+    <div className="space-y-3 w-full max-w-none px-4">
+      {/* Breadcrumb / Steps - COMPACTO */}
+      <nav aria-label="Progress" className="pb-2">
+        <ol className="flex items-center justify-center gap-x-16">
           {steps.map((step, stepIdx) => (
             <li
               key={step.name}
-              className="relative flex flex-col items-center"
+              className="relative flex items-center"
             >
-              <div className="flex flex-col items-center">
-                <div className="flex items-center">
-                  {stepIdx !== 0 && (
-                    <div className="h-0.5 w-32 bg-gray-200 mr-8"></div>
-                  )}
-                  {currentStep > step.number ? (
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-900">
-                      <svg className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                  ) : currentStep === step.number ? (
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-gray-900 bg-white">
-                      <span className="text-gray-900 font-semibold">{step.number}</span>
-                    </div>
-                  ) : (
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-gray-300 bg-white">
-                      <span className="text-gray-500">{step.number}</span>
-                    </div>
-                  )}
-                  {stepIdx !== steps.length - 1 && (
-                    <div className="h-0.5 w-32 bg-gray-200 ml-8"></div>
-                  )}
+              <div className="flex items-center gap-x-3">
+                {stepIdx !== 0 && (
+                  <div className="h-0.5 w-16 bg-gray-200"></div>
+                )}
+                {currentStep > step.number ? (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-900">
+                    <svg className="h-4 w-4 text-white" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                ) : currentStep === step.number ? (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-gray-900 bg-white">
+                    <span className="text-gray-900 font-semibold text-xs">{step.number}</span>
+                  </div>
+                ) : (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-gray-300 bg-white">
+                    <span className="text-gray-500 text-xs">{step.number}</span>
+                  </div>
+                )}
+                <div className="text-xs">
+                  <div className={`font-medium ${currentStep === step.number ? 'text-gray-900' : 'text-gray-500'}`}>
+                    {step.name}
+                  </div>
                 </div>
-                <div className="mt-3 text-center max-w-[200px]">
-                  <div className="text-sm font-medium text-gray-900">{step.name}</div>
-                  <div className="text-xs text-gray-500 mt-1">{step.description}</div>
-                </div>
+                {stepIdx !== steps.length - 1 && (
+                  <div className="h-0.5 w-16 bg-gray-200"></div>
+                )}
               </div>
             </li>
           ))}
