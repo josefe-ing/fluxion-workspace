@@ -108,13 +108,15 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   // Actualizar cantidad_pedida_bultos con el pedido sugerido cuando stockParams esté disponible
   useEffect(() => {
     if (stockParams && productos.length > 0) {
-      // Solo actualizar si hay productos sin cantidad_pedida_bultos definida
-      const needsUpdate = productos.some(p => p.cantidad_pedida_bultos === undefined || p.cantidad_pedida_bultos === 0);
+      // Solo actualizar si hay productos sin cantidad_pedida_bultos definida (undefined)
+      // NO recalcular si el usuario puso 0 manualmente
+      const needsUpdate = productos.some(p => p.cantidad_pedida_bultos === undefined);
 
       if (needsUpdate) {
         const productosActualizados = productos.map(p => ({
           ...p,
-          cantidad_pedida_bultos: calcularPedidoSugerido(p)
+          // Solo calcular si no está definido, de lo contrario preservar el valor del usuario
+          cantidad_pedida_bultos: p.cantidad_pedida_bultos !== undefined ? p.cantidad_pedida_bultos : calcularPedidoSugerido(p)
         }));
 
         setProductos(productosActualizados);
@@ -252,7 +254,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
 
       const productosConDefaults = response.data.map((p: ProductoPedido) => ({
         ...p,
-        cantidad_pedida_bultos: p.cantidad_ajustada_bultos,
+        // No inicializar cantidad_pedida_bultos aquí - dejar que useEffect lo calcule con calcularPedidoSugerido()
+        cantidad_pedida_bultos: undefined,
         incluido: true,
       }));
 
@@ -728,6 +731,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   </th>
                   <SortableHeader field="sugerido" label="Sugerido" bgColor="bg-gray-100" width="60px" />
                   <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="55px" />
+                  <th className="bg-indigo-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '60px' }}>Peso (Kg)</th>
                   <th className="bg-gray-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '120px' }}>Notas</th>
                 </tr>
               </thead>
@@ -956,6 +960,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         disabled={!producto.incluido}
                         className="w-14 px-1 py-0.5 border border-gray-300 rounded text-[11px] text-center font-bold disabled:bg-gray-100 focus:ring-1 focus:ring-blue-500"
                       />
+                    </td>
+                    <td className="bg-indigo-50 px-2 py-1 text-[11px] text-indigo-800 text-center font-medium" style={{ width: '60px' }}>
+                      {formatNumber((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos * (producto.peso_unidad || 0) / 1000, 2)}
                     </td>
                     <td className="bg-gray-50 px-2 py-1 text-center" style={{ width: '120px' }}>
                       <input
