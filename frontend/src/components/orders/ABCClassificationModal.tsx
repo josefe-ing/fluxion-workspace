@@ -57,7 +57,6 @@ export default function ABCClassificationModal({ isOpen, onClose, producto }: AB
     clasificacionSuperior = 'BC';
   } else {
     clasificacion = '-';
-    umbralActual = 0;
     proximoUmbral = ABC_THRESHOLDS.C;
     clasificacionSuperior = 'C';
   }

@@ -91,7 +91,7 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
   // Determinar estado y urgencia
   let estado: 'critico' | 'bajo' | 'normal' | 'alto' | 'exceso';
   let urgencia: string;
-  let icon: JSX.Element;
+  let icon: React.ReactElement;
   let colorBg: string;
   let colorText: string;
   let recomendacion: string;
