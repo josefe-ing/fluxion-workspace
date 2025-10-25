@@ -58,7 +58,7 @@ export default function ABCClassificationModal({ isOpen, onClose, producto }: AB
   const diferenciaSiguienteNivel = proximoUmbral ? proximoUmbral - ventaDiariaBultos : 0;
   const porcentajeHaciaProximo = proximoUmbral
     ? ((ventaDiariaBultos / proximoUmbral) * 100).toFixed(1)
-    : 100;
+    : '100.0';
 
   const getColorClasificacion = (clase: string) => {
     if (clase === 'A') return 'text-red-700 bg-red-50';
