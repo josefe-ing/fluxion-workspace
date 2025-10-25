@@ -28,31 +28,25 @@ export default function ABCClassificationModal({ isOpen, onClose, producto }: AB
 
   // Calcular clasificación usando la misma lógica que en la tabla
   let clasificacion: string;
-  let umbralActual: number;
   let proximoUmbral: number | null = null;
   let clasificacionSuperior: string | null = null;
 
   if (ventaDiariaBultos >= ABC_THRESHOLDS.A) {
     clasificacion = 'A';
-    umbralActual = ABC_THRESHOLDS.A;
   } else if (ventaDiariaBultos >= ABC_THRESHOLDS.AB) {
     clasificacion = 'AB';
-    umbralActual = ABC_THRESHOLDS.AB;
     proximoUmbral = ABC_THRESHOLDS.A;
     clasificacionSuperior = 'A';
   } else if (ventaDiariaBultos >= ABC_THRESHOLDS.B) {
     clasificacion = 'B';
-    umbralActual = ABC_THRESHOLDS.B;
     proximoUmbral = ABC_THRESHOLDS.AB;
     clasificacionSuperior = 'AB';
   } else if (ventaDiariaBultos >= ABC_THRESHOLDS.BC) {
     clasificacion = 'BC';
-    umbralActual = ABC_THRESHOLDS.BC;
     proximoUmbral = ABC_THRESHOLDS.B;
     clasificacionSuperior = 'B';
   } else if (ventaDiariaBultos >= ABC_THRESHOLDS.C) {
     clasificacion = 'C';
-    umbralActual = ABC_THRESHOLDS.C;
     proximoUmbral = ABC_THRESHOLDS.BC;
     clasificacionSuperior = 'BC';
   } else {
