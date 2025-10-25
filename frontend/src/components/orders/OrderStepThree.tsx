@@ -9,15 +9,6 @@ interface Props {
   onBack: () => void;
 }
 
-// Definir umbrales ABC (mismo que OrderStepTwo)
-const ABC_THRESHOLDS = {
-  A: 5.0,
-  AB: 2.5,
-  B: 1.0,
-  BC: 0.5,
-  C: 0.0
-};
-
 export default function OrderStepThree({ orderData, onBack }: Props) {
   const navigate = useNavigate();
   const [observaciones, setObservaciones] = useState('');
@@ -29,12 +20,63 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
   // Función para clasificación ABC
   const getClasificacionABC = (producto: ProductoPedido): string => {
     const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    if (ventaDiariaBultos >= ABC_THRESHOLDS.A) return 'A';
-    if (ventaDiariaBultos >= ABC_THRESHOLDS.AB) return 'AB';
-    if (ventaDiariaBultos >= ABC_THRESHOLDS.B) return 'B';
-    if (ventaDiariaBultos >= ABC_THRESHOLDS.BC) return 'BC';
-    if (ventaDiariaBultos > 0) return 'C';
+    if (ventaDiariaBultos >= 20) return 'A';
+    if (ventaDiariaBultos >= 5) return 'AB';
+    if (ventaDiariaBultos >= 0.45) return 'B';
+    if (ventaDiariaBultos >= 0.20) return 'BC';
+    if (ventaDiariaBultos >= 0.001) return 'C';
     return '-';
+  };
+
+  // Función para calcular criticidad y emoji
+  const calcularCriticidadDisplay = (producto: ProductoPedido) => {
+    if (producto.prom_ventas_20dias_unid <= 0) {
+      return { emoji: '-', color: 'text-gray-400' };
+    }
+
+    const clasificacion = getClasificacionABC(producto);
+    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+    const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
+    const diasStockActual = stockTotalUnidades / producto.prom_ventas_20dias_unid;
+
+    // Calcular puntos de control en días usando los valores ya calculados
+    const stockMinimoBultos = producto.stock_minimo;
+    const diasMinimo = ventaDiariaBultos > 0 ? stockMinimoBultos / ventaDiariaBultos : 0;
+
+    const puntoReordenBultos = producto.punto_reorden;
+    const diasReorden = ventaDiariaBultos > 0 ? puntoReordenBultos / ventaDiariaBultos : 0;
+
+    const stockMaximoBultos = producto.stock_maximo;
+    const diasMaximo = ventaDiariaBultos > 0 ? stockMaximoBultos / ventaDiariaBultos : 0;
+
+    const puntoMedio = diasMinimo + ((diasReorden - diasMinimo) * 0.5);
+
+    let emoji = '';
+    let color = '';
+
+    if (diasStockActual <= diasMinimo) {
+      // NIVEL 1: CRÍTICO
+      emoji = clasificacion === 'A' ? '🔴🔴🔴' : clasificacion === 'AB' ? '🔴🔴' : '🔴';
+      color = 'text-red-700';
+    } else if (diasStockActual <= puntoMedio) {
+      // NIVEL 2: MUY URGENTE
+      emoji = clasificacion === 'A' || clasificacion === 'AB' ? '🔴🟠' : '🔴';
+      color = 'text-red-600';
+    } else if (diasStockActual <= diasReorden) {
+      // NIVEL 3: URGENTE
+      emoji = clasificacion === 'A' ? '🟠🟠' : '🟠';
+      color = 'text-orange-600';
+    } else if (diasStockActual <= diasMaximo * 0.8) {
+      // NIVEL 4: PREVENTIVO
+      emoji = '✓';
+      color = 'text-green-600';
+    } else {
+      // NIVEL 5: ÓPTIMO/EXCESO
+      emoji = '⚠️';
+      color = 'text-blue-600';
+    }
+
+    return { emoji, color };
   };
 
   const handleSubmit = async (enviar: boolean = false) => {
@@ -157,6 +199,8 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             <tbody className="bg-white divide-y divide-gray-200">
               {productosIncluidos.map((producto, index) => {
                 const clasificacion = getClasificacionABC(producto);
+                const criticidad = calcularCriticidadDisplay(producto);
+                const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
 
                 return (
                   <tr key={`${producto.codigo_producto}-${index}`} className="hover:bg-gray-50">
@@ -190,11 +234,21 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
                         {clasificacion}
                       </span>
                     </td>
-                    <td className="bg-red-50 px-2 py-1 text-[10px] text-center font-bold">-</td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">-</td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">-</td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">-</td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">-</td>
+                    <td className="bg-red-50 px-2 py-1 text-[10px] text-center font-bold">
+                      <span className={criticidad.color}>{criticidad.emoji}</span>
+                    </td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
+                      {ventaDiariaBultos > 0 ? formatNumber(producto.stock_minimo / ventaDiariaBultos, 1) : '-'}
+                    </td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
+                      {ventaDiariaBultos > 0 ? formatNumber(producto.stock_seguridad / ventaDiariaBultos, 1) : '-'}
+                    </td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
+                      {ventaDiariaBultos > 0 ? formatNumber(producto.punto_reorden / ventaDiariaBultos, 1) : '-'}
+                    </td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
+                      {ventaDiariaBultos > 0 ? formatNumber(producto.stock_maximo / ventaDiariaBultos, 1) : '-'}
+                    </td>
                     <td className="bg-yellow-50 px-2 py-1 text-[11px] text-yellow-800 text-center font-medium">{formatNumber(producto.cantidad_sugerida_bultos, 2)}</td>
                     <td className="bg-yellow-50 px-2 py-1 text-[11px] text-gray-700">{producto.razon_pedido}</td>
                   </tr>
