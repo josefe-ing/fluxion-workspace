@@ -9,6 +9,7 @@ import InventorySummary from './components/dashboard/InventorySummary';
 import InventoryDashboard from './components/dashboard/InventoryDashboard';
 import SalesSummary from './components/sales/SalesSummary';
 import SalesDashboard from './components/sales/SalesDashboard';
+import SalesCoverageCalendar from './components/sales/SalesCoverageCalendar';
 import SuggestedOrder from './components/orders/SuggestedOrder';
 import OrderWizard from './components/orders/OrderWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
@@ -31,6 +32,7 @@ function ProtectedRoutes() {
         <Route path="dashboard" element={<InventorySummary />} />
         <Route path="dashboard/:ubicacionId" element={<InventoryDashboard />} />
         <Route path="ventas" element={<SalesSummary />} />
+        <Route path="ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="ventas/:ubicacionId" element={<SalesDashboard />} />
         <Route path="pedidos-sugeridos" element={<SuggestedOrder />} />
         <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} />

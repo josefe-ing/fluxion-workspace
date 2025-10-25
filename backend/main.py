@@ -2588,6 +2588,101 @@ async def get_ventas_gaps():
         logger.error(f"Error analizando gaps de ventas: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
+@app.get("/api/ventas/coverage-calendar", tags=["Ventas"])
+async def get_ventas_coverage_calendar(days: int = 90):
+    """
+    Retorna un calendario de cobertura de datos de ventas para los últimos N días
+    por tienda. Útil para visualizar qué días tienen datos y cuáles faltan.
+
+    Args:
+        days: Número de días hacia atrás a consultar (default: 90)
+
+    Returns:
+        {
+            "ubicaciones": [...],
+            "fechas": ["2025-01-01", "2025-01-02", ...],
+            "data": {
+                "tienda_01": {"2025-01-01": 150, "2025-01-02": null, ...},
+                ...
+            }
+        }
+    """
+    try:
+        with get_db_connection() as conn:
+            # Calcular rango de fechas
+            fecha_fin = date.today()
+            fecha_inicio = fecha_fin - timedelta(days=days)
+
+            # Generar lista de todas las fechas en el rango
+            fechas = []
+            fecha_actual = fecha_inicio
+            while fecha_actual <= fecha_fin:
+                fechas.append(fecha_actual.strftime('%Y-%m-%d'))
+                fecha_actual += timedelta(days=1)
+
+            # Obtener lista de ubicaciones
+            ubicaciones_query = """
+                SELECT DISTINCT ubicacion_id, ubicacion_nombre
+                FROM ventas_raw
+                ORDER BY ubicacion_id
+            """
+            ubicaciones_result = conn.execute(ubicaciones_query).fetchall()
+            ubicaciones = [
+                {"id": row[0], "nombre": row[1]}
+                for row in ubicaciones_result
+            ]
+
+            # Obtener datos de ventas agrupados por ubicación y fecha
+            ventas_query = """
+                SELECT
+                    ubicacion_id,
+                    fecha::DATE as fecha,
+                    COUNT(*) as registros,
+                    SUM(monto_total) as venta_total
+                FROM ventas_raw
+                WHERE fecha >= ? AND fecha <= ?
+                GROUP BY ubicacion_id, fecha::DATE
+                ORDER BY ubicacion_id, fecha::DATE
+            """
+            ventas_result = conn.execute(
+                ventas_query,
+                [fecha_inicio.strftime('%Y-%m-%d'), fecha_fin.strftime('%Y-%m-%d')]
+            ).fetchall()
+
+            # Organizar datos en estructura de mapa
+            data = {}
+            for ubicacion in ubicaciones:
+                ubicacion_id = ubicacion["id"]
+                data[ubicacion_id] = {fecha: None for fecha in fechas}
+
+            # Rellenar con datos reales
+            for row in ventas_result:
+                ubicacion_id = row[0]
+                fecha = str(row[1])
+                registros = row[2]
+                venta_total = float(row[3]) if row[3] else 0
+
+                if ubicacion_id in data and fecha in data[ubicacion_id]:
+                    data[ubicacion_id][fecha] = {
+                        "registros": registros,
+                        "venta_total": round(venta_total, 2)
+                    }
+
+            return {
+                "ubicaciones": ubicaciones,
+                "fechas": fechas,
+                "data": data,
+                "periodo": {
+                    "fecha_inicio": fecha_inicio.strftime('%Y-%m-%d'),
+                    "fecha_fin": fecha_fin.strftime('%Y-%m-%d'),
+                    "total_dias": len(fechas)
+                }
+            }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo calendario de cobertura: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 @app.get("/api/ventas/detail", response_model=PaginatedVentasResponse, tags=["Ventas"])
 async def get_ventas_detail(
     ubicacion_id: Optional[str] = None,
