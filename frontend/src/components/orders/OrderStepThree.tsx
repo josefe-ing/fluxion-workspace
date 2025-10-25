@@ -56,7 +56,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Resumen del pedido */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Confirmación de Pedido</h2>
