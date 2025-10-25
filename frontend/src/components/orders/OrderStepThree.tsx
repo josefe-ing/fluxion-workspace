@@ -1,27 +1,45 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import http from '../../services/http';
-import type { OrderData } from './OrderWizard';
-import { formatNumber, formatInteger } from '../../utils/formatNumber';
+import type { OrderData, ProductoPedido } from './OrderWizard';
+import { formatNumber } from '../../utils/formatNumber';
 
 interface Props {
   orderData: OrderData;
   onBack: () => void;
 }
 
+// Definir umbrales ABC (mismo que OrderStepTwo)
+const ABC_THRESHOLDS = {
+  A: 5.0,
+  AB: 2.5,
+  B: 1.0,
+  BC: 0.5,
+  C: 0.0
+};
+
 export default function OrderStepThree({ orderData, onBack }: Props) {
   const navigate = useNavigate();
-  const [observaciones, setObservaciones] = useState(orderData.observaciones);
+  const [observaciones, setObservaciones] = useState('');
   const [loading, setLoading] = useState(false);
 
   const productosIncluidos = orderData.productos.filter(p => p.incluido);
   const totalBultos = productosIncluidos.reduce((sum, p) => sum + (p.cantidad_pedida_bultos || 0), 0);
-  const totalUnidades = productosIncluidos.reduce((sum, p) => sum + ((p.cantidad_pedida_bultos || 0) * p.cantidad_bultos), 0);
+
+  // Función para clasificación ABC
+  const getClasificacionABC = (producto: ProductoPedido): string => {
+    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+    if (ventaDiariaBultos >= ABC_THRESHOLDS.A) return 'A';
+    if (ventaDiariaBultos >= ABC_THRESHOLDS.AB) return 'AB';
+    if (ventaDiariaBultos >= ABC_THRESHOLDS.B) return 'B';
+    if (ventaDiariaBultos >= ABC_THRESHOLDS.BC) return 'BC';
+    if (ventaDiariaBultos > 0) return 'C';
+    return '-';
+  };
 
   const handleSubmit = async (enviar: boolean = false) => {
     setLoading(true);
     try {
-      // Preparar datos para enviar
       const payload = {
         cedi_origen: orderData.cedi_origen,
         cedi_origen_nombre: orderData.cedi_origen_nombre,
@@ -33,10 +51,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
       };
 
       console.log('Guardando pedido:', payload);
-
-      // Llamar API para guardar
       const response = await http.post('/api/pedidos-sugeridos', payload);
-
       console.log('Pedido guardado:', response.data);
 
       const mensaje = enviar
@@ -57,7 +72,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      {/* Resumen del pedido */}
+      {/* Header con información del pedido */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Confirmación de Pedido</h2>
 
@@ -82,7 +97,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
         {/* Estadísticas */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="bg-blue-50 rounded-md p-4">
-            <div className="text-xs text-blue-600 mb-1">Productos</div>
+            <div className="text-xs text-blue-600 mb-1">Productos Seleccionados</div>
             <div className="text-2xl font-bold text-blue-900">{productosIncluidos.length}</div>
           </div>
           <div className="bg-green-50 rounded-md p-4">
@@ -90,8 +105,8 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             <div className="text-2xl font-bold text-green-900">{formatNumber(totalBultos, 2)}</div>
           </div>
           <div className="bg-purple-50 rounded-md p-4">
-            <div className="text-xs text-purple-600 mb-1">Total Unidades</div>
-            <div className="text-2xl font-bold text-purple-900">{formatInteger(Math.round(totalUnidades))}</div>
+            <div className="text-xs text-purple-600 mb-1">Total Productos</div>
+            <div className="text-2xl font-bold text-purple-900">{orderData.productos.length}</div>
           </div>
         </div>
 
@@ -110,36 +125,81 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
         </div>
       </div>
 
-      {/* Lista de productos resumida */}
+      {/* Tabla de productos con todas las columnas */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">Productos del Pedido</h3>
-        </div>
-        <div className="overflow-x-auto max-h-96">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50 sticky top-0">
+        <div className="overflow-x-auto">
+          <table className="w-full divide-y divide-gray-200 text-xs" style={{ minWidth: '1400px' }}>
+            <thead className="bg-gray-100">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Cant. Bultos</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Unidades</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Razón</th>
+                <th className="sticky left-0 z-10 bg-gray-100 px-2 py-1.5 text-left font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '80px' }}>Código</th>
+                <th className="bg-gray-100 px-2 py-1.5 text-left font-semibold text-gray-700 text-[10px] uppercase" style={{ minWidth: '200px' }}>Descripción</th>
+                <th className="bg-yellow-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>Pedir</th>
+                <th className="bg-gray-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '65px' }}>¿Bulto?</th>
+                <th className="bg-blue-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '40px' }}>5D</th>
+                <th className="bg-blue-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '40px' }}>20D</th>
+                <th className="bg-blue-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Mismo Día</th>
+                <th className="bg-purple-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Proyección</th>
+                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>Stock</th>
+                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Tránsito</th>
+                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>Total</th>
+                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '45px' }}>Días</th>
+                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>CEDI</th>
+                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '40px' }}>ABC</th>
+                <th className="bg-red-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>🔥</th>
+                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '45px' }}>Min</th>
+                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '70px' }}>Seguridad</th>
+                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '70px' }}>Pto. Reorden</th>
+                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>Máx</th>
+                <th className="bg-yellow-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Sugerido</th>
+                <th className="bg-yellow-50 px-2 py-1.5 text-left font-semibold text-gray-700 text-[10px] uppercase" style={{ minWidth: '150px' }}>Notas</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {productosIncluidos.map((producto, index) => (
-                <tr key={`${producto.codigo_producto}-${index}`}>
-                  <td className="px-6 py-3 text-sm font-medium text-gray-900">{producto.codigo_producto}</td>
-                  <td className="px-6 py-3 text-sm text-gray-900">{producto.descripcion_producto}</td>
-                  <td className="px-6 py-3 text-sm text-right font-semibold text-gray-900">
-                    {formatNumber(producto.cantidad_pedida_bultos, 2)}
-                  </td>
-                  <td className="px-6 py-3 text-sm text-right text-gray-600">
-                    {formatInteger(Math.round((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos))}
-                  </td>
-                  <td className="px-6 py-3 text-xs text-gray-500">{producto.razon_pedido}</td>
-                </tr>
-              ))}
+              {productosIncluidos.map((producto, index) => {
+                const clasificacion = getClasificacionABC(producto);
+
+                return (
+                  <tr key={`${producto.codigo_producto}-${index}`} className="hover:bg-gray-50">
+                    <td className="sticky left-0 z-10 bg-white px-2 py-1 text-[11px] font-medium text-gray-900">{producto.codigo_producto}</td>
+                    <td className="px-2 py-1 text-[11px] text-gray-900">{producto.descripcion_producto}</td>
+                    <td className="bg-yellow-50 px-2 py-1 text-center">
+                      <span className="text-[11px] font-bold text-gray-900">{formatNumber(producto.cantidad_pedida_bultos, 2)}</span>
+                    </td>
+                    <td className="bg-gray-50 px-2 py-1 text-[11px] text-gray-700 text-center">{producto.cantidad_bultos}</td>
+                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center">{formatNumber(producto.prom_ventas_5dias_unid / producto.cantidad_bultos, 1)}</td>
+                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center font-medium">{formatNumber(producto.prom_ventas_20dias_unid / producto.cantidad_bultos, 1)}</td>
+                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center">{formatNumber(producto.prom_mismo_dia_unid / producto.cantidad_bultos, 1)}</td>
+                    <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium">-</td>
+                    <td className="bg-green-50 px-2 py-1 text-[11px] text-indigo-800 text-center">{formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}</td>
+                    <td className="bg-green-50 px-2 py-1 text-[11px] text-green-700 text-center">{formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}</td>
+                    <td className="bg-green-50 px-2 py-1 text-[11px] text-green-800 text-center font-medium">{formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}</td>
+                    <td className="bg-green-50 px-2 py-1 text-[11px] text-center font-bold">
+                      {producto.prom_ventas_20dias_unid > 0
+                        ? formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.prom_ventas_20dias_unid, 1)
+                        : '∞'
+                      }
+                    </td>
+                    <td className="bg-green-50 px-2 py-1 text-[11px] text-green-800 text-center font-medium">{formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}</td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-center">
+                      <span className={`font-bold ${(() => {
+                        if (clasificacion === 'A') return 'text-red-700';
+                        if (clasificacion === 'AB') return 'text-orange-700';
+                        if (clasificacion === 'B') return 'text-yellow-700';
+                        return 'text-gray-600';
+                      })()}`}>
+                        {clasificacion}
+                      </span>
+                    </td>
+                    <td className="bg-red-50 px-2 py-1 text-[10px] text-center font-bold">-</td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">-</td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">-</td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">-</td>
+                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">-</td>
+                    <td className="bg-yellow-50 px-2 py-1 text-[11px] text-yellow-800 text-center font-medium">{formatNumber(producto.cantidad_sugerida_bultos, 2)}</td>
+                    <td className="bg-yellow-50 px-2 py-1 text-[11px] text-gray-700">{producto.razon_pedido}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
