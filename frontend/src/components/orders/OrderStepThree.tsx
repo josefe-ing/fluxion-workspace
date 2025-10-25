@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import http from '../../services/http';
 import type { OrderData, ProductoPedido } from './OrderWizard';
 import { formatNumber } from '../../utils/formatNumber';
+import ProductSalesModal from '../sales/ProductSalesModal';
+import ABCClassificationModal from './ABCClassificationModal';
+import StockDiasModal from './StockDiasModal';
+import CriticidadModal from './CriticidadModal';
 
 interface Props {
   orderData: OrderData;
@@ -13,6 +17,16 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
   const navigate = useNavigate();
   const [observaciones, setObservaciones] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Estados para modales
+  const [salesModalOpen, setSalesModalOpen] = useState(false);
+  const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
+  const [abcModalOpen, setAbcModalOpen] = useState(false);
+  const [selectedProductoABC, setSelectedProductoABC] = useState<ProductoPedido | null>(null);
+  const [stockDiasModalOpen, setStockDiasModalOpen] = useState(false);
+  const [selectedProductoDias, setSelectedProductoDias] = useState<ProductoPedido | null>(null);
+  const [criticidadModalOpen, setCriticidadModalOpen] = useState(false);
+  const [selectedProductoCriticidad, setSelectedProductoCriticidad] = useState<ProductoPedido | null>(null);
 
   const productosIncluidos = orderData.productos.filter(p => p.incluido);
   const totalBultos = productosIncluidos.reduce((sum, p) => sum + (p.cantidad_pedida_bultos || 0), 0);
@@ -77,6 +91,27 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
     }
 
     return { emoji, color };
+  };
+
+  // Handlers para modales
+  const handleSalesClick = (producto: ProductoPedido) => {
+    setSelectedProductoSales(producto);
+    setSalesModalOpen(true);
+  };
+
+  const handleABCClick = (producto: ProductoPedido) => {
+    setSelectedProductoABC(producto);
+    setAbcModalOpen(true);
+  };
+
+  const handleStockDiasClick = (producto: ProductoPedido) => {
+    setSelectedProductoDias(producto);
+    setStockDiasModalOpen(true);
+  };
+
+  const handleCriticidadClick = (producto: ProductoPedido) => {
+    setSelectedProductoCriticidad(producto);
+    setCriticidadModalOpen(true);
   };
 
   const handleSubmit = async (enviar: boolean = false) => {
@@ -211,31 +246,55 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
                     </td>
                     <td className="bg-gray-50 px-2 py-1 text-[11px] text-gray-700 text-center">{producto.cantidad_bultos}</td>
                     <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center">{formatNumber(producto.prom_ventas_5dias_unid / producto.cantidad_bultos, 1)}</td>
-                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center font-medium">{formatNumber(producto.prom_ventas_20dias_unid / producto.cantidad_bultos, 1)}</td>
+                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center font-medium">
+                      <button
+                        onClick={() => handleSalesClick(producto)}
+                        className="hover:underline cursor-pointer hover:text-blue-900"
+                        title="Click para ver análisis de ventas"
+                      >
+                        {formatNumber(producto.prom_ventas_20dias_unid / producto.cantidad_bultos, 1)}
+                      </button>
+                    </td>
                     <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center">{formatNumber(producto.prom_mismo_dia_unid / producto.cantidad_bultos, 1)}</td>
                     <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium">-</td>
                     <td className="bg-green-50 px-2 py-1 text-[11px] text-indigo-800 text-center">{formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}</td>
                     <td className="bg-green-50 px-2 py-1 text-[11px] text-green-700 text-center">{formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}</td>
                     <td className="bg-green-50 px-2 py-1 text-[11px] text-green-800 text-center font-medium">{formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}</td>
                     <td className="bg-green-50 px-2 py-1 text-[11px] text-center font-bold">
-                      {producto.prom_ventas_20dias_unid > 0
-                        ? formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.prom_ventas_20dias_unid, 1)
-                        : '∞'
-                      }
+                      <button
+                        onClick={() => handleStockDiasClick(producto)}
+                        className="hover:underline cursor-pointer hover:text-indigo-900"
+                        title="Click para ver análisis de urgencia de reposición"
+                      >
+                        {producto.prom_ventas_20dias_unid > 0
+                          ? formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.prom_ventas_20dias_unid, 1)
+                          : '∞'
+                        }
+                      </button>
                     </td>
                     <td className="bg-green-50 px-2 py-1 text-[11px] text-green-800 text-center font-medium">{formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}</td>
                     <td className="bg-orange-50 px-2 py-1 text-[11px] text-center">
-                      <span className={`font-bold ${(() => {
-                        if (clasificacion === 'A') return 'text-red-700';
-                        if (clasificacion === 'AB') return 'text-orange-700';
-                        if (clasificacion === 'B') return 'text-yellow-700';
-                        return 'text-gray-600';
-                      })()}`}>
+                      <button
+                        onClick={() => handleABCClick(producto)}
+                        className={`font-bold hover:underline cursor-pointer ${(() => {
+                          if (clasificacion === 'A') return 'text-red-700 hover:text-red-900';
+                          if (clasificacion === 'AB') return 'text-orange-700 hover:text-orange-900';
+                          if (clasificacion === 'B') return 'text-yellow-700 hover:text-yellow-900';
+                          return 'text-gray-600 hover:text-gray-800';
+                        })()}`}
+                        title="Click para ver cálculo de clasificación ABC"
+                      >
                         {clasificacion}
-                      </span>
+                      </button>
                     </td>
                     <td className="bg-red-50 px-2 py-1 text-[10px] text-center font-bold">
-                      <span className={criticidad.color}>{criticidad.emoji}</span>
+                      <button
+                        onClick={() => handleCriticidadClick(producto)}
+                        className={`${criticidad.color} hover:underline cursor-pointer`}
+                        title="Click para ver cálculo de Criticidad"
+                      >
+                        {criticidad.emoji}
+                      </button>
                     </td>
                     <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
                       {ventaDiariaBultos > 0 ? formatNumber(producto.stock_minimo / ventaDiariaBultos, 1) : '-'}
@@ -285,6 +344,94 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Modales educativos */}
+      {selectedProductoSales && (
+        <ProductSalesModal
+          isOpen={salesModalOpen}
+          onClose={() => setSalesModalOpen(false)}
+          codigoProducto={selectedProductoSales.codigo_producto}
+          descripcionProducto={selectedProductoSales.descripcion_producto}
+          currentUbicacionId={orderData.tienda_destino}
+        />
+      )}
+
+      {selectedProductoABC && (
+        <ABCClassificationModal
+          isOpen={abcModalOpen}
+          onClose={() => setAbcModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoABC.codigo_producto,
+            descripcion_producto: selectedProductoABC.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoABC.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoABC.cantidad_bultos,
+          }}
+        />
+      )}
+
+      {selectedProductoDias && (
+        <StockDiasModal
+          isOpen={stockDiasModalOpen}
+          onClose={() => setStockDiasModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoDias.codigo_producto,
+            descripcion_producto: selectedProductoDias.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoDias.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoDias.cantidad_bultos,
+            stock_tienda: selectedProductoDias.stock_tienda,
+            stock_en_transito: selectedProductoDias.stock_en_transito,
+          }}
+          stockParams={{
+            stock_min_mult_a: 0,
+            stock_min_mult_ab: 0,
+            stock_min_mult_b: 0,
+            stock_min_mult_bc: 0,
+            stock_min_mult_c: 0,
+            stock_seg_mult_a: 0,
+            stock_seg_mult_ab: 0,
+            stock_seg_mult_b: 0,
+            stock_seg_mult_bc: 0,
+            stock_seg_mult_c: 0,
+            stock_max_mult_a: 0,
+            stock_max_mult_ab: 0,
+            stock_max_mult_b: 0,
+            stock_max_mult_bc: 0,
+            stock_max_mult_c: 0,
+          }}
+        />
+      )}
+
+      {selectedProductoCriticidad && (
+        <CriticidadModal
+          isOpen={criticidadModalOpen}
+          onClose={() => setCriticidadModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoCriticidad.codigo_producto,
+            descripcion_producto: selectedProductoCriticidad.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoCriticidad.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoCriticidad.cantidad_bultos,
+            stock_tienda: selectedProductoCriticidad.stock_tienda,
+            stock_en_transito: selectedProductoCriticidad.stock_en_transito,
+          }}
+          stockParams={{
+            stock_min_mult_a: 0,
+            stock_min_mult_ab: 0,
+            stock_min_mult_b: 0,
+            stock_min_mult_bc: 0,
+            stock_min_mult_c: 0,
+            stock_seg_mult_a: 0,
+            stock_seg_mult_ab: 0,
+            stock_seg_mult_b: 0,
+            stock_seg_mult_bc: 0,
+            stock_seg_mult_c: 0,
+            stock_max_mult_a: 0,
+            stock_max_mult_ab: 0,
+            stock_max_mult_b: 0,
+            stock_max_mult_bc: 0,
+            stock_max_mult_c: 0,
+          }}
+        />
+      )}
     </div>
   );
 }
