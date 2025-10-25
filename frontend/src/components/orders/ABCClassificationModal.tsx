@@ -226,3 +226,4 @@ export default function ABCClassificationModal({ isOpen, onClose, producto }: AB
     </div>
   );
 }
+
