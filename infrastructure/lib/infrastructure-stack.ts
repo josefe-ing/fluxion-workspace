@@ -137,14 +137,16 @@ PersistentKeepalive = 25`),
       'systemctl enable wg-quick@wg0',
       'systemctl start wg-quick@wg0',
       '',
-      '# Configure iptables for NAT',
+      '# Configure iptables for NAT (CRITICAL: routes ECS traffic through WireGuard)',
       'iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE',
-      'iptables -A FORWARD -i eth0 -o wg0 -j ACCEPT',
-      'iptables -A FORWARD -i wg0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT',
+      'iptables -A FORWARD -i ens5 -o wg0 -j ACCEPT',
+      'iptables -A FORWARD -i wg0 -o ens5 -m state --state RELATED,ESTABLISHED -j ACCEPT',
       '',
-      '# Save iptables rules',
+      '# Save iptables rules permanently',
       'dnf install -y iptables-services',
-      'service iptables save',
+      'iptables-save > /etc/sysconfig/iptables',
+      'systemctl enable iptables',
+      'systemctl start iptables',
       '',
       'echo "WireGuard bridge setup complete"'
     );
@@ -723,8 +725,11 @@ PersistentKeepalive = 25`),
     // Configure Backend with ETL task information
     // ========================================
     // Get private subnets for ETL task launching
+    // IMPORTANT: Only use PrivateSubnet2 (us-east-1b) to avoid same-subnet routing issue
+    // WireGuard is in PrivateSubnet1 (10.0.2.0/24), ETL must be in PrivateSubnet2 (10.0.3.0/24)
     const privateSubnets = vpc.selectSubnets({
-      subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
+      subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      availabilityZones: [vpc.availabilityZones[1]]  // Only second AZ (where WireGuard is NOT)
     }).subnetIds;
 
     // Add ETL configuration to Backend container environment

@@ -115,7 +115,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         username=get_sql_user(),
         password=get_sql_pass(),
         port=14348,
-        activo=True,
+        activo=False,  # Temporalmente deshabilitado para pruebas
         codigo_deposito="0102"
     ),
 
