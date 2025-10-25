@@ -5,7 +5,12 @@ import type { OrderData, ProductoPedido } from './OrderWizard';
 import { formatNumber } from '../../utils/formatNumber';
 import ProductSalesModal from '../sales/ProductSalesModal';
 import ABCClassificationModal from './ABCClassificationModal';
+import StockMinimoModal from './StockMinimoModal';
+import StockSeguridadModal from './StockSeguridadModal';
+import PuntoReordenModal from './PuntoReordenModal';
+import StockMaximoModal from './StockMaximoModal';
 import StockDiasModal from './StockDiasModal';
+import PedidoSugeridoModal from './PedidoSugeridoModal';
 import CriticidadModal from './CriticidadModal';
 
 interface Props {
@@ -23,12 +28,23 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
   const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
   const [abcModalOpen, setAbcModalOpen] = useState(false);
   const [selectedProductoABC, setSelectedProductoABC] = useState<ProductoPedido | null>(null);
+  const [stockMinimoModalOpen, setStockMinimoModalOpen] = useState(false);
+  const [selectedProductoStockMin, setSelectedProductoStockMin] = useState<ProductoPedido | null>(null);
+  const [stockSeguridadModalOpen, setStockSeguridadModalOpen] = useState(false);
+  const [selectedProductoStockSeg, setSelectedProductoStockSeg] = useState<ProductoPedido | null>(null);
+  const [puntoReordenModalOpen, setPuntoReordenModalOpen] = useState(false);
+  const [selectedProductoReorden, setSelectedProductoReorden] = useState<ProductoPedido | null>(null);
+  const [stockMaximoModalOpen, setStockMaximoModalOpen] = useState(false);
+  const [selectedProductoStockMax, setSelectedProductoStockMax] = useState<ProductoPedido | null>(null);
   const [stockDiasModalOpen, setStockDiasModalOpen] = useState(false);
   const [selectedProductoDias, setSelectedProductoDias] = useState<ProductoPedido | null>(null);
+  const [pedidoSugeridoModalOpen, setPedidoSugeridoModalOpen] = useState(false);
+  const [selectedProductoPedido, setSelectedProductoPedido] = useState<ProductoPedido | null>(null);
   const [criticidadModalOpen, setCriticidadModalOpen] = useState(false);
   const [selectedProductoCriticidad, setSelectedProductoCriticidad] = useState<ProductoPedido | null>(null);
 
-  const productosIncluidos = orderData.productos.filter(p => p.incluido);
+  // Filtrar productos incluidos Y con cantidad pedida > 0
+  const productosIncluidos = orderData.productos.filter(p => p.incluido && (p.cantidad_pedida_bultos || 0) > 0);
   const totalBultos = productosIncluidos.reduce((sum, p) => sum + (p.cantidad_pedida_bultos || 0), 0);
 
   // Función para clasificación ABC
@@ -104,9 +120,34 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
     setAbcModalOpen(true);
   };
 
+  const handleStockMinimoClick = (producto: ProductoPedido) => {
+    setSelectedProductoStockMin(producto);
+    setStockMinimoModalOpen(true);
+  };
+
+  const handleStockSeguridadClick = (producto: ProductoPedido) => {
+    setSelectedProductoStockSeg(producto);
+    setStockSeguridadModalOpen(true);
+  };
+
+  const handlePuntoReordenClick = (producto: ProductoPedido) => {
+    setSelectedProductoReorden(producto);
+    setPuntoReordenModalOpen(true);
+  };
+
+  const handleStockMaximoClick = (producto: ProductoPedido) => {
+    setSelectedProductoStockMax(producto);
+    setStockMaximoModalOpen(true);
+  };
+
   const handleStockDiasClick = (producto: ProductoPedido) => {
     setSelectedProductoDias(producto);
     setStockDiasModalOpen(true);
+  };
+
+  const handlePedidoSugeridoClick = (producto: ProductoPedido) => {
+    setSelectedProductoPedido(producto);
+    setPedidoSugeridoModalOpen(true);
   };
 
   const handleCriticidadClick = (producto: ProductoPedido) => {
@@ -242,7 +283,13 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
                     <td className="sticky left-0 z-10 bg-white px-2 py-1 text-[11px] font-medium text-gray-900">{producto.codigo_producto}</td>
                     <td className="px-2 py-1 text-[11px] text-gray-900">{producto.descripcion_producto}</td>
                     <td className="bg-yellow-50 px-2 py-1 text-center">
-                      <span className="text-[11px] font-bold text-gray-900">{formatNumber(producto.cantidad_pedida_bultos, 2)}</span>
+                      <button
+                        onClick={() => handlePedidoSugeridoClick(producto)}
+                        className="text-[11px] font-bold text-gray-900 hover:underline cursor-pointer hover:text-gray-700"
+                        title="Click para ver cálculo de Cantidad Sugerida"
+                      >
+                        {formatNumber(producto.cantidad_pedida_bultos, 2)}
+                      </button>
                     </td>
                     <td className="bg-gray-50 px-2 py-1 text-[11px] text-gray-700 text-center">{producto.cantidad_bultos}</td>
                     <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center">{formatNumber(producto.prom_ventas_5dias_unid / producto.cantidad_bultos, 1)}</td>
@@ -297,18 +344,58 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
                       </button>
                     </td>
                     <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
-                      {ventaDiariaBultos > 0 ? formatNumber(producto.stock_minimo / ventaDiariaBultos, 1) : '-'}
+                      {ventaDiariaBultos > 0 ? (
+                        <button
+                          onClick={() => handleStockMinimoClick(producto)}
+                          className="hover:underline cursor-pointer hover:text-orange-900"
+                          title="Click para ver cálculo de Stock Mínimo"
+                        >
+                          {formatNumber(producto.stock_minimo / ventaDiariaBultos, 1)}
+                        </button>
+                      ) : '-'}
                     </td>
                     <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
-                      {ventaDiariaBultos > 0 ? formatNumber(producto.stock_seguridad / ventaDiariaBultos, 1) : '-'}
+                      {ventaDiariaBultos > 0 ? (
+                        <button
+                          onClick={() => handleStockSeguridadClick(producto)}
+                          className="hover:underline cursor-pointer hover:text-blue-900"
+                          title="Click para ver cálculo de Stock de Seguridad"
+                        >
+                          {formatNumber(producto.stock_seguridad / ventaDiariaBultos, 1)}
+                        </button>
+                      ) : '-'}
                     </td>
                     <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
-                      {ventaDiariaBultos > 0 ? formatNumber(producto.punto_reorden / ventaDiariaBultos, 1) : '-'}
+                      {ventaDiariaBultos > 0 ? (
+                        <button
+                          onClick={() => handlePuntoReordenClick(producto)}
+                          className="hover:underline cursor-pointer hover:text-orange-900"
+                          title="Click para ver cálculo de Punto de Reorden"
+                        >
+                          {formatNumber(producto.punto_reorden / ventaDiariaBultos, 1)}
+                        </button>
+                      ) : '-'}
                     </td>
                     <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
-                      {ventaDiariaBultos > 0 ? formatNumber(producto.stock_maximo / ventaDiariaBultos, 1) : '-'}
+                      {ventaDiariaBultos > 0 ? (
+                        <button
+                          onClick={() => handleStockMaximoClick(producto)}
+                          className="hover:underline cursor-pointer hover:text-orange-900"
+                          title="Click para ver cálculo de Stock Máximo"
+                        >
+                          {formatNumber(producto.stock_maximo / ventaDiariaBultos, 1)}
+                        </button>
+                      ) : '-'}
                     </td>
-                    <td className="bg-yellow-50 px-2 py-1 text-[11px] text-yellow-800 text-center font-medium">{formatNumber(producto.cantidad_sugerida_bultos, 2)}</td>
+                    <td className="bg-yellow-50 px-2 py-1 text-[11px] text-yellow-800 text-center font-medium">
+                      <button
+                        onClick={() => handlePedidoSugeridoClick(producto)}
+                        className="hover:underline cursor-pointer hover:text-yellow-900"
+                        title="Click para ver cálculo de Cantidad Sugerida"
+                      >
+                        {formatNumber(producto.cantidad_sugerida_bultos, 2)}
+                      </button>
+                    </td>
                     <td className="bg-yellow-50 px-2 py-1 text-[11px] text-gray-700">{producto.razon_pedido}</td>
                   </tr>
                 );
@@ -369,6 +456,91 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
         />
       )}
 
+      {selectedProductoStockMin && (
+        <StockMinimoModal
+          isOpen={stockMinimoModalOpen}
+          onClose={() => setStockMinimoModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoStockMin.codigo_producto,
+            descripcion_producto: selectedProductoStockMin.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoStockMin.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoStockMin.cantidad_bultos,
+          }}
+          stockParams={{
+            stock_min_mult_a: 0,
+            stock_min_mult_ab: 0,
+            stock_min_mult_b: 0,
+            stock_min_mult_bc: 0,
+            stock_min_mult_c: 0,
+          }}
+        />
+      )}
+
+      {selectedProductoStockSeg && (
+        <StockSeguridadModal
+          isOpen={stockSeguridadModalOpen}
+          onClose={() => setStockSeguridadModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoStockSeg.codigo_producto,
+            descripcion_producto: selectedProductoStockSeg.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoStockSeg.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoStockSeg.cantidad_bultos,
+          }}
+          stockParams={{
+            stock_seg_mult_a: 0,
+            stock_seg_mult_ab: 0,
+            stock_seg_mult_b: 0,
+            stock_seg_mult_bc: 0,
+            stock_seg_mult_c: 0,
+          }}
+        />
+      )}
+
+      {selectedProductoReorden && (
+        <PuntoReordenModal
+          isOpen={puntoReordenModalOpen}
+          onClose={() => setPuntoReordenModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoReorden.codigo_producto,
+            descripcion_producto: selectedProductoReorden.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoReorden.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoReorden.cantidad_bultos,
+          }}
+          stockParams={{
+            stock_min_mult_a: 0,
+            stock_min_mult_ab: 0,
+            stock_min_mult_b: 0,
+            stock_min_mult_bc: 0,
+            stock_min_mult_c: 0,
+            stock_seg_mult_a: 0,
+            stock_seg_mult_ab: 0,
+            stock_seg_mult_b: 0,
+            stock_seg_mult_bc: 0,
+            stock_seg_mult_c: 0,
+          }}
+        />
+      )}
+
+      {selectedProductoStockMax && (
+        <StockMaximoModal
+          isOpen={stockMaximoModalOpen}
+          onClose={() => setStockMaximoModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoStockMax.codigo_producto,
+            descripcion_producto: selectedProductoStockMax.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoStockMax.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoStockMax.cantidad_bultos,
+          }}
+          stockParams={{
+            stock_max_mult_a: 0,
+            stock_max_mult_ab: 0,
+            stock_max_mult_b: 0,
+            stock_max_mult_bc: 0,
+            stock_max_mult_c: 0,
+          }}
+        />
+      )}
+
       {selectedProductoDias && (
         <StockDiasModal
           isOpen={stockDiasModalOpen}
@@ -380,6 +552,39 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             cantidad_bultos: selectedProductoDias.cantidad_bultos,
             stock_tienda: selectedProductoDias.stock_tienda,
             stock_en_transito: selectedProductoDias.stock_en_transito,
+          }}
+          stockParams={{
+            stock_min_mult_a: 0,
+            stock_min_mult_ab: 0,
+            stock_min_mult_b: 0,
+            stock_min_mult_bc: 0,
+            stock_min_mult_c: 0,
+            stock_seg_mult_a: 0,
+            stock_seg_mult_ab: 0,
+            stock_seg_mult_b: 0,
+            stock_seg_mult_bc: 0,
+            stock_seg_mult_c: 0,
+            stock_max_mult_a: 0,
+            stock_max_mult_ab: 0,
+            stock_max_mult_b: 0,
+            stock_max_mult_bc: 0,
+            stock_max_mult_c: 0,
+          }}
+        />
+      )}
+
+      {selectedProductoPedido && (
+        <PedidoSugeridoModal
+          isOpen={pedidoSugeridoModalOpen}
+          onClose={() => setPedidoSugeridoModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoPedido.codigo_producto,
+            descripcion_producto: selectedProductoPedido.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoPedido.prom_ventas_20dias_unid,
+            cantidad_bultos: selectedProductoPedido.cantidad_bultos,
+            stock_tienda: selectedProductoPedido.stock_tienda,
+            stock_en_transito: selectedProductoPedido.stock_en_transito,
+            stock_cedi_origen: selectedProductoPedido.stock_cedi_origen,
           }}
           stockParams={{
             stock_min_mult_a: 0,
