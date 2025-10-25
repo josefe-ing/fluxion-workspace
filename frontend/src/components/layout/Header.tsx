@@ -6,24 +6,20 @@ export default function Header() {
   const { username, nombreCompleto, logout } = useAuth();
 
   const navItems = [
-    { path: '/dashboard', label: 'Inventarios' },
-    { path: '/ventas', label: 'Ventas' },
     { path: '/pedidos-sugeridos', label: 'Pedidos' },
-    { path: '/settings/etl', label: 'ETL' },
+    { path: '/inventarios', label: 'Inventarios' },
+    { path: '/ventas', label: 'Ventas' },
   ];
 
   const isActive = (path: string) => {
-    if (path === '/dashboard') {
-      return location.pathname === path || location.pathname.startsWith('/dashboard/');
+    if (path === '/inventarios') {
+      return location.pathname === path || location.pathname.startsWith('/inventarios/') || location.pathname.startsWith('/dashboard/');
     }
     if (path === '/ventas') {
       return location.pathname === path || location.pathname.startsWith('/ventas/');
     }
     if (path === '/pedidos-sugeridos') {
       return location.pathname === path || location.pathname.startsWith('/pedidos-sugeridos/');
-    }
-    if (path === '/settings/etl') {
-      return location.pathname === path || location.pathname.startsWith('/settings/');
     }
     return location.pathname === path;
   };
@@ -34,9 +30,9 @@ export default function Header() {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <div className="flex items-center">
-            <Link to="/dashboard" className="flex items-center">
+            <Link to="/pedidos-sugeridos" className="flex items-center">
               <div className="text-2xl font-bold text-gray-900">
-                Fluxion <span className="text-gray-400">AI</span>
+                Fluxion <span className="text-gray-400">IA</span>
               </div>
             </Link>
           </div>
@@ -63,6 +59,12 @@ export default function Header() {
             <div className="text-sm text-gray-700">
               <span className="font-medium">{nombreCompleto || username}</span>
             </div>
+            <Link
+              to="/administrador"
+              className="text-sm text-gray-500 hover:text-gray-700 font-medium transition-colors"
+            >
+              Administrador
+            </Link>
             <button
               onClick={logout}
               className="text-sm text-gray-500 hover:text-gray-700 font-medium transition-colors"

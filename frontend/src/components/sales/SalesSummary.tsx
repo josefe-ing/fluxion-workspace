@@ -59,22 +59,11 @@ export default function SalesSummary() {
   return (
     <div className="space-y-6">
       {/* Título */}
-      <div className="flex justify-between items-start">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard de Ventas</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Resumen de ventas por ubicación
-          </p>
-        </div>
-        <button
-          onClick={() => navigate('/ventas/cobertura')}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          Ver Cobertura de Datos
-        </button>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Dashboard de Ventas</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          Resumen de ventas por ubicación
+        </p>
       </div>
 
       {/* Métricas Globales */}

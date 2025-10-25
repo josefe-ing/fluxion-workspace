@@ -9,8 +9,8 @@ import InventorySummary from './components/dashboard/InventorySummary';
 import InventoryDashboard from './components/dashboard/InventoryDashboard';
 import SalesSummary from './components/sales/SalesSummary';
 import SalesDashboard from './components/sales/SalesDashboard';
-import SalesCoverageCalendar from './components/sales/SalesCoverageCalendar';
 import SuggestedOrder from './components/orders/SuggestedOrder';
+import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
 import OrderWizard from './components/orders/OrderWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import ETLControlCenter from './components/settings/ETLControlCenter';
@@ -28,16 +28,17 @@ function ProtectedRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<InventorySummary />} />
+        <Route index element={<Navigate to="/pedidos-sugeridos" replace />} />
+        <Route path="dashboard" element={<Navigate to="/pedidos-sugeridos" replace />} />
+        <Route path="inventarios" element={<InventorySummary />} />
         <Route path="dashboard/:ubicacionId" element={<InventoryDashboard />} />
         <Route path="ventas" element={<SalesSummary />} />
-        <Route path="ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="ventas/:ubicacionId" element={<SalesDashboard />} />
         <Route path="pedidos-sugeridos" element={<SuggestedOrder />} />
         <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} />
         <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
-        <Route path="settings/etl" element={<ETLControlCenter />} />
+        <Route path="administrador" element={<ETLControlCenter />} />
+        <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
       </Route>
     </Routes>
   );

@@ -2589,13 +2589,14 @@ async def get_ventas_gaps():
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @app.get("/api/ventas/coverage-calendar", tags=["Ventas"])
-async def get_ventas_coverage_calendar(days: int = 90):
+async def get_ventas_coverage_calendar(days: Optional[int] = 90, mode: str = "days"):
     """
     Retorna un calendario de cobertura de datos de ventas para los últimos N días
     por tienda. Útil para visualizar qué días tienen datos y cuáles faltan.
 
     Args:
         days: Número de días hacia atrás a consultar (default: 90)
+        mode: 'days' para últimos N días, 'all' para todo el histórico
 
     Returns:
         {
@@ -2604,14 +2605,22 @@ async def get_ventas_coverage_calendar(days: int = 90):
             "data": {
                 "tienda_01": {"2025-01-01": 150, "2025-01-02": null, ...},
                 ...
-            }
+            },
+            "meses": [...] // solo si mode='all'
         }
     """
     try:
         with get_db_connection() as conn:
             # Calcular rango de fechas
             fecha_fin = date.today()
-            fecha_inicio = fecha_fin - timedelta(days=days)
+
+            if mode == "all":
+                # Obtener la fecha más antigua en la base de datos
+                fecha_min_query = "SELECT MIN(fecha::DATE) as fecha_min FROM ventas_raw"
+                result = conn.execute(fecha_min_query).fetchone()
+                fecha_inicio = result[0] if result[0] else fecha_fin - timedelta(days=365)
+            else:
+                fecha_inicio = fecha_fin - timedelta(days=days)
 
             # Generar lista de todas las fechas en el rango
             fechas = []
@@ -2638,7 +2647,7 @@ async def get_ventas_coverage_calendar(days: int = 90):
                     ubicacion_id,
                     fecha::DATE as fecha,
                     COUNT(*) as registros,
-                    SUM(monto_total) as venta_total
+                    SUM(TRY_CAST(venta_total AS DOUBLE)) as total_venta
                 FROM ventas_raw
                 WHERE fecha >= ? AND fecha <= ?
                 GROUP BY ubicacion_id, fecha::DATE
@@ -2668,16 +2677,55 @@ async def get_ventas_coverage_calendar(days: int = 90):
                         "venta_total": round(venta_total, 2)
                     }
 
-            return {
+            # Agrupar fechas por mes para facilitar visualización
+            from collections import defaultdict
+            meses = defaultdict(list)
+            for fecha_str in fechas:
+                fecha_obj = date.fromisoformat(fecha_str)
+                mes_key = fecha_obj.strftime('%Y-%m')  # "2024-09"
+                mes_nombre = fecha_obj.strftime('%B %Y')  # "September 2024"
+                meses[mes_key].append(fecha_str)
+
+            # Convertir a lista ordenada de meses con metadata
+            meses_list = []
+            for mes_key in sorted(meses.keys()):
+                fechas_mes = meses[mes_key]
+                # Calcular estadísticas por ubicación para este mes
+                estadisticas_ubicaciones = {}
+                for ubicacion in ubicaciones:
+                    ubicacion_id = ubicacion["id"]
+                    dias_con_datos = sum(1 for f in fechas_mes if data[ubicacion_id].get(f) is not None)
+                    total_dias = len(fechas_mes)
+                    estadisticas_ubicaciones[ubicacion_id] = {
+                        "dias_con_datos": dias_con_datos,
+                        "total_dias": total_dias,
+                        "porcentaje": round((dias_con_datos / total_dias * 100), 1) if total_dias > 0 else 0
+                    }
+
+                fecha_obj = date.fromisoformat(fechas_mes[0])
+                meses_list.append({
+                    "key": mes_key,
+                    "nombre": fecha_obj.strftime('%B %Y'),
+                    "nombre_corto": fecha_obj.strftime('%b %Y'),
+                    "fechas": fechas_mes,
+                    "total_dias": len(fechas_mes),
+                    "estadisticas": estadisticas_ubicaciones
+                })
+
+            response = {
                 "ubicaciones": ubicaciones,
                 "fechas": fechas,
                 "data": data,
+                "meses": meses_list,
                 "periodo": {
                     "fecha_inicio": fecha_inicio.strftime('%Y-%m-%d'),
                     "fecha_fin": fecha_fin.strftime('%Y-%m-%d'),
-                    "total_dias": len(fechas)
+                    "total_dias": len(fechas),
+                    "total_meses": len(meses_list)
                 }
             }
+
+            return response
 
     except Exception as e:
         logger.error(f"Error obteniendo calendario de cobertura: {str(e)}")
