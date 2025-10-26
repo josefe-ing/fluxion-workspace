@@ -20,11 +20,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       const isProduction =
         window.location.hostname.includes('cloudfront.net') ||
         window.location.hostname.includes('s3-website') ||
-        window.location.hostname.includes('amazonaws.com');
+        window.location.hostname.includes('amazonaws.com') ||
+        window.location.hostname.includes('fluxionia.co');
 
       const API_BASE_URL = import.meta.env.VITE_API_URL ?? (
         isProduction
-          ? 'https://d38251tjpy8f61.cloudfront.net'
+          ? 'https://api.fluxionia.co'
           : 'http://localhost:8001'
       );
 

@@ -2,12 +2,13 @@
 const isProduction =
   window.location.hostname.includes('cloudfront.net') ||
   window.location.hostname.includes('s3-website') ||
-  window.location.hostname.includes('amazonaws.com');
+  window.location.hostname.includes('amazonaws.com') ||
+  window.location.hostname.includes('fluxionia.co');
 
 // Use environment variable for backend URL, fallback to hardcoded values
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? (
   isProduction
-    ? 'https://d38251tjpy8f61.cloudfront.net' // Backend CloudFront with HTTPS
+    ? 'https://api.fluxionia.co' // Backend API domain
     : 'http://localhost:8001'
 );
 
