@@ -214,7 +214,7 @@ async def guardar_pedido(
                 id, numero_pedido,
                 cedi_origen_id, cedi_origen_nombre,
                 tienda_destino_id, tienda_destino_nombre,
-                fecha_pedido, fecha_entrega_solicitada,
+                fecha_envio, fecha_entrega_solicitada,
                 estado, requiere_aprobacion,
                 total_productos, total_bultos, total_unidades,
                 tiene_devoluciones, total_productos_devolucion,
@@ -437,7 +437,7 @@ async def listar_pedidos(
     try:
         query = """
             SELECT
-                id, numero_pedido, fecha_pedido, fecha_creacion,
+                id, numero_pedido, fecha_envio, fecha_creacion,
                 cedi_origen_nombre, tienda_destino_nombre,
                 estado, prioridad, tipo_pedido,
                 total_productos, total_lineas, total_bultos, total_unidades, total_peso_kg,
@@ -525,7 +525,7 @@ async def obtener_pedido(
         # Obtener pedido principal
         pedido_row = conn.execute("""
             SELECT
-                id, numero_pedido, fecha_pedido, fecha_creacion,
+                id, numero_pedido, fecha_envio, fecha_creacion,
                 cedi_origen_id, cedi_origen_nombre,
                 tienda_destino_id, tienda_destino_nombre,
                 estado, prioridad, tipo_pedido,
