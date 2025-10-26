@@ -548,30 +548,47 @@ async def obtener_pedido(
                 cantidad_bultos, cantidad_pedida_bultos, total_unidades,
                 cantidad_sugerida_bultos, clasificacion_abc, razon_pedido,
                 prom_ventas_8sem_unid, prom_ventas_8sem_bultos,
-                stock_tienda, stock_total, comentario_gerente, incluido
+                stock_tienda, stock_total, incluido
             FROM pedidos_sugeridos_detalle
             WHERE pedido_id = ?
             ORDER BY linea_numero
         """, [pedido_id]).fetchall()
 
-        # Construir lista de productos
+        # Construir lista de productos con TODOS los campos requeridos por ProductoPedidoSugeridoCompleto
         productos = []
-        for prod_row in productos_rows:
+        for idx, prod_row in enumerate(productos_rows):
+            cantidad_bultos = float(prod_row[2]) if prod_row[2] else 1.0
+            cantidad_pedida_bultos = float(prod_row[3]) if prod_row[3] else 0.0
+
             productos.append({
+                # ProductoPedidoSugeridoCompleto - campos de identificación
+                "id": f"{pedido_id}-{idx+1}",  # ID sintético
+                "pedido_id": pedido_id,
+                "linea_numero": idx + 1,
+
+                # ProductoPedidoSugeridoBase - información básica
                 "codigo_producto": prod_row[0],
                 "descripcion_producto": prod_row[1],
-                "cantidad_bultos": float(prod_row[2]) if prod_row[2] else 0.0,
-                "cantidad_pedida_bultos": float(prod_row[3]) if prod_row[3] else 0.0,
-                "total_unidades": float(prod_row[4]) if prod_row[4] else 0.0,
+                "cantidad_bultos": cantidad_bultos,
+
+                # ProductoPedidoSugeridoCalculado - cantidades sugeridas y métricas
                 "cantidad_sugerida_bultos": float(prod_row[5]) if prod_row[5] else 0.0,
+                "cantidad_sugerida_unidades": (float(prod_row[5]) * cantidad_bultos) if prod_row[5] else 0.0,
                 "clasificacion_abc": prod_row[6],
-                "razon_pedido": prod_row[7],
+                "razon_pedido": prod_row[7] or "",
                 "prom_ventas_8sem_unid": float(prod_row[8]) if prod_row[8] else 0.0,
                 "prom_ventas_8sem_bultos": float(prod_row[9]) if prod_row[9] else 0.0,
                 "stock_tienda": float(prod_row[10]) if prod_row[10] else 0.0,
                 "stock_total": float(prod_row[11]) if prod_row[11] else 0.0,
-                "comentario_gerente": prod_row[12],
-                "incluido": prod_row[13]
+
+                # ProductoPedidoSugeridoAjustado - cantidades pedidas
+                "cantidad_pedida_bultos": cantidad_pedida_bultos,
+                "cantidad_pedida_unidades": cantidad_pedida_bultos * cantidad_bultos,
+                "total_unidades": float(prod_row[4]) if prod_row[4] else 0.0,
+                "incluido": prod_row[12] if prod_row[12] is not None else True,
+
+                # Campos de fecha requeridos por ProductoPedidoSugeridoCompleto
+                "fecha_creacion": pedido_row[3],  # Usar fecha del pedido
             })
 
         # Construir respuesta completa con TODOS los campos requeridos
@@ -821,21 +838,25 @@ async def agregar_comentario_producto(
         if not producto:
             raise HTTPException(status_code=404, detail="Producto no encontrado en el pedido")
 
-        # Actualizar comentario
-        conn.execute("""
-            UPDATE pedidos_sugeridos_detalle
-            SET comentario_gerente = ?,
-                comentario_revisado_analista = false,
-                fecha_modificacion = CURRENT_TIMESTAMP
-            WHERE pedido_id = ? AND codigo_producto = ?
-        """, [comentario, pedido_id, producto_codigo])
+        # TODO: Actualizar comentario cuando se agregue la columna a la tabla
+        # La tabla pedidos_sugeridos_detalle actualmente no tiene columnas para comentarios
+        # conn.execute("""
+        #     UPDATE pedidos_sugeridos_detalle
+        #     SET comentario_gerente = ?,
+        #         comentario_revisado_analista = false,
+        #         fecha_modificacion = CURRENT_TIMESTAMP
+        #     WHERE pedido_id = ? AND codigo_producto = ?
+        # """, [comentario, pedido_id, producto_codigo])
 
-        # Marcar el pedido como que tiene comentarios
-        conn.execute("""
-            UPDATE pedidos_sugeridos
-            SET tiene_comentarios_gerente = true
-            WHERE id = ?
-        """, [pedido_id])
+        # # Marcar el pedido como que tiene comentarios
+        # conn.execute("""
+        #     UPDATE pedidos_sugeridos
+        #     SET tiene_comentarios_gerente = true
+        #     WHERE id = ?
+        # """, [pedido_id])
+
+        # Por ahora solo registrar que se intentó agregar un comentario
+        logger.info(f"📝 Comentario para producto {producto_codigo} en pedido {pedido_id}: {comentario}")
 
         logger.info(f"💬 Comentario agregado a producto {producto_codigo} en pedido {pedido_id}")
 

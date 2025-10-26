@@ -11,13 +11,21 @@
  * formatNumber(1234.567, 3) => "1.234,567"
  * formatNumber(1234) => "1.234,00"
  */
-export function formatNumber(value: number | null | undefined, decimals: number = 2): string {
+export function formatNumber(value: number | string | null | undefined, decimals: number = 2): string {
   if (value === null || value === undefined) {
     return '-';
   }
 
+  // Convertir a número si es string
+  const numValue = typeof value === 'string' ? parseFloat(value) : value;
+
+  // Validar que sea un número válido
+  if (isNaN(numValue)) {
+    return '-';
+  }
+
   // Forzar formato español manualmente
-  const parts = value.toFixed(decimals).split('.');
+  const parts = numValue.toFixed(decimals).split('.');
   const integerPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const decimalPart = parts[1];
 
@@ -27,12 +35,20 @@ export function formatNumber(value: number | null | undefined, decimals: number 
 /**
  * Formatea un número sin decimales
  */
-export function formatInteger(value: number | null | undefined): string {
+export function formatInteger(value: number | string | null | undefined): string {
   if (value === null || value === undefined) {
     return '-';
   }
 
+  // Convertir a número si es string
+  const numValue = typeof value === 'string' ? parseFloat(value) : value;
+
+  // Validar que sea un número válido
+  if (isNaN(numValue)) {
+    return '-';
+  }
+
   // Forzar formato español manualmente
-  const integerValue = Math.round(value);
+  const integerValue = Math.round(numValue);
   return integerValue.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
