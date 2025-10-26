@@ -548,7 +548,7 @@ async def obtener_pedido(
                 cantidad_bultos, cantidad_pedida_bultos, total_unidades,
                 cantidad_sugerida_bultos, clasificacion_abc, razon_pedido,
                 prom_ventas_8sem_unid, prom_ventas_8sem_bultos,
-                stock_tienda, stock_total, observaciones, incluido
+                stock_tienda, stock_total, comentario_gerente, incluido
             FROM pedidos_sugeridos_detalle
             WHERE pedido_id = ?
             ORDER BY linea_numero
@@ -570,70 +570,36 @@ async def obtener_pedido(
                 "prom_ventas_8sem_bultos": float(prod_row[9]) if prod_row[9] else 0.0,
                 "stock_tienda": float(prod_row[10]) if prod_row[10] else 0.0,
                 "stock_total": float(prod_row[11]) if prod_row[11] else 0.0,
-                "comentario_gerente": prod_row[12],  # Usando observaciones
+                "comentario_gerente": prod_row[12],
                 "incluido": prod_row[13]
             })
 
-        # Construir respuesta completa con TODOS los campos requeridos
+        # Construir respuesta
         return {
-            # Campos de PedidoSugeridoResumen
             "id": pedido_row[0],
             "numero_pedido": pedido_row[1],
             "fecha_pedido": pedido_row[2],
             "fecha_creacion": pedido_row[3],
+            "cedi_origen_id": pedido_row[4],
             "cedi_origen_nombre": pedido_row[5],
+            "tienda_destino_id": pedido_row[6],
             "tienda_destino_nombre": pedido_row[7],
             "estado": pedido_row[8],
             "prioridad": pedido_row[9],
             "tipo_pedido": pedido_row[10],
             "total_productos": pedido_row[11],
-            "total_lineas": len(productos),
             "total_bultos": float(pedido_row[12]) if pedido_row[12] else 0.0,
             "total_unidades": float(pedido_row[13]) if pedido_row[13] else 0.0,
-            "total_peso_kg": None,
-            "fecha_entrega_solicitada": None,
-            "fecha_aprobacion": None,
-            "fecha_recepcion": None,
-            "usuario_creador": pedido_row[20],
-            "dias_desde_creacion": None,
-            "porcentaje_avance": None,
-
-            # Campos adicionales de PedidoSugeridoCompleto
-            "cedi_origen_id": pedido_row[4],
-            "tienda_destino_id": pedido_row[6],
-            "numero_guia": None,
-            "numero_orden_compra": None,
-            "numero_picking": None,
-            "sub_estado": None,
-            "requiere_aprobacion": pedido_row[8] == 'pendiente_aprobacion_gerente',
-            "total_volumen_m3": None,
             "tiene_devoluciones": pedido_row[14],
             "total_productos_devolucion": pedido_row[15],
             "total_bultos_devolucion": float(pedido_row[16]) if pedido_row[16] else 0.0,
             "total_unidades_devolucion": float(pedido_row[17]) if pedido_row[17] else 0.0,
             "dias_cobertura": pedido_row[18],
-            "requiere_refrigeracion": False,
-            "requiere_congelacion": False,
-            "paleta_asignada": None,
             "observaciones": pedido_row[19],
-            "notas_picking": None,
-            "notas_entrega": None,
-            "notas_recepcion": None,
-            "usuario_aprobador": None,
-            "usuario_picker": None,
-            "usuario_receptor": None,
+            "usuario_creador": pedido_row[20],
             "fecha_modificacion": pedido_row[21],
-            "fecha_inicio_picking": None,
-            "fecha_fin_picking": None,
-            "fecha_despacho": None,
-            "fecha_cancelacion": None,
-            "fecha_entrega_real": None,
-            "version": 1,
-            "pedido_padre_id": None,
-            "porcentaje_cumplimiento": None,
-            "tiempo_preparacion_horas": None,
             "productos": productos,
-            "devoluciones": []
+            "devoluciones": []  # Por ahora vacío
         }
 
     except HTTPException:
@@ -821,10 +787,11 @@ async def agregar_comentario_producto(
         if not producto:
             raise HTTPException(status_code=404, detail="Producto no encontrado en el pedido")
 
-        # Actualizar comentario (usando observaciones ya que comentario_gerente no existe)
+        # Actualizar comentario
         conn.execute("""
             UPDATE pedidos_sugeridos_detalle
-            SET observaciones = ?,
+            SET comentario_gerente = ?,
+                comentario_revisado_analista = false,
                 fecha_modificacion = CURRENT_TIMESTAMP
             WHERE pedido_id = ? AND codigo_producto = ?
         """, [comentario, pedido_id, producto_codigo])
