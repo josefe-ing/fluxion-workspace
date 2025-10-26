@@ -341,6 +341,7 @@ class ProductoPedidoSugerido(BaseModel):
     marca: Optional[str]
     presentacion: Optional[str]
     cantidad_bultos: float
+    peso_unidad: float  # Peso por unidad en gramos
     cuadrante_producto: Optional[str]
 
     # Ventas (unidades y bultos)
@@ -3304,6 +3305,8 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
                 i.marca,
                 i.presentacion,
                 i.cantidad_bultos,
+                -- Peso en gramos (peso_producto está en kg, multiplicar x1000)
+                COALESCE(i.peso_producto * 1000, 1000.0) as peso_unidad,
                 COALESCE(i.cantidad_actual, 0) as stock_tienda,
                 COALESCE(i.cantidad_en_transito, 0) as stock_en_transito,
                 COALESCE(i.stock_minimo, 10) as stock_minimo,
@@ -3341,6 +3344,7 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
             it.marca,
             it.presentacion,
             it.cantidad_bultos,
+            it.peso_unidad,
             pc.cuadrante_producto,
 
             -- Ventas
@@ -3397,14 +3401,14 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
 
             productos = []
             for row in result:
-                # Desempaquetar datos de los índices calculados (32-34 - ajustado por cuadrante)
-                prom_diario = float(row[32]) if row[32] else 0
-                cantidad_bultos = float(row[33]) if row[33] else 1
-                stock_total = float(row[34]) if row[34] else 0
-                stock_minimo = float(row[29]) if row[29] else 10
-                stock_maximo = float(row[30]) if row[30] else 100
-                punto_reorden = float(row[31]) if row[31] else 30
-                pronostico_unid = float(row[18]) if row[18] else 0
+                # Desempaquetar datos de los índices calculados (33-35 - ajustado por cuadrante y peso)
+                prom_diario = float(row[33]) if row[33] else 0
+                cantidad_bultos = float(row[34]) if row[34] else 1
+                stock_total = float(row[35]) if row[35] else 0
+                stock_minimo = float(row[30]) if row[30] else 10
+                stock_maximo = float(row[31]) if row[31] else 100
+                punto_reorden = float(row[32]) if row[32] else 30
+                pronostico_unid = float(row[19]) if row[19] else 0
 
                 # Calcular cantidad sugerida
                 stock_seguridad = stock_minimo * 1.5
@@ -3446,28 +3450,29 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
                     marca=row[6],
                     presentacion=row[7],
                     cantidad_bultos=float(row[8]) if row[8] else 1,
-                    cuadrante_producto=row[9],
-                    # Ventas - actualizados índices (+1 por cuadrante)
-                    prom_ventas_5dias_unid=float(row[10]) if row[10] else 0,
-                    prom_ventas_20dias_unid=float(row[11]) if row[11] else 0,
-                    prom_mismo_dia_unid=float(row[12]) if row[12] else 0,
-                    prom_ventas_8sem_unid=float(row[13]) if row[13] else 0,
-                    prom_ventas_8sem_bultos=float(row[14]) if row[14] else 0,
-                    prom_ventas_3dias_unid=float(row[15]) if row[15] else 0,
-                    prom_ventas_3dias_bultos=float(row[16]) if row[16] else 0,
-                    prom_mismo_dia_bultos=float(row[17]) if row[17] else 0,
-                    pronostico_3dias_unid=float(row[18]) if row[18] else 0,
-                    pronostico_3dias_bultos=float(row[19]) if row[19] else 0,
+                    peso_unidad=float(row[9]) if row[9] else 1000.0,
+                    cuadrante_producto=row[10],
+                    # Ventas - actualizados índices (+2 por cuadrante y peso_unidad)
+                    prom_ventas_5dias_unid=float(row[11]) if row[11] else 0,
+                    prom_ventas_20dias_unid=float(row[12]) if row[12] else 0,
+                    prom_mismo_dia_unid=float(row[13]) if row[13] else 0,
+                    prom_ventas_8sem_unid=float(row[14]) if row[14] else 0,
+                    prom_ventas_8sem_bultos=float(row[15]) if row[15] else 0,
+                    prom_ventas_3dias_unid=float(row[16]) if row[16] else 0,
+                    prom_ventas_3dias_bultos=float(row[17]) if row[17] else 0,
+                    prom_mismo_dia_bultos=float(row[18]) if row[18] else 0,
+                    pronostico_3dias_unid=float(row[19]) if row[19] else 0,
+                    pronostico_3dias_bultos=float(row[20]) if row[20] else 0,
                     # Inventario
-                    stock_tienda=float(row[20]) if row[20] else 0,
-                    stock_en_transito=float(row[21]) if row[21] else 0,
-                    stock_total=float(row[22]) if row[22] else 0,
-                    stock_total_bultos=float(row[23]) if row[23] else 0,
-                    stock_dias_cobertura=float(row[24]) if row[24] else 0,
-                    stock_cedi_seco=float(row[25]) if row[25] else 0,
-                    stock_cedi_frio=float(row[26]) if row[26] else 0,
-                    stock_cedi_verde=float(row[27]) if row[27] else 0,
-                    stock_cedi_origen=float(row[28]) if row[28] else 0,
+                    stock_tienda=float(row[21]) if row[21] else 0,
+                    stock_en_transito=float(row[22]) if row[22] else 0,
+                    stock_total=float(row[23]) if row[23] else 0,
+                    stock_total_bultos=float(row[24]) if row[24] else 0,
+                    stock_dias_cobertura=float(row[25]) if row[25] else 0,
+                    stock_cedi_seco=float(row[26]) if row[26] else 0,
+                    stock_cedi_frio=float(row[27]) if row[27] else 0,
+                    stock_cedi_verde=float(row[28]) if row[28] else 0,
+                    stock_cedi_origen=float(row[29]) if row[29] else 0,
                     clasificacion_abc=clasificacion,
                     stock_minimo=stock_minimo,
                     stock_maximo=stock_maximo,
@@ -3510,6 +3515,7 @@ class GuardarPedidoRequest(BaseModel):
     dias_cobertura: int
     productos: List[ProductoGuardarPedido]
     observaciones: Optional[str] = ""
+    enviar_aprobacion: bool = False  # True = Pendiente Aprobación, False = Borrador
 
 class PedidoGuardadoResponse(BaseModel):
     id: str
@@ -3550,6 +3556,9 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
             total_bultos = sum(p.cantidad_pedida_bultos for p in productos_incluidos)
             total_unidades = sum(p.cantidad_pedida_bultos * p.cantidad_bultos for p in productos_incluidos)
 
+            # Determinar estado según si se envía para aprobación
+            estado = 'pendiente_aprobacion_gerente' if request.enviar_aprobacion else 'borrador'
+
             # Insertar pedido principal
             conn.execute("""
                 INSERT INTO pedidos_sugeridos (
@@ -3561,7 +3570,7 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
             """, [
                 pedido_id, numero_pedido, request.cedi_origen, request.cedi_origen_nombre,
-                request.tienda_destino, request.tienda_destino_nombre, 'borrador',
+                request.tienda_destino, request.tienda_destino_nombre, estado,
                 total_productos, float(total_bultos), float(total_unidades),
                 request.dias_cobertura, request.observaciones,
                 'sistema'  # TODO: Obtener usuario real
@@ -3594,12 +3603,12 @@ async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
                     float(producto.stock_tienda), float(producto.stock_total)
                 ])
 
-            logger.info(f"✅ Pedido guardado: {numero_pedido} con {total_productos} productos, {total_bultos} bultos")
+            logger.info(f"✅ Pedido guardado: {numero_pedido} con {total_productos} productos, {total_bultos} bultos - Estado: {estado}")
 
             return PedidoGuardadoResponse(
                 id=pedido_id,
                 numero_pedido=numero_pedido,
-                estado='borrador',
+                estado=estado,
                 total_productos=total_productos,
                 total_bultos=float(total_bultos),
                 fecha_creacion=timestamp

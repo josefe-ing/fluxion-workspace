@@ -574,32 +574,66 @@ async def obtener_pedido(
                 "incluido": prod_row[13]
             })
 
-        # Construir respuesta
+        # Construir respuesta completa con TODOS los campos requeridos
         return {
+            # Campos de PedidoSugeridoResumen
             "id": pedido_row[0],
             "numero_pedido": pedido_row[1],
             "fecha_pedido": pedido_row[2],
             "fecha_creacion": pedido_row[3],
-            "cedi_origen_id": pedido_row[4],
             "cedi_origen_nombre": pedido_row[5],
-            "tienda_destino_id": pedido_row[6],
             "tienda_destino_nombre": pedido_row[7],
             "estado": pedido_row[8],
             "prioridad": pedido_row[9],
             "tipo_pedido": pedido_row[10],
             "total_productos": pedido_row[11],
+            "total_lineas": len(productos),
             "total_bultos": float(pedido_row[12]) if pedido_row[12] else 0.0,
             "total_unidades": float(pedido_row[13]) if pedido_row[13] else 0.0,
+            "total_peso_kg": None,
+            "fecha_entrega_solicitada": None,
+            "fecha_aprobacion": None,
+            "fecha_recepcion": None,
+            "usuario_creador": pedido_row[20],
+            "dias_desde_creacion": None,
+            "porcentaje_avance": None,
+
+            # Campos adicionales de PedidoSugeridoCompleto
+            "cedi_origen_id": pedido_row[4],
+            "tienda_destino_id": pedido_row[6],
+            "numero_guia": None,
+            "numero_orden_compra": None,
+            "numero_picking": None,
+            "sub_estado": None,
+            "requiere_aprobacion": pedido_row[8] == 'pendiente_aprobacion_gerente',
+            "total_volumen_m3": None,
             "tiene_devoluciones": pedido_row[14],
             "total_productos_devolucion": pedido_row[15],
             "total_bultos_devolucion": float(pedido_row[16]) if pedido_row[16] else 0.0,
             "total_unidades_devolucion": float(pedido_row[17]) if pedido_row[17] else 0.0,
             "dias_cobertura": pedido_row[18],
+            "requiere_refrigeracion": False,
+            "requiere_congelacion": False,
+            "paleta_asignada": None,
             "observaciones": pedido_row[19],
-            "usuario_creador": pedido_row[20],
+            "notas_picking": None,
+            "notas_entrega": None,
+            "notas_recepcion": None,
+            "usuario_aprobador": None,
+            "usuario_picker": None,
+            "usuario_receptor": None,
             "fecha_modificacion": pedido_row[21],
+            "fecha_inicio_picking": None,
+            "fecha_fin_picking": None,
+            "fecha_despacho": None,
+            "fecha_cancelacion": None,
+            "fecha_entrega_real": None,
+            "version": 1,
+            "pedido_padre_id": None,
+            "porcentaje_cumplimiento": None,
+            "tiempo_preparacion_horas": None,
             "productos": productos,
-            "devoluciones": []  # Por ahora vacío
+            "devoluciones": []
         }
 
     except HTTPException:
