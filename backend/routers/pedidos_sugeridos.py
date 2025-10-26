@@ -418,6 +418,32 @@ async def enviar_para_aprobacion(
 
 
 # =====================================================================================
+# DEBUG ENDPOINT - Temporal para ver estructura de tabla
+# =====================================================================================
+
+@router.get("/debug/schema")
+async def get_table_schema(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    """
+    Endpoint temporal para inspeccionar el esquema de la tabla pedidos_sugeridos
+    """
+    try:
+        # Obtener las columnas de la tabla
+        columns = conn.execute("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'pedidos_sugeridos'
+            ORDER BY ordinal_position
+        """).fetchall()
+
+        return {
+            "table": "pedidos_sugeridos",
+            "columns": [{"name": col[0], "type": col[1]} for col in columns]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =====================================================================================
 # LISTAR PEDIDOS
 # =====================================================================================
 
