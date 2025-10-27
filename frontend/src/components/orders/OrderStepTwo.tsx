@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import http from '../../services/http';
 import type { OrderData, ProductoPedido } from './OrderWizard';
 import ProductSalesModal from '../sales/ProductSalesModal';
@@ -11,7 +11,12 @@ import StockDiasModal from './StockDiasModal';
 import PedidoSugeridoModal from './PedidoSugeridoModal';
 import ProyeccionModal from './ProyeccionModal';
 import CriticidadModal from './CriticidadModal';
+import ModoConsultorToggle from './ModoConsultorToggle';
+import ResumenComparativo from './ResumenComparativo';
+import ModalAnalisisComparativo from './ModalAnalisisComparativo';
 import { formatNumber } from '../../utils/formatNumber';
+import { generarAnalisisXYZDummy, generarResumenComparativo, type AnalisisXYZ } from '../../utils/analisisXYZDummy';
+import { obtenerAnalisisXYZBatch } from '../../services/analisisXYZ';
 
 interface Props {
   orderData: OrderData;
@@ -70,6 +75,14 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [selectedProductoProyeccion, setSelectedProductoProyeccion] = useState<ProductoPedido | null>(null);
   const [criticidadModalOpen, setCriticidadModalOpen] = useState(false);
   const [selectedProductoCriticidad, setSelectedProductoCriticidad] = useState<ProductoPedido | null>(null);
+
+  // Estados para Modo Consultor IA
+  const [modoConsultorActivo, setModoConsultorActivo] = useState(false);
+  const [analisisComparativoModalOpen, setAnalisisComparativoModalOpen] = useState(false);
+  const [selectedProductoComparativo, setSelectedProductoComparativo] = useState<ProductoPedido | null>(null);
+  const [analisisXYZCargando, setAnalisisXYZCargando] = useState(false);
+  const [analisisXYZReal, setAnalisisXYZReal] = useState<Record<string, AnalisisXYZ>>({});
+  const [usarDatosReales, setUsarDatosReales] = useState(true); // true = API real, false = dummy
 
   useEffect(() => {
     cargarStockParams();
@@ -498,6 +511,106 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     return (urgenciaStock * 10) + pesoABC;
   };
 
+  // Cargar análisis XYZ desde API cuando se activa Modo Consultor
+  useEffect(() => {
+    if (modoConsultorActivo && usarDatosReales && productosFiltrados.length > 0 && Object.keys(analisisXYZReal).length === 0) {
+      cargarAnalisisXYZReal();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoConsultorActivo, usarDatosReales, productosFiltrados.length]);
+
+  const cargarAnalisisXYZReal = async () => {
+    if (!orderData.tienda_destino || productosFiltrados.length === 0) {
+      return;
+    }
+
+    setAnalisisXYZCargando(true);
+
+    try {
+      const codigosProductos = productosFiltrados.map(p => p.codigo_producto);
+
+      console.log(`🔬 Cargando análisis XYZ para ${codigosProductos.length} productos...`);
+
+      const analisisReal = await obtenerAnalisisXYZBatch(
+        codigosProductos,
+        orderData.tienda_destino,
+        (completados, total) => {
+          console.log(`📊 Progreso: ${completados}/${total}`);
+        }
+      );
+
+      setAnalisisXYZReal(analisisReal);
+      console.log(`✅ Análisis XYZ cargado: ${Object.keys(analisisReal).length} productos`);
+    } catch (error) {
+      console.error('Error cargando análisis XYZ real:', error);
+      // En caso de error, usar dummy como fallback
+      console.warn('⚠️ Usando datos dummy como fallback');
+      setUsarDatosReales(false);
+    } finally {
+      setAnalisisXYZCargando(false);
+    }
+  };
+
+  // Generar análisis XYZ para productos filtrados (solo cuando Modo Consultor está activo)
+  const analisisXYZData = useMemo<Record<string, AnalisisXYZ>>(() => {
+    if (!modoConsultorActivo || !stockParams || productosFiltrados.length === 0) {
+      return {};
+    }
+
+    // Si estamos cargando datos reales, retornar vacío temporalmente
+    if (usarDatosReales && analisisXYZCargando) {
+      return {};
+    }
+
+    // Si usamos datos reales y ya los tenemos
+    if (usarDatosReales && Object.keys(analisisXYZReal).length > 0) {
+      return analisisXYZReal;
+    }
+
+    // Fallback a datos dummy
+    const analisisMap: Record<string, AnalisisXYZ> = {};
+    productosFiltrados.forEach(producto => {
+      const clasificacionABC = getClasificacionABC(producto);
+      analisisMap[producto.codigo_producto] = generarAnalisisXYZDummy(producto, clasificacionABC, stockParams);
+    });
+
+    return analisisMap;
+  }, [modoConsultorActivo, stockParams, productosFiltrados, usarDatosReales, analisisXYZCargando, analisisXYZReal]);
+
+  // Generar resumen comparativo
+  const resumenComparativo = useMemo(() => {
+    if (!modoConsultorActivo || Object.keys(analisisXYZData).length === 0) {
+      return null;
+    }
+    return generarResumenComparativo(Object.values(analisisXYZData));
+  }, [modoConsultorActivo, analisisXYZData]);
+
+  // Handlers para Modo Consultor
+  const handleComparativoClick = (producto: ProductoPedido) => {
+    setSelectedProductoComparativo(producto);
+    setAnalisisComparativoModalOpen(true);
+  };
+
+  const handleUsarABC = () => {
+    if (selectedProductoComparativo) {
+      const analisis = analisisXYZData[selectedProductoComparativo.codigo_producto];
+      if (analisis) {
+        handleCantidadChange(selectedProductoComparativo.codigo_producto, analisis.stock_calculado.abc.sugerido.toString());
+      }
+    }
+    setAnalisisComparativoModalOpen(false);
+  };
+
+  const handleUsarXYZ = () => {
+    if (selectedProductoComparativo) {
+      const analisis = analisisXYZData[selectedProductoComparativo.codigo_producto];
+      if (analisis) {
+        handleCantidadChange(selectedProductoComparativo.codigo_producto, analisis.stock_calculado.xyz.sugerido.toString());
+      }
+    }
+    setAnalisisComparativoModalOpen(false);
+  };
+
   // Ordenar productos
   const productosOrdenados = [...productosFiltrados].sort((a, b) => {
     if (!sortField) return 0;
@@ -593,6 +706,18 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       {/* Header con información del pedido */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Productos Sugeridos</h2>
+
+        {/* Modo Consultor IA Toggle */}
+        <ModoConsultorToggle
+          modoConsultorActivo={modoConsultorActivo}
+          onToggle={() => setModoConsultorActivo(!modoConsultorActivo)}
+          cargando={analisisXYZCargando}
+        />
+
+        {/* Resumen Comparativo (solo visible en Modo Consultor) */}
+        {modoConsultorActivo && resumenComparativo && (
+          <ResumenComparativo stats={resumenComparativo} />
+        )}
 
         {/* Información origen/destino */}
         <div className="grid grid-cols-2 gap-6 mb-6">
@@ -730,6 +855,25 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     Max
                   </th>
                   <SortableHeader field="sugerido" label="Sugerido" bgColor="bg-gray-100" width="60px" />
+
+                  {/* Columnas XYZ - Solo visibles en Modo Consultor */}
+                  {modoConsultorActivo && (
+                    <>
+                      <th className="bg-indigo-100 px-2 py-1.5 text-center font-semibold text-indigo-900 text-[10px] uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                        XYZ ✨
+                      </th>
+                      <th className="bg-indigo-100 px-2 py-1.5 text-center font-semibold text-indigo-900 text-[10px] uppercase whitespace-nowrap" style={{ width: '60px' }}>
+                        Sug. XYZ
+                      </th>
+                      <th className="bg-purple-100 px-2 py-1.5 text-center font-semibold text-purple-900 text-[10px] uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                        Δ
+                      </th>
+                      <th className="bg-purple-100 px-2 py-1.5 text-center font-semibold text-purple-900 text-[10px] uppercase whitespace-nowrap" style={{ width: '80px' }}>
+                        Análisis
+                      </th>
+                    </>
+                  )}
+
                   <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="55px" />
                   <th className="bg-indigo-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '60px' }}>Peso (Kg)</th>
                   <th className="bg-gray-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '120px' }}>Notas</th>
@@ -951,6 +1095,60 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {calcularPedidoSugerido(producto)}
                       </button>
                     </td>
+
+                    {/* Columnas XYZ - Solo visibles en Modo Consultor */}
+                    {modoConsultorActivo && analisisXYZData[producto.codigo_producto] && (() => {
+                      const analisis = analisisXYZData[producto.codigo_producto];
+                      const diferencia = analisis.explicacion.diferencia_bultos;
+
+                      // Badge para XYZ
+                      const getXYZBadge = (clase: string) => {
+                        if (clase === 'X') return { text: '⭐ X', color: 'text-green-700 bg-green-100' };
+                        if (clase === 'Y') return { text: '⚡ Y', color: 'text-yellow-700 bg-yellow-100' };
+                        return { text: '🌀 Z', color: 'text-red-700 bg-red-100' };
+                      };
+                      const xyzBadge = getXYZBadge(analisis.clasificacion_xyz);
+
+                      return (
+                        <>
+                          {/* Clasificación XYZ */}
+                          <td className="bg-indigo-50 px-2 py-1 text-center" style={{ width: '50px' }}>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${xyzBadge.color}`}>
+                              {xyzBadge.text}
+                            </span>
+                          </td>
+
+                          {/* Sugerido XYZ */}
+                          <td className="bg-indigo-50 px-2 py-1 text-center" style={{ width: '60px' }}>
+                            <span className="text-[11px] font-bold text-indigo-900">
+                              {analisis.stock_calculado.xyz.sugerido}
+                            </span>
+                          </td>
+
+                          {/* Diferencia (Δ) */}
+                          <td className="bg-purple-50 px-2 py-1 text-center" style={{ width: '50px' }}>
+                            {diferencia === 0 ? (
+                              <span className="text-[11px] font-bold text-green-700">✅</span>
+                            ) : diferencia > 0 ? (
+                              <span className="text-[11px] font-bold text-red-700">🔺 +{diferencia}</span>
+                            ) : (
+                              <span className="text-[11px] font-bold text-blue-700">🔻 {diferencia}</span>
+                            )}
+                          </td>
+
+                          {/* Botón Análisis */}
+                          <td className="bg-purple-50 px-2 py-1 text-center" style={{ width: '80px' }}>
+                            <button
+                              onClick={() => handleComparativoClick(producto)}
+                              className="text-[10px] font-semibold text-purple-700 hover:text-purple-900 hover:underline transition-colors px-2 py-1 bg-purple-200 rounded"
+                            >
+                              Ver Detalle
+                            </button>
+                          </td>
+                        </>
+                      );
+                    })()}
+
                     <td className="bg-yellow-50 px-2 py-1 text-center" style={{ width: '55px' }}>
                       <input
                         type="number"
@@ -1226,6 +1424,22 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             stock_max_mult_bc: stockParams.stock_max_mult_bc,
             stock_max_mult_c: stockParams.stock_max_mult_c,
           }}
+        />
+      )}
+
+      {/* Modal de Análisis Comparativo ABC vs XYZ */}
+      {selectedProductoComparativo && analisisXYZData[selectedProductoComparativo.codigo_producto] && (
+        <ModalAnalisisComparativo
+          isOpen={analisisComparativoModalOpen}
+          onClose={() => setAnalisisComparativoModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoComparativo.codigo_producto,
+            descripcion_producto: selectedProductoComparativo.descripcion_producto,
+            cantidad_bultos: selectedProductoComparativo.cantidad_bultos,
+          }}
+          analisisXYZ={analisisXYZData[selectedProductoComparativo.codigo_producto]}
+          onUsarABC={handleUsarABC}
+          onUsarXYZ={handleUsarXYZ}
         />
       )}
     </div>

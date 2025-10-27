@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 3000 --host",
     "build": "tsc && vite build",
     "build-single": "tsc && vite build --config vite.single.config.ts",
     "preview": "vite preview",
