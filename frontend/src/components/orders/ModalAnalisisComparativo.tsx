@@ -1,5 +1,3 @@
-import { formatNumber } from '../../utils/formatNumber';
-
 interface AnalisisXYZ {
   clasificacion_abc: string;
   clasificacion_xyz: string;
