@@ -66,12 +66,12 @@ export async function obtenerAnalisisXYZProducto(
   ubicacionId: string
 ): Promise<AnalisisXYZ> {
   try {
-    const response = await http.get<AnalisisXYZResponse>(
+    const response = await http.get(
       `/api/analisis-xyz/producto/${codigoProducto}`,
       {
         params: { ubicacion_id: ubicacionId }
       }
-    );
+    ) as { data: AnalisisXYZResponse };
 
     // Transformar response del backend a formato del frontend
     return {
