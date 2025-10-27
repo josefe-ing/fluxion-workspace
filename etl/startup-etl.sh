@@ -172,6 +172,37 @@ echo ""
 # Remove old success flag
 rm -f /app/logs/etl_last_success.flag
 
+# ========================================
+# Sentry Crons Integration
+# ========================================
+# Determine monitor slug based on ETL script and schedule type
+if [[ "$ETL_SCRIPT" == "etl_ventas_multi_tienda.py" ]]; then
+    SENTRY_MONITOR_SLUG="fluxion-ventas-etl"
+elif [[ "$ETL_SCRIPT" == "etl_inventario.py" ]]; then
+    # Differentiate between morning and afternoon runs
+    if [[ "$ETL_SCHEDULE_TYPE" == "afternoon" ]]; then
+        SENTRY_MONITOR_SLUG="fluxion-inventario-etl-afternoon"
+    else
+        SENTRY_MONITOR_SLUG="fluxion-inventario-etl-morning"
+    fi
+else
+    SENTRY_MONITOR_SLUG="fluxion-etl-generic"
+fi
+
+# Send check-in to Sentry (in_progress)
+if [ -n "$SENTRY_DSN" ]; then
+    echo "📊 Sentry Cron Monitor: $SENTRY_MONITOR_SLUG"
+    SENTRY_CHECK_IN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(date +%s)-$$")
+
+    curl -X POST \
+        "https://sentry.io/api/0/organization/jose-felipe-lopez/monitors/$SENTRY_MONITOR_SLUG/checkins/" \
+        -H "Authorization: DSN $SENTRY_DSN" \
+        -H "Content-Type: application/json" \
+        -d "{\"status\": \"in_progress\", \"check_in_id\": \"$SENTRY_CHECK_IN_ID\"}" \
+        --silent --show-error || echo "⚠️  Warning: Failed to send Sentry check-in"
+    echo ""
+fi
+
 # Execute ETL and capture exit code
 START_TIME=$(date +%s)
 
@@ -195,6 +226,16 @@ if timeout --preserve-status $ETL_TIMEOUT python3 "/app/$ETL_SCRIPT" $ETL_ARGS; 
 
     # Create success flag for health check
     date > /app/logs/etl_last_success.flag
+
+    # Send success check-in to Sentry
+    if [ -n "$SENTRY_DSN" ] && [ -n "$SENTRY_CHECK_IN_ID" ]; then
+        curl -X PUT \
+            "https://sentry.io/api/0/organization/jose-felipe-lopez/monitors/$SENTRY_MONITOR_SLUG/checkins/$SENTRY_CHECK_IN_ID/" \
+            -H "Authorization: DSN $SENTRY_DSN" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\": \"ok\", \"duration\": $DURATION}" \
+            --silent --show-error || echo "⚠️  Warning: Failed to send Sentry success check-in"
+    fi
 else
     EXIT_CODE=$?
     END_TIME=$(date +%s)
@@ -211,6 +252,16 @@ else
     echo "⏱️  Duration: ${DURATION}s"
     echo "📅 Failed at: $(date)"
     echo "========================================"
+
+    # Send error check-in to Sentry
+    if [ -n "$SENTRY_DSN" ] && [ -n "$SENTRY_CHECK_IN_ID" ]; then
+        curl -X PUT \
+            "https://sentry.io/api/0/organization/jose-felipe-lopez/monitors/$SENTRY_MONITOR_SLUG/checkins/$SENTRY_CHECK_IN_ID/" \
+            -H "Authorization: DSN $SENTRY_DSN" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\": \"error\", \"duration\": $DURATION}" \
+            --silent --show-error || echo "⚠️  Warning: Failed to send Sentry error check-in"
+    fi
 fi
 
 # ========================================

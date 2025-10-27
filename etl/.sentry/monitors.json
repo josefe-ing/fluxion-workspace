@@ -1,0 +1,65 @@
+[
+  {
+    "slug": "fluxion-ventas-etl",
+    "name": "Fluxion Ventas ETL",
+    "type": "cron_job",
+    "schedule": {
+      "type": "crontab",
+      "value": "0 5 * * *"
+    },
+    "timezone": "UTC",
+    "checkin_margin": 10,
+    "max_runtime": 120,
+    "failure_issue_threshold": 1,
+    "recovery_threshold": 1,
+    "config": {
+      "schedule_type": "crontab",
+      "schedule": "0 5 * * *",
+      "timezone": "UTC",
+      "checkin_margin": 10,
+      "max_runtime": 120
+    }
+  },
+  {
+    "slug": "fluxion-inventario-etl-morning",
+    "name": "Fluxion Inventario ETL (Morning)",
+    "type": "cron_job",
+    "schedule": {
+      "type": "crontab",
+      "value": "0 9 * * *"
+    },
+    "timezone": "UTC",
+    "checkin_margin": 10,
+    "max_runtime": 120,
+    "failure_issue_threshold": 1,
+    "recovery_threshold": 1,
+    "config": {
+      "schedule_type": "crontab",
+      "schedule": "0 9 * * *",
+      "timezone": "UTC",
+      "checkin_margin": 10,
+      "max_runtime": 120
+    }
+  },
+  {
+    "slug": "fluxion-inventario-etl-afternoon",
+    "name": "Fluxion Inventario ETL (Afternoon)",
+    "type": "cron_job",
+    "schedule": {
+      "type": "crontab",
+      "value": "0 19 * * *"
+    },
+    "timezone": "UTC",
+    "checkin_margin": 10,
+    "max_runtime": 120,
+    "failure_issue_threshold": 1,
+    "recovery_threshold": 1,
+    "config": {
+      "schedule_type": "crontab",
+      "schedule": "0 19 * * *",
+      "timezone": "UTC",
+      "checkin_margin": 10,
+      "max_runtime": 120
+    }
+  }
+]

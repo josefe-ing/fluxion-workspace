@@ -677,16 +677,16 @@ PersistentKeepalive = 25`),
     fileSystem.connections.allowDefaultPortFrom(etlSecurityGroup);
 
     // ========================================
-    // 10. ETL Scheduled Rules (Twice daily: 3:00 AM and 2:00 PM)
+    // 10. ETL Scheduled Rules (Twice daily: 5:00 AM and 5:00 PM)
     // ========================================
-    // Morning ETL at 3:00 AM UTC-4 (7:00 AM UTC)
+    // Morning ETL at 5:00 AM UTC-4 (9:00 AM UTC)
     const etlRuleMorning = new events.Rule(this, 'FluxionETLScheduleMorning', {
       schedule: events.Schedule.cron({
         minute: '0',
-        hour: '7',  // 3:00 AM Venezuela time (UTC-4)
+        hour: '9',  // 5:00 AM Venezuela time (UTC-4)
         weekDay: '*',
       }),
-      description: 'Run Fluxion ETL at 3:00 AM Venezuela time',
+      description: 'Run Fluxion ETL at 5:00 AM Venezuela time',
       ruleName: 'fluxion-etl-schedule-morning',
       enabled: true,
     });
@@ -700,20 +700,26 @@ PersistentKeepalive = 25`),
         platformVersion: ecs.FargatePlatformVersion.LATEST,
         taskCount: 1,
         propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+        containerOverrides: [{
+          containerName: 'etl',
+          environment: [
+            { name: 'ETL_SCHEDULE_TYPE', value: 'morning' }
+          ]
+        }],
         // Prevent concurrent executions: retry with backoff if task already running
         maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
         retryAttempts: 2,  // Retry up to 2 times if task launch fails
       })
     );
 
-    // Afternoon ETL at 2:00 PM UTC-4 (6:00 PM UTC)
+    // Afternoon ETL at 3:00 PM UTC-4 (7:00 PM UTC)
     const etlRuleAfternoon = new events.Rule(this, 'FluxionETLScheduleAfternoon', {
       schedule: events.Schedule.cron({
         minute: '0',
-        hour: '18',  // 2:00 PM Venezuela time (UTC-4)
+        hour: '19',  // 3:00 PM Venezuela time (UTC-4)
         weekDay: '*',
       }),
-      description: 'Run Fluxion ETL at 2:00 PM Venezuela time',
+      description: 'Run Fluxion ETL at 3:00 PM Venezuela time',
       ruleName: 'fluxion-etl-schedule-afternoon',
       enabled: true,
     });
@@ -727,6 +733,12 @@ PersistentKeepalive = 25`),
         platformVersion: ecs.FargatePlatformVersion.LATEST,
         taskCount: 1,
         propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+        containerOverrides: [{
+          containerName: 'etl',
+          environment: [
+            { name: 'ETL_SCHEDULE_TYPE', value: 'afternoon' }
+          ]
+        }],
         // Prevent concurrent executions: retry with backoff if task already running
         maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
         retryAttempts: 2,  // Retry up to 2 times if task launch fails
@@ -873,16 +885,16 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
-    // 11. Ventas ETL Scheduled Rules (Twice daily: 3:00 AM and 2:00 PM)
+    // 11. Ventas ETL Scheduled Rule (Once daily: 1:00 AM)
     // ========================================
-    // Morning Ventas ETL at 3:00 AM UTC-4 (7:00 AM UTC)
+    // Daily Ventas ETL at 1:00 AM UTC-4 (5:00 AM UTC) - Fetches previous day's sales
     const ventasEtlRuleMorning = new events.Rule(this, 'FluxionVentasETLScheduleMorning', {
       schedule: events.Schedule.cron({
         minute: '0',
-        hour: '7',  // 3:00 AM Venezuela time (UTC-4)
+        hour: '5',  // 1:00 AM Venezuela time (UTC-4)
         weekDay: '*',
       }),
-      description: 'Run Fluxion Ventas ETL at 3:00 AM Venezuela time',
+      description: 'Run Fluxion Ventas ETL at 1:00 AM Venezuela time (daily)',
       ruleName: 'fluxion-ventas-etl-schedule-morning',
       enabled: true,
     });
@@ -902,16 +914,16 @@ PersistentKeepalive = 25`),
       })
     );
 
-    // Afternoon Ventas ETL at 2:00 PM UTC-4 (6:00 PM UTC)
+    // Afternoon Ventas ETL DISABLED (sales only run once daily at 1:00 AM)
     const ventasEtlRuleAfternoon = new events.Rule(this, 'FluxionVentasETLScheduleAfternoon', {
       schedule: events.Schedule.cron({
         minute: '0',
         hour: '18',  // 2:00 PM Venezuela time (UTC-4)
         weekDay: '*',
       }),
-      description: 'Run Fluxion Ventas ETL at 2:00 PM Venezuela time',
+      description: 'Run Fluxion Ventas ETL at 2:00 PM Venezuela time (DISABLED)',
       ruleName: 'fluxion-ventas-etl-schedule-afternoon',
-      enabled: true,
+      enabled: false,  // DISABLED - Ventas ETL only runs once daily at 1:00 AM
     });
 
     ventasEtlRuleAfternoon.addTarget(
