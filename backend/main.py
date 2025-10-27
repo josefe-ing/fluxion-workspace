@@ -52,6 +52,7 @@ from middleware.tenant import TenantMiddleware
 
 # Importar routers
 from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
+from routers.analisis_xyz_router import router as analisis_xyz_router
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +127,7 @@ app.add_middleware(
 
 # Registrar routers
 app.include_router(pedidos_sugeridos_router)
+app.include_router(analisis_xyz_router)
 
 # Tenant Middleware - Detecta tenant desde hostname o header
 @app.middleware("http")
@@ -172,44 +174,8 @@ async def add_security_headers(request: Request, call_next):
 
     return response
 
-# Configuración de la base de datos
-DB_PATH = Path(os.getenv('DATABASE_PATH', str(Path(__file__).parent.parent / "data" / "fluxion_production.db")))
-
-@contextmanager
-def get_db_connection():
-    """
-    Context manager para conexiones DuckDB READ-ONLY (para queries de lectura)
-    Permite múltiples lectores simultáneos y no bloquea ETL
-    """
-    if not DB_PATH.exists():
-        raise HTTPException(status_code=500, detail="Base de datos no encontrada")
-
-    conn = None
-    try:
-        # Conexión read-only: permite múltiples lectores y no bloquea ETL
-        conn = duckdb.connect(str(DB_PATH), read_only=True)
-        yield conn
-    finally:
-        if conn:
-            conn.close()
-
-@contextmanager
-def get_db_connection_write():
-    """
-    Context manager para conexiones DuckDB READ-WRITE (para escrituras)
-    Solo usar cuando realmente necesites INSERT/UPDATE/DELETE
-    """
-    if not DB_PATH.exists():
-        raise HTTPException(status_code=500, detail="Base de datos no encontrada")
-
-    conn = None
-    try:
-        # Conexión read-write: solo para operaciones de escritura
-        conn = duckdb.connect(str(DB_PATH), read_only=False)
-        yield conn
-    finally:
-        if conn:
-            conn.close()
+# Importar utilidades de base de datos
+from database import get_db_connection, get_db_connection_write, DB_PATH
 
 # Modelos Pydantic
 class UbicacionResponse(BaseModel):

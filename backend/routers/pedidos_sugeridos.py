@@ -38,28 +38,23 @@ from services.calcular_devoluciones import (
     calcular_devoluciones_sugeridas,
     aplicar_reglas_exclusion
 )
+from database import get_db_connection, get_db_connection_write
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/pedidos-sugeridos", tags=["Pedidos Sugeridos - Workflow"])
 
-# Database path - relative to project root
-from pathlib import Path
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "fluxion_production.db"
-
-# Debug logging
-logger.info(f"📂 DB_PATH configurado: {DB_PATH}")
-logger.info(f"📂 DB_PATH existe: {DB_PATH.exists()}")
-
 
 def get_db():
-    """Get database connection"""
-    logger.info(f"📂 Intentando conectar a: {DB_PATH}")
-    conn = duckdb.connect(str(DB_PATH), read_only=False)
-    try:
+    """Get database connection (read-only para consultas)"""
+    with get_db_connection() as conn:
         yield conn
-    finally:
-        conn.close()
+
+
+def get_db_write():
+    """Get database connection (read-write para escrituras)"""
+    with get_db_connection_write() as conn:
+        yield conn
 
 
 # =====================================================================================
@@ -154,7 +149,7 @@ def get_db():
 @router.post("/", response_model=PedidoGuardadoResponse)
 async def crear_pedido(
     request: GuardarPedidoRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db)
+    conn: duckdb.DuckDBPyConnection = Depends(get_db_write)
 ):
     """
     Alias de /guardar para compatibilidad con frontend
@@ -166,7 +161,7 @@ async def crear_pedido(
 @router.post("/guardar", response_model=PedidoGuardadoResponse)
 async def guardar_pedido(
     request: GuardarPedidoRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db)
+    conn: duckdb.DuckDBPyConnection = Depends(get_db_write)
 ):
     """
     Guarda pedido en estado BORRADOR
@@ -345,7 +340,7 @@ async def guardar_pedido(
 @router.post("/{pedido_id}/enviar-aprobacion")
 async def enviar_para_aprobacion(
     pedido_id: str,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db)
+    conn: duckdb.DuckDBPyConnection = Depends(get_db_write)
 ):
     """
     Cambia estado de BORRADOR → PENDIENTE_APROBACION_GERENTE
