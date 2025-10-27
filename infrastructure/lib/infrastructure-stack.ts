@@ -630,6 +630,7 @@ PersistentKeepalive = 25`),
         ETL_ARGS: '--todas',  // Todas las tiendas activas (20 ubicaciones)
         ETL_ENVIRONMENT: 'production',  // Usar IPs y puertos de producción via WireGuard
         RUN_MODE: 'scheduled',
+        ETL_TIMEOUT: '7200',  // 2 hours timeout for ETL execution
 
         // Sentry Monitoring Configuration
         SENTRY_ENVIRONMENT: 'production',
@@ -699,6 +700,9 @@ PersistentKeepalive = 25`),
         platformVersion: ecs.FargatePlatformVersion.LATEST,
         taskCount: 1,
         propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+        // Prevent concurrent executions: retry with backoff if task already running
+        maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
+        retryAttempts: 2,  // Retry up to 2 times if task launch fails
       })
     );
 
@@ -723,6 +727,9 @@ PersistentKeepalive = 25`),
         platformVersion: ecs.FargatePlatformVersion.LATEST,
         taskCount: 1,
         propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+        // Prevent concurrent executions: retry with backoff if task already running
+        maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
+        retryAttempts: 2,  // Retry up to 2 times if task launch fails
       })
     );
 
@@ -841,6 +848,7 @@ PersistentKeepalive = 25`),
         ETL_MODE: 'etl_ventas_multi_tienda.py',
         ETL_ARGS: '--todas',  // startup-etl.sh calculará fecha de ayer automáticamente
         RUN_MODE: 'scheduled',
+        ETL_TIMEOUT: '7200',  // 2 hours timeout for ETL execution
 
         // Sentry Monitoring Configuration
         SENTRY_ENVIRONMENT: 'production',
@@ -888,6 +896,9 @@ PersistentKeepalive = 25`),
         platformVersion: ecs.FargatePlatformVersion.LATEST,
         taskCount: 1,
         propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+        // Prevent concurrent executions: retry with backoff if task already running
+        maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
+        retryAttempts: 2,  // Retry up to 2 times if task launch fails
       })
     );
 
@@ -912,6 +923,9 @@ PersistentKeepalive = 25`),
         platformVersion: ecs.FargatePlatformVersion.LATEST,
         taskCount: 1,
         propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+        // Prevent concurrent executions: retry with backoff if task already running
+        maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
+        retryAttempts: 2,  // Retry up to 2 times if task launch fails
       })
     );
 

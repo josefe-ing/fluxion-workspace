@@ -175,7 +175,13 @@ rm -f /app/logs/etl_last_success.flag
 # Execute ETL and capture exit code
 START_TIME=$(date +%s)
 
-if python3 "/app/$ETL_SCRIPT" $ETL_ARGS; then
+# Set timeout: 2 hours = 7200 seconds
+ETL_TIMEOUT="${ETL_TIMEOUT:-7200}"
+echo "⏰ ETL timeout configurado: ${ETL_TIMEOUT}s ($(($ETL_TIMEOUT / 60)) minutos)"
+echo ""
+
+# Execute with timeout
+if timeout --preserve-status $ETL_TIMEOUT python3 "/app/$ETL_SCRIPT" $ETL_ARGS; then
     EXIT_CODE=0
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
@@ -196,7 +202,12 @@ else
 
     echo ""
     echo "========================================"
-    echo "❌ ETL failed with exit code: $EXIT_CODE"
+    if [ $EXIT_CODE -eq 124 ]; then
+        echo "⏰ ETL TIMEOUT - Proceso detenido después de ${ETL_TIMEOUT}s"
+        echo "   Esto indica que el ETL se quedó colgado o tardó demasiado"
+    else
+        echo "❌ ETL failed with exit code: $EXIT_CODE"
+    fi
     echo "⏱️  Duration: ${DURATION}s"
     echo "📅 Failed at: $(date)"
     echo "========================================"
