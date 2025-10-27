@@ -37,10 +37,8 @@ echo ""
 # Monitor 1: Ventas ETL (Daily at 1:00 AM)
 # ========================================
 echo "1️⃣  Creando monitor: Fluxion Ventas ETL"
-sentry-cli monitors run \
-    --org "$SENTRY_ORG" \
-    --project "$SENTRY_PROJECT" \
-    fluxion-ventas-etl \
+sentry-cli --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \
+    monitors run fluxion-ventas-etl \
     --schedule "0 5 * * *" \
     --checkin-margin 10 \
     --max-runtime 120 \
@@ -55,10 +53,8 @@ echo ""
 # Monitor 2: Inventario ETL Morning (5:00 AM)
 # ========================================
 echo "2️⃣  Creando monitor: Fluxion Inventario ETL (Morning)"
-sentry-cli monitors run \
-    --org "$SENTRY_ORG" \
-    --project "$SENTRY_PROJECT" \
-    fluxion-inventario-etl-morning \
+sentry-cli --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \
+    monitors run fluxion-inventario-etl-morning \
     --schedule "0 9 * * *" \
     --checkin-margin 10 \
     --max-runtime 120 \
@@ -73,10 +69,8 @@ echo ""
 # Monitor 3: Inventario ETL Afternoon (3:00 PM)
 # ========================================
 echo "3️⃣  Creando monitor: Fluxion Inventario ETL (Afternoon)"
-sentry-cli monitors run \
-    --org "$SENTRY_ORG" \
-    --project "$SENTRY_PROJECT" \
-    fluxion-inventario-etl-afternoon \
+sentry-cli --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \
+    monitors run fluxion-inventario-etl-afternoon \
     --schedule "0 19 * * *" \
     --checkin-margin 10 \
     --max-runtime 120 \
