@@ -175,8 +175,9 @@ def run_migrations():
 
             apply_migration(conn, migration_file)
 
-        # Ejecutar migración de datos de tiendas_config.py
-        run_data_migration(conn)
+        # NOTA: La migración de datos de tiendas_config.py ya no es necesaria
+        # Los datos iniciales están incluidos en el archivo SQL con INSERT OR IGNORE
+        # run_data_migration(conn)
 
         logger.info("✅ Todas las migraciones completadas exitosamente")
 
