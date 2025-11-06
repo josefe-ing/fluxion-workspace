@@ -57,12 +57,15 @@ def apply_migration(conn, migration_file: Path):
     sql = migration_file.read_text()
 
     # Dividir en statements de forma más inteligente
-    # Remover comentarios y líneas vacías primero
+    # Remover comentarios inline y líneas vacías
     lines = []
     for line in sql.split('\n'):
+        # Remover comentarios inline (después de --)
+        if '--' in line:
+            line = line[:line.index('--')]
         line = line.strip()
-        # Skip líneas vacías y comentarios de línea completa
-        if not line or line.startswith('--'):
+        # Skip líneas vacías
+        if not line:
             continue
         lines.append(line)
 
