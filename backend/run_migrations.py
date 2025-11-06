@@ -53,18 +53,32 @@ def apply_migration(conn, migration_file: Path):
 
     logger.info(f"📝 Aplicando migración: {migration_name}")
 
-    # Leer y ejecutar SQL
+    # Leer SQL
     sql = migration_file.read_text()
 
-    # Ejecutar cada statement (separados por ;)
-    for statement in sql.split(';'):
-        statement = statement.strip()
-        if statement and not statement.startswith('--'):
+    # Dividir en statements de forma más inteligente
+    # Remover comentarios y líneas vacías primero
+    lines = []
+    for line in sql.split('\n'):
+        line = line.strip()
+        # Skip líneas vacías y comentarios de línea completa
+        if not line or line.startswith('--'):
+            continue
+        lines.append(line)
+
+    # Unir y dividir por punto y coma
+    cleaned_sql = ' '.join(lines)
+    statements = [s.strip() for s in cleaned_sql.split(';') if s.strip()]
+
+    # Ejecutar cada statement
+    for i, statement in enumerate(statements, 1):
+        if statement:
             try:
+                logger.debug(f"  Ejecutando statement {i}/{len(statements)}")
                 conn.execute(statement)
             except Exception as e:
-                logger.error(f"❌ Error en statement: {str(e)}")
-                logger.error(f"Statement: {statement[:200]}...")
+                logger.error(f"❌ Error en statement {i}: {str(e)}")
+                logger.error(f"Statement: {statement[:500]}...")
                 raise
 
     # Registrar migración aplicada
