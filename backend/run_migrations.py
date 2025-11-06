@@ -37,6 +37,21 @@ def get_applied_migrations(conn):
 
 def create_migrations_table(conn):
     """Crea tabla de control de migraciones"""
+    # Verificar si la tabla existe con estructura incorrecta (con campo id)
+    try:
+        result = conn.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'schema_migrations' AND column_name = 'id'
+        """).fetchall()
+
+        if result:
+            # Tabla existe con estructura incorrecta, recrearla
+            logger.info("🔄 Recreando tabla schema_migrations con estructura correcta...")
+            conn.execute("DROP TABLE IF EXISTS schema_migrations")
+    except:
+        pass  # Tabla no existe, es OK
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS schema_migrations (
             migration_name VARCHAR PRIMARY KEY,
