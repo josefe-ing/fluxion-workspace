@@ -458,12 +458,12 @@ async def listar_pedidos(
     try:
         query = """
             SELECT
-                id, numero_pedido, fecha_pedido, fecha_creacion,
+                id, numero_pedido, fecha_envio, fecha_creacion,
                 cedi_origen_nombre, tienda_destino_nombre,
                 estado, prioridad, tipo_pedido,
                 total_productos, total_lineas, total_bultos, total_unidades, total_peso_kg,
                 fecha_entrega_solicitada, fecha_aprobacion, fecha_recepcion,
-                usuario_creador,
+                creado_por,
                 CAST(DATEDIFF('day', fecha_creacion::DATE, CURRENT_DATE) AS INTEGER) as dias_desde_creacion
             FROM pedidos_sugeridos
             WHERE 1=1
@@ -503,7 +503,7 @@ async def listar_pedidos(
             pedidos.append(PedidoSugeridoResumen(
                 id=row[0],
                 numero_pedido=row[1],
-                fecha_pedido=row[2],
+                fecha_pedido=row[2],  # fecha_envio mapeado a fecha_pedido
                 fecha_creacion=row[3],
                 cedi_origen_nombre=row[4],
                 tienda_destino_nombre=row[5],
@@ -518,7 +518,7 @@ async def listar_pedidos(
                 fecha_entrega_solicitada=row[14],
                 fecha_aprobacion=row[15],
                 fecha_recepcion=row[16],
-                usuario_creador=row[17],
+                usuario_creador=row[17],  # creado_por mapeado a usuario_creador
                 dias_desde_creacion=row[18],
                 porcentaje_avance=porcentaje
             ))
