@@ -19,17 +19,17 @@ RUN groupadd -g 1000 appuser && \
 WORKDIR /app
 
 # Copiar requirements
-COPY requirements.txt .
+COPY backend/requirements.txt .
 
 # Instalar dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar código del backend (incluye startup.sh)
-COPY . .
+COPY backend/ .
 
 # Copiar migraciones desde el directorio database
-COPY ../database/migrations /app/database/migrations
-COPY ../database/scripts /app/database/scripts
+COPY database/migrations /app/database/migrations
+COPY database/scripts /app/database/scripts
 
 # Hacer archivos ejecutables
 RUN chmod +x /app/startup.sh /app/run_migrations.py
