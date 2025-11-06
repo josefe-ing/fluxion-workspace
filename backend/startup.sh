@@ -53,6 +53,16 @@ fi
 # Note: Authentication schema will be initialized automatically by FastAPI startup event
 # via auto_bootstrap_admin() function in auth.py
 
+# Run database migrations
+echo "🔄 Running database migrations..."
+python3 /app/run_migrations.py
+if [ $? -eq 0 ]; then
+    echo "✅ Migrations completed successfully"
+else
+    echo "❌ Migration failed"
+    exit 1
+fi
+
 # Start the application
 echo "🚀 Starting Uvicorn server..."
 # Use single worker to avoid DuckDB file locking issues

@@ -27,8 +27,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código del backend (incluye startup.sh)
 COPY . .
 
-# Hacer startup.sh ejecutable
-RUN chmod +x /app/startup.sh
+# Copiar migraciones desde el directorio database
+COPY ../database/migrations /app/database/migrations
+COPY ../database/scripts /app/database/scripts
+
+# Hacer archivos ejecutables
+RUN chmod +x /app/startup.sh /app/run_migrations.py
 
 # Create /data directory and set ownership
 RUN mkdir -p /data && chown -R appuser:appuser /data /app
