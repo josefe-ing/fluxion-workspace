@@ -39,8 +39,7 @@ def create_migrations_table(conn):
     """Crea tabla de control de migraciones"""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS schema_migrations (
-            id INTEGER PRIMARY KEY,
-            migration_name VARCHAR NOT NULL UNIQUE,
+            migration_name VARCHAR PRIMARY KEY,
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
