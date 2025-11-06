@@ -90,6 +90,56 @@ const http = {
     const data = await response.json();
     return { data };
   },
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async put(url: string, body: any) {
+    const fullUrl = `${API_BASE_URL}${url}`;
+    console.log('🌐 HTTP PUT:', fullUrl);
+
+    const response = await fetch(fullUrl, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      // Si es 401, limpiar token y redirigir a login
+      if (response.status === 401) {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('username');
+        localStorage.removeItem('nombre_completo');
+        window.location.reload();
+      }
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return { data };
+  },
+
+  async delete(url: string) {
+    const fullUrl = `${API_BASE_URL}${url}`;
+    console.log('🌐 HTTP DELETE:', fullUrl);
+
+    const response = await fetch(fullUrl, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      // Si es 401, limpiar token y redirigir a login
+      if (response.status === 401) {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('username');
+        localStorage.removeItem('nombre_completo');
+        window.location.reload();
+      }
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return { data };
+  },
 };
 
 export default http;

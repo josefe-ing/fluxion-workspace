@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import http from '../../services/http';
-import SyncButton from './SyncButton';
-import SyncLogsModal from './SyncLogsModal';
 import { formatInteger } from '../../utils/formatNumber';
 
 interface UbicacionSummary {
@@ -18,8 +16,6 @@ interface UbicacionSummary {
 export default function InventorySummary() {
   const [summaryData, setSummaryData] = useState<UbicacionSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showSyncModal, setShowSyncModal] = useState(false);
-  const [selectedUbicacionId, setSelectedUbicacionId] = useState<string | undefined>();
   const navigate = useNavigate();
 
   const loadSummary = useCallback(async () => {
@@ -72,17 +68,12 @@ export default function InventorySummary() {
 
   return (
     <div className="space-y-6">
-      {/* Título y Botón de Sincronización */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Resumen de Inventarios</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Vista general del estado de stock en todas las ubicaciones
-          </p>
-        </div>
-        <div className="flex-shrink-0">
-          <SyncButton onSyncComplete={loadSummary} />
-        </div>
+      {/* Título */}
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Resumen de Inventarios</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          Vista general del estado de stock en todas las ubicaciones
+        </p>
       </div>
 
       {/* Métricas Globales */}
@@ -175,9 +166,6 @@ export default function InventorySummary() {
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Última Actualización
                 </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Acciones
-                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -248,21 +236,6 @@ export default function InventorySummary() {
                   <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">
                     {formatFecha(item.ultima_actualizacion)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedUbicacionId(item.ubicacion_id);
-                        setShowSyncModal(true);
-                      }}
-                      className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-                    >
-                      <svg className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Sincronizar
-                    </button>
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -283,17 +256,6 @@ export default function InventorySummary() {
           </div>
         </div>
       </div>
-
-      {/* Modal de logs de sincronización */}
-      <SyncLogsModal
-        isOpen={showSyncModal}
-        onClose={() => {
-          setShowSyncModal(false);
-          setSelectedUbicacionId(undefined);
-          loadSummary(); // Recargar datos después de sincronizar
-        }}
-        ubicacionId={selectedUbicacionId}
-      />
     </div>
   );
 }

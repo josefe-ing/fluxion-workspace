@@ -14,6 +14,7 @@ import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
 import OrderWizard from './components/orders/OrderWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import ETLControlCenter from './components/settings/ETLControlCenter';
+import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
 import { getTenantId } from './utils/tenant';
 // import { checkMaintenanceStatus } from './services/maintenanceService';  // Descomentar el lunes
 
@@ -39,6 +40,7 @@ function ProtectedRoutes() {
         <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
         <Route path="administrador" element={<ETLControlCenter />} />
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
+        <Route path="administrador/config-inventario" element={<ConfiguracionInventario />} />
       </Route>
     </Routes>
   );

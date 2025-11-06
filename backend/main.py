@@ -53,6 +53,7 @@ from middleware.tenant import TenantMiddleware
 # Importar routers
 from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
 from routers.analisis_xyz_router import router as analisis_xyz_router
+from routers.config_inventario_router import router as config_inventario_router
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -128,6 +129,7 @@ app.add_middleware(
 # Registrar routers
 app.include_router(pedidos_sugeridos_router)
 app.include_router(analisis_xyz_router)
+app.include_router(config_inventario_router)
 
 # Global Exception Handler con CORS
 @app.middleware("http")
@@ -729,52 +731,28 @@ async def get_ubicaciones_summary():
 
 @app.get("/api/ubicaciones/{ubicacion_id}/stock-params", tags=["Ubicaciones"])
 async def get_stock_params(ubicacion_id: str):
-    """Obtiene los parámetros de stock para una tienda específica"""
+    """Obtiene los parámetros de stock para una tienda específica desde base de datos"""
     try:
-        from tiendas_config import TIENDAS_CONFIG
+        with get_db_connection() as conn:
+            from services.config_inventario_service import ConfigInventarioService
 
-        # Buscar configuración de la tienda
-        tienda_config = TIENDAS_CONFIG.get(ubicacion_id)
+            # Obtener multiplicadores para cada categoría y clasificación ABC
+            # Nota: Este endpoint retorna config para categoria 'seco' por compatibilidad
+            # En el frontend se debe llamar con categoría específica si se necesita
 
-        if not tienda_config:
-            # Valores por defecto si no se encuentra la tienda
-            return {
-                "ubicacion_id": ubicacion_id,
-                "stock_min_mult_a": 2.0,
-                "stock_min_mult_ab": 2.0,
-                "stock_min_mult_b": 3.0,
-                "stock_min_mult_bc": 9.0,
-                "stock_min_mult_c": 15.0,
-                "stock_seg_mult_a": 1.0,
-                "stock_seg_mult_ab": 2.5,
-                "stock_seg_mult_b": 2.0,
-                "stock_seg_mult_bc": 3.0,
-                "stock_seg_mult_c": 7.0,
-                "stock_max_mult_a": 5.0,
-                "stock_max_mult_ab": 7.0,
-                "stock_max_mult_b": 12.0,
-                "stock_max_mult_bc": 17.0,
-                "stock_max_mult_c": 26.0
-            }
+            result = {}
+            result["ubicacion_id"] = ubicacion_id
 
-        return {
-            "ubicacion_id": ubicacion_id,
-            "stock_min_mult_a": tienda_config.stock_min_mult_a,
-            "stock_min_mult_ab": tienda_config.stock_min_mult_ab,
-            "stock_min_mult_b": tienda_config.stock_min_mult_b,
-            "stock_min_mult_bc": tienda_config.stock_min_mult_bc,
-            "stock_min_mult_c": tienda_config.stock_min_mult_c,
-            "stock_seg_mult_a": tienda_config.stock_seg_mult_a,
-            "stock_seg_mult_ab": tienda_config.stock_seg_mult_ab,
-            "stock_seg_mult_b": tienda_config.stock_seg_mult_b,
-            "stock_seg_mult_bc": tienda_config.stock_seg_mult_bc,
-            "stock_seg_mult_c": tienda_config.stock_seg_mult_c,
-            "stock_max_mult_a": tienda_config.stock_max_mult_a,
-            "stock_max_mult_ab": tienda_config.stock_max_mult_ab,
-            "stock_max_mult_b": tienda_config.stock_max_mult_b,
-            "stock_max_mult_bc": tienda_config.stock_max_mult_bc,
-            "stock_max_mult_c": tienda_config.stock_max_mult_c
-        }
+            # Obtener config para cada ABC en categoría SECO (mayoría de productos)
+            for abc in ['A', 'AB', 'B', 'BC', 'C']:
+                config = ConfigInventarioService.obtener_config_global('seco', abc, conn)
+
+                suffix = abc.lower()
+                result[f"stock_min_mult_{suffix}"] = config['stock_min_mult']
+                result[f"stock_seg_mult_{suffix}"] = config['stock_seg_mult']
+                result[f"stock_max_mult_{suffix}"] = config['stock_max_mult']
+
+            return result
 
     except Exception as e:
         logger.error(f"Error obteniendo parámetros de stock: {str(e)}")
@@ -3416,21 +3394,44 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
 
             result = conn.execute(query).fetchall()
 
+            # Importar servicio de configuración
+            from services.config_inventario_service import ConfigInventarioService
+
             productos = []
             for row in result:
                 # Desempaquetar datos de los índices calculados (33-35 - ajustado por cuadrante y peso)
+                codigo_producto = row[0]
                 prom_diario = float(row[33]) if row[33] else 0
                 cantidad_bultos = float(row[34]) if row[34] else 1
                 stock_total = float(row[35]) if row[35] else 0
-                stock_minimo = float(row[30]) if row[30] else 10
-                stock_maximo = float(row[31]) if row[31] else 100
-                punto_reorden = float(row[32]) if row[32] else 30
                 pronostico_unid = float(row[19]) if row[19] else 0
 
-                # Calcular cantidad sugerida
-                stock_seguridad = stock_minimo * 1.5
+                # ===== NUEVO: Clasificación ABC y configuración dinámica =====
 
-                # Lógica de pedido
+                # 1. Calcular venta diaria en bultos
+                venta_diaria_bultos = prom_diario / cantidad_bultos if cantidad_bultos > 0 else 0
+
+                # 2. Clasificar producto en ABC usando umbrales desde BD
+                clasificacion = ConfigInventarioService.clasificar_abc(venta_diaria_bultos, conn)
+
+                # 3. Obtener configuración jerárquica (producto → tienda → global)
+                config = ConfigInventarioService.obtener_config_producto(
+                    codigo_producto=codigo_producto,
+                    tienda_id=request.tienda_destino,
+                    clasificacion_abc=clasificacion,
+                    conn=conn
+                )
+
+                # 4. Calcular niveles de stock dinámicamente con multiplicadores
+                stock_minimo = prom_diario * config['stock_min_mult']
+                stock_seguridad = prom_diario * config['stock_seg_mult']
+                stock_maximo = prom_diario * config['stock_max_mult']
+
+                # Punto de reorden = stock_mínimo + (demanda durante lead time)
+                lead_time_dias = config['lead_time_dias']
+                punto_reorden = stock_minimo + (prom_diario * lead_time_dias)
+
+                # ===== Lógica de pedido =====
                 if stock_total < punto_reorden:
                     cantidad_sugerida = (stock_maximo - stock_total) + pronostico_unid
                     razon = "Stock bajo punto de reorden"
@@ -3447,14 +3448,6 @@ async def calcular_pedido_sugerido(request: CalcularPedidoRequest):
                 # Convertir a bultos
                 cantidad_bultos_sugerida = cantidad_sugerida / cantidad_bultos if cantidad_bultos > 0 else 0
                 cantidad_bultos_ajustada = int(cantidad_bultos_sugerida) + (1 if cantidad_bultos_sugerida % 1 >= 0.5 else 0)
-
-                # Clasificación ABC basada en promedio de ventas
-                if prom_diario >= 10:
-                    clasificacion = "A"
-                elif prom_diario >= 3:
-                    clasificacion = "B"
-                else:
-                    clasificacion = "C"
 
                 # Incluir todos los productos para permitir búsqueda y pedido manual
                 productos.append(ProductoPedidoSugerido(
