@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Ruta de la base de datos
 DB_PATH = Path(os.getenv('DATABASE_PATH', '/data/fluxion_production.db'))
-MIGRATIONS_DIR = Path(__file__).parent.parent / "database" / "migrations"
+# Ruta de migraciones: /app/database/migrations
+MIGRATIONS_DIR = Path(__file__).parent / "database" / "migrations"
 
 
 def get_applied_migrations(conn):
