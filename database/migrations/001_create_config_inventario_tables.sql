@@ -101,7 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_productos_categoria_tipo
 -- ============================================================================
 
 -- Umbrales de Clasificación ABC
-INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
+INSERT OR IGNORE INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
 ('abc_umbral_a', 'abc_umbrales', 'umbral_a', 20.0, 'Umbral mínimo para clasificación A', 'bultos_dia'),
 ('abc_umbral_ab', 'abc_umbrales', 'umbral_ab', 5.0, 'Umbral mínimo para clasificación AB', 'bultos_dia'),
 ('abc_umbral_b', 'abc_umbrales', 'umbral_b', 0.45, 'Umbral mínimo para clasificación B', 'bultos_dia'),
@@ -109,12 +109,12 @@ INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, 
 ('abc_umbral_c', 'abc_umbrales', 'umbral_c', 0.001, 'Umbral mínimo para clasificación C', 'bultos_dia');
 
 -- Umbrales de Clasificación XYZ
-INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
+INSERT OR IGNORE INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
 ('xyz_umbral_x', 'xyz_umbrales', 'umbral_x', 0.5, 'CV máximo para clasificación X (Predecible)', 'coeficiente'),
 ('xyz_umbral_y', 'xyz_umbrales', 'umbral_y', 1.0, 'CV máximo para clasificación Y (Variable)', 'coeficiente');
 
 -- Niveles de Servicio (Z-scores) por ABC
-INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
+INSERT OR IGNORE INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
 ('zscore_a', 'niveles_servicio', 'zscore_a', 2.33, 'Z-score para clase A (99% servicio)', 'zscore'),
 ('zscore_ab', 'niveles_servicio', 'zscore_ab', 2.05, 'Z-score para clase AB (98% servicio)', 'zscore'),
 ('zscore_b', 'niveles_servicio', 'zscore_b', 1.65, 'Z-score para clase B (95% servicio)', 'zscore'),
@@ -122,28 +122,28 @@ INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, 
 ('zscore_c', 'niveles_servicio', 'zscore_c', 0.84, 'Z-score para clase C (80% servicio)', 'zscore');
 
 -- Ajustes por Variabilidad XYZ
-INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
+INSERT OR IGNORE INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
 ('ajuste_xyz_x', 'ajustes_xyz', 'ajuste_x', 0.8, 'Ajuste para productos X (Predecibles): -20%', 'multiplicador'),
 ('ajuste_xyz_y', 'ajustes_xyz', 'ajuste_y', 1.0, 'Ajuste para productos Y (Variables): 0%', 'multiplicador'),
 ('ajuste_xyz_z', 'ajustes_xyz', 'ajuste_z', 1.3, 'Ajuste para productos Z (Erráticos): +30%', 'multiplicador');
 
 -- Parámetros de Tendencias
-INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
+INSERT OR IGNORE INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
 ('tend_periodo_corto', 'tendencias', 'periodo_corto', 5, 'Días para calcular venta reciente', 'dias'),
 ('tend_periodo_largo', 'tendencias', 'periodo_largo', 20, 'Días para calcular venta histórica', 'dias'),
 ('tend_umbral_sig', 'tendencias', 'umbral_significancia', 0.20, 'Umbral para considerar tendencia significativa', 'porcentaje');
 
 -- Factores Estacionales
-INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
+INSERT OR IGNORE INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
 ('estac_fin_semana', 'estacionalidad', 'factor_fin_semana', 1.4, 'Factor de ajuste para fin de semana (+40%)', 'multiplicador'),
 ('estac_quincena', 'estacionalidad', 'factor_quincena', 1.2, 'Factor de ajuste para quincena (+20%)', 'multiplicador');
 
-INSERT INTO config_inventario_global (id, categoria, parametro, valor_texto, descripcion, unidad) VALUES
+INSERT OR IGNORE INTO config_inventario_global (id, categoria, parametro, valor_texto, descripcion, unidad) VALUES
 ('estac_quin_dias_1', 'estacionalidad', 'quincena_dias_1', '1-7', 'Días de primera quincena', 'texto'),
 ('estac_quin_dias_2', 'estacionalidad', 'quincena_dias_2', '15-22', 'Días de segunda quincena', 'texto');
 
 -- Parámetros Generales de Stock
-INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
+INSERT OR IGNORE INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad) VALUES
 ('stock_lead_time', 'stock_general', 'lead_time_dias', 3, 'Lead time por defecto desde CEDI', 'dias'),
 ('stock_min_dias', 'stock_general', 'stock_min_dias', 3, 'Días de cobertura para stock mínimo', 'dias'),
 ('stock_max_dias', 'stock_general', 'stock_max_dias', 6, 'Días de cobertura para stock máximo', 'dias');
