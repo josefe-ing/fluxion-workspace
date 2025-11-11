@@ -9,7 +9,8 @@
 
 CREATE TABLE IF NOT EXISTS productos_abc_v2 (
     id VARCHAR PRIMARY KEY,
-    producto_id VARCHAR NOT NULL,
+    codigo_producto VARCHAR NOT NULL,  -- Código del producto (no producto_id)
+    ubicacion_id VARCHAR NOT NULL,     -- ID de la tienda (análisis por tienda)
 
     -- Periodo de análisis
     periodo_analisis VARCHAR(20) NOT NULL, -- 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'
@@ -59,7 +60,8 @@ CREATE TABLE IF NOT EXISTS productos_abc_v2 (
     observaciones TEXT,
 
     -- Constraints
-    FOREIGN KEY (producto_id) REFERENCES productos(id),
+    -- Note: codigo_producto references productos.codigo (not productos.id)
+    -- Foreign key omitted as DuckDB may not support it on non-PK columns
 
     -- Validaciones
     CHECK (unidades_vendidas_total >= 0),
@@ -75,7 +77,8 @@ CREATE TABLE IF NOT EXISTS productos_abc_v2 (
 
 CREATE TABLE IF NOT EXISTS productos_abc_v2_historico (
     id VARCHAR PRIMARY KEY,
-    producto_id VARCHAR NOT NULL,
+    codigo_producto VARCHAR NOT NULL,
+    ubicacion_id VARCHAR NOT NULL,
     periodo_analisis VARCHAR(20) NOT NULL,
     fecha_inicio DATE NOT NULL,
     fecha_fin DATE NOT NULL,
@@ -86,10 +89,9 @@ CREATE TABLE IF NOT EXISTS productos_abc_v2_historico (
     valor_consumo_total DECIMAL(18,2) NOT NULL,
     ranking_valor INTEGER NOT NULL,
     porcentaje_valor DECIMAL(8,4) NOT NULL,
-    porcentaje_acumulado DECIMAL(8,4) NOT NULL,
+    porcentaje_acumulado DECIMAL(8,4) NOT NULL
 
-    -- Metadata
-    FOREIGN KEY (producto_id) REFERENCES productos(id)
+    -- Metadata: Foreign key omitted (references productos.codigo)
 );
 
 -- =====================================================================================
@@ -98,7 +100,8 @@ CREATE TABLE IF NOT EXISTS productos_abc_v2_historico (
 
 CREATE TABLE IF NOT EXISTS productos_abc_v2_evolucion (
     id VARCHAR PRIMARY KEY,
-    producto_id VARCHAR NOT NULL,
+    codigo_producto VARCHAR NOT NULL,
+    ubicacion_id VARCHAR NOT NULL,
 
     -- Periodo de comparación
     periodo_desde DATE NOT NULL,
@@ -119,17 +122,21 @@ CREATE TABLE IF NOT EXISTS productos_abc_v2_evolucion (
     velocidad_cambio VARCHAR(20), -- 'rapido', 'gradual', 'lento'
 
     -- Metadata
-    fecha_calculo TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (producto_id) REFERENCES productos(id)
+    fecha_calculo TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    -- Foreign key omitted (references productos.codigo)
 );
 
 -- =====================================================================================
 -- ÍNDICES PARA PERFORMANCE
 -- =====================================================================================
 
--- Índice principal para búsquedas por producto y periodo
-CREATE INDEX IF NOT EXISTS idx_abc_v2_producto_periodo
-    ON productos_abc_v2(producto_id, periodo_analisis, fecha_inicio);
+-- Índice principal para búsquedas por producto, ubicación y periodo
+CREATE INDEX IF NOT EXISTS idx_abc_v2_producto_ubicacion_periodo
+    ON productos_abc_v2(codigo_producto, ubicacion_id, periodo_analisis, fecha_inicio);
+
+-- Índice para búsquedas por ubicación
+CREATE INDEX IF NOT EXISTS idx_abc_v2_ubicacion
+    ON productos_abc_v2(ubicacion_id);
 
 -- Índice para búsqueda por clasificación
 CREATE INDEX IF NOT EXISTS idx_abc_v2_clasificacion
@@ -148,15 +155,15 @@ CREATE INDEX IF NOT EXISTS idx_abc_v2_flags
     ON productos_abc_v2(es_producto_nuevo, tiene_costo_valido);
 
 -- Índices para tabla histórica
-CREATE INDEX IF NOT EXISTS idx_abc_v2_hist_producto
-    ON productos_abc_v2_historico(producto_id, fecha_calculo DESC);
+CREATE INDEX IF NOT EXISTS idx_abc_v2_hist_producto_ubicacion
+    ON productos_abc_v2_historico(codigo_producto, ubicacion_id, fecha_calculo DESC);
 
 CREATE INDEX IF NOT EXISTS idx_abc_v2_hist_periodo
     ON productos_abc_v2_historico(fecha_inicio, fecha_fin);
 
 -- Índices para tabla de evolución
-CREATE INDEX IF NOT EXISTS idx_abc_v2_evol_producto
-    ON productos_abc_v2_evolucion(producto_id);
+CREATE INDEX IF NOT EXISTS idx_abc_v2_evol_producto_ubicacion
+    ON productos_abc_v2_evolucion(codigo_producto, ubicacion_id);
 
 CREATE INDEX IF NOT EXISTS idx_abc_v2_evol_cambio
     ON productos_abc_v2_evolucion(cambio_clasificacion);
@@ -193,6 +200,7 @@ SELECT
     p.codigo,
     p.descripcion,
     p.categoria,
+    abc.ubicacion_id,
     abc.clasificacion_velocidad,
     abc.clasificacion_abc_valor,
     abc.valor_consumo_total,
@@ -205,7 +213,7 @@ SELECT
         ELSE 'Discrepancia moderada'
     END as tipo_discrepancia
 FROM productos p
-LEFT JOIN productos_abc_v2 abc ON p.id = abc.producto_id
+LEFT JOIN productos_abc_v2 abc ON p.codigo = abc.codigo_producto
 WHERE abc.clasificacion_abc_valor IS NOT NULL
     AND abc.clasificacion_abc_valor IN ('A', 'B', 'C');
 
@@ -213,7 +221,8 @@ WHERE abc.clasificacion_abc_valor IS NOT NULL
 CREATE OR REPLACE VIEW v_abc_top_productos AS
 SELECT
     abc.ranking_valor,
-    p.codigo,
+    abc.codigo_producto,
+    abc.ubicacion_id,
     p.descripcion,
     p.categoria,
     p.marca,
@@ -225,7 +234,7 @@ SELECT
     abc.numero_ubicaciones,
     abc.margen_total
 FROM productos_abc_v2 abc
-JOIN productos p ON abc.producto_id = p.id
+JOIN productos p ON abc.codigo_producto = p.codigo
 WHERE abc.clasificacion_abc_valor IN ('A', 'B', 'C')
 ORDER BY abc.ranking_valor
 LIMIT 100;
@@ -233,7 +242,8 @@ LIMIT 100;
 -- Vista: Productos con cambios significativos
 CREATE OR REPLACE VIEW v_abc_cambios_significativos AS
 SELECT
-    p.codigo,
+    e.codigo_producto,
+    e.ubicacion_id,
     p.descripcion,
     p.categoria,
     e.clasificacion_inicial,
@@ -245,7 +255,7 @@ SELECT
     e.tipo_tendencia,
     e.velocidad_cambio
 FROM productos_abc_v2_evolucion e
-JOIN productos p ON e.producto_id = p.id
+JOIN productos p ON e.codigo_producto = p.codigo
 WHERE e.clasificacion_inicial != e.clasificacion_final
     OR ABS(e.cambio_ranking) > 100
 ORDER BY ABS(e.cambio_porcentual) DESC;
