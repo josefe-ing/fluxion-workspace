@@ -141,7 +141,7 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
   };
 
   // Calculate trend based on recent weeks
-  const getTrend = (semanas: typeof ventasSemanales.semanas) => {
+  const getTrend = (semanas: VentasSemanalesResponse['semanas']) => {
     if (semanas.length < 8) return '→';
 
     const recent4 = semanas.slice(-4).reduce((sum, s) => sum + s.unidades, 0) / 4;
