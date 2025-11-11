@@ -4,7 +4,6 @@ import {
   getProductosPorMatriz,
   MatrizABCXYZ as MatrizData,
   ProductoEnriquecido,
-  formatCurrency,
 } from '../../services/productosService';
 import { getTiendas, Ubicacion } from '../../services/ubicacionesService';
 import MatrizABCXYZ from './MatrizABCXYZ';
