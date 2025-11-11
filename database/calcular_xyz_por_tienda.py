@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 # Usar DATABASE_PATH env var si está disponible, sino usar path por defecto
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = os.getenv('DATABASE_PATH', str(BASE_DIR / "data" / "fluxion_production.db"))
+DB_PATH = Path(os.getenv('DATABASE_PATH', str(BASE_DIR / "data" / "fluxion_production.db")))
 
 
 class CalculadorXYZPorTienda:
