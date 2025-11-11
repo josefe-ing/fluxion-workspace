@@ -70,25 +70,26 @@ ORDER BY
 
 CREATE OR REPLACE VIEW vista_productos_az_criticos AS
 SELECT
-    p.codigo_producto,
-    p.valor_consumo_total,
-    p.coeficiente_variacion,
-    p.demanda_promedio_semanal,
-    p.desviacion_estandar_semanal,
-    p.semanas_con_venta,
-    p.confiabilidad_calculo,
-    p.es_extremadamente_volatil,
-    p.ranking_valor,
+    prod.codigo as codigo_producto,
+    abc.valor_consumo_total,
+    abc.coeficiente_variacion,
+    abc.demanda_promedio_semanal,
+    abc.desviacion_estandar_semanal,
+    abc.semanas_con_venta,
+    abc.confiabilidad_calculo,
+    abc.es_extremadamente_volatil,
+    abc.ranking_valor,
     CASE
-        WHEN p.coeficiente_variacion > 2.0 THEN 'CRÍTICO - CV Extremo'
-        WHEN p.coeficiente_variacion > 1.5 THEN 'ALTO RIESGO - CV Alto'
-        WHEN p.semanas_con_venta < 8 THEN 'ADVERTENCIA - Datos Insuficientes'
+        WHEN abc.coeficiente_variacion > 2.0 THEN 'CRÍTICO - CV Extremo'
+        WHEN abc.coeficiente_variacion > 1.5 THEN 'ALTO RIESGO - CV Alto'
+        WHEN abc.semanas_con_venta < 8 THEN 'ADVERTENCIA - Datos Insuficientes'
         ELSE 'MONITOREAR - CV Moderado'
     END as nivel_alerta
-FROM productos_abc_v2 p
-WHERE p.matriz_abc_xyz = 'AZ'
-  AND p.clasificacion_abc_valor = 'A'
-ORDER BY p.valor_consumo_total DESC;
+FROM productos_abc_v2 abc
+JOIN productos prod ON abc.producto_id = prod.id
+WHERE abc.matriz_abc_xyz = 'AZ'
+  AND abc.clasificacion_abc_valor = 'A'
+ORDER BY abc.valor_consumo_total DESC;
 
 -- =====================================================================================
 -- VISTA: Productos BZ y CZ - Baja prioridad + impredecibles
@@ -96,23 +97,24 @@ ORDER BY p.valor_consumo_total DESC;
 
 CREATE OR REPLACE VIEW vista_productos_bz_cz AS
 SELECT
-    p.codigo_producto,
-    p.clasificacion_abc_valor,
-    p.clasificacion_xyz,
-    p.matriz_abc_xyz,
-    p.valor_consumo_total,
-    p.coeficiente_variacion,
-    p.confiabilidad_calculo,
+    prod.codigo as codigo_producto,
+    abc.clasificacion_abc_valor,
+    abc.clasificacion_xyz,
+    abc.matriz_abc_xyz,
+    abc.valor_consumo_total,
+    abc.coeficiente_variacion,
+    abc.confiabilidad_calculo,
     CASE
-        WHEN p.semanas_con_venta < 4 THEN 'CANDIDATO_DESCONTINUACION'
-        WHEN p.coeficiente_variacion > 3.0 THEN 'STOCK_BAJO_SOLO_DEMANDA'
+        WHEN abc.semanas_con_venta < 4 THEN 'CANDIDATO_DESCONTINUACION'
+        WHEN abc.coeficiente_variacion > 3.0 THEN 'STOCK_BAJO_SOLO_DEMANDA'
         ELSE 'MANTENER_STOCK_MINIMO'
     END as estrategia_recomendada
-FROM productos_abc_v2 p
-WHERE p.matriz_abc_xyz IN ('BZ', 'CZ')
+FROM productos_abc_v2 abc
+JOIN productos prod ON abc.producto_id = prod.id
+WHERE abc.matriz_abc_xyz IN ('BZ', 'CZ')
 ORDER BY
-    p.clasificacion_abc_valor,
-    p.coeficiente_variacion DESC;
+    abc.clasificacion_abc_valor,
+    abc.coeficiente_variacion DESC;
 
 -- =====================================================================================
 -- VISTA: Productos AX y BX - Alta prioridad + predecibles (ideales)
@@ -120,22 +122,23 @@ ORDER BY
 
 CREATE OR REPLACE VIEW vista_productos_ax_bx AS
 SELECT
-    p.codigo_producto,
-    p.clasificacion_abc_valor,
-    p.valor_consumo_total,
-    p.coeficiente_variacion,
-    p.demanda_promedio_semanal,
-    p.ranking_valor,
-    p.confiabilidad_calculo,
+    prod.codigo as codigo_producto,
+    abc.clasificacion_abc_valor,
+    abc.valor_consumo_total,
+    abc.coeficiente_variacion,
+    abc.demanda_promedio_semanal,
+    abc.ranking_valor,
+    abc.confiabilidad_calculo,
     CASE
-        WHEN p.clasificacion_abc_valor = 'A' AND p.clasificacion_xyz = 'X' THEN 'STOCK_ALTO_REPOSICION_AUTOMATICA'
-        WHEN p.clasificacion_abc_valor = 'B' AND p.clasificacion_xyz = 'X' THEN 'STOCK_MEDIO_REPOSICION_PROGRAMADA'
+        WHEN abc.clasificacion_abc_valor = 'A' AND abc.clasificacion_xyz = 'X' THEN 'STOCK_ALTO_REPOSICION_AUTOMATICA'
+        WHEN abc.clasificacion_abc_valor = 'B' AND abc.clasificacion_xyz = 'X' THEN 'STOCK_MEDIO_REPOSICION_PROGRAMADA'
         ELSE 'REVISAR_ESTRATEGIA'
     END as estrategia_recomendada
-FROM productos_abc_v2 p
-WHERE p.matriz_abc_xyz IN ('AX', 'BX')
-  AND p.confiabilidad_calculo = 'ALTA'
-ORDER BY p.valor_consumo_total DESC;
+FROM productos_abc_v2 abc
+JOIN productos prod ON abc.producto_id = prod.id
+WHERE abc.matriz_abc_xyz IN ('AX', 'BX')
+  AND abc.confiabilidad_calculo = 'ALTA'
+ORDER BY abc.valor_consumo_total DESC;
 
 -- =====================================================================================
 -- VISTA: Auditoría de Confiabilidad
