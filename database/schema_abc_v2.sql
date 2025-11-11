@@ -4,6 +4,23 @@
 -- =====================================================================================
 
 -- =====================================================================================
+-- MIGRACIÓN: Añadir columnas faltantes si la tabla ya existe
+-- =====================================================================================
+
+-- Añadir codigo_producto y ubicacion_id si no existen (migración desde schema anterior)
+-- Estas ALTER TABLE se ejecutarán antes del CREATE TABLE IF NOT EXISTS
+-- para asegurar que las tablas existentes tengan las columnas correctas
+
+ALTER TABLE IF EXISTS productos_abc_v2 ADD COLUMN IF NOT EXISTS codigo_producto VARCHAR;
+ALTER TABLE IF EXISTS productos_abc_v2 ADD COLUMN IF NOT EXISTS ubicacion_id VARCHAR;
+
+ALTER TABLE IF EXISTS productos_abc_v2_historico ADD COLUMN IF NOT EXISTS codigo_producto VARCHAR;
+ALTER TABLE IF EXISTS productos_abc_v2_historico ADD COLUMN IF NOT EXISTS ubicacion_id VARCHAR;
+
+ALTER TABLE IF EXISTS productos_abc_v2_evolucion ADD COLUMN IF NOT EXISTS codigo_producto VARCHAR;
+ALTER TABLE IF EXISTS productos_abc_v2_evolucion ADD COLUMN IF NOT EXISTS ubicacion_id VARCHAR;
+
+-- =====================================================================================
 -- TABLA PRINCIPAL: PRODUCTOS_ABC_V2
 -- =====================================================================================
 
