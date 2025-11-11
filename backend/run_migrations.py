@@ -45,9 +45,7 @@ def apply_migrations():
             """).fetchone()
 
             if columns_result[0] > 0:
-                logger.info("✅ Migración XYZ ya aplicada")
-                conn.close()
-                return True
+                logger.info("✅ Columnas XYZ ya existen, recreando vistas...")
             else:
                 logger.info("📝 Aplicando extensión XYZ...")
         else:
