@@ -4540,6 +4540,71 @@ def get_forecast_producto_diario(
         raise HTTPException(status_code=500, detail=f"Error en forecast diario: {str(e)}")
 
 
+# ======================================================================================
+# ENDPOINTS ADMIN - CÁLCULOS ABC-XYZ
+# ======================================================================================
+
+@app.post("/api/admin/calcular-abc-xyz", tags=["Admin"])
+async def calcular_abc_xyz(
+    background_tasks: BackgroundTasks,
+    current_user: Usuario = Depends(verify_token)
+):
+    """
+    Ejecuta el cálculo de ABC v2 y XYZ para todas las tiendas.
+    Esto puede tardar varios minutos. Se ejecuta en background.
+
+    Requiere autenticación.
+    """
+    def run_calculations():
+        """Ejecuta los scripts de cálculo en background"""
+        import time
+        logger.info("🔄 Iniciando cálculo ABC v2 por tienda...")
+
+        try:
+            # Ejecutar cálculo ABC v2
+            result_abc = subprocess.run(
+                ["python3", "/app/database/calcular_abc_v2_por_tienda.py", "--verbose"],
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minutos máximo
+            )
+
+            if result_abc.returncode == 0:
+                logger.info(f"✅ ABC v2 completado:\n{result_abc.stdout}")
+            else:
+                logger.error(f"❌ Error en ABC v2:\n{result_abc.stderr}")
+                return
+
+            logger.info("🔄 Iniciando cálculo XYZ por tienda...")
+
+            # Ejecutar cálculo XYZ
+            result_xyz = subprocess.run(
+                ["python3", "/app/database/calcular_xyz_por_tienda.py", "--verbose"],
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minutos máximo
+            )
+
+            if result_xyz.returncode == 0:
+                logger.info(f"✅ XYZ completado:\n{result_xyz.stdout}")
+            else:
+                logger.error(f"❌ Error en XYZ:\n{result_xyz.stderr}")
+
+        except subprocess.TimeoutExpired:
+            logger.error("❌ Timeout ejecutando cálculos ABC-XYZ")
+        except Exception as e:
+            logger.error(f"❌ Error ejecutando cálculos: {e}")
+
+    # Añadir tarea en background
+    background_tasks.add_task(run_calculations)
+
+    return {
+        "success": True,
+        "message": "Cálculo ABC-XYZ iniciado en background. Revisa los logs del servidor para ver el progreso.",
+        "usuario": current_user.email
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
