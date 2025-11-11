@@ -15,15 +15,8 @@ ALTER TABLE productos_abc_v2 ADD COLUMN IF NOT EXISTS confiabilidad_calculo VARC
 ALTER TABLE productos_abc_v2 ADD COLUMN IF NOT EXISTS es_estacional BOOLEAN DEFAULT false;
 ALTER TABLE productos_abc_v2 ADD COLUMN IF NOT EXISTS es_extremadamente_volatil BOOLEAN DEFAULT false;
 
--- Agregar constraints
-ALTER TABLE productos_abc_v2 ADD CONSTRAINT IF NOT EXISTS check_clasificacion_xyz
-  CHECK (clasificacion_xyz IN ('X', 'Y', 'Z', NULL));
-
-ALTER TABLE productos_abc_v2 ADD CONSTRAINT IF NOT EXISTS check_confiabilidad
-  CHECK (confiabilidad_calculo IN ('ALTA', 'MEDIA', 'BAJA', NULL));
-
-ALTER TABLE productos_abc_v2 ADD CONSTRAINT IF NOT EXISTS check_cv_positive
-  CHECK (coeficiente_variacion IS NULL OR coeficiente_variacion >= 0);
+-- Nota: Constraints se omiten en esta migración porque DuckDB no soporta
+-- IF NOT EXISTS para constraints. Las validaciones se harán a nivel de aplicación.
 
 -- Índices para optimizar consultas XYZ
 CREATE INDEX IF NOT EXISTS idx_abc_v2_clasificacion_xyz
