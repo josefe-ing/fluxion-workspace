@@ -7,11 +7,13 @@ Cada tienda tiene su propia matriz ABC basada en valor económico local.
 import duckdb
 import argparse
 import sys
+import os
 from pathlib import Path
 from datetime import datetime, timedelta
 
+# Usar DATABASE_PATH env var si está disponible, sino usar path por defecto
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "data" / "fluxion_production.db"
+DB_PATH = os.getenv('DATABASE_PATH', str(BASE_DIR / "data" / "fluxion_production.db"))
 
 
 class CalculadorABCv2PorTienda:
