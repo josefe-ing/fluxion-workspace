@@ -1,194 +1,104 @@
 #!/usr/bin/env python3
 """
-Script para ejecutar migraciones de base de datos automáticamente.
-Se ejecuta al iniciar el backend en producción.
+Script para aplicar migraciones ABC-XYZ a producción
+Este script se ejecuta como un comando de inicio en el contenedor
 """
 import os
 import sys
-from pathlib import Path
 import duckdb
 import logging
+from pathlib import Path
 
-# Configurar logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Ruta de la base de datos
-DB_PATH = Path(os.getenv('DATABASE_PATH', '/data/fluxion_production.db'))
-# Ruta de migraciones: /app/database/migrations
-MIGRATIONS_DIR = Path(__file__).parent / "database" / "migrations"
+def apply_migrations():
+    """Aplica las migraciones de base de datos si no existen las tablas"""
+    db_path = os.getenv('DATABASE_PATH', '/data/fluxion_production.db')
 
-
-def get_applied_migrations(conn):
-    """Obtiene lista de migraciones ya aplicadas"""
-    try:
-        result = conn.execute("""
-            SELECT migration_name FROM schema_migrations
-            ORDER BY applied_at
-        """).fetchall()
-        return [row[0] for row in result]
-    except Exception:
-        # Tabla no existe, primera vez
-        return []
-
-
-def create_migrations_table(conn):
-    """Crea tabla de control de migraciones"""
-    # Verificar si la tabla existe con estructura incorrecta (con campo id)
-    try:
-        result = conn.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'schema_migrations' AND column_name = 'id'
-        """).fetchall()
-
-        if result:
-            # Tabla existe con estructura incorrecta, recrearla
-            logger.info("🔄 Recreando tabla schema_migrations con estructura correcta...")
-            conn.execute("DROP TABLE IF EXISTS schema_migrations")
-    except:
-        pass  # Tabla no existe, es OK
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            migration_name VARCHAR PRIMARY KEY,
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    logger.info("✅ Tabla schema_migrations creada/verificada")
-
-
-def apply_migration(conn, migration_file: Path):
-    """Aplica una migración SQL"""
-    migration_name = migration_file.name
-
-    logger.info(f"📝 Aplicando migración: {migration_name}")
-
-    # Leer SQL
-    sql = migration_file.read_text()
-
-    # Dividir en statements de forma más inteligente
-    # Remover comentarios inline y líneas vacías
-    lines = []
-    for line in sql.split('\n'):
-        # Remover comentarios inline (después de --)
-        if '--' in line:
-            line = line[:line.index('--')]
-        line = line.strip()
-        # Skip líneas vacías
-        if not line:
-            continue
-        lines.append(line)
-
-    # Unir y dividir por punto y coma
-    cleaned_sql = ' '.join(lines)
-    statements = [s.strip() for s in cleaned_sql.split(';') if s.strip()]
-
-    # Ejecutar cada statement
-    for i, statement in enumerate(statements, 1):
-        if statement:
-            try:
-                logger.debug(f"  Ejecutando statement {i}/{len(statements)}")
-                conn.execute(statement)
-            except Exception as e:
-                logger.error(f"❌ Error en statement {i}: {str(e)}")
-                logger.error(f"Statement: {statement[:500]}...")
-                raise
-
-    # Registrar migración aplicada
-    conn.execute("""
-        INSERT INTO schema_migrations (migration_name)
-        VALUES (?)
-    """, [migration_name])
-
-    conn.commit()
-    logger.info(f"✅ Migración aplicada: {migration_name}")
-
-
-def run_data_migration(conn):
-    """Ejecuta script de migración de datos en Python"""
-    migration_name = "migrate_tiendas_config_to_db.py"
-
-    logger.info(f"🔄 Ejecutando migración de datos: {migration_name}")
+    if not os.path.exists(db_path):
+        logger.error(f"Base de datos no encontrada en {db_path}")
+        return False
 
     try:
-        # Verificar si ya fue aplicada
+        conn = duckdb.connect(db_path)
+
+        # Verificar si la tabla productos_abc_v2 existe
         result = conn.execute("""
-            SELECT COUNT(*) FROM schema_migrations
-            WHERE migration_name = ?
-        """, [migration_name]).fetchone()
+            SELECT COUNT(*) as count
+            FROM information_schema.tables
+            WHERE table_name = 'productos_abc_v2'
+        """).fetchone()
 
         if result[0] > 0:
-            logger.info(f"⏭️  Migración de datos ya aplicada: {migration_name}")
-            return
+            logger.info("✅ Tabla productos_abc_v2 ya existe, verificando columnas XYZ...")
 
-        # Importar y ejecutar desde el mismo directorio
-        from migrate_tiendas_config_to_db import main as migrate_main
-        migrate_main()
+            # Verificar si las columnas XYZ existen
+            columns_result = conn.execute("""
+                SELECT COUNT(*) as count
+                FROM information_schema.columns
+                WHERE table_name = 'productos_abc_v2'
+                AND column_name = 'clasificacion_xyz'
+            """).fetchone()
 
-        # Registrar como aplicada
-        conn.execute("""
-            INSERT INTO schema_migrations (migration_name)
-            VALUES (?)
-        """, [migration_name])
-        conn.commit()
+            if columns_result[0] > 0:
+                logger.info("✅ Migración XYZ ya aplicada")
+                conn.close()
+                return True
+            else:
+                logger.info("📝 Aplicando extensión XYZ...")
+        else:
+            logger.info("📝 Creando tabla productos_abc_v2...")
 
-        logger.info(f"✅ Migración de datos aplicada: {migration_name}")
+        # Aplicar schema_abc_v2.sql
+        schema_abc_v2_path = Path('/app/database/schema_abc_v2.sql')
+        if schema_abc_v2_path.exists():
+            logger.info(f"Aplicando {schema_abc_v2_path}...")
+            with open(schema_abc_v2_path, 'r') as f:
+                sql_content = f.read()
+                # Ejecutar cada statement por separado
+                statements = [s.strip() for s in sql_content.split(';') if s.strip()]
+                for stmt in statements:
+                    if stmt:
+                        try:
+                            conn.execute(stmt)
+                            logger.info(f"✅ Ejecutado: {stmt[:50]}...")
+                        except Exception as e:
+                            # Ignorar errores de "ya existe"
+                            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                                logger.info(f"⚠️  Ya existe: {stmt[:50]}...")
+                            else:
+                                raise
 
-    except Exception as e:
-        logger.error(f"❌ Error en migración de datos: {str(e)}")
-        raise
+        # Aplicar schema_abc_xyz.sql
+        schema_xyz_path = Path('/app/database/schema_abc_xyz.sql')
+        if schema_xyz_path.exists():
+            logger.info(f"Aplicando {schema_xyz_path}...")
+            with open(schema_xyz_path, 'r') as f:
+                sql_content = f.read()
+                statements = [s.strip() for s in sql_content.split(';') if s.strip()]
+                for stmt in statements:
+                    if stmt:
+                        try:
+                            conn.execute(stmt)
+                            logger.info(f"✅ Ejecutado: {stmt[:50]}...")
+                        except Exception as e:
+                            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                                logger.info(f"⚠️  Ya existe: {stmt[:50]}...")
+                            else:
+                                raise
 
-
-def run_migrations():
-    """Ejecuta todas las migraciones pendientes"""
-    logger.info("🚀 Iniciando proceso de migraciones...")
-    logger.info(f"📂 Base de datos: {DB_PATH}")
-
-    if not DB_PATH.exists():
-        logger.error(f"❌ Base de datos no encontrada: {DB_PATH}")
-        sys.exit(1)
-
-    # Conectar a la BD
-    conn = duckdb.connect(str(DB_PATH))
-
-    try:
-        # Crear tabla de control de migraciones
-        create_migrations_table(conn)
-
-        # Obtener migraciones aplicadas
-        applied = get_applied_migrations(conn)
-        logger.info(f"📋 Migraciones aplicadas: {len(applied)}")
-
-        # Buscar archivos de migración SQL
-        sql_migrations = sorted(MIGRATIONS_DIR.glob("*.sql"))
-
-        for migration_file in sql_migrations:
-            migration_name = migration_file.name
-
-            if migration_name in applied:
-                logger.info(f"⏭️  Migración ya aplicada: {migration_name}")
-                continue
-
-            apply_migration(conn, migration_file)
-
-        # NOTA: La migración de datos de tiendas_config.py ya no es necesaria
-        # Los datos iniciales están incluidos en el archivo SQL con INSERT OR IGNORE
-        # run_data_migration(conn)
-
-        logger.info("✅ Todas las migraciones completadas exitosamente")
-
-    except Exception as e:
-        logger.error(f"❌ Error durante migraciones: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-    finally:
         conn.close()
+        logger.info("✅ Migraciones aplicadas exitosamente")
+        return True
 
+    except Exception as e:
+        logger.error(f"❌ Error aplicando migraciones: {e}", exc_info=True)
+        return False
 
 if __name__ == "__main__":
-    run_migrations()
+    success = apply_migrations()
+    sys.exit(0 if success else 1)

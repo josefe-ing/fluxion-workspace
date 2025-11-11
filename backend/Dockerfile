@@ -27,9 +27,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código del backend (incluye startup.sh)
 COPY backend/ .
 
-# Copiar migraciones desde el directorio database
-COPY database/migrations /app/database/migrations
-COPY database/scripts /app/database/scripts
+# Crear directorio para schemas de base de datos
+RUN mkdir -p /app/database
+
+# Copiar schemas de migraciones desde el directorio database
+COPY database/schema_abc_v2.sql /app/database/schema_abc_v2.sql
+COPY database/schema_abc_xyz.sql /app/database/schema_abc_xyz.sql
 
 # Hacer archivos ejecutables
 RUN chmod +x /app/startup.sh /app/run_migrations.py
