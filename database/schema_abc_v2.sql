@@ -2,23 +2,9 @@
 -- CLASIFICACIÓN ABC V2 BASADA EN VALOR ECONÓMICO (PRINCIPIO DE PARETO)
 -- Sistema de clasificación ABC basado en valor de consumo anual
 -- =====================================================================================
-
+-- NOTA: Si la tabla existe con schema antiguo (producto_id), se eliminará y recreará
+-- mediante migrate_abc_v2_schema.sql ejecutado por run_migrations.py
 -- =====================================================================================
--- MIGRACIÓN: Añadir columnas faltantes si la tabla ya existe
--- =====================================================================================
-
--- Añadir codigo_producto y ubicacion_id si no existen (migración desde schema anterior)
--- Estas ALTER TABLE se ejecutarán antes del CREATE TABLE IF NOT EXISTS
--- para asegurar que las tablas existentes tengan las columnas correctas
-
-ALTER TABLE IF EXISTS productos_abc_v2 ADD COLUMN IF NOT EXISTS codigo_producto VARCHAR;
-ALTER TABLE IF EXISTS productos_abc_v2 ADD COLUMN IF NOT EXISTS ubicacion_id VARCHAR;
-
-ALTER TABLE IF EXISTS productos_abc_v2_historico ADD COLUMN IF NOT EXISTS codigo_producto VARCHAR;
-ALTER TABLE IF EXISTS productos_abc_v2_historico ADD COLUMN IF NOT EXISTS ubicacion_id VARCHAR;
-
-ALTER TABLE IF EXISTS productos_abc_v2_evolucion ADD COLUMN IF NOT EXISTS codigo_producto VARCHAR;
-ALTER TABLE IF EXISTS productos_abc_v2_evolucion ADD COLUMN IF NOT EXISTS ubicacion_id VARCHAR;
 
 -- =====================================================================================
 -- TABLA PRINCIPAL: PRODUCTOS_ABC_V2

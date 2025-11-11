@@ -31,6 +31,7 @@ COPY backend/ .
 RUN mkdir -p /app/database
 
 # Copiar schemas de migraciones desde el directorio database
+COPY database/migrate_abc_v2_schema.sql /app/database/migrate_abc_v2_schema.sql
 COPY database/schema_abc_v2.sql /app/database/schema_abc_v2.sql
 COPY database/schema_abc_xyz.sql /app/database/schema_abc_xyz.sql
 

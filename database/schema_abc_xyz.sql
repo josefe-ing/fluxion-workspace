@@ -70,7 +70,9 @@ ORDER BY
 
 CREATE OR REPLACE VIEW vista_productos_az_criticos AS
 SELECT
-    prod.codigo as codigo_producto,
+    abc.codigo_producto,
+    abc.ubicacion_id,
+    prod.descripcion,
     abc.valor_consumo_total,
     abc.coeficiente_variacion,
     abc.demanda_promedio_semanal,
@@ -86,7 +88,7 @@ SELECT
         ELSE 'MONITOREAR - CV Moderado'
     END as nivel_alerta
 FROM productos_abc_v2 abc
-JOIN productos prod ON abc.producto_id = prod.id
+LEFT JOIN productos prod ON abc.codigo_producto = prod.codigo
 WHERE abc.matriz_abc_xyz = 'AZ'
   AND abc.clasificacion_abc_valor = 'A'
 ORDER BY abc.valor_consumo_total DESC;
@@ -97,7 +99,9 @@ ORDER BY abc.valor_consumo_total DESC;
 
 CREATE OR REPLACE VIEW vista_productos_bz_cz AS
 SELECT
-    prod.codigo as codigo_producto,
+    abc.codigo_producto,
+    abc.ubicacion_id,
+    prod.descripcion,
     abc.clasificacion_abc_valor,
     abc.clasificacion_xyz,
     abc.matriz_abc_xyz,
@@ -110,7 +114,7 @@ SELECT
         ELSE 'MANTENER_STOCK_MINIMO'
     END as estrategia_recomendada
 FROM productos_abc_v2 abc
-JOIN productos prod ON abc.producto_id = prod.id
+LEFT JOIN productos prod ON abc.codigo_producto = prod.codigo
 WHERE abc.matriz_abc_xyz IN ('BZ', 'CZ')
 ORDER BY
     abc.clasificacion_abc_valor,
@@ -122,7 +126,9 @@ ORDER BY
 
 CREATE OR REPLACE VIEW vista_productos_ax_bx AS
 SELECT
-    prod.codigo as codigo_producto,
+    abc.codigo_producto,
+    abc.ubicacion_id,
+    prod.descripcion,
     abc.clasificacion_abc_valor,
     abc.valor_consumo_total,
     abc.coeficiente_variacion,
@@ -135,7 +141,7 @@ SELECT
         ELSE 'REVISAR_ESTRATEGIA'
     END as estrategia_recomendada
 FROM productos_abc_v2 abc
-JOIN productos prod ON abc.producto_id = prod.id
+LEFT JOIN productos prod ON abc.codigo_producto = prod.codigo
 WHERE abc.matriz_abc_xyz IN ('AX', 'BX')
   AND abc.confiabilidad_calculo = 'ALTA'
 ORDER BY abc.valor_consumo_total DESC;
