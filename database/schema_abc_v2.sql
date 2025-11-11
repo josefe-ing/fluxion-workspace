@@ -193,15 +193,15 @@ SELECT
     p.codigo,
     p.descripcion,
     p.categoria,
-    p.abc_classification as clasificacion_velocidad,
+    abc.clasificacion_velocidad,
     abc.clasificacion_abc_valor,
     abc.valor_consumo_total,
     abc.unidades_vendidas_total,
     abc.ranking_valor,
     CASE
-        WHEN p.abc_classification = 'A' AND abc.clasificacion_abc_valor = 'C' THEN 'Alta velocidad, bajo valor'
-        WHEN p.abc_classification = 'C' AND abc.clasificacion_abc_valor = 'A' THEN 'Baja velocidad, alto valor'
-        WHEN p.abc_classification = abc.clasificacion_abc_valor THEN 'Coherente'
+        WHEN abc.clasificacion_velocidad = 'A' AND abc.clasificacion_abc_valor = 'C' THEN 'Alta velocidad, bajo valor'
+        WHEN abc.clasificacion_velocidad = 'C' AND abc.clasificacion_abc_valor = 'A' THEN 'Baja velocidad, alto valor'
+        WHEN abc.clasificacion_velocidad = abc.clasificacion_abc_valor THEN 'Coherente'
         ELSE 'Discrepancia moderada'
     END as tipo_discrepancia
 FROM productos p
