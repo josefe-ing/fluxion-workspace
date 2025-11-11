@@ -2,8 +2,15 @@ import { useState, useEffect, useMemo } from 'react';
 import http from '../../services/http';
 import type { OrderData, ProductoPedido } from './OrderWizard';
 import ProductSalesModal from '../sales/ProductSalesModal';
-import ABCClassificationModal from './ABCClassificationModal';
+import ABCComparisonModal from './ABCComparisonModal';
+import XYZModal from './XYZModal';
 import StockMinimoModal from './StockMinimoModal';
+import {
+  getClasificacionesPorCodigos,
+  ClasificacionABCv2,
+  getIconoDiscrepancia,
+  getDescripcionXYZ
+} from '../../services/abcV2Service';
 import StockSeguridadModal from './StockSeguridadModal';
 import PuntoReordenModal from './PuntoReordenModal';
 import StockMaximoModal from './StockMaximoModal';
@@ -25,7 +32,7 @@ interface Props {
   onBack: () => void;
 }
 
-type SortField = 'prom_5d' | 'prom_20d' | 'prom_mismo_dia' | 'stock' | 'sugerido' | 'pedir' | 'abc' | 'criticidad';
+type SortField = 'prom_5d' | 'prom_20d' | 'prom_mismo_dia' | 'stock' | 'sugerido' | 'pedir' | 'abc' | 'abc_v2' | 'criticidad';
 type SortDirection = 'asc' | 'desc';
 
 interface StockParams {
@@ -59,6 +66,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
   const [abcModalOpen, setAbcModalOpen] = useState(false);
   const [selectedProductoABC, setSelectedProductoABC] = useState<ProductoPedido | null>(null);
+  const [xyzModalOpen, setXyzModalOpen] = useState(false);
+  const [selectedProductoXYZ, setSelectedProductoXYZ] = useState<ProductoPedido | null>(null);
   const [stockMinimoModalOpen, setStockMinimoModalOpen] = useState(false);
   const [selectedProductoStockMin, setSelectedProductoStockMin] = useState<ProductoPedido | null>(null);
   const [stockSeguridadModalOpen, setStockSeguridadModalOpen] = useState(false);
@@ -83,6 +92,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [analisisXYZCargando, setAnalisisXYZCargando] = useState(false);
   const [analisisXYZReal, setAnalisisXYZReal] = useState<Record<string, AnalisisXYZ>>({});
   const [usarDatosReales, setUsarDatosReales] = useState(true); // true = API real, false = dummy
+
+  // Estado para ABC v2 (valor económico)
+  const [clasificacionesV2, setClasificacionesV2] = useState<Map<string, ClasificacionABCv2>>(new Map());
 
   useEffect(() => {
     cargarStockParams();
@@ -189,6 +201,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     setAbcModalOpen(true);
   };
 
+  const handleXYZClick = (producto: ProductoPedido) => {
+    setSelectedProductoXYZ(producto);
+    setXyzModalOpen(true);
+  };
+
   const handleStockMinimoClick = (producto: ProductoPedido) => {
     setSelectedProductoStockMin(producto);
     setStockMinimoModalOpen(true);
@@ -256,6 +273,21 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     }
   };
 
+  const cargarClasificacionesABCv2 = async (codigosProductos: string[]) => {
+    try {
+      // Usar tienda_destino como ubicacion_id para obtener clasificaciones locales
+      const clasificaciones = await getClasificacionesPorCodigos(
+        codigosProductos,
+        orderData.tienda_destino
+      );
+      setClasificacionesV2(clasificaciones);
+      console.log(`✅ ABC v2 + XYZ cargado para ${clasificaciones.size} productos en ${orderData.tienda_destino}`);
+    } catch (error) {
+      console.warn('ABC v2 no disponible:', error);
+      // No es crítico, continuar sin ABC v2
+    }
+  };
+
   const cargarProductosSugeridos = async () => {
     try {
       setLoading(true);
@@ -274,6 +306,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
 
       setProductos(productosConDefaults);
       updateOrderData({ productos: productosConDefaults });
+
+      // Cargar clasificaciones ABC v2 después de tener los productos
+      if (productosConDefaults.length > 0) {
+        const codigos = productosConDefaults.map((p: ProductoPedido) => p.codigo_producto);
+        cargarClasificacionesABCv2(codigos);
+      }
     } catch (error) {
       console.error('Error cargando productos sugeridos:', error);
     } finally {
@@ -630,6 +668,21 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       }
     }
 
+    // Caso especial para ABC v2 (ordenamiento por clasificación de valor)
+    if (sortField === 'abc_v2') {
+      const abcV2Order = { 'A': 1, 'B': 2, 'C': 3, 'NUEVO': 4, 'ERROR_COSTO': 5, 'SIN_MOVIMIENTO': 6, '-': 7 };
+      const aClasifV2 = clasificacionesV2.get(a.codigo_producto);
+      const bClasifV2 = clasificacionesV2.get(b.codigo_producto);
+      const aOrder = abcV2Order[(aClasifV2?.clasificacion_abc_valor || '-') as keyof typeof abcV2Order];
+      const bOrder = abcV2Order[(bClasifV2?.clasificacion_abc_valor || '-') as keyof typeof abcV2Order];
+
+      if (sortDirection === 'asc') {
+        return aOrder - bOrder;
+      } else {
+        return bOrder - aOrder;
+      }
+    }
+
     // Caso especial para Criticidad (ordenamiento por urgencia combinada)
     if (sortField === 'criticidad') {
       const aCriticidad = calcularCriticidad(a);
@@ -841,6 +894,34 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     CEDI
                   </th>
                   <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="40px" />
+                  {/* Nueva columna ABC v2 (Valor) - Ordenable */}
+                  <th
+                    onClick={() => handleSort('abc_v2')}
+                    className="bg-emerald-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap cursor-pointer hover:bg-emerald-200 select-none"
+                    style={{ width: '45px' }}
+                  >
+                    <div className="flex flex-col items-center gap-0.5">
+                      <div className="flex items-center gap-0.5">
+                        <span>ABC</span>
+                        {sortField === 'abc_v2' && (
+                          <span className="text-gray-900 text-xs">
+                            {sortDirection === 'asc' ? '↑' : '↓'}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[8px] text-emerald-700">v2 💰</span>
+                    </div>
+                  </th>
+                  <th
+                    className="bg-blue-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap"
+                    style={{ width: '45px' }}
+                    title="XYZ: Variabilidad de demanda"
+                  >
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span>XYZ</span>
+                      <span className="text-[8px] text-blue-700">📊</span>
+                    </div>
+                  </th>
                   <SortableHeader field="criticidad" label="🔥" bgColor="bg-red-100" width="60px" />
                   <th className="bg-orange-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '45px' }}>
                     Min
@@ -972,6 +1053,88 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       >
                         {getClasificacionABC(producto)}
                       </button>
+                    </td>
+                    {/* Nueva celda ABC v2 (Valor) */}
+                    <td
+                      onClick={() => handleABCClick(producto)}
+                      className="bg-emerald-50 px-2 py-1 text-center cursor-pointer hover:bg-emerald-100 transition-colors"
+                      style={{ width: '45px' }}
+                      title="ABC v2 basado en valor económico"
+                    >
+                      {(() => {
+                        const claseV2 = clasificacionesV2.get(producto.codigo_producto);
+                        if (!claseV2) {
+                          return <span className="text-gray-400 text-[10px]">-</span>;
+                        }
+
+                        const icono = getIconoDiscrepancia(claseV2);
+                        let colorClase = '';
+
+                        if (claseV2.clasificacion_abc_valor === 'A') {
+                          colorClase = 'text-red-700 font-bold';
+                        } else if (claseV2.clasificacion_abc_valor === 'B') {
+                          colorClase = 'text-yellow-700 font-semibold';
+                        } else if (claseV2.clasificacion_abc_valor === 'C') {
+                          colorClase = 'text-gray-600 font-medium';
+                        }
+
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className={`text-[11px] ${colorClase}`}>
+                              {claseV2.clasificacion_abc_valor}
+                            </span>
+                            {claseV2.tiene_discrepancia && (
+                              <span className="text-[10px]" title={claseV2.tipo_discrepancia}>
+                                {icono}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    {/* Nueva columna XYZ (Variabilidad) */}
+                    <td
+                      onClick={() => handleXYZClick(producto)}
+                      className="bg-blue-50 px-2 py-1 text-center cursor-pointer hover:bg-blue-100 transition-colors"
+                      style={{ width: '45px' }}
+                      title={(() => {
+                        const claseV2 = clasificacionesV2.get(producto.codigo_producto);
+                        if (!claseV2?.clasificacion_xyz) return 'Sin clasificación XYZ - Click para más info';
+                        return `${getDescripcionXYZ(claseV2.clasificacion_xyz)}\nCV: ${claseV2.coeficiente_variacion?.toFixed(2) || 'N/A'}\n\nClick para ver análisis detallado`;
+                      })()}
+                    >
+                      {(() => {
+                        const claseV2 = clasificacionesV2.get(producto.codigo_producto);
+                        if (!claseV2?.clasificacion_xyz) {
+                          return <span className="text-gray-400 text-[10px]">-</span>;
+                        }
+
+                        const matriz = claseV2.matriz_abc_xyz;
+                        let colorClase = '';
+
+                        // Colores por XYZ
+                        if (claseV2.clasificacion_xyz === 'X') {
+                          colorClase = 'text-green-700 font-semibold';
+                        } else if (claseV2.clasificacion_xyz === 'Y') {
+                          colorClase = 'text-yellow-700 font-semibold';
+                        } else if (claseV2.clasificacion_xyz === 'Z') {
+                          colorClase = 'text-red-700 font-bold';
+                        }
+
+                        // Mostrar matriz completa (ej: AX, BZ) en vez de solo X/Y/Z
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className={`text-[10px] ${colorClase}`}>
+                              {matriz || claseV2.clasificacion_xyz}
+                            </span>
+                            {claseV2.es_extremadamente_volatil && (
+                              <span className="text-[10px]" title="Extremadamente volátil (CV > 2.0)">
+                                ⚡
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="bg-red-50 px-2 py-1 text-[10px] text-center font-bold" style={{ width: '60px' }}>
                       {stockParams && producto.prom_ventas_20dias_unid > 0 ? (() => {
@@ -1209,16 +1372,30 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         />
       )}
 
-      {/* Modal de Clasificación ABC */}
+      {/* Modal de Clasificación ABC - Comparación v1 vs v2 */}
       {selectedProductoABC && (
-        <ABCClassificationModal
+        <ABCComparisonModal
           isOpen={abcModalOpen}
           onClose={() => setAbcModalOpen(false)}
           producto={{
             codigo_producto: selectedProductoABC.codigo_producto,
             descripcion_producto: selectedProductoABC.descripcion_producto,
-            prom_ventas_20dias_unid: selectedProductoABC.prom_ventas_20dias_unid,
-            cantidad_bultos: selectedProductoABC.cantidad_bultos,
+            abc: getClasificacionABC(selectedProductoABC),
+            velocidad_bultos_dia: selectedProductoABC.prom_ventas_20dias_unid / selectedProductoABC.cantidad_bultos,
+          }}
+          ubicacionId={orderData.tienda_destino}
+        />
+      )}
+
+      {/* Modal de Clasificación XYZ - Variabilidad Detallada */}
+      {selectedProductoXYZ && (
+        <XYZModal
+          isOpen={xyzModalOpen}
+          onClose={() => setXyzModalOpen(false)}
+          clasificacion={clasificacionesV2.get(selectedProductoXYZ.codigo_producto) || null}
+          producto={{
+            codigo_producto: selectedProductoXYZ.codigo_producto,
+            descripcion_producto: selectedProductoXYZ.descripcion_producto,
           }}
         />
       )}

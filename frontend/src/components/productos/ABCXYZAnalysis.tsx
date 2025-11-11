@@ -1,0 +1,419 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  getMatrizABCXYZ,
+  getProductosPorMatriz,
+  MatrizABCXYZ as MatrizData,
+  ProductoEnriquecido,
+  formatCurrency,
+} from '../../services/productosService';
+import { getTiendas, Ubicacion } from '../../services/ubicacionesService';
+import MatrizABCXYZ from './MatrizABCXYZ';
+import ProductoDetalleModal from './ProductoDetalleModal';
+import ABCDistributionChart from './charts/ABCDistributionChart';
+import XYZDistributionChart from './charts/XYZDistributionChart';
+
+const ABCXYZAnalysis: React.FC = () => {
+  const [loading, setLoading] = useState(true);
+  const [ubicacionId, setUbicacionId] = useState<string>('');
+  const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
+  const [matrizData, setMatrizData] = useState<MatrizData | null>(null);
+  const [selectedMatriz, setSelectedMatriz] = useState<string>('');
+  const [productos, setProductos] = useState<ProductoEnriquecido[]>([]);
+  const [loadingProductos, setLoadingProductos] = useState(false);
+  const [selectedProducto, setSelectedProducto] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'ranking' | 'stock'>('ranking');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [hasMoreProducts, setHasMoreProducts] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const matriz = await getMatrizABCXYZ(ubicacionId || undefined);
+      setMatrizData(matriz);
+    } catch (error) {
+      console.error('Error loading data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [ubicacionId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Cargar ubicaciones al montar el componente
+  useEffect(() => {
+    const loadUbicaciones = async () => {
+      try {
+        const data = await getTiendas();
+        setUbicaciones(data);
+      } catch (error) {
+        console.error('Error loading ubicaciones:', error);
+      }
+    };
+    loadUbicaciones();
+  }, []);
+
+  const handleMatrizClick = async (matriz: string) => {
+    setSelectedMatriz(matriz);
+    setLoadingProductos(true);
+    try {
+      // Load with high limit to get all products
+      const data = await getProductosPorMatriz(matriz, ubicacionId || undefined, 10000, 0);
+      setProductos(data);
+      setHasMoreProducts(data.length >= 10000);
+      // Reset sort to default when loading new data
+      setSortBy('ranking');
+      setSortOrder('asc');
+    } catch (error) {
+      console.error('Error loading productos:', error);
+    } finally {
+      setLoadingProductos(false);
+    }
+  };
+
+  const loadMoreProducts = async () => {
+    if (!selectedMatriz || isLoadingMore) return;
+
+    setIsLoadingMore(true);
+    try {
+      const data = await getProductosPorMatriz(
+        selectedMatriz,
+        ubicacionId || undefined,
+        10000,
+        productos.length
+      );
+      setProductos([...productos, ...data]);
+      setHasMoreProducts(data.length >= 10000);
+    } catch (error) {
+      console.error('Error loading more productos:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  const handleSort = (column: 'ranking' | 'stock') => {
+    if (sortBy === column) {
+      // Toggle sort order if clicking same column
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new column with default ascending order
+      setSortBy(column);
+      setSortOrder('asc');
+    }
+  };
+
+  // Sort productos based on current sort settings
+  const sortedProductos = React.useMemo(() => {
+    const sorted = [...productos];
+    sorted.sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'ranking') {
+        comparison = a.ranking_valor - b.ranking_valor;
+      } else {
+        comparison = a.stock_actual - b.stock_actual;
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+    return sorted;
+  }, [productos, sortBy, sortOrder]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Filtro Tienda */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <div className="flex items-center gap-4">
+          <label className="text-sm font-medium text-gray-700">
+            Filtrar por tienda:
+          </label>
+          <select
+            value={ubicacionId}
+            onChange={(e) => setUbicacionId(e.target.value)}
+            className="rounded-md border-gray-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"
+          >
+            <option value="">Todas las tiendas</option>
+            {ubicaciones.map((ub) => (
+              <option key={ub.id} value={ub.id}>
+                {ub.nombre}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={loadData}
+            className="ml-auto text-sm text-blue-600 hover:text-blue-800 flex items-center gap-2"
+          >
+            🔄 Refrescar
+          </button>
+        </div>
+      </div>
+
+      {/* Resumen ABC y XYZ lado a lado */}
+      {matrizData && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Resumen ABC (Tabla Pareto) */}
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Resumen ABC (Pareto)</h2>
+              <p className="text-xs text-gray-500 mt-1">Análisis por valor</p>
+            </div>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Clase</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Productos</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">% Productos</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">% Valor</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {Object.entries(matrizData.resumen_abc).map(([clase, data]) => (
+                  <tr key={clase}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                        clase === 'A' ? 'bg-red-100 text-red-800' :
+                        clase === 'B' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {clase}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {data.count}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {data.porcentaje_productos.toFixed(1)}%
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {data.porcentaje_valor.toFixed(1)}%
+                      {clase === 'A' && data.porcentaje_valor >= 70 && ' ✓'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="px-6 py-4 bg-blue-50 border-t border-blue-100">
+              <p className="text-sm text-blue-800 flex items-center gap-2">
+                💡 Solo el {matrizData.resumen_abc.A?.porcentaje_productos.toFixed(1)}% de tus productos generan el {matrizData.resumen_abc.A?.porcentaje_valor.toFixed(1)}% del valor
+              </p>
+            </div>
+            {/* Chart ABC */}
+            <div className="px-6 py-6 border-t border-gray-200">
+              <ABCDistributionChart resumenABC={matrizData.resumen_abc} />
+            </div>
+          </div>
+
+          {/* Resumen XYZ (Variabilidad) */}
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Resumen XYZ (Variabilidad)</h2>
+              <p className="text-xs text-gray-500 mt-1">Análisis por estabilidad de demanda</p>
+            </div>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Clase</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Productos</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">% Productos</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {Object.entries(matrizData.resumen_xyz).map(([clase, data]) => (
+                  <tr key={clase}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                        clase === 'X' ? 'bg-green-100 text-green-800' :
+                        clase === 'Y' ? 'bg-blue-100 text-blue-800' :
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {clase}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {data.count}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {data.porcentaje_productos.toFixed(1)}%
+                    </td>
+                    <td className="px-6 py-4 text-xs text-gray-500">
+                      {clase === 'X' && 'Demanda estable (CV < 0.5)'}
+                      {clase === 'Y' && 'Demanda variable (0.5 ≤ CV < 1.0)'}
+                      {clase === 'Z' && 'Demanda errática (CV ≥ 1.0)'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="px-6 py-4 bg-green-50 border-t border-green-100">
+              <p className="text-sm text-green-800 flex items-center gap-2">
+                💡 {matrizData.resumen_xyz.X?.porcentaje_productos.toFixed(1)}% de tus productos tienen demanda estable y predecible
+              </p>
+            </div>
+            {/* Chart XYZ */}
+            <div className="px-6 py-6 border-t border-gray-200">
+              <XYZDistributionChart resumenXYZ={matrizData.resumen_xyz} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Matriz ABC-XYZ */}
+      {matrizData && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Matriz ABC × XYZ</h2>
+          <MatrizABCXYZ
+            data={matrizData.matriz}
+            onCellClick={handleMatrizClick}
+            selectedCell={selectedMatriz}
+          />
+        </div>
+      )}
+
+      {/* Lista de Productos Filtrados */}
+      {selectedMatriz && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Productos en clasificación: {selectedMatriz}
+            </h3>
+          </div>
+
+          {loadingProductos ? (
+            <div className="flex items-center justify-center h-32">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+          ) : productos.length > 0 ? (
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Categoría</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ABC</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">XYZ</th>
+                  <th
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('ranking')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Ranking
+                      {sortBy === 'ranking' && (
+                        <span className="text-blue-600">
+                          {sortOrder === 'asc' ? '↑' : '↓'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('stock')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Stock
+                      {sortBy === 'stock' && (
+                        <span className="text-blue-600">
+                          {sortOrder === 'asc' ? '↑' : '↓'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {sortedProductos.map((producto, index) => (
+                  <tr
+                    key={producto.codigo_producto}
+                    onClick={() => setSelectedProducto(producto.codigo_producto)}
+                    className="hover:bg-gray-50 cursor-pointer"
+                  >
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {index + 1}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {producto.codigo_producto}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900">
+                      {producto.descripcion}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {producto.categoria}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        producto.clasificacion_abc === 'A' ? 'bg-red-100 text-red-800' :
+                        producto.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {producto.clasificacion_abc}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        producto.clasificacion_xyz === 'X' ? 'bg-green-100 text-green-800' :
+                        producto.clasificacion_xyz === 'Y' ? 'bg-blue-100 text-blue-800' :
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {producto.clasificacion_xyz}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      #{producto.ranking_valor}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {producto.stock_actual.toFixed(0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="px-6 py-8 text-center text-gray-500">
+              No hay productos en esta clasificación
+            </div>
+          )}
+
+          {/* Load More Button */}
+          {productos.length > 0 && hasMoreProducts && (
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-center">
+              <button
+                onClick={loadMoreProducts}
+                disabled={isLoadingMore}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isLoadingMore ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Cargando...
+                  </>
+                ) : (
+                  `Cargar más productos (mostrando ${productos.length})`
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal Producto Detalle */}
+      {selectedProducto && (
+        <ProductoDetalleModal
+          isOpen={!!selectedProducto}
+          onClose={() => setSelectedProducto(null)}
+          codigo={selectedProducto}
+        />
+      )}
+    </div>
+  );
+};
+
+export default ABCXYZAnalysis;

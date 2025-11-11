@@ -94,6 +94,10 @@ CREATE TABLE productos (
     abc_classification VARCHAR(1), -- A, B, C según importancia
     xyz_classification VARCHAR(1), -- X, Y, Z según variabilidad
 
+    -- Conjuntos sustituibles
+    conjunto_sustituible VARCHAR(100), -- ID del conjunto al que pertenece
+    es_lider_conjunto BOOLEAN DEFAULT false, -- Si es el producto principal del conjunto
+
     -- Control
     activo BOOLEAN DEFAULT true,
     discontinuado BOOLEAN DEFAULT false,
@@ -465,22 +469,69 @@ CREATE TABLE stock_actual (
 );
 
 -- =====================================================================================
+-- TABLAS DE CONJUNTOS SUSTITUIBLES (PRODUCTOS INTERCAMBIABLES)
+-- =====================================================================================
+
+-- Tabla de conjuntos sustituibles
+CREATE TABLE IF NOT EXISTS conjuntos_sustituibles (
+    id VARCHAR PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL UNIQUE,  -- ej: "azucar_blanca"
+    descripcion VARCHAR(200),             -- ej: "Azúcar Blanca 1kg"
+    categoria VARCHAR(50),
+    tipo_conjunto VARCHAR(50) DEFAULT 'sustituibles',  -- 'sustituibles', 'complementarios'
+    activo BOOLEAN DEFAULT true,
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================================================
+-- HISTÓRICO DE CLASIFICACIONES ABC-XYZ
+-- =====================================================================================
+
+-- Tabla de histórico para tracking de clasificaciones en el tiempo
+CREATE TABLE IF NOT EXISTS productos_abc_v2_historico (
+    id VARCHAR PRIMARY KEY,
+    codigo_producto VARCHAR(50) NOT NULL,
+    ubicacion_id VARCHAR(20) NOT NULL,
+    fecha_calculo DATE NOT NULL,
+    clasificacion_abc_valor VARCHAR(20),
+    clasificacion_xyz VARCHAR(1),
+    matriz_abc_xyz VARCHAR(2),
+    ranking_valor INTEGER,
+    valor_consumo_total DECIMAL(18,2),
+    porcentaje_valor DECIMAL(8,4),
+    porcentaje_acumulado DECIMAL(8,4),
+    coeficiente_variacion DECIMAL(8,4),
+    demanda_promedio_semanal DECIMAL(12,4),
+    UNIQUE(codigo_producto, ubicacion_id, fecha_calculo)
+);
+
+-- =====================================================================================
 -- ÍNDICES OPTIMIZADOS PARA PERFORMANCE
 -- =====================================================================================
 
 -- Índices principales
-CREATE INDEX idx_facturas_fecha_ubicacion ON facturas(fecha, ubicacion_id);
-CREATE INDEX idx_items_fecha_producto ON items_facturas(fecha, producto_id);
-CREATE INDEX idx_movimientos_fecha_ubicacion_producto ON movimientos_inventario(fecha, ubicacion_id, producto_id);
+CREATE INDEX IF NOT EXISTS idx_facturas_fecha_ubicacion ON facturas(fecha, ubicacion_id);
+CREATE INDEX IF NOT EXISTS idx_items_fecha_producto ON items_facturas(fecha, producto_id);
+CREATE INDEX IF NOT EXISTS idx_movimientos_fecha_ubicacion_producto ON movimientos_inventario(fecha, ubicacion_id, producto_id);
 
 -- Índices para configuración
-CREATE INDEX idx_producto_ubicacion_activo ON producto_ubicacion_config(ubicacion_id, activo);
-CREATE INDEX idx_productos_categoria ON productos(categoria, activo);
-CREATE INDEX idx_productos_abc ON productos(abc_classification, activo);
+CREATE INDEX IF NOT EXISTS idx_producto_ubicacion_activo ON producto_ubicacion_config(ubicacion_id, activo);
+CREATE INDEX IF NOT EXISTS idx_productos_categoria ON productos(categoria, activo);
+CREATE INDEX IF NOT EXISTS idx_productos_abc ON productos(abc_classification, activo);
 
 -- Índices para stock
-CREATE INDEX idx_stock_ubicacion ON stock_actual(ubicacion_id);
-CREATE INDEX idx_stock_reposicion ON stock_actual(requiere_reposicion) WHERE requiere_reposicion = true;
+CREATE INDEX IF NOT EXISTS idx_stock_ubicacion ON stock_actual(ubicacion_id);
+CREATE INDEX IF NOT EXISTS idx_stock_reposicion ON stock_actual(requiere_reposicion) WHERE requiere_reposicion = true;
+
+-- Índices para conjuntos sustituibles
+CREATE INDEX IF NOT EXISTS idx_conjuntos_nombre ON conjuntos_sustituibles(nombre);
+CREATE INDEX IF NOT EXISTS idx_conjuntos_categoria ON conjuntos_sustituibles(categoria);
+
+-- Índices para histórico ABC-XYZ
+CREATE INDEX IF NOT EXISTS idx_historico_codigo ON productos_abc_v2_historico(codigo_producto);
+CREATE INDEX IF NOT EXISTS idx_historico_ubicacion ON productos_abc_v2_historico(ubicacion_id);
+CREATE INDEX IF NOT EXISTS idx_historico_fecha ON productos_abc_v2_historico(fecha_calculo);
 
 -- =====================================================================================
 -- VISTAS PARA DASHBOARDS Y REPORTES

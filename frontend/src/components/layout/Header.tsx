@@ -9,6 +9,7 @@ export default function Header() {
     { path: '/pedidos-sugeridos', label: 'Pedidos' },
     { path: '/inventarios', label: 'Inventarios' },
     { path: '/ventas', label: 'Ventas' },
+    { path: '/productos', label: 'Productos' },
   ];
 
   const isActive = (path: string) => {
@@ -20,6 +21,9 @@ export default function Header() {
     }
     if (path === '/pedidos-sugeridos') {
       return location.pathname === path || location.pathname.startsWith('/pedidos-sugeridos/');
+    }
+    if (path === '/productos') {
+      return location.pathname === path || location.pathname.startsWith('/productos/');
     }
     return location.pathname === path;
   };

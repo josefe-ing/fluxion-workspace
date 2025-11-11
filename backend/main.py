@@ -54,6 +54,7 @@ from middleware.tenant import TenantMiddleware
 from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
 from routers.analisis_xyz_router import router as analisis_xyz_router
 from routers.config_inventario_router import router as config_inventario_router
+from routers.abc_v2_router import router as abc_v2_router
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -130,6 +131,7 @@ app.add_middleware(
 app.include_router(pedidos_sugeridos_router)
 app.include_router(analisis_xyz_router)
 app.include_router(config_inventario_router)
+app.include_router(abc_v2_router)
 
 # Global Exception Handler con CORS
 @app.middleware("http")
@@ -818,6 +820,787 @@ async def get_categorias():
     except Exception as e:
         logger.error(f"Error obteniendo categorías: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+# =====================================================================================
+# ENDPOINTS PARA SECCIÓN PRODUCTOS (ABC-XYZ)
+# =====================================================================================
+
+@app.get("/api/productos/matriz-abc-xyz", tags=["Productos"])
+async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
+    """
+    Retorna matriz 3×3 ABC-XYZ con conteos y porcentajes
+
+    Args:
+        ubicacion_id: Filtro por tienda (opcional, None = todas las tiendas)
+
+    Returns:
+        {
+            "total_productos": 3133,
+            "matriz": {
+                "AX": { "count": 45, "porcentaje_productos": 1.4, "porcentaje_valor": 35.2 },
+                ...
+            },
+            "resumen_abc": { "A": {...}, "B": {...}, "C": {...} },
+            "resumen_xyz": { "X": {...}, "Y": {...}, "Z": {...} }
+        }
+    """
+    try:
+        with get_db_connection() as conn:
+            if ubicacion_id:
+                # Si hay ubicacion_id, mostrar datos de esa tienda específica
+                where_clause = "WHERE matriz_abc_xyz IS NOT NULL AND ubicacion_id = ?"
+                params = [ubicacion_id]
+
+                # Contar productos por matriz
+                matriz_query = f"""
+                    SELECT
+                        matriz_abc_xyz,
+                        COUNT(DISTINCT codigo_producto) as count,
+                        SUM(valor_consumo_total) as valor_total
+                    FROM productos_abc_v2
+                    {where_clause}
+                    GROUP BY matriz_abc_xyz
+                """
+
+                matriz_result = conn.execute(matriz_query, params).fetchall()
+
+                # Resumen por ABC
+                abc_query = f"""
+                    SELECT
+                        clasificacion_abc_valor,
+                        COUNT(DISTINCT codigo_producto) as count,
+                        SUM(valor_consumo_total) as valor_total
+                    FROM productos_abc_v2
+                    {where_clause}
+                    GROUP BY clasificacion_abc_valor
+                """
+
+                abc_result = conn.execute(abc_query, params).fetchall()
+
+                # Resumen por XYZ
+                xyz_query = f"""
+                    SELECT
+                        clasificacion_xyz,
+                        COUNT(DISTINCT codigo_producto) as count
+                    FROM productos_abc_v2
+                    {where_clause}
+                        AND clasificacion_xyz IS NOT NULL
+                    GROUP BY clasificacion_xyz
+                """
+
+                xyz_result = conn.execute(xyz_query, params).fetchall()
+
+            else:
+                # Sin ubicacion_id: agregar por producto primero, luego clasificar
+                # Esto evita contar el mismo producto múltiples veces si tiene diferentes
+                # clasificaciones en diferentes tiendas
+
+                # Matriz: tomar la clasificación más común por producto
+                matriz_query = """
+                    WITH producto_matriz AS (
+                        SELECT
+                            codigo_producto,
+                            matriz_abc_xyz,
+                            SUM(valor_consumo_total) as valor_total,
+                            COUNT(*) as tiendas_count
+                        FROM productos_abc_v2
+                        WHERE matriz_abc_xyz IS NOT NULL
+                        GROUP BY codigo_producto, matriz_abc_xyz
+                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC, valor_total DESC) = 1
+                    )
+                    SELECT
+                        matriz_abc_xyz,
+                        COUNT(codigo_producto) as count,
+                        SUM(valor_total) as valor_total
+                    FROM producto_matriz
+                    GROUP BY matriz_abc_xyz
+                """
+
+                matriz_result = conn.execute(matriz_query).fetchall()
+
+                # Resumen ABC: tomar la clasificación más común por producto
+                abc_query = """
+                    WITH producto_abc AS (
+                        SELECT
+                            codigo_producto,
+                            clasificacion_abc_valor,
+                            SUM(valor_consumo_total) as valor_total,
+                            COUNT(*) as tiendas_count
+                        FROM productos_abc_v2
+                        WHERE clasificacion_abc_valor IS NOT NULL
+                        GROUP BY codigo_producto, clasificacion_abc_valor
+                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC, valor_total DESC) = 1
+                    )
+                    SELECT
+                        clasificacion_abc_valor,
+                        COUNT(codigo_producto) as count,
+                        SUM(valor_total) as valor_total
+                    FROM producto_abc
+                    GROUP BY clasificacion_abc_valor
+                """
+
+                abc_result = conn.execute(abc_query).fetchall()
+
+                # Resumen XYZ: tomar la clasificación más común por producto
+                xyz_query = """
+                    WITH producto_xyz AS (
+                        SELECT
+                            codigo_producto,
+                            clasificacion_xyz,
+                            COUNT(*) as tiendas_count
+                        FROM productos_abc_v2
+                        WHERE clasificacion_xyz IS NOT NULL
+                        GROUP BY codigo_producto, clasificacion_xyz
+                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC) = 1
+                    )
+                    SELECT
+                        clasificacion_xyz,
+                        COUNT(codigo_producto) as count
+                    FROM producto_xyz
+                    GROUP BY clasificacion_xyz
+                """
+
+                xyz_result = conn.execute(xyz_query).fetchall()
+
+            # Calcular totales
+            total_productos = sum(row[1] for row in matriz_result)
+            total_valor = sum(row[2] if row[2] else 0 for row in matriz_result)
+
+            # Construir matriz con todos los cuadrantes
+            matriz = {}
+            for abc in ['A', 'B', 'C']:
+                for xyz in ['X', 'Y', 'Z']:
+                    key = f"{abc}{xyz}"
+                    matriz[key] = {
+                        "count": 0,
+                        "porcentaje_productos": 0.0,
+                        "porcentaje_valor": 0.0
+                    }
+
+            # Llenar con datos reales
+            for row in matriz_result:
+                if row[0]:  # matriz_abc_xyz no es NULL
+                    matriz[row[0]] = {
+                        "count": row[1],
+                        "porcentaje_productos": round((row[1] / total_productos * 100), 2) if total_productos > 0 else 0,
+                        "porcentaje_valor": round((row[2] / total_valor * 100), 2) if total_valor > 0 else 0
+                    }
+
+            # Procesar resumen ABC (derivar de la matriz para consistencia)
+            resumen_abc = {}
+            for abc in ['A', 'B', 'C']:
+                abc_count = sum(matriz[f"{abc}{xyz}"]["count"] for xyz in ['X', 'Y', 'Z'])
+                abc_porcentaje_valor = sum(matriz[f"{abc}{xyz}"]["porcentaje_valor"] for xyz in ['X', 'Y', 'Z'])
+                if abc_count > 0:
+                    resumen_abc[abc] = {
+                        "count": abc_count,
+                        "porcentaje_productos": round((abc_count / total_productos * 100), 2) if total_productos > 0 else 0,
+                        "porcentaje_valor": round(abc_porcentaje_valor, 2)
+                    }
+
+            # Procesar resumen XYZ (derivar de la matriz para consistencia)
+            resumen_xyz = {}
+            for xyz in ['X', 'Y', 'Z']:
+                xyz_count = sum(matriz[f"{abc}{xyz}"]["count"] for abc in ['A', 'B', 'C'])
+                if xyz_count > 0:
+                    resumen_xyz[xyz] = {
+                        "count": xyz_count,
+                        "porcentaje_productos": round((xyz_count / total_productos * 100), 2) if total_productos > 0 else 0
+                    }
+
+            return {
+                "total_productos": total_productos,
+                "total_valor": float(total_valor) if total_valor else 0,
+                "matriz": matriz,
+                "resumen_abc": resumen_abc,
+                "resumen_xyz": resumen_xyz
+            }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo matriz ABC-XYZ: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@app.get("/api/productos/lista-por-matriz", tags=["Productos"])
+async def get_productos_por_matriz(
+    matriz: str,
+    ubicacion_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    """
+    Retorna lista de productos de una clasificación específica
+
+    Args:
+        matriz: "AX", "AY", "AZ", "BX", "BY", "BZ", "CX", "CY", "CZ"
+        ubicacion_id: Filtro por tienda (opcional)
+        limit: Cantidad máxima de productos a retornar
+        offset: Offset para paginación
+
+    Returns:
+        Lista de productos con clasificación ABC-XYZ
+    """
+    try:
+        with get_db_connection() as conn:
+            if ubicacion_id:
+                # Si hay ubicacion_id, mostrar productos de esa tienda específica
+                # Usar COALESCE para obtener descripción de inventario o ventas
+                query = """
+                    WITH producto_ventas AS (
+                        SELECT
+                            codigo_producto,
+                            descripcion_producto,
+                            categoria_producto
+                        FROM ventas_raw
+                        WHERE codigo_producto IN (
+                            SELECT codigo_producto FROM productos_abc_v2
+                            WHERE matriz_abc_xyz = ? AND ubicacion_id = ?
+                        )
+                        GROUP BY codigo_producto, descripcion_producto, categoria_producto
+                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY COUNT(*) DESC) = 1
+                    )
+                    SELECT
+                        abc.codigo_producto,
+                        COALESCE(inv.descripcion_producto, pv.descripcion_producto, 'Sin descripción') as descripcion,
+                        COALESCE(inv.categoria, pv.categoria_producto, 'Sin categoría') as categoria,
+                        abc.clasificacion_abc_valor,
+                        abc.clasificacion_xyz,
+                        abc.matriz_abc_xyz,
+                        abc.valor_consumo_total,
+                        abc.porcentaje_valor,
+                        abc.ranking_valor,
+                        abc.coeficiente_variacion,
+                        COALESCE(inv.cantidad_actual, 0) as stock_actual
+                    FROM productos_abc_v2 abc
+                    LEFT JOIN inventario_raw inv ON abc.codigo_producto = inv.codigo_producto
+                        AND abc.ubicacion_id = inv.ubicacion_id
+                    LEFT JOIN producto_ventas pv ON abc.codigo_producto = pv.codigo_producto
+                    WHERE abc.matriz_abc_xyz = ?
+                        AND abc.ubicacion_id = ?
+                    ORDER BY abc.ranking_valor ASC
+                    LIMIT ? OFFSET ?
+                """
+                params = [matriz, ubicacion_id, matriz, ubicacion_id, limit, offset]
+            else:
+                # Sin ubicacion_id: usar la clasificación más común para cada producto
+                # Esto asegura que cada producto aparezca una sola vez con su clasificación principal
+                query = """
+                    WITH producto_clasificacion AS (
+                        SELECT
+                            codigo_producto,
+                            matriz_abc_xyz,
+                            clasificacion_abc_valor,
+                            clasificacion_xyz,
+                            SUM(valor_consumo_total) as valor_total,
+                            AVG(porcentaje_valor) as porcentaje_promedio,
+                            AVG(coeficiente_variacion) as cv_promedio,
+                            COUNT(*) as tiendas_count
+                        FROM productos_abc_v2
+                        WHERE matriz_abc_xyz = ?
+                        GROUP BY codigo_producto, matriz_abc_xyz, clasificacion_abc_valor, clasificacion_xyz
+                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC, valor_total DESC) = 1
+                    ),
+                    producto_ranked AS (
+                        SELECT
+                            *,
+                            ROW_NUMBER() OVER (ORDER BY valor_total DESC) as ranking_global
+                        FROM producto_clasificacion
+                    ),
+                    producto_stock AS (
+                        SELECT
+                            codigo_producto,
+                            MIN(descripcion_producto) as descripcion_inv,
+                            MIN(categoria) as categoria_inv,
+                            SUM(cantidad_actual) as stock_total
+                        FROM inventario_raw
+                        GROUP BY codigo_producto
+                    ),
+                    producto_ventas AS (
+                        SELECT
+                            codigo_producto,
+                            descripcion_producto,
+                            categoria_producto
+                        FROM ventas_raw
+                        WHERE codigo_producto IN (SELECT codigo_producto FROM producto_clasificacion)
+                        GROUP BY codigo_producto, descripcion_producto, categoria_producto
+                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY COUNT(*) DESC) = 1
+                    )
+                    SELECT
+                        pr.codigo_producto,
+                        COALESCE(ps.descripcion_inv, pv.descripcion_producto) as descripcion,
+                        COALESCE(ps.categoria_inv, pv.categoria_producto) as categoria,
+                        pr.clasificacion_abc_valor,
+                        pr.clasificacion_xyz,
+                        pr.matriz_abc_xyz,
+                        pr.valor_total,
+                        pr.porcentaje_promedio,
+                        pr.ranking_global,
+                        pr.cv_promedio,
+                        ps.stock_total
+                    FROM producto_ranked pr
+                    LEFT JOIN producto_stock ps ON pr.codigo_producto = ps.codigo_producto
+                    LEFT JOIN producto_ventas pv ON pr.codigo_producto = pv.codigo_producto
+                    ORDER BY pr.valor_total DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = [matriz, limit, offset]
+
+            result = conn.execute(query, params).fetchall()
+
+            productos = []
+            for row in result:
+                productos.append({
+                    "codigo_producto": row[0],
+                    "descripcion": row[1],
+                    "categoria": row[2],
+                    "clasificacion_abc": row[3],
+                    "clasificacion_xyz": row[4],
+                    "matriz": row[5],
+                    "valor_consumo_total": float(row[6]) if row[6] else 0,
+                    "porcentaje_valor": float(row[7]) if row[7] else 0,
+                    "ranking_valor": row[8],
+                    "coeficiente_variacion": float(row[9]) if row[9] else None,
+                    "stock_actual": float(row[10]) if row[10] else 0
+                })
+
+            return productos
+
+    except Exception as e:
+        logger.error(f"Error obteniendo productos por matriz: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@app.get("/api/productos/{codigo}/detalle-completo", tags=["Productos"])
+async def get_producto_detalle_completo(codigo: str):
+    """
+    Vista 360° de un producto: info básica, clasificaciones por tienda,
+    inventarios, velocidades de venta
+
+    Args:
+        codigo: Código del producto
+
+    Returns:
+        Objeto completo con toda la información del producto
+    """
+    try:
+        with get_db_connection() as conn:
+            # 1. Información básica del producto
+            # Primero buscar en inventario, si no está, buscar en ventas históricas
+            producto_query_inv = """
+                SELECT DISTINCT
+                    codigo_producto as codigo,
+                    descripcion_producto as descripcion,
+                    categoria,
+                    marca
+                FROM inventario_raw
+                WHERE codigo_producto = ?
+                LIMIT 1
+            """
+
+            producto_row = conn.execute(producto_query_inv, [codigo]).fetchone()
+
+            # Si no está en inventario, buscar en ventas históricas
+            if not producto_row:
+                producto_query_ventas = """
+                    SELECT
+                        codigo_producto,
+                        descripcion_producto,
+                        categoria_producto,
+                        marca_producto
+                    FROM ventas_raw
+                    WHERE codigo_producto = ?
+                    GROUP BY codigo_producto, descripcion_producto, categoria_producto, marca_producto
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 1
+                """
+                producto_row = conn.execute(producto_query_ventas, [codigo]).fetchone()
+
+            if not producto_row:
+                raise HTTPException(status_code=404, detail=f"Producto {codigo} no encontrado")
+
+            producto_info = {
+                "codigo": producto_row[0],
+                "descripcion": producto_row[1],
+                "categoria": producto_row[2],
+                "marca": producto_row[3] if len(producto_row) > 3 else None
+            }
+
+            # 2. Clasificaciones ABC-XYZ por ubicación
+            clasificaciones_query = """
+                SELECT
+                    abc.ubicacion_id,
+                    COALESCE(
+                        (SELECT DISTINCT ubicacion_nombre FROM inventario_raw WHERE ubicacion_id = abc.ubicacion_id LIMIT 1),
+                        (SELECT DISTINCT ubicacion_nombre FROM ventas_raw WHERE ubicacion_id = abc.ubicacion_id LIMIT 1),
+                        abc.ubicacion_id
+                    ) as ubicacion_nombre,
+                    abc.clasificacion_abc_valor,
+                    abc.clasificacion_xyz,
+                    abc.matriz_abc_xyz,
+                    abc.ranking_valor,
+                    abc.valor_consumo_total,
+                    abc.coeficiente_variacion
+                FROM productos_abc_v2 abc
+                WHERE abc.codigo_producto = ?
+                ORDER BY abc.ranking_valor ASC
+            """
+
+            clasif_result = conn.execute(clasificaciones_query, [codigo]).fetchall()
+            clasificaciones = []
+            for row in clasif_result:
+                clasificaciones.append({
+                    "ubicacion_id": row[0],
+                    "ubicacion_nombre": row[1],
+                    "clasificacion_abc": row[2],
+                    "clasificacion_xyz": row[3],
+                    "matriz": row[4],
+                    "ranking_valor": row[5],
+                    "valor_consumo": float(row[6]) if row[6] else 0,
+                    "coeficiente_variacion": float(row[7]) if row[7] else None
+                })
+
+            # 3. Inventarios por ubicación
+            inventarios_query = """
+                SELECT
+                    ubicacion_id,
+                    ubicacion_nombre,
+                    tipo_ubicacion,
+                    cantidad_actual,
+                    fecha_extraccion as ultima_actualizacion
+                FROM inventario_raw
+                WHERE codigo_producto = ?
+                    AND activo = true
+                ORDER BY tipo_ubicacion, ubicacion_nombre
+            """
+
+            inv_result = conn.execute(inventarios_query, [codigo]).fetchall()
+            inventarios = []
+            total_inventario = 0
+            ubicaciones_con_stock = 0
+            ubicaciones_sin_stock = 0
+
+            for row in inv_result:
+                cantidad = float(row[3]) if row[3] else 0
+                total_inventario += cantidad
+                if cantidad > 0:
+                    ubicaciones_con_stock += 1
+                else:
+                    ubicaciones_sin_stock += 1
+
+                inventarios.append({
+                    "ubicacion_id": row[0],
+                    "ubicacion_nombre": row[1],
+                    "tipo_ubicacion": row[2],
+                    "cantidad_actual": cantidad,
+                    "ultima_actualizacion": str(row[4]) if row[4] else None
+                })
+
+            # 4. Métricas globales
+            metricas_globales = {
+                "total_inventario": total_inventario,
+                "ubicaciones_con_stock": ubicaciones_con_stock,
+                "ubicaciones_sin_stock": ubicaciones_sin_stock,
+                "total_ubicaciones": ubicaciones_con_stock + ubicaciones_sin_stock
+            }
+
+            return {
+                "producto": producto_info,
+                "clasificaciones": clasificaciones,
+                "inventarios": inventarios,
+                "metricas_globales": metricas_globales
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo detalle completo de producto: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@app.get("/api/productos/{codigo}/ventas-semanales", tags=["Productos"])
+async def get_ventas_semanales(codigo: str, ubicacion_id: Optional[str] = None):
+    """
+    Obtiene serie temporal de ventas semanales para un producto.
+
+    Retorna datos agrupados por semana (últimas 52 semanas) con:
+    - semana: YYYY-Www (ej: 2025-W01)
+    - unidades: Total de unidades vendidas
+    - valor: Valor total de ventas
+    - promedio_diario: Promedio de unidades por día en esa semana
+
+    Args:
+        codigo: Código del producto
+        ubicacion_id: Opcional - filtrar por ubicación específica
+    """
+    try:
+        with get_db_connection() as conn:
+            # Query para ventas semanales
+            if ubicacion_id:
+                query = """
+                    WITH ventas_semanales AS (
+                        SELECT
+                            STRFTIME(TRY_CAST(fecha AS DATE), '%Y-W%W') as semana,
+                            TRY_CAST(fecha AS DATE) as fecha,
+                            SUM(TRY_CAST(cantidad_vendida AS DOUBLE)) as unidades,
+                            SUM(TRY_CAST(venta_total AS DOUBLE)) as valor
+                        FROM ventas_raw
+                        WHERE codigo_producto = ?
+                            AND ubicacion_id = ?
+                            AND TRY_CAST(fecha AS DATE) >= CURRENT_DATE - INTERVAL '52 weeks'
+                        GROUP BY STRFTIME(TRY_CAST(fecha AS DATE), '%Y-W%W'), TRY_CAST(fecha AS DATE)
+                    )
+                    SELECT
+                        semana,
+                        SUM(unidades) as unidades,
+                        SUM(valor) as valor,
+                        SUM(unidades) / 7.0 as promedio_diario,
+                        MIN(fecha) as fecha_inicio_semana
+                    FROM ventas_semanales
+                    GROUP BY semana
+                    ORDER BY semana ASC
+                """
+                params = [codigo, ubicacion_id]
+            else:
+                # Agregar todas las ubicaciones
+                query = """
+                    WITH ventas_semanales AS (
+                        SELECT
+                            STRFTIME(TRY_CAST(fecha AS DATE), '%Y-W%W') as semana,
+                            TRY_CAST(fecha AS DATE) as fecha,
+                            SUM(TRY_CAST(cantidad_vendida AS DOUBLE)) as unidades,
+                            SUM(TRY_CAST(venta_total AS DOUBLE)) as valor
+                        FROM ventas_raw
+                        WHERE codigo_producto = ?
+                            AND TRY_CAST(fecha AS DATE) >= CURRENT_DATE - INTERVAL '52 weeks'
+                        GROUP BY STRFTIME(TRY_CAST(fecha AS DATE), '%Y-W%W'), TRY_CAST(fecha AS DATE)
+                    )
+                    SELECT
+                        semana,
+                        SUM(unidades) as unidades,
+                        SUM(valor) as valor,
+                        SUM(unidades) / 7.0 as promedio_diario,
+                        MIN(fecha) as fecha_inicio_semana
+                    FROM ventas_semanales
+                    GROUP BY semana
+                    ORDER BY semana ASC
+                """
+                params = [codigo]
+
+            rows = conn.execute(query, params).fetchall()
+
+            if not rows:
+                return {
+                    "codigo_producto": codigo,
+                    "ubicacion_id": ubicacion_id,
+                    "semanas": [],
+                    "metricas": {
+                        "semanas_con_ventas": 0,
+                        "total_unidades": 0,
+                        "total_valor": 0,
+                        "promedio_semanal": 0,
+                        "coeficiente_variacion": None
+                    }
+                }
+
+            # Formatear datos de semanas
+            semanas = []
+            total_unidades = 0
+            total_valor = 0
+            unidades_por_semana = []
+
+            for row in rows:
+                unidades = float(row[1]) if row[1] else 0
+                valor = float(row[2]) if row[2] else 0
+                promedio_diario = float(row[3]) if row[3] else 0
+
+                semanas.append({
+                    "semana": row[0],
+                    "unidades": round(unidades, 2),
+                    "valor": round(valor, 2),
+                    "promedio_diario": round(promedio_diario, 2),
+                    "fecha_inicio": row[4].isoformat() if row[4] else None
+                })
+
+                total_unidades += unidades
+                total_valor += valor
+                unidades_por_semana.append(unidades)
+
+            # Calcular métricas
+            num_semanas = len(unidades_por_semana)
+            promedio_semanal = total_unidades / num_semanas if num_semanas > 0 else 0
+
+            # Calcular coeficiente de variación
+            if num_semanas > 1 and promedio_semanal > 0:
+                varianza = sum((x - promedio_semanal) ** 2 for x in unidades_por_semana) / (num_semanas - 1)
+                desviacion = varianza ** 0.5
+                cv = desviacion / promedio_semanal
+            else:
+                cv = None
+
+            return {
+                "codigo_producto": codigo,
+                "ubicacion_id": ubicacion_id,
+                "semanas": semanas,
+                "metricas": {
+                    "semanas_con_ventas": num_semanas,
+                    "total_unidades": round(total_unidades, 2),
+                    "total_valor": round(total_valor, 2),
+                    "promedio_semanal": round(promedio_semanal, 2),
+                    "coeficiente_variacion": round(cv, 4) if cv is not None else None
+                }
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo ventas semanales: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/productos/{codigo}/historico-clasificacion", tags=["Productos"])
+async def get_historico_clasificacion(codigo: str, ubicacion_id: Optional[str] = None):
+    """
+    Obtiene el histórico de clasificación ABC-XYZ de un producto.
+
+    Por ahora, genera datos simulados basados en la clasificación actual.
+    En el futuro, cuando implementemos snapshots periódicos, devolverá datos reales.
+
+    Args:
+        codigo: Código del producto
+        ubicacion_id: ID de ubicación (opcional, si no se provee devuelve histórico global)
+
+    Returns:
+        Histórico de clasificación con datos por mes
+    """
+    try:
+        with get_db_connection() as conn:
+            # Obtener clasificación actual del producto
+            if ubicacion_id:
+                query = """
+                    SELECT
+                        clasificacion_abc_valor,
+                        clasificacion_xyz,
+                        matriz_abc_xyz,
+                        ranking_valor,
+                        coeficiente_variacion
+                    FROM productos_abc_v2
+                    WHERE codigo_producto = ? AND ubicacion_id = ?
+                """
+                params = [codigo, ubicacion_id]
+            else:
+                # Si no hay ubicacion_id, usar la clasificación dominante (la de mayor valor)
+                query = """
+                    SELECT
+                        clasificacion_abc_valor,
+                        clasificacion_xyz,
+                        matriz_abc_xyz,
+                        ranking_valor,
+                        coeficiente_variacion
+                    FROM productos_abc_v2
+                    WHERE codigo_producto = ?
+                    ORDER BY valor_consumo_total DESC
+                    LIMIT 1
+                """
+                params = [codigo]
+
+            row = conn.execute(query, params).fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail=f"No se encontró clasificación para el producto {codigo}")
+
+            clasificacion_abc = row[0]
+            clasificacion_xyz = row[1]
+            matriz = row[2]
+            ranking = row[3]
+            cv = float(row[4]) if row[4] else None
+
+            # Generar datos históricos simulados (últimos 6 meses)
+            # TODO: Reemplazar con datos reales cuando implementemos snapshots históricos
+            from datetime import datetime, timedelta
+
+            historico = []
+            fecha_actual = datetime.now()
+
+            # Mapeo de clasificaciones a números para variación
+            abc_to_num = {'A': 1, 'B': 2, 'C': 3}
+            xyz_to_num = {'X': 1, 'Y': 2, 'Z': 3}
+            num_to_abc = {1: 'A', 2: 'B', 3: 'C'}
+            num_to_xyz = {1: 'X', 2: 'Y', 3: 'Z'}
+
+            abc_num = abc_to_num.get(clasificacion_abc, 2)
+            xyz_num = xyz_to_num.get(clasificacion_xyz, 2)
+
+            for i in range(12, 0, -1):
+                # Fecha del mes
+                fecha = fecha_actual - timedelta(days=30 * i)
+                mes = fecha.strftime('%Y-%m')
+
+                # Simular pequeñas variaciones en la clasificación
+                # Productos estables (X) varían menos que los volátiles (Z)
+                import random
+
+                if clasificacion_xyz == 'X':
+                    # Muy estable, casi no cambia
+                    abc_var = random.choice([0, 0, 0, -1, 1]) if i > 3 else 0
+                    xyz_var = 0
+                elif clasificacion_xyz == 'Y':
+                    # Algo variable
+                    abc_var = random.choice([0, 0, -1, 1]) if i > 3 else 0
+                    xyz_var = random.choice([0, 0, -1, 1]) if i > 4 else 0
+                else:  # Z
+                    # Muy variable
+                    abc_var = random.choice([0, -1, 1, -1, 1]) if i > 2 else 0
+                    xyz_var = random.choice([0, -1, 1]) if i > 3 else 0
+
+                abc_hist = max(1, min(3, abc_num + abc_var))
+                xyz_hist = max(1, min(3, xyz_num + xyz_var))
+
+                abc_hist_str = num_to_abc[abc_hist]
+                xyz_hist_str = num_to_xyz[xyz_hist]
+                matriz_hist = f"{abc_hist_str}{xyz_hist_str}"
+
+                # Simular ranking con variación
+                ranking_var = random.randint(-20, 20) if i > 2 else 0
+                ranking_hist = max(1, ranking + ranking_var)
+
+                # Simular CV con variación para productos volátiles
+                if cv is not None:
+                    if clasificacion_xyz == 'Z':
+                        cv_var = random.uniform(-0.2, 0.2)
+                    elif clasificacion_xyz == 'Y':
+                        cv_var = random.uniform(-0.1, 0.1)
+                    else:
+                        cv_var = random.uniform(-0.05, 0.05)
+                    cv_hist = max(0, cv + cv_var)
+                else:
+                    cv_hist = None
+
+                historico.append({
+                    "mes": mes,
+                    "clasificacion_abc": abc_hist_str,
+                    "clasificacion_xyz": xyz_hist_str,
+                    "matriz": matriz_hist,
+                    "ranking_valor": ranking_hist,
+                    "coeficiente_variacion": round(cv_hist, 4) if cv_hist is not None else None
+                })
+
+            return {
+                "codigo_producto": codigo,
+                "ubicacion_id": ubicacion_id,
+                "clasificacion_actual": {
+                    "abc": clasificacion_abc,
+                    "xyz": clasificacion_xyz,
+                    "matriz": matriz,
+                    "ranking": ranking,
+                    "cv": round(cv, 4) if cv is not None else None
+                },
+                "historico": historico,
+                "nota": "Datos históricos simulados. Implementación de snapshots reales pendiente."
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo histórico de clasificación: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 
 @app.get("/api/stock", response_model=PaginatedStockResponse, tags=["Inventario"])
 async def get_stock(

@@ -17,6 +17,7 @@ import ETLControlCenter from './components/settings/ETLControlCenter';
 import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
 import { getTenantId } from './utils/tenant';
 // import { checkMaintenanceStatus } from './services/maintenanceService';  // Descomentar el lunes
+import ABCXYZAnalysis from './components/productos/ABCXYZAnalysis';
 
 // Protected Routes Component
 function ProtectedRoutes() {
@@ -41,6 +42,7 @@ function ProtectedRoutes() {
         <Route path="administrador" element={<ETLControlCenter />} />
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="administrador/config-inventario" element={<ConfiguracionInventario />} />
+        <Route path="productos" element={<ABCXYZAnalysis />} />
       </Route>
     </Routes>
   );
