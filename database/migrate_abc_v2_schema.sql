@@ -5,11 +5,7 @@
 -- Los datos se perderán pero pueden ser recalculados con el script Python.
 -- =====================================================================================
 
--- 1. Hacer backup de datos existentes (opcional)
-CREATE TABLE IF NOT EXISTS productos_abc_v2_backup_20251111 AS
-SELECT * FROM productos_abc_v2;
-
--- 2. Eliminar tabla antigua
+-- 1. Eliminar tabla antigua directamente (sin backup)
 DROP TABLE IF EXISTS productos_abc_v2;
 DROP TABLE IF EXISTS productos_abc_v2_historico;
 DROP TABLE IF EXISTS productos_abc_v2_evolucion;
