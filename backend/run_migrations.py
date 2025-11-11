@@ -51,31 +51,23 @@ def apply_migrations():
         else:
             logger.info("📝 Creando tabla productos_abc_v2...")
 
-        # PASO 1: Ejecutar migración destructiva si la tabla existe con schema antiguo
+        # PASO 1: Siempre recrear tabla si existe para asegurar schema correcto
+        # Los datos son calculados y pueden regenerarse, así evitamos problemas de constraints
         if result[0] > 0:
-            # Verificar si tiene el schema antiguo (producto_id en vez de codigo_producto)
-            old_schema_check = conn.execute("""
-                SELECT COUNT(*) as count
-                FROM information_schema.columns
-                WHERE table_name = 'productos_abc_v2'
-                AND column_name = 'producto_id'
-            """).fetchone()
-
-            if old_schema_check[0] > 0:
-                logger.warning("⚠️  Detectado schema antiguo (producto_id), recreando tabla...")
-                migrate_script = Path('/app/database/migrate_abc_v2_schema.sql')
-                if migrate_script.exists():
-                    logger.info("Ejecutando migración destructiva...")
-                    with open(migrate_script, 'r') as f:
-                        sql_content = f.read()
-                        statements = [s.strip() for s in sql_content.split(';') if s.strip()]
-                        for stmt in statements:
-                            if stmt and not stmt.startswith('--'):
-                                try:
-                                    conn.execute(stmt)
-                                    logger.info(f"✅ Ejecutado: {stmt[:50]}...")
-                                except Exception as e:
-                                    logger.warning(f"⚠️  Error en migración (ignorado): {e}")
+            logger.warning("⚠️  Tabla productos_abc_v2 existe, recreando para asegurar schema correcto...")
+            migrate_script = Path('/app/database/migrate_abc_v2_schema.sql')
+            if migrate_script.exists():
+                logger.info("Ejecutando migración destructiva...")
+                with open(migrate_script, 'r') as f:
+                    sql_content = f.read()
+                    statements = [s.strip() for s in sql_content.split(';') if s.strip()]
+                    for stmt in statements:
+                        if stmt and not stmt.startswith('--'):
+                            try:
+                                conn.execute(stmt)
+                                logger.info(f"✅ Ejecutado: {stmt[:50]}...")
+                            except Exception as e:
+                                logger.warning(f"⚠️  Error en migración (ignorado): {e}")
 
         # Aplicar schema_abc_v2.sql
         schema_abc_v2_path = Path('/app/database/schema_abc_v2.sql')
