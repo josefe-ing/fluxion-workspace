@@ -1,13 +1,9 @@
--- =====================================================================================
--- MIGRACIÓN SEGURA: Recrear tabla productos_abc_v2 con schema correcto
--- =====================================================================================
--- Esta migración elimina la tabla vieja y la recrea con el schema correcto.
--- Los datos se perderán pero pueden ser recalculados con el script Python.
--- =====================================================================================
+-- Migración: Recrear tabla productos_abc_v2 con schema correcto
 
--- 1. Eliminar tabla antigua directamente (sin backup)
 DROP TABLE IF EXISTS productos_abc_v2;
+
 DROP TABLE IF EXISTS productos_abc_v2_historico;
+
 DROP TABLE IF EXISTS productos_abc_v2_evolucion;
 
 -- 3. Eliminar vistas que dependen de estas tablas
