@@ -15,6 +15,8 @@ import OrderWizard from './components/orders/OrderWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import ETLControlCenter from './components/settings/ETLControlCenter';
 import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
+import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
+import AlertasReclasificacion from './components/admin/AlertasReclasificacion';
 import { getTenantId } from './utils/tenant';
 // import { checkMaintenanceStatus } from './services/maintenanceService';  // Descomentar el lunes
 import ABCXYZAnalysis from './components/productos/ABCXYZAnalysis';
@@ -42,6 +44,8 @@ function ProtectedRoutes() {
         <Route path="administrador" element={<ETLControlCenter />} />
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="administrador/config-inventario" element={<ConfiguracionInventario />} />
+        <Route path="administrador/conjuntos" element={<ConjuntosAdmin />} />
+        <Route path="administrador/alertas" element={<AlertasReclasificacion />} />
         <Route path="productos" element={<ABCXYZAnalysis />} />
       </Route>
     </Routes>

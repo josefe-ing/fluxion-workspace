@@ -175,6 +175,91 @@ class CalculadorXYZPorTienda:
 
         return True
 
+    def _guardar_snapshot_xyz_anterior(self):
+        """Guardar snapshot de clasificaciones XYZ antes de actualizar."""
+        try:
+            self.conn.execute("""
+                CREATE OR REPLACE TEMP TABLE xyz_anterior AS
+                SELECT
+                    codigo_producto,
+                    ubicacion_id,
+                    clasificacion_xyz,
+                    coeficiente_variacion,
+                    matriz_abc_xyz
+                FROM productos_abc_v2
+                WHERE clasificacion_xyz IS NOT NULL
+            """)
+
+            count = self.conn.execute("SELECT COUNT(*) FROM xyz_anterior").fetchone()[0]
+            if self.verbose:
+                print(f"📸 Snapshot de {count:,} clasificaciones XYZ guardado")
+
+            return count
+        except Exception as e:
+            print(f"⚠️  Error guardando snapshot XYZ: {e}")
+            return 0
+
+    def _detectar_cambios_xyz(self):
+        """Detectar cambios en clasificaciones XYZ."""
+        try:
+            cambios = self.conn.execute("""
+                SELECT
+                    actual.codigo_producto,
+                    actual.ubicacion_id,
+                    anterior.clasificacion_xyz as xyz_anterior,
+                    actual.clasificacion_xyz as xyz_nuevo,
+                    anterior.coeficiente_variacion as cv_anterior,
+                    actual.coeficiente_variacion as cv_nuevo,
+                    anterior.matriz_abc_xyz as matriz_anterior,
+                    actual.matriz_abc_xyz as matriz_nueva,
+                    actual.clasificacion_abc_valor,
+                    CASE
+                        WHEN (anterior.clasificacion_xyz = 'X' AND actual.clasificacion_xyz = 'Z')
+                          OR (anterior.clasificacion_xyz = 'Z' AND actual.clasificacion_xyz = 'X') THEN true
+                        ELSE false
+                    END as es_cambio_volatilidad_critico
+                FROM productos_abc_v2 actual
+                INNER JOIN xyz_anterior anterior
+                    ON actual.codigo_producto = anterior.codigo_producto
+                    AND actual.ubicacion_id = anterior.ubicacion_id
+                WHERE actual.clasificacion_xyz IS NOT NULL
+                    AND (anterior.clasificacion_xyz != actual.clasificacion_xyz
+                         OR anterior.matriz_abc_xyz != actual.matriz_abc_xyz)
+            """).fetchall()
+
+            if len(cambios) > 0:
+                print(f"\n🔔 CAMBIOS DE CLASIFICACIÓN XYZ DETECTADOS: {len(cambios)}")
+                print("=" * 70)
+
+                criticos = sum(1 for c in cambios if c[9])  # es_cambio_volatilidad_critico
+                if criticos > 0:
+                    print(f"   🔴 Cambios críticos de volatilidad: {criticos}")
+
+                # Filtrar cambios críticos por clase A
+                cambios_clase_a = [c for c in cambios if c[8] == 'A']  # clasificacion_abc_valor
+                if len(cambios_clase_a) > 0:
+                    print(f"   ⚠️  Productos clase A con cambio XYZ: {len(cambios_clase_a)}")
+
+                # Mostrar algunos ejemplos
+                for i, cambio in enumerate(cambios[:5]):
+                    simbolo = "🔴" if cambio[9] else "🟡"
+                    cv_cambio = ""
+                    if cambio[5] and cambio[4]:
+                        cv_cambio = f" (CV: {cambio[4]:.2f}→{cambio[5]:.2f})"
+                    print(f"   {simbolo} {cambio[0][:20]:<20} [{cambio[1]}]: {cambio[2]} → {cambio[3]}{cv_cambio}")
+
+                if len(cambios) > 5:
+                    print(f"   ... y {len(cambios) - 5} cambios más")
+
+                print()
+
+            return len(cambios)
+
+        except Exception as e:
+            if self.verbose:
+                print(f"⚠️  Error detectando cambios XYZ: {e}")
+            return 0
+
     def calcular_todas_tiendas(self, semanas: int = 12, dry_run: bool = False):
         """Calcular XYZ para todas las tiendas."""
         print(f"\n{'=' * 70}")
@@ -189,6 +274,10 @@ class CalculadorXYZPorTienda:
             print("⚠️  DRY-RUN MODE - No se guardarán cambios\n")
             return True
 
+        # PASO NUEVO: Guardar snapshot de XYZ anterior
+        print("📸 Guardando snapshot de clasificaciones XYZ anteriores...")
+        self._guardar_snapshot_xyz_anterior()
+
         # Procesar cada tienda
         tiendas_exitosas = 0
         for ubicacion_id in tiendas:
@@ -198,6 +287,10 @@ class CalculadorXYZPorTienda:
                     tiendas_exitosas += 1
             except Exception as e:
                 print(f"   ✗ Error procesando {ubicacion_id}: {e}")
+
+        # PASO NUEVO: Detectar cambios en clasificaciones XYZ
+        print("\n🔍 Detectando cambios de clasificación XYZ...")
+        self._detectar_cambios_xyz()
 
         # Mostrar resumen
         self._mostrar_resumen(tiendas_exitosas, len(tiendas))

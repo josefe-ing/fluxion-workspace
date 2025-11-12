@@ -212,6 +212,137 @@ class CalculadorABCv2PorTienda:
 
         return True
 
+    def _guardar_historico(self, fecha_inicio: str, fecha_fin: str):
+        """Guardar histórico antes de borrar clasificaciones antiguas."""
+        try:
+            # Contar registros a archivar
+            count = self.conn.execute(f"""
+                SELECT COUNT(*) FROM productos_abc_v2
+                WHERE fecha_inicio = DATE '{fecha_inicio}'
+                    AND fecha_fin = DATE '{fecha_fin}'
+            """).fetchone()[0]
+
+            if count == 0:
+                if self.verbose:
+                    print("ℹ️  No hay registros antiguos para archivar")
+                return 0
+
+            # Guardar en histórico
+            self.conn.execute(f"""
+                INSERT INTO productos_abc_v2_historico (
+                    id,
+                    codigo_producto,
+                    ubicacion_id,
+                    periodo_analisis,
+                    fecha_inicio,
+                    fecha_fin,
+                    fecha_calculo,
+                    clasificacion_abc_valor,
+                    valor_consumo_total,
+                    ranking_valor,
+                    porcentaje_valor,
+                    porcentaje_acumulado
+                )
+                SELECT
+                    gen_random_uuid()::VARCHAR as id,
+                    codigo_producto,
+                    ubicacion_id,
+                    periodo_analisis,
+                    fecha_inicio,
+                    fecha_fin,
+                    fecha_calculo,
+                    clasificacion_abc_valor,
+                    valor_consumo_total,
+                    ranking_valor,
+                    porcentaje_valor,
+                    porcentaje_acumulado
+                FROM productos_abc_v2
+                WHERE fecha_inicio = DATE '{fecha_inicio}'
+                    AND fecha_fin = DATE '{fecha_fin}'
+                    AND clasificacion_abc_valor IN ('A', 'B', 'C')
+            """)
+
+            if self.verbose:
+                print(f"📦 {count:,} registros archivados en histórico")
+
+            return count
+
+        except Exception as e:
+            print(f"⚠️  Error guardando histórico: {e}")
+            return 0
+
+    def _detectar_cambios_clasificacion(self):
+        """Detectar cambios en clasificaciones y registrarlos."""
+        try:
+            # Crear tabla temporal con clasificaciones anteriores
+            self.conn.execute("""
+                CREATE OR REPLACE TEMP TABLE clasificaciones_anteriores AS
+                SELECT DISTINCT ON (codigo_producto, ubicacion_id)
+                    codigo_producto,
+                    ubicacion_id,
+                    clasificacion_abc_valor,
+                    valor_consumo_total,
+                    ranking_valor,
+                    fecha_calculo
+                FROM productos_abc_v2_historico
+                WHERE clasificacion_abc_valor IN ('A', 'B', 'C')
+                ORDER BY codigo_producto, ubicacion_id, fecha_calculo DESC
+            """)
+
+            # Detectar cambios comparando con la tabla actual
+            cambios = self.conn.execute("""
+                SELECT
+                    actual.codigo_producto,
+                    actual.ubicacion_id,
+                    anterior.clasificacion_abc_valor as clasificacion_anterior,
+                    actual.clasificacion_abc_valor as clasificacion_nueva,
+                    anterior.valor_consumo_total as valor_anterior,
+                    actual.valor_consumo_total as valor_nuevo,
+                    anterior.ranking_valor as ranking_anterior,
+                    actual.ranking_valor as ranking_nuevo,
+                    CASE
+                        WHEN anterior.valor_consumo_total > 0 THEN
+                            ROUND(((actual.valor_consumo_total - anterior.valor_consumo_total) * 100.0 / anterior.valor_consumo_total)::DECIMAL, 2)
+                        ELSE NULL
+                    END as cambio_porcentual,
+                    CASE
+                        WHEN (anterior.clasificacion_abc_valor = 'A' AND actual.clasificacion_abc_valor = 'C')
+                          OR (anterior.clasificacion_abc_valor = 'C' AND actual.clasificacion_abc_valor = 'A') THEN true
+                        ELSE false
+                    END as es_critico
+                FROM productos_abc_v2 actual
+                INNER JOIN clasificaciones_anteriores anterior
+                    ON actual.codigo_producto = anterior.codigo_producto
+                    AND actual.ubicacion_id = anterior.ubicacion_id
+                WHERE actual.clasificacion_abc_valor IN ('A', 'B', 'C')
+                    AND anterior.clasificacion_abc_valor != actual.clasificacion_abc_valor
+            """).fetchall()
+
+            if len(cambios) > 0:
+                print(f"\n🔔 CAMBIOS DE CLASIFICACIÓN DETECTADOS: {len(cambios)}")
+                print("=" * 70)
+
+                criticos = sum(1 for c in cambios if c[9])  # es_critico
+                if criticos > 0:
+                    print(f"   🔴 Cambios críticos: {criticos}")
+
+                # Mostrar algunos ejemplos
+                for i, cambio in enumerate(cambios[:5]):
+                    simbolo = "🔴" if cambio[9] else "🟡"
+                    print(f"   {simbolo} {cambio[0][:20]:<20} [{cambio[1]}]: {cambio[2]} → {cambio[3]} ({cambio[8]:+.1f}%)")
+
+                if len(cambios) > 5:
+                    print(f"   ... y {len(cambios) - 5} cambios más")
+
+                print()
+
+            return len(cambios)
+
+        except Exception as e:
+            if self.verbose:
+                print(f"⚠️  Error detectando cambios: {e}")
+            return 0
+
     def calcular_todas_tiendas(self, periodo: str = 'TRIMESTRAL', meses: int = 3, dry_run: bool = False):
         """Calcular ABC v2 para todas las tiendas."""
         print(f"\n{'=' * 70}")
@@ -226,10 +357,15 @@ class CalculadorABCv2PorTienda:
             print("⚠️  DRY-RUN MODE - No se guardarán cambios\n")
             return True
 
-        # Limpiar datos anteriores del mismo periodo
+        # Calcular fechas del periodo
         fecha_fin = datetime.now().date()
         fecha_inicio = fecha_fin - timedelta(days=meses * 30)
 
+        # PASO NUEVO: Guardar histórico antes de borrar
+        print("📦 Archivando clasificaciones antiguas...")
+        self._guardar_historico(str(fecha_inicio), str(fecha_fin))
+
+        # Limpiar datos anteriores del mismo periodo
         self.conn.execute(f"""
             DELETE FROM productos_abc_v2
             WHERE fecha_inicio = DATE '{fecha_inicio}'
@@ -250,6 +386,10 @@ class CalculadorABCv2PorTienda:
                     tiendas_exitosas += 1
             except Exception as e:
                 print(f"   ✗ Error procesando {ubicacion_nombre}: {e}")
+
+        # PASO NUEVO: Detectar cambios en clasificaciones
+        print("\n🔍 Detectando cambios de clasificación...")
+        self._detectar_cambios_clasificacion()
 
         # Mostrar resumen
         self._mostrar_resumen(tiendas_exitosas, len(tiendas))

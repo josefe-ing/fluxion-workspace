@@ -4632,6 +4632,308 @@ async def calcular_abc_xyz(
     }
 
 
+# ======================================================================================
+# ENDPOINTS - ALERTAS Y CAMBIOS DE CLASIFICACIÓN
+# ======================================================================================
+
+@app.get("/api/alertas/cambios-clasificacion", tags=["Alertas"])
+async def get_alertas_cambios(
+    ubicacion_id: Optional[str] = None,
+    solo_pendientes: bool = True,
+    solo_criticas: bool = False,
+    dias: int = 30,
+    limit: int = 100
+):
+    """
+    Obtiene alertas de cambios de clasificación ABC-XYZ.
+
+    Args:
+        ubicacion_id: Filtrar por tienda específica
+        solo_pendientes: Solo alertas no revisadas
+        solo_criticas: Solo alertas críticas
+        dias: Ventana de tiempo en días
+        limit: Número máximo de resultados
+    """
+    try:
+        conn = duckdb.connect(str(DB_PATH))
+
+        conditions = [f"fecha_cambio >= CURRENT_TIMESTAMP - INTERVAL '{dias} days'"]
+
+        if ubicacion_id:
+            conditions.append(f"ubicacion_id = '{ubicacion_id}'")
+
+        if solo_pendientes:
+            conditions.append("revisado = false")
+
+        if solo_criticas:
+            conditions.append("es_critico = true")
+
+        where_clause = " AND ".join(conditions)
+
+        query = f"""
+            SELECT
+                a.id,
+                a.codigo_producto,
+                p.descripcion as producto_descripcion,
+                p.categoria,
+                p.marca,
+                a.ubicacion_id,
+                a.tipo_cambio,
+                a.cambio_clasificacion,
+                a.clasificacion_anterior,
+                a.clasificacion_nueva,
+                a.fecha_cambio,
+                a.es_critico,
+                a.nivel_prioridad,
+                a.valor_anterior,
+                a.valor_nuevo,
+                a.cambio_porcentual,
+                a.ranking_anterior,
+                a.ranking_nuevo,
+                a.matriz_anterior,
+                a.matriz_nueva,
+                a.cv_anterior,
+                a.cv_nuevo,
+                a.accion_recomendada,
+                a.revisado,
+                a.revisado_por,
+                a.revisado_fecha,
+                a.notas
+            FROM alertas_cambio_clasificacion a
+            LEFT JOIN productos p ON a.codigo_producto = p.codigo
+            WHERE {where_clause}
+            ORDER BY
+                CASE a.nivel_prioridad
+                    WHEN 'ALTA' THEN 1
+                    WHEN 'MEDIA' THEN 2
+                    WHEN 'BAJA' THEN 3
+                END,
+                a.fecha_cambio DESC
+            LIMIT {limit}
+        """
+
+        result = conn.execute(query).fetchall()
+        columns = [desc[0] for desc in conn.description]
+
+        alertas = [dict(zip(columns, row)) for row in result]
+
+        # Estadísticas
+        stats_query = f"""
+            SELECT
+                COUNT(*) as total,
+                COUNT(CASE WHEN es_critico THEN 1 END) as criticas,
+                COUNT(CASE WHEN nivel_prioridad = 'ALTA' THEN 1 END) as alta_prioridad,
+                COUNT(CASE WHEN revisado = false THEN 1 END) as pendientes,
+                COUNT(CASE WHEN tipo_cambio = 'ABC' THEN 1 END) as cambios_abc,
+                COUNT(CASE WHEN tipo_cambio = 'XYZ' THEN 1 END) as cambios_xyz
+            FROM alertas_cambio_clasificacion
+            WHERE {where_clause}
+        """
+
+        stats = conn.execute(stats_query).fetchone()
+
+        conn.close()
+
+        return {
+            "success": True,
+            "alertas": alertas,
+            "total": len(alertas),
+            "estadisticas": {
+                "total_en_periodo": stats[0],
+                "criticas": stats[1],
+                "alta_prioridad": stats[2],
+                "pendientes": stats[3],
+                "cambios_abc": stats[4],
+                "cambios_xyz": stats[5]
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo alertas: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alertas/resumen-tiendas", tags=["Alertas"])
+async def get_resumen_alertas_tiendas(dias: int = 30):
+    """
+    Obtiene resumen de alertas agrupadas por tienda.
+    """
+    try:
+        conn = duckdb.connect(str(DB_PATH))
+
+        query = f"""
+            SELECT
+                ubicacion_id,
+                COUNT(*) as total_alertas,
+                COUNT(CASE WHEN es_critico THEN 1 END) as alertas_criticas,
+                COUNT(CASE WHEN nivel_prioridad = 'ALTA' THEN 1 END) as prioridad_alta,
+                COUNT(CASE WHEN nivel_prioridad = 'MEDIA' THEN 1 END) as prioridad_media,
+                COUNT(CASE WHEN nivel_prioridad = 'BAJA' THEN 1 END) as prioridad_baja,
+                COUNT(CASE WHEN revisado = false THEN 1 END) as pendientes_revision,
+                COUNT(CASE WHEN tipo_cambio = 'ABC' THEN 1 END) as cambios_abc,
+                COUNT(CASE WHEN tipo_cambio = 'XYZ' THEN 1 END) as cambios_xyz,
+                MAX(fecha_cambio) as ultima_alerta
+            FROM alertas_cambio_clasificacion
+            WHERE fecha_cambio >= CURRENT_TIMESTAMP - INTERVAL '{dias} days'
+            GROUP BY ubicacion_id
+            ORDER BY pendientes_revision DESC, alertas_criticas DESC
+        """
+
+        result = conn.execute(query).fetchall()
+        columns = [desc[0] for desc in conn.description]
+
+        resumen = [dict(zip(columns, row)) for row in result]
+
+        conn.close()
+
+        return {
+            "success": True,
+            "resumen": resumen,
+            "total_tiendas": len(resumen)
+        }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen por tiendas: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/alertas/{alerta_id}/revisar", tags=["Alertas"])
+async def marcar_alerta_revisada(
+    alerta_id: str,
+    notas: Optional[str] = None,
+    current_user: Usuario = Depends(verify_token)
+):
+    """
+    Marca una alerta como revisada.
+
+    Requiere autenticación.
+    """
+    try:
+        conn = duckdb.connect(str(DB_PATH))
+
+        # Verificar que existe la alerta
+        existe = conn.execute(
+            "SELECT COUNT(*) FROM alertas_cambio_clasificacion WHERE id = ?",
+            [alerta_id]
+        ).fetchone()[0]
+
+        if existe == 0:
+            raise HTTPException(status_code=404, detail="Alerta no encontrada")
+
+        # Actualizar
+        conn.execute("""
+            UPDATE alertas_cambio_clasificacion
+            SET
+                revisado = true,
+                revisado_por = ?,
+                revisado_fecha = CURRENT_TIMESTAMP,
+                notas = COALESCE(?, notas)
+            WHERE id = ?
+        """, [current_user.email, notas, alerta_id])
+
+        conn.close()
+
+        return {
+            "success": True,
+            "message": "Alerta marcada como revisada",
+            "alerta_id": alerta_id,
+            "revisado_por": current_user.email
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error marcando alerta como revisada: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/productos/{codigo}/historico-abc-xyz", tags=["Productos"])
+async def get_historico_abc_xyz_completo(
+    codigo: str,
+    ubicacion_id: Optional[str] = None,
+    limit: int = 50
+):
+    """
+    Obtiene el histórico completo de clasificaciones ABC y XYZ de un producto.
+
+    Args:
+        codigo: Código del producto
+        ubicacion_id: Filtrar por tienda (opcional)
+        limit: Número máximo de registros históricos
+    """
+    try:
+        conn = duckdb.connect(str(DB_PATH))
+
+        # Construir condiciones
+        conditions = ["codigo_producto = ?"]
+        params = [codigo]
+
+        if ubicacion_id:
+            conditions.append("ubicacion_id = ?")
+            params.append(ubicacion_id)
+
+        where_clause = " AND ".join(conditions)
+
+        # Obtener histórico
+        query = f"""
+            SELECT
+                fecha_calculo,
+                ubicacion_id,
+                periodo_analisis,
+                fecha_inicio,
+                fecha_fin,
+                clasificacion_abc_valor,
+                valor_consumo_total,
+                ranking_valor,
+                porcentaje_valor,
+                porcentaje_acumulado
+            FROM productos_abc_v2_historico
+            WHERE {where_clause}
+            ORDER BY fecha_calculo DESC
+            LIMIT {limit}
+        """
+
+        result = conn.execute(query, params).fetchall()
+        columns = [desc[0] for desc in conn.description]
+
+        historico = [dict(zip(columns, row)) for row in result]
+
+        # Obtener clasificación actual
+        query_actual = f"""
+            SELECT
+                fecha_calculo,
+                ubicacion_id,
+                clasificacion_abc_valor,
+                clasificacion_xyz,
+                matriz_abc_xyz,
+                valor_consumo_total,
+                ranking_valor,
+                coeficiente_variacion,
+                demanda_promedio_semanal
+            FROM productos_abc_v2
+            WHERE {where_clause}
+        """
+
+        actual_result = conn.execute(query_actual, params).fetchall()
+        actual_columns = [desc[0] for desc in conn.description]
+
+        clasificacion_actual = [dict(zip(actual_columns, row)) for row in actual_result]
+
+        conn.close()
+
+        return {
+            "success": True,
+            "codigo_producto": codigo,
+            "clasificacion_actual": clasificacion_actual,
+            "historico": historico,
+            "total_registros": len(historico)
+        }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo histórico ABC-XYZ: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
