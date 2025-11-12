@@ -1,0 +1,223 @@
+{
+  "meta": {
+    "tienda_codigo": "08",
+    "tienda_nombre": "BOSQUE",
+    "fecha_desde": "2025-10-09",
+    "fecha_hasta": "2025-10-09",
+    "total_registros": 6,
+    "fecha_generacion": "2025-10-09T23:59:59Z",
+    "version_api": "1.0"
+  },
+  "ventas": [
+    {
+      "numero_factura": "001044414",
+      "fecha": "2025-10-09",
+      "hora": "07:18:52",
+      "linea": 1,
+      "codigo_transaccion": null,
+      "producto": {
+        "codigo": "000128",
+        "descripcion": "MANDARINA KG",
+        "marca": "FRUVERVARIOS",
+        "modelo": "KG",
+        "presentacion": "KG",
+        "categoria": "FRUVER",
+        "grupo": "FRUTA",
+        "subgrupo": "ENTERO",
+        "cuadrante": "CUADRANTE IX"
+      },
+      "cantidad": {
+        "vendida": 0.22,
+        "bultos": 1.0,
+        "peso_unitario": 1.0,
+        "peso_total": 0.22,
+        "volumen_unitario": 0.001,
+        "tipo_peso": 2
+      },
+      "financiero": {
+        "costo_unitario": 2.16,
+        "precio_unitario": 2.66,
+        "costo_total": 0.48,
+        "venta_total": 0.59,
+        "impuesto_porcentaje": 0.0,
+        "impuesto_total": 0.0,
+        "utilidad_bruta": 0.11
+      }
+    },
+    {
+      "numero_factura": "001044420",
+      "fecha": "2025-10-09",
+      "hora": "07:43:07",
+      "linea": 7,
+      "codigo_transaccion": null,
+      "producto": {
+        "codigo": "000099",
+        "descripcion": "TOMATE KG",
+        "marca": "FRUVERVARIOS",
+        "modelo": "30 KG",
+        "presentacion": "KG",
+        "categoria": "FRUVER",
+        "grupo": "LEGUMBRE",
+        "subgrupo": "ENTERO",
+        "cuadrante": "CUADRANTE IX"
+      },
+      "cantidad": {
+        "vendida": 0.305,
+        "bultos": 1.0,
+        "peso_unitario": 1.0,
+        "peso_total": 0.305,
+        "volumen_unitario": 0.0,
+        "tipo_peso": 2
+      },
+      "financiero": {
+        "costo_unitario": 0.87,
+        "precio_unitario": 0.88,
+        "costo_total": 0.27,
+        "venta_total": 0.27,
+        "impuesto_porcentaje": 0.0,
+        "impuesto_total": 0.0,
+        "utilidad_bruta": 0.0
+      }
+    },
+    {
+      "numero_factura": "001044421",
+      "fecha": "2025-10-09",
+      "hora": "07:50:04",
+      "linea": 5,
+      "codigo_transaccion": null,
+      "producto": {
+        "codigo": "003119",
+        "descripcion": "QUESO BLANCO LLANERO KG",
+        "marca": "GRANJA",
+        "modelo": "KG",
+        "presentacion": "KG",
+        "categoria": "CHARCUTERIA",
+        "grupo": "QUESO",
+        "subgrupo": "OTROS",
+        "cuadrante": "CUADRANTE VI"
+      },
+      "cantidad": {
+        "vendida": 0.445,
+        "bultos": 1.0,
+        "peso_unitario": 1.0,
+        "peso_total": 0.445,
+        "volumen_unitario": 0.001,
+        "tipo_peso": 2
+      },
+      "financiero": {
+        "costo_unitario": 6.20,
+        "precio_unitario": 6.74,
+        "costo_total": 2.76,
+        "venta_total": 3.00,
+        "impuesto_porcentaje": 0.0,
+        "impuesto_total": 0.0,
+        "utilidad_bruta": 0.24
+      }
+    },
+    {
+      "numero_factura": "001044422",
+      "fecha": "2025-10-09",
+      "hora": "07:53:41",
+      "linea": 6,
+      "codigo_transaccion": null,
+      "producto": {
+        "codigo": "000128",
+        "descripcion": "MANDARINA KG",
+        "marca": "FRUVERVARIOS",
+        "modelo": "KG",
+        "presentacion": "KG",
+        "categoria": "FRUVER",
+        "grupo": "FRUTA",
+        "subgrupo": "ENTERO",
+        "cuadrante": "CUADRANTE IX"
+      },
+      "cantidad": {
+        "vendida": 1.115,
+        "bultos": 1.0,
+        "peso_unitario": 1.0,
+        "peso_total": 1.115,
+        "volumen_unitario": 0.001,
+        "tipo_peso": 2
+      },
+      "financiero": {
+        "costo_unitario": 2.16,
+        "precio_unitario": 2.66,
+        "costo_total": 2.41,
+        "venta_total": 2.97,
+        "impuesto_porcentaje": 0.0,
+        "impuesto_total": 0.0,
+        "utilidad_bruta": 0.56
+      }
+    },
+    {
+      "numero_factura": "001044422",
+      "fecha": "2025-10-09",
+      "hora": "07:53:41",
+      "linea": 7,
+      "codigo_transaccion": null,
+      "producto": {
+        "codigo": "000099",
+        "descripcion": "TOMATE KG",
+        "marca": "FRUVERVARIOS",
+        "modelo": "30 KG",
+        "presentacion": "KG",
+        "categoria": "FRUVER",
+        "grupo": "LEGUMBRE",
+        "subgrupo": "ENTERO",
+        "cuadrante": "CUADRANTE IX"
+      },
+      "cantidad": {
+        "vendida": 0.54,
+        "bultos": 1.0,
+        "peso_unitario": 1.0,
+        "peso_total": 0.54,
+        "volumen_unitario": 0.0,
+        "tipo_peso": 2
+      },
+      "financiero": {
+        "costo_unitario": 0.87,
+        "precio_unitario": 0.88,
+        "costo_total": 0.47,
+        "venta_total": 0.48,
+        "impuesto_porcentaje": 0.0,
+        "impuesto_total": 0.0,
+        "utilidad_bruta": 0.01
+      }
+    },
+    {
+      "numero_factura": "002056888",
+      "fecha": "2025-10-09",
+      "hora": "08:24:57",
+      "linea": 18,
+      "codigo_transaccion": null,
+      "producto": {
+        "codigo": "003628",
+        "descripcion": "MORTADELA TURZA 900 GR",
+        "marca": "TURZA",
+        "modelo": "BTO 12 UND",
+        "presentacion": "UNI",
+        "categoria": "CHARCUTERIA",
+        "grupo": "EMBUTIDOS",
+        "subgrupo": "MORTADELA",
+        "cuadrante": "CUADRANTE VI"
+      },
+      "cantidad": {
+        "vendida": 1.0,
+        "bultos": 12.0,
+        "peso_unitario": 0.9,
+        "peso_total": 1.0,
+        "volumen_unitario": 0.0,
+        "tipo_peso": 0
+      },
+      "financiero": {
+        "costo_unitario": 1.95,
+        "precio_unitario": 2.24,
+        "costo_total": 1.95,
+        "venta_total": 2.24,
+        "impuesto_porcentaje": 0.0,
+        "impuesto_total": 0.0,
+        "utilidad_bruta": 0.29
+      }
+    }
+  ]
+}
