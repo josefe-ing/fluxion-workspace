@@ -30,6 +30,10 @@ export interface ProductoEnriquecido {
   ranking_valor: number;
   coeficiente_variacion: number | null;
   stock_actual: number;
+  // Campos adicionales para vista global (sin ubicacion_id)
+  tiendas_con_clasificacion?: number;
+  total_tiendas?: number;
+  porcentaje_tiendas?: number;
 }
 
 export interface ClasificacionPorTienda {
@@ -123,12 +127,15 @@ export async function getMatrizABCXYZ(ubicacionId?: string): Promise<MatrizABCXY
 }
 
 export async function getProductosPorMatriz(
-  matriz: string,
+  matriz?: string,
   ubicacionId?: string,
   limit: number = 100,
   offset: number = 0
 ): Promise<ProductoEnriquecido[]> {
-  const params: Record<string, string | number> = { matriz, limit, offset };
+  const params: Record<string, string | number> = { limit, offset };
+  if (matriz) {
+    params.matriz = matriz;
+  }
   if (ubicacionId) {
     params.ubicacion_id = ubicacionId;
   }
@@ -187,45 +194,45 @@ export function getColorMatriz(matriz: string): string {
 
 export function getDescripcionMatriz(matriz: string): string {
   const descripciones: Record<string, string> = {
-    'AX': 'Alta rotación, demanda estable - IDEAL',
-    'AY': 'Alta rotación, demanda variable - MONITOREAR',
-    'AZ': 'Alta rotación, demanda errática - RIESGO CRÍTICO',
-    'BX': 'Rotación media, demanda estable',
-    'BY': 'Rotación media, demanda variable',
-    'BZ': 'Rotación media, demanda errática',
-    'CX': 'Baja rotación, demanda estable',
-    'CY': 'Baja rotación, demanda variable',
-    'CZ': 'Baja rotación, demanda errática - CANDIDATO A ELIMINAR',
+    'AX': '⭐ ORO - Productos estrella con demanda constante',
+    'AY': '⚠️ VIGILAR - Alto valor pero demanda fluctuante',
+    'AZ': '🚨 RIESGO ALTO - Alto valor con demanda caótica',
+    'BX': '🔷 CONFIABLE - Valor medio con demanda estable',
+    'BY': '⚪ REVISAR - Valor medio con demanda variable',
+    'BZ': '🟠 EVALUAR - Valor medio con demanda errática',
+    'CX': '💤 ESTABLE - Bajo valor pero demanda constante',
+    'CY': '⚫ MARGINAL - Bajo valor con demanda variable',
+    'CZ': '📉 MINIMIZAR - Bajo valor y demanda caótica',
   };
   return descripciones[matriz] || 'Clasificación desconocida';
 }
 
 export function getEstrategiaMatriz(matriz: string): string {
   const estrategias: Record<string, string> = {
-    'AX': 'Mantener stock óptimo. Estos productos son predecibles y valiosos.',
-    'AY': 'Incrementar frecuencia de revisión. Ajustar stock según temporalidad.',
-    'AZ': 'Stock de seguridad alto. Revisar proveedores alternativos. Considerar conjuntos sustituibles.',
-    'BX': 'Revisar periódicamente. Considerar optimización de costos.',
-    'BY': 'Análisis de patrones estacionales. Ajustar según comportamiento.',
-    'BZ': 'Evaluar necesidad. Posible candidato a descontinuar o reducir SKUs.',
-    'CX': 'Evaluar si es necesario mantener. Considerar pedido por demanda.',
-    'CY': 'Bajo valor estratégico. Revisar rentabilidad.',
-    'CZ': 'Candidato a eliminación. Liberar espacio y capital.',
+    'AX': '⭐ Nunca quedarse sin stock. Mantener inventario óptimo siempre. Son tus mejores productos.',
+    'AY': '⚠️ Monitorear constantemente. Ajustar según patrones y estacionalidad. Alto valor requiere atención.',
+    'AZ': '🚨 Stock de seguridad alto. Buscar proveedores alternativos. Considerar productos sustituibles.',
+    'BX': '🔷 Revisión periódica. Fáciles de manejar. Optimizar costos de almacenamiento.',
+    'BY': '⚪ Analizar caso por caso. Identificar patrones. Decidir estrategia individual.',
+    'BZ': '🟠 Evaluar si vale la pena mantener. Considerar descontinuar o reducir variedad.',
+    'CX': '💤 Pedido por demanda. Evaluar si liberan capital innecesario. Bajo impacto pero estables.',
+    'CY': '⚫ Revisar rentabilidad real. Poco valor estratégico. Considerar eliminar del catálogo.',
+    'CZ': '📉 Reducir al mínimo. Liberar espacio en almacén y capital. Evaluar descontinuar.',
   };
   return estrategias[matriz] || 'Sin estrategia definida';
 }
 
 export function getIconoMatriz(matriz: string): string {
   const iconos: Record<string, string> = {
-    'AX': '✅',
+    'AX': '⭐',
     'AY': '⚠️',
     'AZ': '🚨',
-    'BX': '🔵',
+    'BX': '🔷',
     'BY': '⚪',
     'BZ': '🟠',
-    'CX': '⚪',
-    'CY': '⚪',
-    'CZ': '⚡',
+    'CX': '💤',
+    'CY': '⚫',
+    'CZ': '📉',
   };
   return iconos[matriz] || '•';
 }
@@ -243,4 +250,13 @@ export function formatCurrency(num: number): string {
 
 export function formatPercentage(num: number, decimals: number = 1): string {
   return `${num.toFixed(decimals)}%`;
+}
+
+export function formatPercentageValue(value: number): string {
+  // For very low values, show 3 decimals or "< 0.001%"
+  if (value < 0.1) {
+    return value < 0.001 ? '< 0.001%' : value.toFixed(3) + '%';
+  }
+  // For normal values, show 1 decimal
+  return value.toFixed(1) + '%';
 }

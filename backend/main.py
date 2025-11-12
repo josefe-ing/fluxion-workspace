@@ -55,6 +55,7 @@ from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
 from routers.analisis_xyz_router import router as analisis_xyz_router
 from routers.config_inventario_router import router as config_inventario_router
 from routers.abc_v2_router import router as abc_v2_router
+from routers.conjuntos_router import router as conjuntos_router
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -132,6 +133,7 @@ app.include_router(pedidos_sugeridos_router)
 app.include_router(analisis_xyz_router)
 app.include_router(config_inventario_router)
 app.include_router(abc_v2_router)
+app.include_router(conjuntos_router)
 
 # Global Exception Handler con CORS
 @app.middleware("http")
@@ -1022,16 +1024,16 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
 
 @app.get("/api/productos/lista-por-matriz", tags=["Productos"])
 async def get_productos_por_matriz(
-    matriz: str,
+    matriz: Optional[str] = None,
     ubicacion_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0
 ):
     """
-    Retorna lista de productos de una clasificación específica
+    Retorna lista de productos con clasificación ABC-XYZ
 
     Args:
-        matriz: "AX", "AY", "AZ", "BX", "BY", "BZ", "CX", "CY", "CZ"
+        matriz: "AX", "AY", "AZ", "BX", "BY", "BZ", "CX", "CY", "CZ" (opcional, None = todos)
         ubicacion_id: Filtro por tienda (opcional)
         limit: Cantidad máxima de productos a retornar
         offset: Offset para paginación
@@ -1044,7 +1046,14 @@ async def get_productos_por_matriz(
             if ubicacion_id:
                 # Si hay ubicacion_id, mostrar productos de esa tienda específica
                 # Usar COALESCE para obtener descripción de inventario o ventas
-                query = """
+                where_clause = "WHERE ubicacion_id = ?"
+                params_ventas = [ubicacion_id]
+
+                if matriz:
+                    where_clause += " AND matriz_abc_xyz = ?"
+                    params_ventas.append(matriz)
+
+                query = f"""
                     WITH producto_ventas AS (
                         SELECT
                             codigo_producto,
@@ -1053,7 +1062,7 @@ async def get_productos_por_matriz(
                         FROM ventas_raw
                         WHERE codigo_producto IN (
                             SELECT codigo_producto FROM productos_abc_v2
-                            WHERE matriz_abc_xyz = ? AND ubicacion_id = ?
+                            {where_clause}
                         )
                         GROUP BY codigo_producto, descripcion_producto, categoria_producto
                         QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY COUNT(*) DESC) = 1
@@ -1074,17 +1083,23 @@ async def get_productos_por_matriz(
                     LEFT JOIN inventario_raw inv ON abc.codigo_producto = inv.codigo_producto
                         AND abc.ubicacion_id = inv.ubicacion_id
                     LEFT JOIN producto_ventas pv ON abc.codigo_producto = pv.codigo_producto
-                    WHERE abc.matriz_abc_xyz = ?
-                        AND abc.ubicacion_id = ?
+                    {where_clause.replace('ubicacion_id', 'abc.ubicacion_id').replace('matriz_abc_xyz', 'abc.matriz_abc_xyz')}
                     ORDER BY abc.ranking_valor ASC
                     LIMIT ? OFFSET ?
                 """
-                params = [matriz, ubicacion_id, matriz, ubicacion_id, limit, offset]
+                params = params_ventas + params_ventas + [limit, offset]
             else:
                 # Sin ubicacion_id: usar la clasificación más común para cada producto
                 # Esto asegura que cada producto aparezca una sola vez con su clasificación principal
-                query = """
-                    WITH producto_clasificacion AS (
+                where_filter = "WHERE matriz_abc_xyz IS NOT NULL" if not matriz else "WHERE matriz_abc_xyz = ?"
+                params = [] if not matriz else [matriz]
+
+                query = f"""
+                    WITH total_tiendas AS (
+                        SELECT COUNT(DISTINCT ubicacion_id) as total
+                        FROM productos_abc_v2
+                    ),
+                    producto_clasificacion AS (
                         SELECT
                             codigo_producto,
                             matriz_abc_xyz,
@@ -1095,15 +1110,17 @@ async def get_productos_por_matriz(
                             AVG(coeficiente_variacion) as cv_promedio,
                             COUNT(*) as tiendas_count
                         FROM productos_abc_v2
-                        WHERE matriz_abc_xyz = ?
+                        {where_filter}
                         GROUP BY codigo_producto, matriz_abc_xyz, clasificacion_abc_valor, clasificacion_xyz
                         QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC, valor_total DESC) = 1
                     ),
                     producto_ranked AS (
                         SELECT
-                            *,
-                            ROW_NUMBER() OVER (ORDER BY valor_total DESC) as ranking_global
-                        FROM producto_clasificacion
+                            pc.*,
+                            tt.total as total_tiendas,
+                            ROW_NUMBER() OVER (ORDER BY pc.tiendas_count DESC, pc.valor_total DESC) as ranking_global
+                        FROM producto_clasificacion pc
+                        CROSS JOIN total_tiendas tt
                     ),
                     producto_stock AS (
                         SELECT
@@ -1135,20 +1152,22 @@ async def get_productos_por_matriz(
                         pr.porcentaje_promedio,
                         pr.ranking_global,
                         pr.cv_promedio,
-                        ps.stock_total
+                        ps.stock_total,
+                        pr.tiendas_count,
+                        pr.total_tiendas
                     FROM producto_ranked pr
                     LEFT JOIN producto_stock ps ON pr.codigo_producto = ps.codigo_producto
                     LEFT JOIN producto_ventas pv ON pr.codigo_producto = pv.codigo_producto
-                    ORDER BY pr.valor_total DESC
+                    ORDER BY pr.tiendas_count DESC, pr.valor_total DESC
                     LIMIT ? OFFSET ?
                 """
-                params = [matriz, limit, offset]
+                params = params + [limit, offset]
 
             result = conn.execute(query, params).fetchall()
 
             productos = []
             for row in result:
-                productos.append({
+                producto = {
                     "codigo_producto": row[0],
                     "descripcion": row[1],
                     "categoria": row[2],
@@ -1160,7 +1179,15 @@ async def get_productos_por_matriz(
                     "ranking_valor": row[8],
                     "coeficiente_variacion": float(row[9]) if row[9] else None,
                     "stock_actual": float(row[10]) if row[10] else 0
-                })
+                }
+
+                # Si es vista global (sin ubicacion_id), agregar info de tiendas
+                if not ubicacion_id:
+                    producto["tiendas_con_clasificacion"] = row[11]
+                    producto["total_tiendas"] = row[12]
+                    producto["porcentaje_tiendas"] = round((row[11] / row[12] * 100), 1) if row[12] > 0 else 0
+
+                productos.append(producto)
 
             return productos
 

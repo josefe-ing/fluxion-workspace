@@ -92,18 +92,56 @@ const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selected
       </table>
 
       {/* Leyenda */}
-      <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">✅</span>
-          <span className="text-gray-700">IDEAL: Mantener stock óptimo</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">⚠️</span>
-          <span className="text-gray-700">MONITOREAR: Revisar frecuentemente</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">🚨</span>
-          <span className="text-gray-700">CRÍTICO: Alto riesgo</span>
+      <div className="mt-6 bg-gray-50 border border-gray-200 rounded-lg p-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Guía de Clasificación:</h3>
+        <div className="grid grid-cols-3 gap-4 text-xs">
+          {/* Columna 1: Alto Valor (A) */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">⭐</span>
+              <span className="text-gray-700"><strong>ORO:</strong> Productos estrella estables</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">⚠️</span>
+              <span className="text-gray-700"><strong>VIGILAR:</strong> Alto valor, variable</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🚨</span>
+              <span className="text-gray-700"><strong>RIESGO:</strong> Alto valor, caótico</span>
+            </div>
+          </div>
+
+          {/* Columna 2: Valor Medio (B) */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🔷</span>
+              <span className="text-gray-700"><strong>CONFIABLE:</strong> Medio estable</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">⚪</span>
+              <span className="text-gray-700"><strong>REVISAR:</strong> Medio variable</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🟠</span>
+              <span className="text-gray-700"><strong>EVALUAR:</strong> Medio errático</span>
+            </div>
+          </div>
+
+          {/* Columna 3: Bajo Valor (C) */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">💤</span>
+              <span className="text-gray-700"><strong>ESTABLE:</strong> Bajo pero constante</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">⚫</span>
+              <span className="text-gray-700"><strong>MARGINAL:</strong> Bajo valor variable</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">📉</span>
+              <span className="text-gray-700"><strong>MINIMIZAR:</strong> Reducir al mínimo</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

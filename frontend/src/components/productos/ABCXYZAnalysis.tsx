@@ -4,6 +4,7 @@ import {
   getProductosPorMatriz,
   MatrizABCXYZ as MatrizData,
   ProductoEnriquecido,
+  formatPercentageValue,
 } from '../../services/productosService';
 import { getTiendas, Ubicacion } from '../../services/ubicacionesService';
 import MatrizABCXYZ from './MatrizABCXYZ';
@@ -20,7 +21,7 @@ const ABCXYZAnalysis: React.FC = () => {
   const [productos, setProductos] = useState<ProductoEnriquecido[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [selectedProducto, setSelectedProducto] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<'ranking' | 'stock'>('ranking');
+  const [sortBy, setSortBy] = useState<'ranking' | 'stock' | 'abc' | 'xyz'>('ranking');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [hasMoreProducts, setHasMoreProducts] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -53,6 +54,24 @@ const ABCXYZAnalysis: React.FC = () => {
     };
     loadUbicaciones();
   }, []);
+
+  // Cargar TODOS los productos al montar el componente
+  useEffect(() => {
+    const loadAllProducts = async () => {
+      setLoadingProductos(true);
+      try {
+        // Sin matriz = todos los productos
+        const data = await getProductosPorMatriz(undefined, ubicacionId || undefined, 10000, 0);
+        setProductos(data);
+        setHasMoreProducts(data.length >= 10000);
+      } catch (error) {
+        console.error('Error loading all productos:', error);
+      } finally {
+        setLoadingProductos(false);
+      }
+    };
+    loadAllProducts();
+  }, [ubicacionId]);
 
   const handleMatrizClick = async (matriz: string) => {
     setSelectedMatriz(matriz);
@@ -92,14 +111,14 @@ const ABCXYZAnalysis: React.FC = () => {
     }
   };
 
-  const handleSort = (column: 'ranking' | 'stock') => {
+  const handleSort = (column: 'ranking' | 'stock' | 'abc' | 'xyz') => {
     if (sortBy === column) {
       // Toggle sort order if clicking same column
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
-      // Set new column with default ascending order
+      // Set new column with default descending order for abc/xyz (higher values first)
       setSortBy(column);
-      setSortOrder('asc');
+      setSortOrder(column === 'abc' || column === 'xyz' ? 'desc' : 'asc');
     }
   };
 
@@ -110,8 +129,14 @@ const ABCXYZAnalysis: React.FC = () => {
       let comparison = 0;
       if (sortBy === 'ranking') {
         comparison = a.ranking_valor - b.ranking_valor;
-      } else {
+      } else if (sortBy === 'stock') {
         comparison = a.stock_actual - b.stock_actual;
+      } else if (sortBy === 'abc') {
+        comparison = a.porcentaje_valor - b.porcentaje_valor;
+      } else if (sortBy === 'xyz') {
+        const aCV = a.coeficiente_variacion ?? Infinity;
+        const bCV = b.coeficiente_variacion ?? Infinity;
+        comparison = aCV - bCV;
       }
       return sortOrder === 'asc' ? comparison : -comparison;
     });
@@ -277,13 +302,16 @@ const ABCXYZAnalysis: React.FC = () => {
         </div>
       )}
 
-      {/* Lista de Productos Filtrados */}
-      {selectedMatriz && (
+      {/* Lista de Productos */}
+      {productos.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">
-              Productos en clasificación: {selectedMatriz}
+              {selectedMatriz ? `Productos en clasificación: ${selectedMatriz}` : 'Todos los productos'}
             </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Mostrando {productos.length} productos
+            </p>
           </div>
 
           {loadingProductos ? (
@@ -298,8 +326,37 @@ const ABCXYZAnalysis: React.FC = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Categoría</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ABC</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">XYZ</th>
+                  <th
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('abc')}
+                  >
+                    <div className="flex items-center gap-1">
+                      ABC
+                      {sortBy === 'abc' && (
+                        <span className="text-blue-600">
+                          {sortOrder === 'asc' ? '↑' : '↓'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('xyz')}
+                  >
+                    <div className="flex items-center gap-1">
+                      XYZ
+                      {sortBy === 'xyz' && (
+                        <span className="text-blue-600">
+                          {sortOrder === 'asc' ? '↑' : '↓'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  {!ubicacionId && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Tiendas
+                    </th>
+                  )}
                   <th
                     className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('ranking')}
@@ -353,7 +410,7 @@ const ABCXYZAnalysis: React.FC = () => {
                         producto.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-800' :
                         'bg-gray-100 text-gray-800'
                       }`}>
-                        {producto.clasificacion_abc}
+                        {producto.clasificacion_abc} ({formatPercentageValue(producto.porcentaje_valor)})
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -362,9 +419,25 @@ const ABCXYZAnalysis: React.FC = () => {
                         producto.clasificacion_xyz === 'Y' ? 'bg-blue-100 text-blue-800' :
                         'bg-red-100 text-red-800'
                       }`}>
-                        {producto.clasificacion_xyz}
+                        {producto.clasificacion_xyz} ({producto.coeficiente_variacion !== null ? producto.coeficiente_variacion.toFixed(2) : 'Sin datos'})
                       </span>
                     </td>
+                    {!ubicacionId && producto.porcentaje_tiendas !== undefined && (
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <div className="flex flex-col">
+                          <span className={`font-medium ${
+                            producto.porcentaje_tiendas >= 80 ? 'text-green-700' :
+                            producto.porcentaje_tiendas >= 50 ? 'text-yellow-700' :
+                            'text-gray-600'
+                          }`}>
+                            {producto.porcentaje_tiendas.toFixed(0)}%
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {producto.tiendas_con_clasificacion}/{producto.total_tiendas}
+                          </span>
+                        </div>
+                      </td>
+                    )}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       #{producto.ranking_valor}
                     </td>
