@@ -55,7 +55,7 @@ from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
 from routers.analisis_xyz_router import router as analisis_xyz_router
 from routers.config_inventario_router import router as config_inventario_router
 from routers.abc_v2_router import router as abc_v2_router
-from routers.conjuntos_router import router as conjuntos_router
+# from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -133,7 +133,7 @@ app.include_router(pedidos_sugeridos_router)
 app.include_router(analisis_xyz_router)
 app.include_router(config_inventario_router)
 app.include_router(abc_v2_router)
-app.include_router(conjuntos_router)
+# app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
 # Global Exception Handler con CORS
 @app.middleware("http")
