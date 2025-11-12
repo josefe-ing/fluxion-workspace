@@ -7,10 +7,9 @@
  * - Gráfico de evolución (opcional)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   getHistoricoABCXYZ,
-  formatearCambio,
   type ClasificacionActual,
   type HistoricoClasificacion,
 } from '../../services/alertasService';
@@ -31,11 +30,7 @@ const HistoricoClasificacionModal: React.FC<Props> = ({
   const [clasificacionActual, setClasificacionActual] = useState<ClasificacionActual[]>([]);
   const [historico, setHistorico] = useState<HistoricoClasificacion[]>([]);
 
-  useEffect(() => {
-    loadHistorico();
-  }, [codigoProducto, ubicacionId]);
-
-  const loadHistorico = async () => {
+  const loadHistorico = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -49,7 +44,11 @@ const HistoricoClasificacionModal: React.FC<Props> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [codigoProducto, ubicacionId]);
+
+  useEffect(() => {
+    loadHistorico();
+  }, [loadHistorico]);
 
   const formatearFecha = (fecha: string) => {
     return new Date(fecha).toLocaleDateString('es-VE', {

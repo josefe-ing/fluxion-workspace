@@ -8,7 +8,7 @@
  * - Ver detalle y acción recomendada
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   getAlertasCambios,
   getResumenAlertasTiendas,
@@ -54,22 +54,10 @@ const AlertasReclasificacion: React.FC = () => {
   const [procesandoRevision, setProcesandoRevision] = useState(false);
 
   // =====================================================================================
-  // EFECTOS
-  // =====================================================================================
-
-  useEffect(() => {
-    loadAlertas();
-  }, [filtroUbicacion, filtroPendientes, filtroCriticas, filtroDias]);
-
-  useEffect(() => {
-    loadResumenTiendas();
-  }, [filtroDias]);
-
-  // =====================================================================================
   // FUNCIONES
   // =====================================================================================
 
-  const loadAlertas = async () => {
+  const loadAlertas = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -90,16 +78,28 @@ const AlertasReclasificacion: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filtroUbicacion, filtroPendientes, filtroCriticas, filtroDias]);
 
-  const loadResumenTiendas = async () => {
+  const loadResumenTiendas = useCallback(async () => {
     try {
       const response = await getResumenAlertasTiendas(filtroDias);
       setResumenTiendas(response.resumen);
     } catch (err) {
       console.error('Error cargando resumen de tiendas:', err);
     }
-  };
+  }, [filtroDias]);
+
+  // =====================================================================================
+  // EFECTOS
+  // =====================================================================================
+
+  useEffect(() => {
+    loadAlertas();
+  }, [loadAlertas]);
+
+  useEffect(() => {
+    loadResumenTiendas();
+  }, [loadResumenTiendas]);
 
   const handleMarcarRevisada = async (alertaId: string, notas: string) => {
     try {
@@ -481,7 +481,7 @@ const AlertasReclasificacion: React.FC = () => {
                     </div>
                   )}
 
-                  {alertaSeleccionada.cambio_porcentual !== null && (
+                  {alertaSeleccionada.cambio_porcentual !== null && alertaSeleccionada.cambio_porcentual !== undefined && (
                     <div className="flex items-center justify-between">
                       <span>Variación de valor:</span>
                       <span className={`font-semibold ${alertaSeleccionada.cambio_porcentual > 0 ? 'text-green-600' : 'text-red-600'}`}>
