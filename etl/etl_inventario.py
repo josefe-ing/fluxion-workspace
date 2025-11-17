@@ -348,62 +348,72 @@ class MultiTiendaETL:
             }
 
     def _cargar_productos_klk(self, df_productos) -> int:
-        """Carga productos KLK a DuckDB de forma idempotente"""
+        """Carga productos KLK a DuckDB de forma idempotente (detecta columnas dinámicamente)"""
         try:
             conn = self.loader.get_connection()
-            conn.register('productos_temp', df_productos)
+
+            # Detectar qué columnas existen en la tabla productos
+            tabla_cols = conn.execute("PRAGMA table_info(productos)").fetchall()
+            columnas_existentes = {col[1] for col in tabla_cols}  # col[1] es el nombre de columna
+
+            # Columnas base que siempre deben existir
+            columnas_base = [
+                'id', 'codigo', 'codigo_barras', 'descripcion',
+                'categoria', 'grupo', 'subgrupo', 'marca', 'modelo', 'presentacion',
+                'costo_promedio', 'precio_venta', 'stock_minimo', 'stock_maximo',
+                'activo', 'es_perecedero', 'dias_vencimiento',
+                'created_at', 'updated_at'
+            ]
+
+            # Columnas opcionales (features futuros)
+            columnas_opcionales = ['conjunto_sustituible', 'es_lider_conjunto']
+
+            # Filtrar columnas disponibles
+            columnas_insert = [col for col in columnas_base if col in columnas_existentes]
+            columnas_insert += [col for col in columnas_opcionales if col in columnas_existentes]
+
+            # Eliminar columnas opcionales del DataFrame si no existen en la tabla
+            df_productos_filtered = df_productos.copy()
+            for col in columnas_opcionales:
+                if col not in columnas_existentes and col in df_productos_filtered.columns:
+                    df_productos_filtered = df_productos_filtered.drop(columns=[col])
+
+            conn.register('productos_temp', df_productos_filtered)
+
+            # Construir query dinámicamente
+            cols_list = ', '.join(columnas_insert)
+            cols_select = ', '.join([f'temp.{col}' for col in columnas_insert])
 
             # Insertar solo productos nuevos
-            conn.execute("""
-                INSERT INTO productos
-                (id, codigo, codigo_barras, descripcion,
-                 categoria, grupo, subgrupo, marca, modelo, presentacion,
-                 costo_promedio, precio_venta, stock_minimo, stock_maximo,
-                 activo, es_perecedero, dias_vencimiento,
-                 created_at, updated_at, conjunto_sustituible)
-                SELECT
-                    temp.id, temp.codigo, temp.codigo_barras, temp.descripcion,
-                    temp.categoria, temp.grupo, temp.subgrupo,
-                    temp.marca, temp.modelo, temp.presentacion,
-                    temp.costo_promedio, temp.precio_venta,
-                    temp.stock_minimo, temp.stock_maximo,
-                    temp.activo, temp.es_perecedero, temp.dias_vencimiento,
-                    temp.created_at, temp.updated_at, temp.conjunto_sustituible
+            query_insert = f"""
+                INSERT INTO productos ({cols_list})
+                SELECT {cols_select}
                 FROM productos_temp temp
                 WHERE NOT EXISTS (
                     SELECT 1 FROM productos p WHERE p.codigo = temp.codigo
                 )
-            """)
+            """
+            conn.execute(query_insert)
 
-            # Actualizar productos existentes SIN stock_actual referencias
-            try:
-                conn.execute("""
-                    UPDATE productos SET
-                        codigo_barras = temp.codigo_barras,
-                        descripcion = temp.descripcion,
-                        categoria = temp.categoria,
-                        grupo = temp.grupo,
-                        subgrupo = temp.subgrupo,
-                        marca = temp.marca,
-                        modelo = temp.modelo,
-                        presentacion = temp.presentacion,
-                        costo_promedio = temp.costo_promedio,
-                        precio_venta = temp.precio_venta,
-                        stock_minimo = temp.stock_minimo,
-                        stock_maximo = temp.stock_maximo,
-                        activo = temp.activo,
-                        es_perecedero = temp.es_perecedero,
-                        dias_vencimiento = temp.dias_vencimiento,
-                        updated_at = temp.updated_at,
-                        conjunto_sustituible = temp.conjunto_sustituible
-                    FROM productos_temp temp
-                    WHERE productos.codigo = temp.codigo
-                      AND NOT EXISTS (
-                          SELECT 1 FROM stock_actual sa WHERE sa.producto_id = productos.id
-                      )
-                """)
-            except Exception:
-                pass  # Si falla por FK, continuar
+            # Actualizar productos existentes (excluyendo id, codigo, created_at)
+            columnas_update = [col for col in columnas_insert
+                             if col not in ['id', 'codigo', 'created_at']]
+
+            if columnas_update:
+                set_clause = ', '.join([f"{col} = temp.{col}" for col in columnas_update])
+
+                try:
+                    query_update = f"""
+                        UPDATE productos SET {set_clause}
+                        FROM productos_temp temp
+                        WHERE productos.codigo = temp.codigo
+                          AND NOT EXISTS (
+                              SELECT 1 FROM stock_actual sa WHERE sa.producto_id = productos.id
+                          )
+                    """
+                    conn.execute(query_update)
+                except Exception:
+                    pass  # Si falla por FK, continuar
 
             conn.close()
             return len(df_productos)
