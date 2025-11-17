@@ -458,12 +458,12 @@ async def listar_pedidos(
     try:
         query = """
             SELECT
-                id, numero_pedido, fecha_envio, fecha_creacion,
+                id, numero_pedido, fecha_pedido, fecha_creacion,
                 cedi_origen_nombre, tienda_destino_nombre,
                 estado, prioridad, tipo_pedido,
                 total_productos, total_lineas, total_bultos, total_unidades, total_peso_kg,
                 fecha_entrega_solicitada, fecha_aprobacion, fecha_recepcion,
-                creado_por,
+                usuario_creador,
                 CAST(DATEDIFF('day', fecha_creacion::DATE, CURRENT_DATE) AS INTEGER) as dias_desde_creacion
             FROM pedidos_sugeridos
             WHERE 1=1
@@ -893,3 +893,168 @@ async def agregar_comentario_producto(
     except Exception as e:
         logger.error(f"❌ Error agregando comentario: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error agregando comentario: {str(e)}")
+
+
+# =====================================================================================
+# CREAR PEDIDO V2.0 (Método Nivel Objetivo ABC-XYZ)
+# =====================================================================================
+
+from pydantic import BaseModel
+from typing import List
+
+class ProductoPedidoV2(BaseModel):
+    """Producto para pedido v2.0 con datos de nivel objetivo"""
+    producto_id: str
+    cantidad_pedida: float
+    cantidad_sugerida: float
+    nivel_objetivo: float
+    stock_actual: float
+    inventario_en_transito: float
+    stock_seguridad: float
+    demanda_ciclo: float
+    matriz_abc_xyz: str
+    prioridad: int
+
+
+class CrearPedidoV2Request(BaseModel):
+    """Request para crear pedido v2.0"""
+    cedi_origen_id: str
+    tienda_destino_id: str
+    fecha_pedido: date
+    tipo_pedido: str = "sugerido_v2"
+    metodo_calculo: str = "NIVEL_OBJETIVO_V2"
+    productos: List[ProductoPedidoV2]
+
+
+@router.post("/crear-v2", response_model=PedidoGuardadoResponse)
+async def crear_pedido_v2(
+    request: CrearPedidoV2Request,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db_write)
+):
+    """
+    Crea un pedido sugerido usando el método v2.0 (Nivel Objetivo ABC-XYZ)
+
+    Este endpoint guarda un pedido calculado con el nuevo método basado en:
+    - Clasificación ABC-XYZ (9 cuadrantes)
+    - Stock de seguridad diferenciado por matriz
+    - Nivel de servicio configurable por cuadrante
+    - Periodo de reposición de 2.5 días
+    """
+    try:
+        logger.info(f"🆕 Creando pedido v2.0: Destino={request.tienda_destino_id}")
+
+        # Generar IDs
+        pedido_id = str(uuid.uuid4())
+
+        # Generar número de pedido
+        result = conn.execute("SELECT MAX(numero_pedido) FROM pedidos_sugeridos WHERE numero_pedido LIKE 'PS-%'").fetchone()
+        if result[0]:
+            ultimo = int(result[0].split('-')[1])
+            numero_pedido = f"PS-{ultimo + 1:05d}"
+        else:
+            numero_pedido = "PS-00001"
+
+        # Obtener nombres de ubicaciones
+        cedi_nombre = conn.execute("SELECT nombre FROM ubicaciones WHERE id = ?", [request.cedi_origen_id]).fetchone()
+        tienda_nombre = conn.execute("SELECT nombre FROM ubicaciones WHERE id = ?", [request.tienda_destino_id]).fetchone()
+
+        if not cedi_nombre or not tienda_nombre:
+            raise HTTPException(status_code=404, detail="Ubicación no encontrada")
+
+        # Calcular totales
+        total_productos = len(request.productos)
+        total_unidades = sum(p.cantidad_pedida for p in request.productos)
+
+        # Insertar pedido principal
+        conn.execute("""
+            INSERT INTO pedidos_sugeridos (
+                id, numero_pedido,
+                cedi_origen_id, cedi_origen_nombre,
+                tienda_destino_id, tienda_destino_nombre,
+                fecha_pedido,
+                estado, requiere_aprobacion,
+                total_productos, total_unidades,
+                tipo_pedido, prioridad,
+                usuario_creador, fecha_creacion,
+                version, metodo_calculo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 2, ?)
+        """, [
+            pedido_id, numero_pedido,
+            request.cedi_origen_id, cedi_nombre[0],
+            request.tienda_destino_id, tienda_nombre[0],
+            request.fecha_pedido,
+            EstadoPedido.BORRADOR, False,  # requiere_aprobacion
+            total_productos, float(total_unidades),
+            request.tipo_pedido, "normal",
+            "sistema",  # TODO: Get real user
+            request.metodo_calculo
+        ])
+
+        # Insertar detalles de productos
+        for idx, producto in enumerate(request.productos):
+            detalle_id = str(uuid.uuid4())
+
+            # Obtener información adicional del producto desde ventas_raw
+            prod_info = conn.execute("""
+                SELECT
+                    codigo_producto,
+                    MAX(descripcion_producto) as descripcion,
+                    MAX(categoria_producto) as categoria,
+                    MAX(marca_producto) as marca,
+                    MAX(presentacion_producto) as presentacion
+                FROM ventas_raw
+                WHERE codigo_producto = ?
+                GROUP BY codigo_producto
+            """, [producto.producto_id]).fetchone()
+
+            if not prod_info:
+                logger.warning(f"Producto {producto.producto_id} no encontrado, saltando...")
+                continue
+
+            codigo, descripcion, categoria, marca, presentacion = prod_info
+
+            conn.execute("""
+                INSERT INTO pedidos_sugeridos_detalle (
+                    id, pedido_id, linea_numero,
+                    codigo_producto, descripcion_producto,
+                    categoria, marca, presentacion,
+                    cuadrante_producto,
+                    cantidad_sugerida_unidades,
+                    cantidad_pedida_unidades,
+                    total_unidades,
+                    stock_tienda,
+                    stock_minimo,
+                    incluido,
+                    fecha_creacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, [
+                detalle_id, pedido_id, idx + 1,
+                codigo, descripcion,
+                categoria, marca, presentacion,
+                producto.matriz_abc_xyz,
+                float(producto.cantidad_sugerida),
+                float(producto.cantidad_pedida),
+                float(producto.cantidad_pedida),
+                float(producto.stock_actual),
+                float(producto.nivel_objetivo),
+                True
+            ])
+
+        logger.info(f"✅ Pedido v2.0 creado: {numero_pedido} con {total_productos} productos")
+
+        return PedidoGuardadoResponse(
+            success=True,
+            message=f"Pedido {numero_pedido} creado exitosamente",
+            pedido_id=pedido_id,
+            numero_pedido=numero_pedido,
+            estado=EstadoPedido.BORRADOR,
+            total_productos=total_productos,
+            total_bultos=0.0,  # No calculamos bultos en v2.0
+            total_unidades=float(total_unidades)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error creando pedido v2.0: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creando pedido: {str(e)}")

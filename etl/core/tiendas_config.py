@@ -90,6 +90,10 @@ class TiendaConfig:
     activo: bool = True
     tipo: str = "tienda"
     codigo_deposito: str = "0102"  # Código específico del depósito para esta tienda
+    # Flags de visibilidad en módulos
+    visible_pedidos: bool = False  # Mostrar en módulo de Pedidos Sugeridos
+    visible_reportes: bool = True  # Mostrar en Reportes
+    visible_dashboards: bool = True  # Mostrar en Dashboards
     # Parámetros de stock mínimo por clasificación ABC
     stock_min_mult_a: float = 2.0
     stock_min_mult_ab: float = 2.0
@@ -116,7 +120,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=get_sql_pass(),
         port=14348,
         activo=True,
-        codigo_deposito="0102"
+        codigo_deposito="0102",
+        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
     ),
 
     "tienda_02": TiendaConfig(
@@ -140,7 +145,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=get_sql_pass(),
         port=14348,
         activo=True,
-        codigo_deposito="0302"
+        codigo_deposito="0302",
+        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
     ),
 
     "tienda_04": TiendaConfig(
@@ -200,7 +206,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=get_sql_pass(),
         port=14348,
         activo=True,
-        codigo_deposito="0802"
+        codigo_deposito="0802",
+        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
     ),
 
     "tienda_09": TiendaConfig(
@@ -322,7 +329,8 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         port=1433,
         codigo_deposito="0001",
         activo=True,
-        tipo="cedi"
+        tipo="cedi",
+        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
     ),
 
     "cedi_frio": TiendaConfig(
@@ -382,6 +390,15 @@ def get_tiendas_con_ventas() -> Dict[str, TiendaConfig]:
     return {
         k: v for k, v in TIENDAS_CONFIG.items()
         if v.activo and v.tipo != "cedi"
+    }
+
+def get_ubicaciones_visibles_pedidos() -> Dict[str, TiendaConfig]:
+    """
+    Retorna solo las ubicaciones (tiendas y CEDIs) visibles en módulo de Pedidos Sugeridos
+    """
+    return {
+        k: v for k, v in TIENDAS_CONFIG.items()
+        if v.activo and v.visible_pedidos
     }
 
 def listar_tiendas():

@@ -55,6 +55,8 @@ from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
 from routers.analisis_xyz_router import router as analisis_xyz_router
 from routers.config_inventario_router import router as config_inventario_router
 from routers.abc_v2_router import router as abc_v2_router
+from routers.nivel_objetivo_router import router as nivel_objetivo_router
+from routers.admin_ubicaciones_router import router as admin_ubicaciones_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
 # Configurar logging
@@ -133,6 +135,8 @@ app.include_router(pedidos_sugeridos_router)
 app.include_router(analisis_xyz_router)
 app.include_router(config_inventario_router)
 app.include_router(abc_v2_router)
+app.include_router(nivel_objetivo_router)
+app.include_router(admin_ubicaciones_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
 # Global Exception Handler con CORS
@@ -244,6 +248,7 @@ class UbicacionResponse(BaseModel):
     ciudad: Optional[str]
     superficie_m2: Optional[float]
     activo: bool
+    visible_pedidos: bool = False  # Mostrar en módulo de Pedidos Sugeridos
 
 class ProductoResponse(BaseModel):
     id: str
@@ -645,48 +650,55 @@ async def bootstrap_admin():
 # =====================================================================================
 
 @app.get("/api/ubicaciones", response_model=List[UbicacionResponse], tags=["Ubicaciones"])
-async def get_ubicaciones(tipo: Optional[str] = None):
-    """Obtiene todas las ubicaciones (tiendas y CEDIs) desde inventario_raw (datos reales)"""
+async def get_ubicaciones(
+    tipo: Optional[str] = None,
+    visible_pedidos: Optional[bool] = None
+):
+    """
+    Obtiene todas las ubicaciones (tiendas y CEDIs) desde tiendas_config.py
+
+    Query params:
+    - tipo: Filtrar por tipo ('tienda' | 'cedi')
+    - visible_pedidos: Filtrar por visibilidad en pedidos sugeridos
+    """
     try:
-        with get_db_connection() as conn:
-            # Query desde inventario_raw para obtener solo las ubicaciones con datos reales
-            # Excluye mayorista según instrucciones
-            query = """
-                SELECT DISTINCT
-                    ubicacion_id as id,
-                    SUBSTRING(ubicacion_id, 1, 3) as codigo,
-                    ubicacion_nombre as nombre,
-                    tipo_ubicacion as tipo,
-                    NULL as region,
-                    NULL as ciudad,
-                    NULL as superficie_m2,
-                    true as activo
-                FROM inventario_raw
-                WHERE activo = true
-                    AND tipo_ubicacion != 'mayorista'
-            """
+        # Import tiendas_config
+        import sys
+        from pathlib import Path
+        etl_core_path = Path(__file__).parent.parent / 'etl' / 'core'
+        if str(etl_core_path) not in sys.path:
+            sys.path.insert(0, str(etl_core_path))
 
-            if tipo:
-                query += " AND tipo_ubicacion = ?"
+        from tiendas_config import TIENDAS_CONFIG
 
-            query += " ORDER BY tipo_ubicacion, ubicacion_nombre"
+        ubicaciones = []
+        for ubicacion_id, config in TIENDAS_CONFIG.items():
+            # Apply filters
+            if tipo and config.tipo != tipo:
+                continue
 
-            result = conn.execute(query, [tipo] if tipo else []).fetchall()
+            if visible_pedidos is not None and config.visible_pedidos != visible_pedidos:
+                continue
 
-            ubicaciones = []
-            for row in result:
-                ubicaciones.append(UbicacionResponse(
-                    id=row[0],
-                    codigo=row[1],
-                    nombre=row[2],
-                    tipo=row[3],
-                    region=row[4],
-                    ciudad=row[5],
-                    superficie_m2=row[6],
-                    activo=row[7]
-                ))
+            if not config.activo:
+                continue
 
-            return ubicaciones
+            ubicaciones.append(UbicacionResponse(
+                id=config.ubicacion_id,
+                codigo=config.codigo_deposito[:3] if config.codigo_deposito else ubicacion_id[:3],
+                nombre=config.ubicacion_nombre,
+                tipo=config.tipo,
+                region=None,
+                ciudad=None,
+                superficie_m2=None,
+                activo=config.activo,
+                visible_pedidos=config.visible_pedidos
+            ))
+
+        # Sort by tipo and nombre
+        ubicaciones.sort(key=lambda u: (u.tipo, u.nombre))
+
+        return ubicaciones
 
     except Exception as e:
         logger.error(f"Error obteniendo ubicaciones: {str(e)}")
@@ -4931,6 +4943,210 @@ async def get_historico_abc_xyz_completo(
 
     except Exception as e:
         logger.error(f"Error obteniendo histórico ABC-XYZ: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ENDPOINTS: NIVEL OBJETIVO
+# ============================================================================
+
+# from services.nivel_objetivo_service import NivelObjetivoService  # COMENTADO: Router ya maneja esto
+
+class CalcularNivelObjetivoRequest(BaseModel):
+    producto_id: str
+    tienda_id: str
+
+class CalcularNivelObjetivoResponse(BaseModel):
+    success: bool
+    producto_id: str
+    tienda_id: str
+    nivel_objetivo: int
+    stock_seguridad: int
+    demanda_ciclo: float
+    matriz_abc_xyz: str
+    parametros_usados: Dict[str, Any]
+    metricas_base: Dict[str, Any]
+    calculos_intermedios: Dict[str, Any]
+    alertas: List[str]
+    fecha_calculo: str
+
+class CalcularCantidadSugeridaRequest(BaseModel):
+    producto_id: str
+    tienda_id: str
+    stock_actual: Optional[float] = None
+
+class CalcularCantidadSugeridaResponse(BaseModel):
+    success: bool
+    producto_id: str
+    tienda_id: str
+    cantidad_sugerida: int
+    nivel_objetivo: int
+    stock_actual: float
+    inventario_en_transito: float
+    disponible_total: float
+    deficit: float
+    requiere_reposicion: bool
+    matriz_abc_xyz: str
+
+
+# @app.post("/api/niveles-inventario/calcular", response_model=CalcularNivelObjetivoResponse)  # DESHABILITADO: Usar router
+async def calcular_nivel_objetivo_endpoint_DISABLED(request: CalcularNivelObjetivoRequest):
+    """
+    Calcula el nivel objetivo de inventario para un producto en una tienda.
+
+    Este endpoint calcula:
+    - Nivel objetivo basado en demanda y variabilidad
+    - Stock de seguridad según matriz ABC-XYZ
+    - Demanda esperada durante ciclo de reposición
+
+    Returns:
+        CalcularNivelObjetivoResponse con todos los detalles del cálculo
+    """
+    try:
+        db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
+
+        with NivelObjetivoService(str(db_path)) as service:
+            resultado = service.calcular_nivel_objetivo(
+                request.producto_id,
+                request.tienda_id
+            )
+
+        return CalcularNivelObjetivoResponse(
+            success=True,
+            producto_id=request.producto_id,
+            tienda_id=request.tienda_id,
+            **resultado
+        )
+
+    except ValueError as e:
+        logger.error(f"Error de validación al calcular nivel objetivo: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error al calcular nivel objetivo: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# @app.post("/api/niveles-inventario/cantidad-sugerida", response_model=CalcularCantidadSugeridaResponse)  # DESHABILITADO: Usar router
+async def calcular_cantidad_sugerida_endpoint_DISABLED(request: CalcularCantidadSugeridaRequest):
+    """
+    Calcula la cantidad sugerida a pedir para un producto.
+
+    Considera:
+    - Nivel objetivo calculado
+    - Stock actual en tienda
+    - Inventario en tránsito (pedidos aprobados no recibidos)
+
+    Returns:
+        CalcularCantidadSugeridaResponse con cantidad sugerida y detalles
+    """
+    try:
+        db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
+
+        with NivelObjetivoService(str(db_path)) as service:
+            resultado = service.calcular_cantidad_sugerida(
+                request.producto_id,
+                request.tienda_id,
+                request.stock_actual
+            )
+
+        return CalcularCantidadSugeridaResponse(
+            success=True,
+            producto_id=request.producto_id,
+            tienda_id=request.tienda_id,
+            cantidad_sugerida=resultado['cantidad_sugerida'],
+            nivel_objetivo=resultado['nivel_objetivo'],
+            stock_actual=resultado['stock_actual'],
+            inventario_en_transito=resultado['inventario_en_transito'],
+            disponible_total=resultado['disponible_total'],
+            deficit=resultado['deficit'],
+            requiere_reposicion=resultado['requiere_reposicion'],
+            matriz_abc_xyz=resultado['matriz_abc_xyz']
+        )
+
+    except ValueError as e:
+        logger.error(f"Error de validación al calcular cantidad sugerida: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error al calcular cantidad sugerida: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# @app.get("/api/niveles-inventario/tienda/{tienda_id}")  # DESHABILITADO: Usar router
+async def calcular_niveles_tienda_DISABLED(
+    tienda_id: str,
+    limite: Optional[int] = 100,
+    solo_con_deficit: bool = False
+):
+    """
+    Calcula niveles objetivo para múltiples productos de una tienda.
+
+    Args:
+        tienda_id: ID de la tienda
+        limite: Máximo de productos a calcular (default: 100)
+        solo_con_deficit: Si true, solo muestra productos con deficit > 0
+
+    Returns:
+        Lista de productos con sus niveles objetivo y cantidades sugeridas
+    """
+    try:
+        db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
+
+        with NivelObjetivoService(str(db_path)) as service:
+            # Obtener productos activos con clasificación ABC-XYZ en esta tienda
+            conn = service.conn
+            query = """
+            SELECT DISTINCT
+                abc.codigo_producto,
+                p.descripcion as nombre_producto,
+                abc.matriz_abc_xyz,
+                abc.clasificacion_abc_valor,
+                s.cantidad as stock_actual
+            FROM productos_abc_v2 abc
+            JOIN productos p ON abc.codigo_producto = p.codigo
+            LEFT JOIN stock_actual s ON abc.codigo_producto = s.producto_id
+                                     AND abc.ubicacion_id = s.ubicacion_id
+            WHERE abc.ubicacion_id = ?
+              AND abc.matriz_abc_xyz IS NOT NULL
+            ORDER BY abc.clasificacion_abc_valor, abc.matriz_abc_xyz
+            LIMIT ?
+            """
+
+            productos = conn.execute(query, [tienda_id, limite]).fetchall()
+
+            resultados = []
+            for producto_id, nombre, matriz, clase_abc, stock_actual in productos:
+                try:
+                    resultado = service.calcular_cantidad_sugerida(
+                        producto_id,
+                        tienda_id,
+                        float(stock_actual) if stock_actual else None
+                    )
+
+                    # Filtrar si solo_con_deficit
+                    if solo_con_deficit and resultado['cantidad_sugerida'] <= 0:
+                        continue
+
+                    resultados.append({
+                        'producto_id': producto_id,
+                        'nombre_producto': nombre,
+                        'matriz_abc_xyz': matriz,
+                        'clasificacion_abc': clase_abc,
+                        **resultado
+                    })
+
+                except Exception as e:
+                    logger.warning(f"Error al calcular producto {producto_id}: {str(e)}")
+                    continue
+
+        return {
+            'success': True,
+            'tienda_id': tienda_id,
+            'total_productos': len(resultados),
+            'productos': resultados
+        }
+
+    except Exception as e:
+        logger.error(f"Error al calcular niveles para tienda: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
