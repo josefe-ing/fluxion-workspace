@@ -90,6 +90,9 @@ class TiendaConfig:
     activo: bool = True
     tipo: str = "tienda"
     codigo_deposito: str = "0102"  # Código específico del depósito para esta tienda
+    # Sistema POS utilizado - NUEVO CAMPO
+    sistema_pos: str = "stellar"  # "stellar" | "klk" - Sistema POS de la tienda
+    codigo_almacen_klk: str = None  # Código de almacén en KLK (si aplica)
     # Flags de visibilidad en módulos
     visible_pedidos: bool = False  # Mostrar en módulo de Pedidos Sugeridos
     visible_reportes: bool = True  # Mostrar en Reportes
@@ -121,7 +124,9 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         port=14348,
         activo=True,
         codigo_deposito="0102",
-        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
+        visible_pedidos=True,  # ✅ Visible en Pedidos Sugeridos
+        sistema_pos="klk",  # 🆕 Migrado a KLK
+        codigo_almacen_klk="APP-TPF"  # Código de almacén en KLK
     ),
 
     "tienda_02": TiendaConfig(
@@ -207,7 +212,9 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         port=14348,
         activo=True,
         codigo_deposito="0802",
-        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
+        visible_pedidos=True,  # ✅ Visible en Pedidos Sugeridos
+        sistema_pos="klk",  # 🆕 Migrado a KLK
+        codigo_almacen_klk="APP-TBQ"  # Código de almacén en KLK: EL BOSQUE PV
     ),
 
     "tienda_09": TiendaConfig(
@@ -316,6 +323,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         port=1433,
         activo=True,
         codigo_deposito="2001"
+        # NOTA: TAZAJAL tiene código KLK "TTZ" pero aún no migrado
     ),
 
     # CEDIs - Configurados con datos reales
@@ -400,6 +408,33 @@ def get_ubicaciones_visibles_pedidos() -> Dict[str, TiendaConfig]:
         k: v for k, v in TIENDAS_CONFIG.items()
         if v.activo and v.visible_pedidos
     }
+
+def get_tiendas_por_sistema_pos(sistema: str) -> Dict[str, TiendaConfig]:
+    """
+    Retorna solo las tiendas que usan un sistema POS específico
+
+    Args:
+        sistema: 'stellar' | 'klk'
+
+    Returns:
+        Dict de tiendas filtradas por sistema POS
+    """
+    return {
+        k: v for k, v in TIENDAS_CONFIG.items()
+        if v.activo and v.sistema_pos == sistema.lower()
+    }
+
+def get_tiendas_klk() -> Dict[str, TiendaConfig]:
+    """
+    Retorna solo las tiendas que usan KLK POS
+    """
+    return get_tiendas_por_sistema_pos("klk")
+
+def get_tiendas_stellar() -> Dict[str, TiendaConfig]:
+    """
+    Retorna solo las tiendas que usan Stellar POS
+    """
+    return get_tiendas_por_sistema_pos("stellar")
 
 def listar_tiendas():
     """Lista todas las tiendas configuradas"""

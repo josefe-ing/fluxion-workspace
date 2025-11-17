@@ -12,6 +12,7 @@ interface Ubicacion {
   id: string;
   nombre: string;
   tipo: string;
+  sistema_pos?: string;
 }
 
 export default function InventarioETLPanel() {
@@ -166,11 +167,15 @@ export default function InventarioETLPanel() {
 
                 {tiendas.length > 0 && (
                   <optgroup label="Tiendas">
-                    {tiendas.map(u => (
-                      <option key={u.id} value={u.id}>
-                        {u.id} - {u.nombre}
-                      </option>
-                    ))}
+                    {tiendas.map(u => {
+                      const sistemaPOS = u.sistema_pos?.toUpperCase() || 'STELLAR';
+                      const badge = sistemaPOS === 'KLK' ? '🔵 KLK' : '⚪ Stellar';
+                      return (
+                        <option key={u.id} value={u.id}>
+                          {badge} | {u.id} - {u.nombre}
+                        </option>
+                      );
+                    })}
                   </optgroup>
                 )}
               </select>

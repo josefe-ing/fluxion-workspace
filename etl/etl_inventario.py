@@ -19,7 +19,7 @@ sys.path.append(str(Path(__file__).parent / 'core'))
 # Agregar el directorio backend al path para imports
 sys.path.append(str(Path(__file__).parent.parent / 'backend'))
 
-from core.tiendas_config import TIENDAS_CONFIG, get_tiendas_activas
+from core.tiendas_config import TIENDAS_CONFIG, get_tiendas_activas, get_tiendas_klk, get_tiendas_stellar
 from core.config import ETLConfig, DatabaseConfig
 from core.extractor import SQLServerExtractor
 from core.transformer import InventoryTransformer
@@ -31,6 +31,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('etl_multi_tienda')
+
+# Import KLK ETL components
+try:
+    from core.extractor_inventario_klk import InventarioKLKExtractor
+    from core.transformer_inventario_klk import InventarioKLKTransformer
+    KLK_AVAILABLE = True
+except ImportError:
+    KLK_AVAILABLE = False
+    logger.warning("⚠️ KLK ETL components not available")
 
 # Import Sentry ETL monitoring
 try:
@@ -52,16 +61,22 @@ except ImportError:
 
 
 class MultiTiendaETL:
-    """Orquestador de ETL para múltiples tiendas"""
+    """Orquestador de ETL para múltiples tiendas (Stellar y KLK)"""
 
     def __init__(self):
+        # Stellar POS components
         self.extractor = SQLServerExtractor()
         self.transformer = InventoryTransformer()
         self.loader = DuckDBLoader()
+
+        # KLK POS components
+        self.klk_extractor = InventarioKLKExtractor() if KLK_AVAILABLE else None
+        self.klk_transformer = InventarioKLKTransformer() if KLK_AVAILABLE else None
+
         self.results = []
 
     def ejecutar_etl_tienda(self, tienda_id: str) -> Dict[str, Any]:
-        """Ejecuta el ETL para una tienda específica"""
+        """Ejecuta el ETL para una tienda específica (Stellar o KLK)"""
         start_time = time.time()
 
         # Monitoreo de Sentry para este ETL
@@ -92,9 +107,45 @@ class MultiTiendaETL:
                     "tiempo_proceso": time.time() - start_time
                 }
 
-            logger.info(f"🏪 Procesando: {config.ubicacion_nombre}")
-            logger.info(f"   📡 Conectando a {config.server_ip}:{config.port}")
+            # DETECTAR SISTEMA POS Y DELEGAR AL ETL APROPIADO
+            sistema_pos = getattr(config, 'sistema_pos', 'stellar')
 
+            if sistema_pos == 'klk':
+                logger.info(f"🏪 Procesando: {config.ubicacion_nombre} (KLK POS)")
+                return self._ejecutar_etl_klk(tienda_id, config, start_time, monitor)
+            else:
+                logger.info(f"🏪 Procesando: {config.ubicacion_nombre} (Stellar POS)")
+                logger.info(f"   📡 Conectando a {config.server_ip}:{config.port}")
+                return self._ejecutar_etl_stellar(tienda_id, config, start_time, monitor)
+
+        except Exception as e:
+            logger.error(f"❌ Error procesando {tienda_id}: {str(e)}")
+
+            # Capturar error en Sentry
+            if SENTRY_AVAILABLE:
+                capture_etl_error(
+                    error=e,
+                    etl_name="inventario_tienda",
+                    tienda_id=tienda_id,
+                    context={"etl_type": "inventario"}
+                )
+
+            return {
+                "tienda_id": tienda_id,
+                "nombre": TIENDAS_CONFIG.get(tienda_id).ubicacion_nombre if tienda_id in TIENDAS_CONFIG else tienda_id,
+                "success": False,
+                "message": str(e),
+                "registros": 0,
+                "tiempo_proceso": time.time() - start_time
+            }
+
+        finally:
+            if monitor:
+                monitor.__exit__(None, None, None)
+
+    def _ejecutar_etl_stellar(self, tienda_id: str, config, start_time: float, monitor) -> Dict[str, Any]:
+        """Ejecuta ETL para tiendas con Stellar POS (SQL Server)"""
+        try:
             # Configurar config de base de datos
             db_config = DatabaseConfig(
                 ubicacion_id=config.ubicacion_id,
@@ -109,8 +160,6 @@ class MultiTiendaETL:
 
             # 1. EXTRACCIÓN
             logger.info(f"   📥 Extrayendo datos...")
-
-            # Preparar parámetros dinámicos para el query
             query_params = {'codigo_deposito': config.codigo_deposito}
 
             raw_data = self.extractor.extract_inventory_data(
@@ -186,29 +235,182 @@ class MultiTiendaETL:
                 }
 
         except Exception as e:
-            logger.error(f"❌ Error procesando {tienda_id}: {str(e)}")
-
-            # Capturar error en Sentry
-            if SENTRY_AVAILABLE:
-                capture_etl_error(
-                    error=e,
-                    etl_name="inventario_tienda",
-                    tienda_id=tienda_id,
-                    context={"etl_type": "inventario"}
-                )
-
+            logger.error(f"   ❌ Error en ETL Stellar: {str(e)}")
             return {
                 "tienda_id": tienda_id,
-                "nombre": TIENDAS_CONFIG.get(tienda_id).ubicacion_nombre if tienda_id in TIENDAS_CONFIG else tienda_id,
+                "nombre": config.ubicacion_nombre,
                 "success": False,
                 "message": str(e),
                 "registros": 0,
                 "tiempo_proceso": time.time() - start_time
             }
 
-        finally:
+    def _ejecutar_etl_klk(self, tienda_id: str, config, start_time: float, monitor) -> Dict[str, Any]:
+        """Ejecuta ETL para tiendas con KLK POS (REST API)"""
+        if not KLK_AVAILABLE:
+            logger.error("   ❌ KLK ETL components not available")
+            return {
+                "tienda_id": tienda_id,
+                "nombre": config.ubicacion_nombre,
+                "success": False,
+                "message": "KLK ETL components not available",
+                "registros": 0,
+                "tiempo_proceso": time.time() - start_time
+            }
+
+        try:
+            logger.info(f"   📡 API: {self.klk_extractor.api_config.base_url}")
+            logger.info(f"   🏪 Almacén: {config.codigo_almacen_klk}")
+
+            # 1. EXTRACCIÓN
+            logger.info(f"   📥 Extrayendo datos desde KLK API...")
+            df_raw = self.klk_extractor.extract_inventario_data(config)
+
+            if df_raw is None or df_raw.empty:
+                logger.warning(f"   ⚠️ Sin datos para {config.ubicacion_nombre}")
+                return {
+                    "tienda_id": tienda_id,
+                    "nombre": config.ubicacion_nombre,
+                    "success": False,
+                    "message": "Sin datos extraídos",
+                    "registros": 0,
+                    "tiempo_proceso": time.time() - start_time
+                }
+
+            registros_extraidos = len(df_raw)
+            logger.info(f"   ✅ Extraídos: {registros_extraidos} registros")
+
+            # 2. TRANSFORMACIÓN
+            logger.info(f"   🔄 Transformando datos...")
+            df_productos, df_stock = self.klk_transformer.transform(df_raw)
+
+            if df_productos.empty or df_stock.empty:
+                logger.warning(f"   ⚠️ Error en transformación para {config.ubicacion_nombre}")
+                return {
+                    "tienda_id": tienda_id,
+                    "nombre": config.ubicacion_nombre,
+                    "success": False,
+                    "message": "Error en transformación",
+                    "registros": 0,
+                    "tiempo_proceso": time.time() - start_time
+                }
+
+            logger.info(f"   ✅ Transformados: {len(df_productos)} productos, {len(df_stock)} stock")
+
+            # 2B. TRANSFORMAR TAMBIÉN A INVENTARIO_RAW (para dashboard)
+            logger.info(f"   🔄 Transformando a inventario_raw (para dashboard)...")
+            df_inventario_raw = self.klk_transformer.transform_to_inventario_raw(df_raw)
+
+            # 3. CARGA
+            logger.info(f"   💾 Cargando a base de datos...")
+
+            # 3A: Cargar productos primero (necesario por FK)
+            productos_cargados = self._cargar_productos_klk(df_productos)
+            logger.info(f"   ✅ Productos cargados: {productos_cargados}")
+
+            # 3B: Cargar stock
+            result_stock = self.loader.update_stock_actual_table(df_stock)
+            stock_cargado = result_stock.get('records_updated', 0)
+            logger.info(f"   ✅ Stock cargado: {stock_cargado}")
+
+            # 3C: Cargar a inventario_raw (IMPORTANTE: esto actualiza el dashboard)
+            result_raw = self.loader.load_inventory_data(df_inventario_raw)
+            if result_raw['success']:
+                logger.info(f"   ✅ inventario_raw cargado: {result_raw['stats']['insertados']} registros")
+            else:
+                logger.warning(f"   ⚠️ Error cargando inventario_raw: {result_raw.get('message')}")
+
+            # Reportar métricas a Sentry
             if monitor:
-                monitor.__exit__(None, None, None)
+                tiempo_proceso = time.time() - start_time
+                monitor.add_metric("registros_cargados", stock_cargado)
+                monitor.add_metric("tiempo_proceso", tiempo_proceso)
+                monitor.set_success(registros_cargados=stock_cargado)
+
+            return {
+                "tienda_id": tienda_id,
+                "nombre": config.ubicacion_nombre,
+                "success": True,
+                "message": "ETL KLK completado exitosamente",
+                "registros": stock_cargado,
+                "tiempo_proceso": time.time() - start_time
+            }
+
+        except Exception as e:
+            logger.error(f"   ❌ Error en ETL KLK: {str(e)}")
+            return {
+                "tienda_id": tienda_id,
+                "nombre": config.ubicacion_nombre,
+                "success": False,
+                "message": str(e),
+                "registros": 0,
+                "tiempo_proceso": time.time() - start_time
+            }
+
+    def _cargar_productos_klk(self, df_productos) -> int:
+        """Carga productos KLK a DuckDB de forma idempotente"""
+        try:
+            conn = self.loader.get_connection()
+            conn.register('productos_temp', df_productos)
+
+            # Insertar solo productos nuevos
+            conn.execute("""
+                INSERT INTO productos
+                (id, codigo, codigo_barras, descripcion,
+                 categoria, grupo, subgrupo, marca, modelo, presentacion,
+                 costo_promedio, precio_venta, stock_minimo, stock_maximo,
+                 activo, es_perecedero, dias_vencimiento,
+                 created_at, updated_at, conjunto_sustituible)
+                SELECT
+                    temp.id, temp.codigo, temp.codigo_barras, temp.descripcion,
+                    temp.categoria, temp.grupo, temp.subgrupo,
+                    temp.marca, temp.modelo, temp.presentacion,
+                    temp.costo_promedio, temp.precio_venta,
+                    temp.stock_minimo, temp.stock_maximo,
+                    temp.activo, temp.es_perecedero, temp.dias_vencimiento,
+                    temp.created_at, temp.updated_at, temp.conjunto_sustituible
+                FROM productos_temp temp
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM productos p WHERE p.codigo = temp.codigo
+                )
+            """)
+
+            # Actualizar productos existentes SIN stock_actual referencias
+            try:
+                conn.execute("""
+                    UPDATE productos SET
+                        codigo_barras = temp.codigo_barras,
+                        descripcion = temp.descripcion,
+                        categoria = temp.categoria,
+                        grupo = temp.grupo,
+                        subgrupo = temp.subgrupo,
+                        marca = temp.marca,
+                        modelo = temp.modelo,
+                        presentacion = temp.presentacion,
+                        costo_promedio = temp.costo_promedio,
+                        precio_venta = temp.precio_venta,
+                        stock_minimo = temp.stock_minimo,
+                        stock_maximo = temp.stock_maximo,
+                        activo = temp.activo,
+                        es_perecedero = temp.es_perecedero,
+                        dias_vencimiento = temp.dias_vencimiento,
+                        updated_at = temp.updated_at,
+                        conjunto_sustituible = temp.conjunto_sustituible
+                    FROM productos_temp temp
+                    WHERE productos.codigo = temp.codigo
+                      AND NOT EXISTS (
+                          SELECT 1 FROM stock_actual sa WHERE sa.producto_id = productos.id
+                      )
+                """)
+            except Exception:
+                pass  # Si falla por FK, continuar
+
+            conn.close()
+            return len(df_productos)
+
+        except Exception as e:
+            logger.error(f"   ❌ Error cargando productos KLK: {e}")
+            return 0
 
     def ejecutar_todas_las_tiendas(self, paralelo: bool = False) -> List[Dict[str, Any]]:
         """Ejecuta el ETL para todas las tiendas activas"""

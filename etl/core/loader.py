@@ -400,14 +400,24 @@ class DuckDBLoader:
             conn.register('stock_updates', stock_df)
 
             # Actualizar stock_actual usando MERGE-like operation
+            # IMPORTANTE: Hacer JOIN con productos para obtener el UUID correcto
+            # stock_updates.producto_id contiene el CODIGO del producto
+            # pero stock_actual.producto_id debe ser el UUID (productos.id)
             conn.execute("""
                 INSERT OR REPLACE INTO stock_actual
                 (ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
                  stock_minimo, stock_maximo, ultima_actualizacion)
                 SELECT
-                    ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
-                    stock_minimo, stock_maximo, ultima_actualizacion
-                FROM stock_updates
+                    s.ubicacion_id,
+                    p.id as producto_id,
+                    s.cantidad,
+                    s.valor_inventario,
+                    s.costo_promedio,
+                    s.stock_minimo,
+                    s.stock_maximo,
+                    s.ultima_actualizacion
+                FROM stock_updates s
+                INNER JOIN productos p ON p.codigo = s.producto_id
             """)
 
             conn.execute("COMMIT")

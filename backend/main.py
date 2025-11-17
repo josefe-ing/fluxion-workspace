@@ -249,6 +249,7 @@ class UbicacionResponse(BaseModel):
     superficie_m2: Optional[float]
     activo: bool
     visible_pedidos: bool = False  # Mostrar en módulo de Pedidos Sugeridos
+    sistema_pos: str = "stellar"  # Sistema POS: "stellar" o "klk"
 
 class ProductoResponse(BaseModel):
     id: str
@@ -692,7 +693,8 @@ async def get_ubicaciones(
                 ciudad=None,
                 superficie_m2=None,
                 activo=config.activo,
-                visible_pedidos=config.visible_pedidos
+                visible_pedidos=config.visible_pedidos,
+                sistema_pos=getattr(config, 'sistema_pos', 'stellar')
             ))
 
         # Sort by tipo and nombre
@@ -706,10 +708,57 @@ async def get_ubicaciones(
 
 @app.get("/api/ubicaciones/summary", response_model=List[UbicacionSummaryResponse], tags=["Ubicaciones"])
 async def get_ubicaciones_summary():
-    """Obtiene un resumen de inventario por ubicación"""
+    """Obtiene un resumen de inventario por ubicación (Stellar + KLK)"""
     try:
         with get_db_connection() as conn:
+            # Importar tiendas_config para saber qué tiendas usan KLK
+            import sys
+            from pathlib import Path
+            etl_core_path = Path(__file__).parent.parent / 'etl' / 'core'
+            if str(etl_core_path) not in sys.path:
+                sys.path.insert(0, str(etl_core_path))
+
+            from tiendas_config import get_tiendas_klk
+            tiendas_klk_ids = list(get_tiendas_klk().keys())
+
+            # Mapear tienda_01 → T01, tienda_08 → T08, etc.
+            def mapear_ubicacion_codigo(tienda_id):
+                """Convierte tienda_01 a T01, cedi_seco a CSECO, etc."""
+                if tienda_id.startswith('tienda_'):
+                    num = tienda_id.replace('tienda_', '')
+                    return f'T{num.zfill(2)}'
+                elif tienda_id.startswith('cedi_'):
+                    tipo = tienda_id.replace('cedi_', '').upper()
+                    return f'C{tipo[:4]}'
+                return tienda_id
+
+            ubicaciones_codigo_map = {tid: mapear_ubicacion_codigo(tid) for tid in tiendas_klk_ids}
+
+            # Query combinado: stock_actual para KLK, inventario_raw para Stellar
             query = """
+                -- Tiendas KLK: desde stock_actual
+                SELECT
+                    sa.ubicacion_id,
+                    COALESCE(ubi.nombre, 'Desconocido') as ubicacion_nombre,
+                    COALESCE(ubi.tipo, 'tienda') as tipo_ubicacion,
+                    COUNT(DISTINCT sa.producto_id) as total_productos,
+                    SUM(CASE WHEN sa.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
+                    SUM(CASE WHEN sa.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
+                    CAST(MAX(sa.ultima_actualizacion) AS VARCHAR) as ultima_actualizacion
+                FROM stock_actual sa
+                LEFT JOIN ubicaciones ubi ON (
+                    ubi.codigo = CASE
+                        WHEN sa.ubicacion_id LIKE 'tienda_%' THEN 'T' || LPAD(REPLACE(sa.ubicacion_id, 'tienda_', ''), 2, '0')
+                        WHEN sa.ubicacion_id LIKE 'cedi_%' THEN 'C' || UPPER(SUBSTR(REPLACE(sa.ubicacion_id, 'cedi_', ''), 1, 4))
+                        ELSE sa.ubicacion_id
+                    END
+                )
+                WHERE sa.ubicacion_id IN ('""" + "','".join(tiendas_klk_ids) + """')
+                GROUP BY sa.ubicacion_id, ubi.nombre, ubi.tipo
+
+                UNION ALL
+
+                -- Tiendas Stellar: desde inventario_raw
                 SELECT
                     inv.ubicacion_id,
                     inv.ubicacion_nombre,
@@ -721,8 +770,10 @@ async def get_ubicaciones_summary():
                 FROM inventario_raw inv
                 WHERE inv.activo = true
                     AND inv.tipo_ubicacion != 'mayorista'
+                    AND inv.ubicacion_id NOT IN ('""" + "','".join(tiendas_klk_ids) + """')
                 GROUP BY inv.ubicacion_id, inv.ubicacion_nombre, inv.tipo_ubicacion
-                ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre
+
+                ORDER BY tipo_ubicacion, ubicacion_nombre
             """
 
             result = conn.execute(query).fetchall()
