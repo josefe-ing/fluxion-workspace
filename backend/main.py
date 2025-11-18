@@ -1544,6 +1544,90 @@ async def get_ventas_semanales(codigo: str, ubicacion_id: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
+@app.get("/api/productos/{codigo}/ventas-por-tienda", tags=["Productos"])
+async def get_ventas_por_tienda(codigo: str, periodo: str = "1w"):
+    """
+    Obtiene ventas por tienda para un producto en un período específico.
+
+    Args:
+        codigo: Código del producto
+        periodo: Período de tiempo (1w, 2w, 1m, 2m, 3m, 4m, 5m, 6m)
+
+    Returns:
+        Lista de ventas por tienda con total de unidades y transacciones
+    """
+    try:
+        # Mapeo de períodos a días
+        periodo_dias = {
+            "1w": 7,
+            "2w": 14,
+            "1m": 30,
+            "2m": 60,
+            "3m": 90,
+            "4m": 120,
+            "5m": 150,
+            "6m": 180
+        }
+
+        dias = periodo_dias.get(periodo, 7)
+
+        with get_db_connection() as conn:
+            query = f"""
+                SELECT
+                    u.id as ubicacion_id,
+                    u.nombre as ubicacion_nombre,
+                    COALESCE(SUM(TRY_CAST(v.cantidad_vendida AS DOUBLE)), 0) as total_unidades,
+                    COUNT(DISTINCT v.numero_factura) as total_transacciones,
+                    MAX(TRY_CAST(v.fecha AS DATE)) as ultima_venta
+                FROM ubicaciones u
+                LEFT JOIN ventas_raw v ON u.id = v.ubicacion_id
+                    AND v.codigo_producto = ?
+                    AND TRY_CAST(v.fecha AS DATE) >= CURRENT_DATE - INTERVAL {dias} DAY
+                WHERE u.tipo = 'tienda'
+                GROUP BY u.id, u.nombre
+                ORDER BY total_unidades DESC
+            """
+
+            rows = conn.execute(query, [codigo]).fetchall()
+
+            ventas_por_tienda = []
+            total_general_unidades = 0
+            total_general_transacciones = 0
+
+            for row in rows:
+                unidades = float(row[2]) if row[2] else 0
+                transacciones = int(row[3]) if row[3] else 0
+
+                ventas_por_tienda.append({
+                    "ubicacion_id": row[0],
+                    "ubicacion_nombre": row[1],
+                    "total_unidades": round(unidades, 2),
+                    "total_transacciones": transacciones,
+                    "ultima_venta": row[4].isoformat() if row[4] else None
+                })
+
+                total_general_unidades += unidades
+                total_general_transacciones += transacciones
+
+            return {
+                "codigo_producto": codigo,
+                "periodo": periodo,
+                "dias": dias,
+                "ventas": ventas_por_tienda,
+                "totales": {
+                    "total_unidades": round(total_general_unidades, 2),
+                    "total_transacciones": total_general_transacciones,
+                    "tiendas_con_ventas": sum(1 for v in ventas_por_tienda if v["total_unidades"] > 0)
+                }
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo ventas por tienda: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
 @app.get("/api/productos/{codigo}/historico-clasificacion", tags=["Productos"])
 async def get_historico_clasificacion(codigo: str, ubicacion_id: Optional[str] = None):
     """

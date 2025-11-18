@@ -116,6 +116,26 @@ export interface HistoricoClasificacionResponse {
   nota: string;
 }
 
+export interface VentaPorTienda {
+  ubicacion_id: string;
+  ubicacion_nombre: string;
+  total_unidades: number;
+  total_transacciones: number;
+  ultima_venta: string | null;
+}
+
+export interface VentasPorTiendaResponse {
+  codigo_producto: string;
+  periodo: string;
+  dias: number;
+  ventas: VentaPorTienda[];
+  totales: {
+    total_unidades: number;
+    total_transacciones: number;
+    tiendas_con_ventas: number;
+  };
+}
+
 // ============================================================================
 // API FUNCTIONS - ABC-XYZ
 // ============================================================================
@@ -170,6 +190,16 @@ export async function getHistoricoClasificacion(
 ): Promise<HistoricoClasificacionResponse> {
   const params = ubicacionId ? { ubicacion_id: ubicacionId } : {};
   const response = await http.get(`/api/productos/${codigo}/historico-clasificacion`, { params });
+  return response.data;
+}
+
+export async function getVentasPorTienda(
+  codigo: string,
+  periodo: string = "1w"
+): Promise<VentasPorTiendaResponse> {
+  const response = await http.get(`/api/productos/${codigo}/ventas-por-tienda`, {
+    params: { periodo }
+  });
   return response.data;
 }
 

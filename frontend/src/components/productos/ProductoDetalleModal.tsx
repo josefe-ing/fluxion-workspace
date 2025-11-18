@@ -4,10 +4,13 @@ import {
   getProductoDetalleCompleto,
   getVentasSemanales,
   getHistoricoClasificacion,
+  getVentasPorTienda,
   ProductoDetalleCompleto,
   VentasSemanalesResponse,
   HistoricoClasificacionResponse,
+  VentasPorTiendaResponse,
   formatCurrency,
+  formatNumber,
   getIconoMatriz,
   getDescripcionMatriz,
   getEstrategiaMatriz
@@ -25,14 +28,23 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
   const [detalle, setDetalle] = useState<ProductoDetalleCompleto | null>(null);
   const [ventasSemanales, setVentasSemanales] = useState<VentasSemanalesResponse | null>(null);
   const [historico, setHistorico] = useState<HistoricoClasificacionResponse | null>(null);
+  const [ventasPorTienda, setVentasPorTienda] = useState<VentasPorTiendaResponse | null>(null);
   const [loadingVentas, setLoadingVentas] = useState(true);
   const [loadingHistorico, setLoadingHistorico] = useState(true);
+  const [loadingVentasPorTienda, setLoadingVentasPorTienda] = useState(true);
+  const [periodoSeleccionado, setPeriodoSeleccionado] = useState("2m");
 
   useEffect(() => {
     if (isOpen && codigo) {
       loadData();
     }
   }, [isOpen, codigo]);
+
+  useEffect(() => {
+    if (isOpen && codigo) {
+      loadVentasPorTienda();
+    }
+  }, [isOpen, codigo, periodoSeleccionado]);
 
   const loadData = async () => {
     setLoading(true);
@@ -54,6 +66,18 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
       setLoading(false);
       setLoadingVentas(false);
       setLoadingHistorico(false);
+    }
+  };
+
+  const loadVentasPorTienda = async () => {
+    setLoadingVentasPorTienda(true);
+    try {
+      const data = await getVentasPorTienda(codigo, periodoSeleccionado);
+      setVentasPorTienda(data);
+    } catch (error) {
+      console.error('Error loading ventas por tienda:', error);
+    } finally {
+      setLoadingVentasPorTienda(false);
     }
   };
 
@@ -430,6 +454,112 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
                     })}
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            {/* Ventas por Tienda */}
+            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      Ventas por Tienda
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Total de unidades vendidas y transacciones por ubicación
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-600 font-medium">Período:</label>
+                    <select
+                      value={periodoSeleccionado}
+                      onChange={(e) => setPeriodoSeleccionado(e.target.value)}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="1w">Última semana</option>
+                      <option value="2w">2 semanas</option>
+                      <option value="1m">1 mes</option>
+                      <option value="2m">2 meses</option>
+                      <option value="3m">3 meses</option>
+                      <option value="4m">4 meses</option>
+                      <option value="5m">5 meses</option>
+                      <option value="6m">6 meses</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div className="p-6">
+                {loadingVentasPorTienda ? (
+                  <div className="flex items-center justify-center h-32">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                  </div>
+                ) : ventasPorTienda ? (
+                  <>
+                    {/* Resumen */}
+                    <div className="grid grid-cols-3 gap-4 mb-6">
+                      <div className="bg-blue-50 rounded-lg p-4">
+                        <div className="text-sm text-blue-600 font-medium">Total Unidades</div>
+                        <div className="text-2xl font-bold text-blue-900 mt-1">
+                          {formatNumber(ventasPorTienda.totales.total_unidades)}
+                        </div>
+                      </div>
+                      <div className="bg-green-50 rounded-lg p-4">
+                        <div className="text-sm text-green-600 font-medium">Total Transacciones</div>
+                        <div className="text-2xl font-bold text-green-900 mt-1">
+                          {formatNumber(ventasPorTienda.totales.total_transacciones)}
+                        </div>
+                      </div>
+                      <div className="bg-purple-50 rounded-lg p-4">
+                        <div className="text-sm text-purple-600 font-medium">Tiendas con Ventas</div>
+                        <div className="text-2xl font-bold text-purple-900 mt-1">
+                          {ventasPorTienda.totales.tiendas_con_ventas}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tabla de ventas */}
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tienda</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Unidades</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Transacciones</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Última Venta</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {ventasPorTienda.ventas.map((venta) => (
+                            <tr key={venta.ubicacion_id} className="hover:bg-gray-50">
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                {venta.ubicacion_nombre}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                <span className={`font-medium ${
+                                  venta.total_unidades === 0 ? 'text-gray-400' :
+                                  venta.total_unidades > 100 ? 'text-green-600' :
+                                  'text-gray-900'
+                                }`}>
+                                  {formatNumber(venta.total_unidades)}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {formatNumber(venta.total_transacciones)}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {venta.ultima_venta ? new Date(venta.ultima_venta).toLocaleDateString('es-VE') : '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center text-gray-500 py-12">
+                    No hay datos de ventas disponibles para este período
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -25,6 +25,7 @@ const ABCXYZAnalysis: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [hasMoreProducts, setHasMoreProducts] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [searchTerm, setSearchTerm] = useState<string>('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -122,9 +123,20 @@ const ABCXYZAnalysis: React.FC = () => {
     }
   };
 
-  // Sort productos based on current sort settings
-  const sortedProductos = React.useMemo(() => {
-    const sorted = [...productos];
+  // Filter and sort productos based on search term and sort settings
+  const filteredAndSortedProductos = React.useMemo(() => {
+    // First filter by search term
+    let filtered = productos;
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      filtered = productos.filter(p =>
+        p.codigo_producto.toLowerCase().includes(term) ||
+        p.descripcion.toLowerCase().includes(term)
+      );
+    }
+
+    // Then sort
+    const sorted = [...filtered];
     sorted.sort((a, b) => {
       let comparison = 0;
       if (sortBy === 'ranking') {
@@ -141,7 +153,7 @@ const ABCXYZAnalysis: React.FC = () => {
       return sortOrder === 'asc' ? comparison : -comparison;
     });
     return sorted;
-  }, [productos, sortBy, sortOrder]);
+  }, [productos, sortBy, sortOrder, searchTerm]);
 
   if (loading) {
     return (
@@ -306,12 +318,42 @@ const ABCXYZAnalysis: React.FC = () => {
       {productos.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">
-              {selectedMatriz ? `Productos en clasificación: ${selectedMatriz}` : 'Todos los productos'}
-            </h3>
-            <p className="text-sm text-gray-500 mt-1">
-              Mostrando {productos.length} productos
-            </p>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {selectedMatriz ? `Productos en clasificación: ${selectedMatriz}` : 'Todos los productos'}
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Mostrando {filteredAndSortedProductos.length} de {productos.length} productos
+                </p>
+              </div>
+            </div>
+
+            {/* Buscador */}
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Código o descripción..."
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
 
           {loadingProductos ? (
@@ -386,7 +428,7 @@ const ABCXYZAnalysis: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {sortedProductos.map((producto, index) => (
+                {filteredAndSortedProductos.map((producto, index) => (
                   <tr
                     key={producto.codigo_producto}
                     onClick={() => setSelectedProducto(producto.codigo_producto)}
