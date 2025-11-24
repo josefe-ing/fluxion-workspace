@@ -24,27 +24,55 @@ def apply_migrations():
         return False
 
     try:
-        conn = duckdb.connect(db_path)
+        # STEP 1: Verificar estado con conexión READ-ONLY (no bloquea)
+        logger.info("🔍 Verificando estado de tablas en modo read-only...")
+        conn_ro = duckdb.connect(db_path, read_only=True)
 
         # Verificar si la tabla productos_abc_v2 existe
-        result = conn.execute("""
+        result = conn_ro.execute("""
             SELECT COUNT(*) as count
             FROM information_schema.tables
             WHERE table_name = 'productos_abc_v2'
         """).fetchone()
 
-        if result[0] > 0:
-            logger.info("✅ Tabla productos_abc_v2 ya existe, verificando columnas XYZ...")
+        tabla_existe = result[0] > 0
 
-            # Verificar si las columnas XYZ existen
-            columns_result = conn.execute("""
+        # Verificar si las columnas XYZ existen
+        if tabla_existe:
+            columns_result = conn_ro.execute("""
                 SELECT COUNT(*) as count
                 FROM information_schema.columns
                 WHERE table_name = 'productos_abc_v2'
                 AND column_name = 'clasificacion_xyz'
             """).fetchone()
+            columnas_xyz_existen = columns_result[0] > 0
+        else:
+            columnas_xyz_existen = False
 
-            if columns_result[0] > 0:
+        conn_ro.close()
+
+        # Si todo ya existe, no necesitamos hacer nada
+        if tabla_existe and columnas_xyz_existen:
+            logger.info("✅ Tabla productos_abc_v2 y columnas XYZ ya existen - sin cambios necesarios")
+            logger.info("⏭️  Saltando migraciones (todo actualizado)")
+            return True
+
+        # STEP 2: Solo si necesitamos migrar, intentar obtener lock de escritura
+        logger.info("📝 Migraciones necesarias, intentando obtener lock de escritura...")
+        try:
+            # Intentar conectar con timeout corto
+            conn = duckdb.connect(db_path)
+        except Exception as lock_error:
+            if "Conflicting lock" in str(lock_error):
+                logger.warning("⚠️  Base de datos bloqueada por otro proceso (probablemente backend existente)")
+                logger.info("⏭️  Saltando migraciones - se aplicarán en próximo deploy")
+                return True  # No es un error crítico
+            else:
+                raise
+
+        if tabla_existe:
+            logger.info("✅ Tabla productos_abc_v2 ya existe, verificando columnas XYZ...")
+            if columnas_xyz_existen:
                 logger.info("✅ Columnas XYZ ya existen, recreando vistas...")
             else:
                 logger.info("📝 Aplicando extensión XYZ...")
@@ -53,7 +81,7 @@ def apply_migrations():
 
         # PASO 1: Siempre recrear tabla si existe para asegurar schema correcto
         # Los datos son calculados y pueden regenerarse, así evitamos problemas de constraints
-        if result[0] > 0:
+        if tabla_existe:
             logger.warning("⚠️  Tabla productos_abc_v2 existe, recreando para asegurar schema correcto...")
             migrate_script = Path('/app/database/migrate_abc_v2_schema.sql')
             if migrate_script.exists():
