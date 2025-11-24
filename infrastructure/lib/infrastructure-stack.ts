@@ -443,8 +443,8 @@ PersistentKeepalive = 25`),
       this,
       'FluxionBackendTask',
       {
-        memoryLimitMiB: 4096,  // Increased from 2048 to fix OOM errors during startup
-        cpu: 2048,  // Increased from 1024 to match memory ratio (1:2)
+        memoryLimitMiB: 3072,  // 3GB - punto medio para DuckDB + FastAPI startup
+        cpu: 1024,  // 1 vCPU
         volumes: [
           {
             name: 'fluxion-data',
