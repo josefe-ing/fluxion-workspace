@@ -361,7 +361,7 @@ class VentasETL:
             logger.info(f"   ✅ Transformados: {registros_transformados:,} registros")
 
             # Calcular métricas básicas
-            venta_total = transformed_data['venta_total'].sum() if 'venta_total' in transformed_data.columns else 0
+            venta_total = float(transformed_data['venta_total'].sum()) if 'venta_total' in transformed_data.columns else 0.0
             facturas_unicas = transformed_data['numero_factura'].nunique() if 'numero_factura' in transformed_data.columns else 0
 
             logger.info(f"   📊 Tasa supervivencia: {(registros_transformados/registros_extraidos*100):.1f}%")
