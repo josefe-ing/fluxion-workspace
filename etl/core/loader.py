@@ -379,11 +379,19 @@ class DuckDBLoader:
             self.logger.info(f"🔄 Actualizando tabla stock_actual con {len(df):,} registros")
 
             # Preparar datos para stock_actual
-            stock_df = df[[
+            columnas_base = [
                 'ubicacion_id', 'codigo_producto', 'cantidad_actual',
                 'costo_unitario_actual', 'valor_inventario_actual',
                 'stock_minimo', 'stock_maximo', 'fecha_extraccion'
-            ]].copy()
+            ]
+
+            # Incluir almacen_codigo si existe en los datos
+            tiene_almacen = 'almacen_codigo' in df.columns
+            if tiene_almacen:
+                columnas_base.append('almacen_codigo')
+                self.logger.info(f"   📦 Incluye almacen_codigo en actualización")
+
+            stock_df = df[columnas_base].copy()
 
             stock_df = stock_df.rename(columns={
                 'codigo_producto': 'producto_id',
@@ -403,22 +411,41 @@ class DuckDBLoader:
             # IMPORTANTE: Hacer JOIN con productos para obtener el UUID correcto
             # stock_updates.producto_id contiene el CODIGO del producto
             # pero stock_actual.producto_id debe ser el UUID (productos.id)
-            conn.execute("""
-                INSERT OR REPLACE INTO stock_actual
-                (ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
-                 stock_minimo, stock_maximo, ultima_actualizacion)
-                SELECT
-                    s.ubicacion_id,
-                    p.id as producto_id,
-                    s.cantidad,
-                    s.valor_inventario,
-                    s.costo_promedio,
-                    s.stock_minimo,
-                    s.stock_maximo,
-                    s.ultima_actualizacion
-                FROM stock_updates s
-                INNER JOIN productos p ON p.codigo = s.producto_id
-            """)
+            if tiene_almacen:
+                conn.execute("""
+                    INSERT OR REPLACE INTO stock_actual
+                    (ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
+                     stock_minimo, stock_maximo, ultima_actualizacion, almacen_codigo)
+                    SELECT
+                        s.ubicacion_id,
+                        p.id as producto_id,
+                        s.cantidad,
+                        s.valor_inventario,
+                        s.costo_promedio,
+                        s.stock_minimo,
+                        s.stock_maximo,
+                        s.ultima_actualizacion,
+                        s.almacen_codigo
+                    FROM stock_updates s
+                    INNER JOIN productos p ON p.codigo = s.producto_id
+                """)
+            else:
+                conn.execute("""
+                    INSERT OR REPLACE INTO stock_actual
+                    (ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
+                     stock_minimo, stock_maximo, ultima_actualizacion)
+                    SELECT
+                        s.ubicacion_id,
+                        p.id as producto_id,
+                        s.cantidad,
+                        s.valor_inventario,
+                        s.costo_promedio,
+                        s.stock_minimo,
+                        s.stock_maximo,
+                        s.ultima_actualizacion
+                    FROM stock_updates s
+                    INNER JOIN productos p ON p.codigo = s.producto_id
+                """)
 
             conn.execute("COMMIT")
             conn.close()

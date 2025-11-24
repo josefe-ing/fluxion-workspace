@@ -29,12 +29,21 @@ try:
     from loader import DuckDBLoader
     from tiendas_config import get_tiendas_klk, get_tienda_config
     from config import ETLConfig
+    from etl_tracker import ETLTracker, ETLEjecucion
+    from sentry_etl import init_sentry_for_etl, SentryETLMonitor
+    SENTRY_AVAILABLE = True
 except ImportError:
     from core.extractor_inventario_klk import InventarioKLKExtractor, KLKAPIConfig
     from core.transformer_inventario_klk import InventarioKLKTransformer
     from core.loader import DuckDBLoader
     from core.tiendas_config import get_tiendas_klk, get_tienda_config
     from core.config import ETLConfig
+    from core.etl_tracker import ETLTracker, ETLEjecucion
+    try:
+        from core.sentry_etl import init_sentry_for_etl, SentryETLMonitor
+        SENTRY_AVAILABLE = True
+    except ImportError:
+        SENTRY_AVAILABLE = False
 
 
 class ETLInventarioKLK:
@@ -48,6 +57,7 @@ class ETLInventarioKLK:
         self.extractor = InventarioKLKExtractor()
         self.transformer = InventarioKLKTransformer()
         self.loader = DuckDBLoader() if not dry_run else None
+        self.tracker = ETLTracker(version_etl="2.0") if not dry_run else None
 
         # Estadísticas
         self.stats = {
@@ -88,7 +98,7 @@ class ETLInventarioKLK:
 
     def procesar_tienda(self, config) -> bool:
         """
-        Procesa una tienda individual: extrae, transforma y carga
+        Procesa una tienda individual: extrae TODOS los almacenes activos, transforma y carga
 
         Returns:
             True si exitoso, False si falló
@@ -100,17 +110,52 @@ class ETLInventarioKLK:
         self.logger.info(f"🏪 PROCESANDO: {tienda_nombre} ({tienda_id})")
         self.logger.info(f"{'='*80}")
 
-        try:
-            # PASO 1: EXTRACCIÓN
-            self.logger.info(f"\n📡 PASO 1/3: Extrayendo inventario desde KLK API...")
-            df_raw = self.extractor.extract_inventario_data(config)
+        # Tracking: Iniciar ejecución
+        ejecucion_id = None
+        fecha_hoy = datetime.now().date()
+        registros_extraidos = 0
 
-            if df_raw is None or df_raw.empty:
+        if self.tracker:
+            ejecucion = ETLEjecucion(
+                etl_tipo='inventario',
+                ubicacion_id=tienda_id,
+                ubicacion_nombre=tienda_nombre,
+                fecha_desde=fecha_hoy,
+                fecha_hasta=fecha_hoy,
+                modo='completo'
+            )
+            ejecucion_id = self.tracker.iniciar_ejecucion(ejecucion)
+
+        # Sentry: Iniciar monitoreo
+        sentry_monitor = None
+        if SENTRY_AVAILABLE:
+            sentry_monitor = SentryETLMonitor(
+                etl_name="inventario_klk_completo",
+                tienda_id=tienda_id,
+                fecha_inicio=str(fecha_hoy),
+                fecha_fin=str(fecha_hoy),
+                extra_context={"modo": "completo"}
+            )
+            sentry_monitor.__enter__()
+
+        try:
+            # PASO 1: EXTRACCIÓN DE TODOS LOS ALMACENES ACTIVOS
+            self.logger.info(f"\n📡 PASO 1/3: Extrayendo inventario desde KLK API...")
+
+            # Usar el nuevo método que extrae todos los almacenes activos
+            dfs_raw = self.extractor.extract_all_almacenes_tienda(config)
+
+            if not dfs_raw:
                 self.logger.error(f"❌ No se pudo extraer inventario de {tienda_nombre}")
                 return False
 
-            self.logger.info(f"✅ Extraídos {len(df_raw):,} productos")
-            self.stats['total_productos_extraidos'] += len(df_raw)
+            # Combinar todos los DataFrames de almacenes
+            import pandas as pd
+            df_raw = pd.concat(dfs_raw, ignore_index=True)
+
+            registros_extraidos = len(df_raw)
+            self.logger.info(f"✅ Extraídos {registros_extraidos:,} productos de {len(dfs_raw)} almacén(es)")
+            self.stats['total_productos_extraidos'] += registros_extraidos
 
             # PASO 2: TRANSFORMACIÓN
             self.logger.info(f"\n🔄 PASO 2/3: Transformando datos al esquema DuckDB...")
@@ -137,6 +182,10 @@ class ETLInventarioKLK:
                 self.logger.info(f"\n⚠️  DRY RUN: Saltando carga a DuckDB")
                 self.logger.info(f"   Productos a cargar: {len(df_productos):,}")
                 self.logger.info(f"   Stock a cargar: {len(df_stock):,}")
+                # Mostrar almacenes extraídos
+                if 'almacen_codigo' in df_stock.columns:
+                    almacenes = df_stock['almacen_codigo'].unique()
+                    self.logger.info(f"   Almacenes: {list(almacenes)}")
             else:
                 self.logger.info(f"\n💾 PASO 3/3: Cargando datos a DuckDB...")
 
@@ -152,10 +201,47 @@ class ETLInventarioKLK:
                 self.stats['total_stock_cargado'] += records_updated
 
             self.logger.info(f"\n✅ {tienda_nombre} procesada exitosamente")
+
+            # Tracking: Finalizar exitosamente
+            if self.tracker and ejecucion_id:
+                registros_cargados = self.stats.get('total_productos_cargados', registros_extraidos)
+                self.tracker.finalizar_ejecucion_exitosa(
+                    ejecucion_id,
+                    registros_extraidos=registros_extraidos,
+                    registros_cargados=registros_extraidos  # Para inventario, extraídos = cargados
+                )
+
+            # Sentry: Reportar métricas
+            if sentry_monitor:
+                sentry_monitor.add_metric("productos_extraidos", registros_extraidos)
+                sentry_monitor.add_metric("productos_cargados", registros_extraidos)
+                sentry_monitor.set_success(registros_procesados=registros_extraidos)
+                sentry_monitor.__exit__(None, None, None)
+
             return True
 
         except Exception as e:
             self.logger.error(f"❌ Error procesando {tienda_nombre}: {e}", exc_info=True)
+
+            # Tracking: Finalizar con error
+            if self.tracker and ejecucion_id:
+                error_tipo = 'api_error'
+                if 'timeout' in str(e).lower():
+                    error_tipo = 'timeout'
+                elif 'connection' in str(e).lower():
+                    error_tipo = 'conexion'
+
+                self.tracker.finalizar_ejecucion_fallida(
+                    ejecucion_id,
+                    error_mensaje=str(e),
+                    error_tipo=error_tipo,
+                    registros_extraidos=registros_extraidos
+                )
+
+            # Sentry: Reportar error
+            if sentry_monitor:
+                sentry_monitor.__exit__(type(e), e, e.__traceback__)
+
             return False
 
     def ejecutar(self, tienda_ids: List[str] = None) -> bool:

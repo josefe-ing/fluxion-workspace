@@ -2,13 +2,16 @@ import { useState, useEffect } from 'react';
 import { Search, Filter, Eye } from 'lucide-react';
 import MatrizABCXYZBadge from '../../shared/MatrizABCXYZBadge';
 import NivelObjetivoDetalleModal from '../NivelObjetivoDetalleModal';
+import MatrizABCXYZExplicacionModal from './MatrizABCXYZExplicacionModal';
 import {
   obtenerNivelesTienda,
+  obtenerClasificacionProducto,
   formatearNumero,
   tieneDeficit
 } from '../../../services/nivelObjetivoService';
-import type { ProductoNivelObjetivo } from '../../../services/nivelObjetivoService';
+import type { ProductoNivelObjetivo, ClasificacionABCXYZData } from '../../../services/nivelObjetivoService';
 import type { DatosOrigenDestino, ProductoSeleccionado } from '../PedidoSugeridoV2Wizard';
+import { isXYZEnabled } from '../../../config/featureFlags';
 
 interface PasoSeleccionProductosProps {
   datosOrigenDestino: DatosOrigenDestino;
@@ -38,8 +41,19 @@ export default function PasoSeleccionProductosV2Extended({
   const [cantidadesPedir, setCantidadesPedir] = useState<Map<string, number>>(new Map());
   const [notas, setNotas] = useState<Map<string, string>>(new Map());
 
-  // Modal
+  // Modales
   const [productoDetalleModal, setProductoDetalleModal] = useState<ProductoNivelObjetivo | null>(null);
+  const [modalClasificacion, setModalClasificacion] = useState<{
+    isOpen: boolean;
+    producto: ProductoNivelObjetivo | null;
+    datosClasificacion: ClasificacionABCXYZData | null;
+    loading: boolean;
+  }>({
+    isOpen: false,
+    producto: null,
+    datosClasificacion: null,
+    loading: false
+  });
 
   useEffect(() => {
     cargarProductos();
@@ -127,6 +141,51 @@ export default function PasoSeleccionProductosV2Extended({
     const nuevasNotas = new Map(notas);
     nuevasNotas.set(productoId, texto);
     setNotas(nuevasNotas);
+  };
+
+  const handleClickMatriz = async (producto: ProductoNivelObjetivo) => {
+    try {
+      // Abrir modal en estado de carga
+      setModalClasificacion({
+        isOpen: true,
+        producto,
+        datosClasificacion: null,
+        loading: true
+      });
+
+      // Obtener datos de clasificación desde el backend
+      const response = await obtenerClasificacionProducto(
+        datosOrigenDestino.tiendaDestinoId,
+        producto.producto_id
+      );
+
+      // Actualizar modal con los datos
+      setModalClasificacion({
+        isOpen: true,
+        producto,
+        datosClasificacion: response.clasificacion_data,
+        loading: false
+      });
+    } catch (error) {
+      console.error('Error al cargar clasificación:', error);
+      // Cerrar modal en caso de error
+      setModalClasificacion({
+        isOpen: false,
+        producto: null,
+        datosClasificacion: null,
+        loading: false
+      });
+      alert('Error al cargar los datos de clasificación. Por favor intenta nuevamente.');
+    }
+  };
+
+  const handleCloseModalClasificacion = () => {
+    setModalClasificacion({
+      isOpen: false,
+      producto: null,
+      datosClasificacion: null,
+      loading: false
+    });
   };
 
   const handleSiguiente = () => {
@@ -258,16 +317,18 @@ export default function PasoSeleccionProductosV2Extended({
             <option value="B">Clase B</option>
             <option value="C">Clase C</option>
           </select>
-          <select
-            value={filtroXYZ}
-            onChange={(e) => setFiltroXYZ(e.target.value)}
-            className="px-3 py-1.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="">Todas XYZ</option>
-            <option value="X">X (Estable)</option>
-            <option value="Y">Y (Variable)</option>
-            <option value="Z">Z (Errática)</option>
-          </select>
+          {isXYZEnabled() && (
+            <select
+              value={filtroXYZ}
+              onChange={(e) => setFiltroXYZ(e.target.value)}
+              className="px-3 py-1.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Todas XYZ</option>
+              <option value="X">X (Estable)</option>
+              <option value="Y">Y (Variable)</option>
+              <option value="Z">Z (Errática)</option>
+            </select>
+          )}
 
           {/* Filtro por Cuadrante numérico */}
           <div className="border-l-2 border-gray-300 pl-4">
@@ -422,7 +483,13 @@ export default function PasoSeleccionProductosV2Extended({
                   <td className="px-4 py-3 text-sm font-mono text-gray-900">{producto.producto_id}</td>
                   <td className="px-4 py-3 text-sm text-gray-900">{producto.nombre_producto}</td>
                   <td className="px-4 py-3">
-                    <MatrizABCXYZBadge matriz={producto.matriz_abc_xyz} size="sm" mostrarPrioridad={false} />
+                    <button
+                      onClick={() => handleClickMatriz(producto)}
+                      className="hover:opacity-80 transition-opacity cursor-pointer"
+                      title="Click para ver detalles de clasificación ABC-XYZ"
+                    >
+                      <MatrizABCXYZBadge matriz={producto.matriz_abc_xyz} size="sm" mostrarPrioridad={false} />
+                    </button>
                   </td>
 
                   {/* Promedios de Demanda - con fondo amarillo */}
@@ -583,6 +650,35 @@ export default function PasoSeleccionProductosV2Extended({
             }
           }}
         />
+      )}
+
+      {/* Modal de Clasificación ABC-XYZ */}
+      {modalClasificacion.isOpen && modalClasificacion.producto && (
+        <>
+          {modalClasificacion.loading ? (
+            // Modal de carga
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-2xl p-8">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-indigo-600 mx-auto"></div>
+                  <p className="mt-4 text-gray-600 font-medium">Cargando datos de clasificación...</p>
+                </div>
+              </div>
+            </div>
+          ) : modalClasificacion.datosClasificacion ? (
+            // Modal con datos
+            <MatrizABCXYZExplicacionModal
+              isOpen={true}
+              onClose={handleCloseModalClasificacion}
+              producto={{
+                producto_id: modalClasificacion.producto.producto_id,
+                nombre_producto: modalClasificacion.producto.nombre_producto,
+                matriz_abc_xyz: modalClasificacion.producto.matriz_abc_xyz
+              }}
+              datosClasificacion={modalClasificacion.datosClasificacion}
+            />
+          ) : null}
+        </>
       )}
     </div>
   );

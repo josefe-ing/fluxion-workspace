@@ -1,0 +1,373 @@
+{
+	"info": {
+		"_postman_id": "da3023be-0b28-44ff-ae01-c96953c61c14",
+		"name": "KLK API - Complete Collection",
+		"description": "Colección completa de endpoints de la API de KLK para pruebas\n\n**Base URL:** http://localhost:7002\n**Protocolo:** HTTP\n**Puerto:** 7002",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "43502754",
+		"_collection_link": "https://josefelipelopez.postman.co/workspace/9b18bc7b-453c-4250-8a92-5bc21b686b8b/collection/43502754-da3023be-0b28-44ff-ae01-c96953c61c14?action=share&source=collection_link&creator=43502754"
+	},
+	"item": [
+		{
+			"name": "Maestra - Almacenes",
+			"item": [
+				{
+					"name": "Obtener Almacenes de Reposición (Todos)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:7002/maestra/almacenes/Reposicion",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"maestra",
+								"almacenes",
+								"Reposicion"
+							]
+						},
+						"description": "Trae todos los almacenes de todas las sucursales"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Almacenes de Reposición (Por Sucursal)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:7002/maestra/almacenes/Reposicion?sucursal=SUC001",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"maestra",
+								"almacenes",
+								"Reposicion"
+							],
+							"query": [
+								{
+									"key": "sucursal",
+									"value": "SUC001",
+									"description": "Código de sucursal (nvarchar(60))"
+								}
+							]
+						},
+						"description": "Trae los almacenes de reposición de una sucursal específica"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Almacenes de Piso de Venta",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:7002/maestra/almacenes/pisoventa",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"maestra",
+								"almacenes",
+								"pisoventa"
+							]
+						},
+						"description": "Trae los almacenes de piso de ventas para todas las sucursales"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints relacionados con la gestión de almacenes"
+		},
+		{
+			"name": "Maestra - Artículos",
+			"item": [
+				{
+					"name": "Obtener Artículos por Almacén (Único)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"Codigoalmacen\": \"PALT\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7002/maestra/articulos/almacen",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"maestra",
+								"articulos",
+								"almacen"
+							]
+						},
+						"description": "Trae la data de los artículos existentes en un almacén específico"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Artículos por Almacén (Múltiples)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"Codigoalmacen\": [\"PALT\", \"APP-PPF\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7002/maestra/articulos/almacen",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"maestra",
+								"articulos",
+								"almacen"
+							]
+						},
+						"description": "Trae la data de los artículos existentes en una lista de almacenes"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Artículos de Reposición (Sucursal Única)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"CodigoSucursal\": \"SUC001\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7002/maestra/articulos/reposicion",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"maestra",
+								"articulos",
+								"reposicion"
+							]
+						},
+						"description": "Trae la data de los artículos existentes en una sucursal específica"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Artículos de Reposición (Múltiples Sucursales)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"CodigoSucursal\": [\"SUC001\", \"SUC004\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7002/maestra/articulos/reposicion",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"maestra",
+								"articulos",
+								"reposicion"
+							]
+						},
+						"description": "Trae la data de los artículos existentes en una lista de sucursales"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints relacionados con la consulta de artículos/productos"
+		},
+		{
+			"name": "Ventas",
+			"item": [
+				{
+					"name": "Obtener Ventas (Parámetros Básicos)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"sucursal\": \"SUC001\",\n    \"fecha_desde\": \"2025-11-17\",\n    \"fecha_hasta\": \"2025-11-18\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7002/ventas",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"ventas"
+							]
+						},
+						"description": "Trae todas las iteraciones de venta por artículo con filtros básicos de fecha"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Ventas (Con Filtro de Horas)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"sucursal\": \"SUC001\",\n    \"fecha_desde\": \"2025-11-17\",\n    \"fecha_hasta\": \"2025-11-18\",\n    \"hora_desde\": \"12:00\",\n    \"hora_hasta\": \"12:20\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7002/ventas",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"ventas"
+							]
+						},
+						"description": "Trae todas las iteraciones de venta por artículo con filtros de fecha y hora específicos"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Ventas (Con Todos los Filtros)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"sucursal\": \"SUC001\",\n    \"fecha_desde\": \"2025-11-17\",\n    \"fecha_hasta\": \"2025-11-18\",\n    \"hora_desde\": \"12:00:00\",\n    \"hora_hasta\": \"12:20:00\",\n    \"almacen\": \"APP-TPF\",\n    \"CodArticulo\": \"001853\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://localhost:7002/ventas",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "7002",
+							"path": [
+								"ventas"
+							]
+						},
+						"description": "Trae ventas con todos los filtros disponibles: fechas, horas, almacén y código de artículo"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints relacionados con la consulta de ventas (líneas de factura)"
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:7002",
+			"type": "string"
+		},
+		{
+			"key": "sucursalEjemplo",
+			"value": "SUC001",
+			"type": "string"
+		},
+		{
+			"key": "almacenEjemplo",
+			"value": "PALT",
+			"type": "string"
+		}
+	]
+}

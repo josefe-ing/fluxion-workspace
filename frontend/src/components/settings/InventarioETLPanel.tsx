@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import http from '../../services/http';
 import LogViewer from './LogViewer';
+import KLKRealTimeExecutions from './KLKRealTimeExecutions';
+import KLKGapRecoveryPanel from './KLKGapRecoveryPanel';
 
 interface LogEntry {
   timestamp: string;
@@ -224,6 +226,39 @@ export default function InventarioETLPanel() {
             isRunning={isRunning}
             onClear={clearLogs}
           />
+        </div>
+
+        {/* KLK Monitoring Sections */}
+        <div className="border-t-4 border-purple-200 pt-8 mt-8">
+          <div className="flex items-center space-x-3 mb-6">
+            <div className="p-2 bg-purple-100 rounded-lg">
+              <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Sistema de Tracking KLK</h2>
+              <p className="text-sm text-gray-600">Monitoreo en tiempo real de ejecuciones y recuperación de gaps</p>
+            </div>
+          </div>
+
+          {/* Real-Time Executions */}
+          <div className="mb-6">
+            <KLKRealTimeExecutions
+              etl_tipo="inventario"
+              autoRefresh={true}
+              refreshInterval={30}
+            />
+          </div>
+
+          {/* Gap Recovery */}
+          <div className="mb-6">
+            <KLKGapRecoveryPanel
+              etl_tipo="inventario"
+              autoRefresh={true}
+              refreshInterval={60}
+            />
+          </div>
         </div>
       </div>
     </div>

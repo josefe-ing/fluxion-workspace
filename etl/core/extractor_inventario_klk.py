@@ -135,12 +135,12 @@ class InventarioKLKExtractor:
         self.logger.info(f"   🏪 Tienda: {ubicacion_nombre} ({ubicacion_id})")
         self.logger.info(f"   📦 Código Almacén KLK: {codigo_almacen}")
 
-        # Construir URL del endpoint
-        endpoint = f"{self.api_config.base_url}/maestra/articulos"
+        # Construir URL del endpoint (nuevo formato API KLK)
+        endpoint = f"{self.api_config.base_url}/maestra/articulos/almacen"
 
-        # Payload del request
+        # Payload del request (nuevo formato: Codigoalmacen sin mayúscula en 'a')
         payload = {
-            "CodigoAlmacen": codigo_almacen
+            "Codigoalmacen": codigo_almacen
         }
 
         self.logger.info(f"   🌐 Endpoint: POST {endpoint}")
@@ -188,13 +188,28 @@ class InventarioKLKExtractor:
                     else:
                         return None
 
-                # Validar que sea una lista
-                if not isinstance(data, list):
-                    self.logger.error(f"❌ Response no es una lista: {type(data)}")
+                # El nuevo endpoint retorna {"meta": {...}, "articulos": [...]}
+                # Extraer la lista de artículos
+                if isinstance(data, dict):
+                    if 'error' in data:
+                        self.logger.error(f"❌ Error de API: {data['error']}")
+                        return None
+                    if 'articulos' in data:
+                        articulos = data['articulos']
+                        meta = data.get('meta', {})
+                        self.logger.info(f"   📊 Meta: {meta.get('total_articulos', 'N/A')} artículos totales")
+                    else:
+                        self.logger.error(f"❌ Response no tiene 'articulos': {list(data.keys())}")
+                        return None
+                elif isinstance(data, list):
+                    # Formato antiguo (lista directa) - mantener compatibilidad
+                    articulos = data
+                else:
+                    self.logger.error(f"❌ Response no es dict ni list: {type(data)}")
                     return None
 
                 # Convertir a DataFrame
-                df = pd.DataFrame(data)
+                df = pd.DataFrame(articulos)
 
                 if df.empty:
                     self.logger.warning(f"⚠️  API retornó 0 registros para {ubicacion_nombre}")
@@ -247,6 +262,127 @@ class InventarioKLKExtractor:
             f"💥 Falló extracción de {ubicacion_nombre} después de {self.api_config.max_retries} intentos"
         )
         return None
+
+    def extract_almacen_data(self, ubicacion_id: str, ubicacion_nombre: str,
+                              almacen_codigo: str, almacen_nombre: str) -> Optional[pd.DataFrame]:
+        """
+        Extrae datos de inventario para un almacén específico desde API KLK
+
+        Args:
+            ubicacion_id: ID de la ubicación (ej: tienda_01)
+            ubicacion_nombre: Nombre de la ubicación (ej: PERIFERICO)
+            almacen_codigo: Código del almacén KLK (ej: APP-TPF)
+            almacen_nombre: Nombre del almacén (ej: PISO DE VENTA)
+
+        Returns:
+            DataFrame con los datos de inventario o None si falla
+        """
+        self.logger.info(f"📡 Extrayendo inventario desde KLK API")
+        self.logger.info(f"   🏪 Tienda: {ubicacion_nombre} ({ubicacion_id})")
+        self.logger.info(f"   📦 Almacén: {almacen_nombre} ({almacen_codigo})")
+
+        endpoint = f"{self.api_config.base_url}/maestra/articulos/almacen"
+        payload = {"Codigoalmacen": almacen_codigo}
+
+        for intento in range(1, self.api_config.max_retries + 1):
+            try:
+                self.logger.info(f"   🔄 Intento {intento}/{self.api_config.max_retries}")
+                start_time = time.time()
+
+                response = self.session.post(
+                    endpoint, json=payload, timeout=self.api_config.timeout_seconds
+                )
+                request_time = time.time() - start_time
+
+                if response.status_code != 200:
+                    self.logger.error(f"❌ Error HTTP {response.status_code}: {response.text[:200]}")
+                    if intento < self.api_config.max_retries:
+                        time.sleep(self.api_config.retry_delay_seconds)
+                        continue
+                    return None
+
+                data = response.json()
+
+                # Parsear respuesta
+                if isinstance(data, dict):
+                    if 'error' in data:
+                        self.logger.error(f"❌ Error de API: {data['error']}")
+                        return None
+                    articulos = data.get('articulos', [])
+                elif isinstance(data, list):
+                    articulos = data
+                else:
+                    self.logger.error(f"❌ Response inesperado: {type(data)}")
+                    return None
+
+                df = pd.DataFrame(articulos)
+
+                if df.empty:
+                    self.logger.warning(f"⚠️  API retornó 0 registros para {almacen_nombre}")
+                    return df
+
+                self.logger.info(f"✅ Extraídos: {len(df):,} productos en {request_time:.2f}s")
+
+                # Agregar metadatos
+                df['ubicacion_id'] = ubicacion_id
+                df['ubicacion_nombre'] = ubicacion_nombre
+                df['almacen_codigo'] = almacen_codigo
+                df['almacen_nombre'] = almacen_nombre
+                df['fecha_extraccion'] = datetime.now()
+                df['fuente_sistema'] = 'KLK'
+
+                return df
+
+            except Exception as e:
+                self.logger.error(f"❌ Error: {e}")
+                if intento < self.api_config.max_retries:
+                    time.sleep(self.api_config.retry_delay_seconds)
+                    continue
+
+        return None
+
+    def extract_all_almacenes_tienda(self, config) -> List[pd.DataFrame]:
+        """
+        Extrae inventario de TODOS los almacenes activos de una tienda KLK
+
+        Args:
+            config: Configuración de la tienda (TiendaConfig)
+
+        Returns:
+            Lista de DataFrames, uno por cada almacén extraído exitosamente
+        """
+        from tiendas_config import get_almacenes_activos_tienda
+
+        ubicacion_id = config.ubicacion_id
+        ubicacion_nombre = config.ubicacion_nombre
+
+        # Obtener almacenes activos para esta tienda
+        almacenes = get_almacenes_activos_tienda(ubicacion_id)
+
+        if not almacenes:
+            self.logger.warning(f"⚠️  {ubicacion_nombre} no tiene almacenes activos configurados")
+            return []
+
+        self.logger.info(f"🏪 {ubicacion_nombre}: {len(almacenes)} almacén(es) activo(s)")
+
+        results = []
+        for almacen in almacenes:
+            self.logger.info(f"   📦 Extrayendo {almacen.nombre} ({almacen.codigo})...")
+
+            df = self.extract_almacen_data(
+                ubicacion_id=ubicacion_id,
+                ubicacion_nombre=ubicacion_nombre,
+                almacen_codigo=almacen.codigo,
+                almacen_nombre=almacen.nombre
+            )
+
+            if df is not None and not df.empty:
+                results.append(df)
+                self.logger.info(f"   ✅ {almacen.nombre}: {len(df):,} productos")
+            else:
+                self.logger.warning(f"   ⚠️  {almacen.nombre}: sin datos")
+
+        return results
 
     def extract_multiple_inventarios(self, configs: List) -> Dict[str, pd.DataFrame]:
         """

@@ -5,7 +5,8 @@
 DELETE FROM ubicaciones WHERE id NOT IN (
     'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05',
     'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10',
-    'tienda_11', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_19',
+    'tienda_11', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16',
+    'tienda_17', 'tienda_18', 'tienda_19', 'tienda_20',
     'cedi_seco', 'cedi_frio', 'cedi_verde', 'cedi_frutas'
 );
 
@@ -26,10 +27,22 @@ UPDATE ubicaciones SET nombre = 'NAGUANAGUA III', codigo = 'T13' WHERE id = 'tie
 UPDATE ubicaciones SET nombre = 'ISABELICA', codigo = 'T15' WHERE id = 'tienda_15';
 UPDATE ubicaciones SET nombre = 'TOCUYITO', codigo = 'T16' WHERE id = 'tienda_16';
 
--- Insertar tienda_19 si no existe
+-- Insertar tiendas KLK nuevas si no existen
+INSERT INTO ubicaciones (id, codigo, nombre, tipo, region, ciudad, superficie_m2, activo)
+SELECT 'tienda_17', 'T17', 'ARTIGAS', 'tienda', 'Centro', 'Valencia', 150.0, true
+WHERE NOT EXISTS (SELECT 1 FROM ubicaciones WHERE id = 'tienda_17');
+
+INSERT INTO ubicaciones (id, codigo, nombre, tipo, region, ciudad, superficie_m2, activo)
+SELECT 'tienda_18', 'T18', 'PARAISO', 'tienda', 'Centro', 'Valencia', 150.0, true
+WHERE NOT EXISTS (SELECT 1 FROM ubicaciones WHERE id = 'tienda_18');
+
 INSERT INTO ubicaciones (id, codigo, nombre, tipo, region, ciudad, superficie_m2, activo)
 SELECT 'tienda_19', 'T19', 'GUIGUE', 'tienda', 'Sur', 'Guigue', 120.0, true
 WHERE NOT EXISTS (SELECT 1 FROM ubicaciones WHERE id = 'tienda_19');
+
+INSERT INTO ubicaciones (id, codigo, nombre, tipo, region, ciudad, superficie_m2, activo)
+SELECT 'tienda_20', 'T20', 'TAZAJAL', 'tienda', 'Centro', 'Valencia', 150.0, true
+WHERE NOT EXISTS (SELECT 1 FROM ubicaciones WHERE id = 'tienda_20');
 
 -- Actualizar CEDIs
 UPDATE ubicaciones SET nombre = 'CEDI Seco', codigo = 'C01', id = 'cedi_seco' WHERE id = 'cedi_01';

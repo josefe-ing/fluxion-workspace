@@ -1,56 +1,86 @@
 # Mapeo de Tiendas KLK
 
-**Fecha:** 2025-11-17
+**Fecha:** 2025-11-24
 **Sistema:** KLK POS API
-**Endpoint:** `http://190.6.32.3:7002/maestra/articulos`
+**Base URL:** `http://190.6.32.3:7002`
 
 ---
 
-## Tiendas Migradas a KLK (Confirmadas)
+## Cambio Conceptual Importante
 
-| # | Sucursal KLK | Nombre KLK | Código Almacén | Tienda ID Fluxion | Estado |
-|---|--------------|------------|----------------|-------------------|--------|
-| 1 | `SUC001` | PERIFERICO | `APP-TPF` | `tienda_01` | ✅ Configurado y probado |
-| 2 | `SUC002` | EL BOSQUE | `APP-TBQ` | `tienda_08` | ✅ Configurado y probado |
-| 5 | `SUC005` | TAZAJAL | `TTZ` | `tienda_20` | ✅ Configurado |
+**Antes (Stellar):** 1 tienda = 1 inventario
+**Ahora (KLK):** 1 sucursal = múltiples almacenes
+
+Cada sucursal tiene varios tipos de almacén:
+
+| Tipo | Prefijo | Descripción | Relevante para Fluxion |
+|------|---------|-------------|------------------------|
+| **PISO DE VENTA** | T | Stock visible para clientes | ✅ **SÍ - Principal** |
+| PRINCIPAL | P | Almacén/bodega | ⚠️ Posible |
+| PROCURA | PC | Compras pendientes | ❌ No |
+| PRODUCCIÓN | PD | Productos en elaboración | ❌ No |
+| DEVOLUCIONES | D | Productos devueltos | ❌ No |
+| MERMA | M | Pérdidas/bajas | ❌ No |
 
 ---
 
-## Tiendas KLK Pendientes de Mapear
+## Tiendas Migradas a KLK
 
-Estas tiendas existen en KLK pero **no se han mapeado** a tiendas en Fluxion:
+| # | CodigoSucursal | Nombre | Almacén Piso Venta | Almacén Principal | Tienda Fluxion | Estado |
+|---|----------------|--------|-------------------|-------------------|----------------|--------|
+| 1 | `SUC001` | PERIFERICO | `APP-TPF` | `APP-PPF` | `tienda_01` | ✅ Activo |
+| 2 | `SUC002` | EL BOSQUE | `APP-TBQ` | `APP-PBQ` | `tienda_08` | ✅ Activo |
+| 3 | `SUC003` | ARTIGAS | `TANT` | `PANT` | `tienda_17` | ✅ Activo |
+| 4 | `SUC004` | PARAISO | `APP-TPAR` | `APP-PPAR` | `tienda_18` | ✅ Activo |
+| 5 | `SUC005` | TAZAJAL | `TTZ` | `PTZ` | `tienda_20` | ✅ Activo (1,687 con stock) |
 
-| # | Sucursal KLK | Nombre KLK | Código Almacén | Tienda ID Fluxion | Acción Requerida |
-|---|--------------|------------|----------------|-------------------|------------------|
-| 3 | `SUC003` | ARTIGAS | `TANT` | ❓ **DESCONOCIDO** | Identificar tienda en sistema |
-| 4 | `SUC004` | PARAISO | `PALT` | ❓ **DESCONOCIDO** | Identificar tienda en sistema |
+---
 
-### Posibles Candidatos
+## Estructura Completa de Almacenes por Sucursal
 
-Revisar estas tiendas del sistema Fluxion para identificar ARTIGAS y PARAISO:
+### SUC001 - PERIFERICO
+| Código | Nombre | Uso |
+|--------|--------|-----|
+| APP-TPF | PISO DE VENTA | Stock para clientes |
+| APP-PPF | PRINCIPAL | Bodega |
+| APP-PCPF | PROCURA | Compras |
+| APP-PDPF | PRODUCCION | Elaboración |
+| APP-DPF | DEVOLUCIONES | Devueltos |
+| APP-MPF | MERMA | Bajas |
 
-```
-tienda_02: AV. BOLIVAR
-tienda_03: MAÑONGO
-tienda_04: SAN DIEGO
-tienda_05: VIVIENDA
-tienda_06: NAGUANAGUA
-tienda_07: CENTRO
-tienda_09: GUACARA
-tienda_10: FERIAS
-tienda_11: FLOR AMARILLO
-tienda_12: PARAPARAL
-tienda_13: NAGUANAGUA III
-tienda_15: ISABELICA
-tienda_16: TOCUYITO
-tienda_19: GUIGUE
-```
+### SUC003 - ARTIGAS
+| Código | Nombre | Uso |
+|--------|--------|-----|
+| TANT | PISO DE VENTA | Stock para clientes |
+| PANT | PRINCIPAL | Bodega |
+| PCANT | PROCURA | Compras |
+| PDANT | PRODUCCION | Elaboración |
+| DANT | DEVOLUCIONES | Devueltos |
+| MANT | MERMA | Bajas |
+
+### SUC004 - PARAISO
+| Código | Nombre | Uso |
+|--------|--------|-----|
+| APP-TPAR | PISO DE VENTA | Stock para clientes |
+| APP-PPAR | PRINCIPAL | Bodega |
+| APP-PRPAR | PROCURA | Compras |
+| APP-PDPAR | PRODUCCION | Elaboración |
+| APP-DPAR | DEVOLUCIONES | Devueltos |
+| APP-MPAR | MERMA | Bajas |
+
+### SUC005 - TAZAJAL
+| Código | Nombre | Uso |
+|--------|--------|-----|
+| TTZ | PISO DE VENTA | Stock para clientes |
+| PTZ | PRINCIPAL | Bodega |
+| PCTZ | PROCURA | Compras |
+| PDTZ | PRODUCCION | Elaboración |
+| DTZ | DEVOLUCIONES | Devueltos |
+| MTZ | MERMA | Bajas |
 
 ---
 
 ## Consolidado KLK
-
-También existe un almacén consolidado:
 
 | Sucursal | Nombre | Código Almacén | Propósito |
 |----------|--------|----------------|-----------|
@@ -81,16 +111,10 @@ También existe un almacén consolidado:
 
 ## Próximos Pasos
 
-### 1. Identificar Tiendas Faltantes
-
-Confirmar con el cliente qué tiendas de Fluxion corresponden a:
-- ❓ **ARTIGAS** (`TANT`)
-- ❓ **PARAISO** (`PALT`)
-
-### 2. Ejecutar ETL para Tiendas Confirmadas
+### 1. Ejecutar ETL para Tiendas Confirmadas
 
 ```bash
-# Procesar las 3 tiendas KLK confirmadas
+# Procesar todas las tiendas KLK confirmadas (5 tiendas)
 cd etl/core
 python3 etl_inventario_klk.py
 ```
@@ -98,21 +122,17 @@ python3 etl_inventario_klk.py
 Esto procesará:
 - ✅ PERIFERICO (tienda_01)
 - ✅ BOSQUE (tienda_08)
+- ✅ ARTIGAS (tienda_17)
+- ✅ PARAISO (tienda_18)
 - ✅ TAZAJAL (tienda_20)
 
-### 3. Configurar Tiendas Adicionales
+### 2. Actualizar Base de Datos
 
-Una vez identificadas ARTIGAS y PARAISO, agregar a [tiendas_config.py](../etl/core/tiendas_config.py):
+Agregar las nuevas tiendas a la tabla `ubicaciones`:
 
-```python
-# Ejemplo para cuando se identifiquen
-"tienda_XX": TiendaConfig(
-    ubicacion_id="tienda_XX",
-    ubicacion_nombre="ARTIGAS",  # o PARAISO
-    # ... otras configuraciones ...
-    sistema_pos="klk",
-    codigo_almacen_klk="TANT"  # o "PALT"
-),
+```bash
+cd database
+# Ejecutar script de migración (pendiente de crear)
 ```
 
 ---
@@ -142,6 +162,130 @@ tail -f etl/logs/etl_inventario_klk_*.log
 
 ---
 
-**Última actualización:** 2025-11-17
-**Tiendas KLK activas:** 3/5
-**Tiendas pendientes:** 2 (ARTIGAS, PARAISO)
+## Endpoints API KLK
+
+### Almacenes
+
+```bash
+# Todos los almacenes de reposición
+GET /maestra/almacenes/Reposicion
+
+# Almacenes de una sucursal específica
+GET /maestra/almacenes/Reposicion?sucursal=SUC001
+
+# Almacenes de piso de venta (los principales para inventario)
+GET /maestra/almacenes/pisoventa
+```
+
+### Artículos
+
+```bash
+# Artículos de un almacén específico
+POST /maestra/articulos/almacen
+Body: {"Codigoalmacen": "APP-TPF"}
+
+# Artículos de múltiples almacenes
+POST /maestra/articulos/almacen
+Body: {"Codigoalmacen": ["APP-TPF", "APP-PPF"]}
+
+# Artículos de reposición por sucursal
+POST /maestra/articulos/reposicion
+Body: {"CodigoSucursal": "SUC001"}
+
+# Artículos de múltiples sucursales
+POST /maestra/articulos/reposicion
+Body: {"CodigoSucursal": ["SUC001", "SUC003"]}
+```
+
+### Ventas
+
+```bash
+# Ventas básicas por fecha
+POST /ventas
+Body: {
+  "sucursal": "SUC001",
+  "fecha_desde": "2025-11-23",
+  "fecha_hasta": "2025-11-24"
+}
+
+# Ventas con filtro de hora
+POST /ventas
+Body: {
+  "sucursal": "SUC001",
+  "fecha_desde": "2025-11-23",
+  "fecha_hasta": "2025-11-24",
+  "hora_desde": "12:00",
+  "hora_hasta": "18:00"
+}
+
+# Ventas con todos los filtros
+POST /ventas
+Body: {
+  "sucursal": "SUC001",
+  "fecha_desde": "2025-11-23",
+  "fecha_hasta": "2025-11-24",
+  "hora_desde": "12:00:00",
+  "hora_hasta": "18:00:00",
+  "almacen": "APP-TPF",
+  "CodArticulo": "001853"
+}
+```
+
+---
+
+## Estructura de Respuestas
+
+### Artículo (de /maestra/articulos/almacen)
+```json
+{
+  "NombreProducto": "JAMON ESPALDA AHUM. SHOULDER DRAGOS KG",
+  "Codigo": "000001",
+  "Barra": "001",
+  "Categoria": "05",
+  "Descripcion": "CHARCUTERIA",
+  "Subcategoria": "1",
+  "Descripcion_categoria": "DE CERDO",
+  "Marca": "DRAGOS",
+  "Precio": 4.982759,
+  "Iva": 16,
+  "stock": 5.5
+}
+```
+
+### Venta (de /ventas)
+```json
+{
+  "numero_factura": "C9-01-00006123",
+  "fecha": "2025-11-24",
+  "hora": "11:40:53",
+  "fecha_hora_completa": "2025-11-24T11:40:53",
+  "linea": 1,
+  "producto": [{
+    "codigo_producto": "002263",
+    "descripcion_producto": "MAYONESA GRANJA 465 GR",
+    "marca_producto": "GRANJA",
+    "categoria_producto": "ADEREZOS Y PREPARADOS",
+    "grupo_articulo": "VIVERES",
+    "codigo_barras": "7599676000023"
+  }],
+  "cantidad": [{
+    "codigo_almacen": "APP-TPF",
+    "nombre_almacen": "PISO DE VENTA",
+    "cantidad_vendida": 1,
+    "unidad_medida_venta": "UNIDAD"
+  }],
+  "financiero": [{
+    "precio_unitario_usd": 2.17,
+    "venta_total_usd": 2.17,
+    "costo_total_usd": 1.00
+  }],
+  "total_factura": 4205.09,
+  "tasa_usd": 243.11
+}
+```
+
+---
+
+**Última actualización:** 2025-11-24
+**Tiendas KLK activas:** 5 sucursales
+**Estado:** API funcional, estructura multi-almacén documentada

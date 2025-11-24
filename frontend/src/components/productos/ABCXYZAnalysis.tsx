@@ -11,6 +11,7 @@ import MatrizABCXYZ from './MatrizABCXYZ';
 import ProductoDetalleModal from './ProductoDetalleModal';
 import ABCDistributionChart from './charts/ABCDistributionChart';
 import XYZDistributionChart from './charts/XYZDistributionChart';
+import { isXYZEnabled } from '../../config/featureFlags';
 
 const ABCXYZAnalysis: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -18,6 +19,7 @@ const ABCXYZAnalysis: React.FC = () => {
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
   const [matrizData, setMatrizData] = useState<MatrizData | null>(null);
   const [selectedMatriz, setSelectedMatriz] = useState<string>('');
+  const [selectedABC, setSelectedABC] = useState<string>(''); // Filtro por clase ABC (A, B, C)
   const [productos, setProductos] = useState<ProductoEnriquecido[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [selectedProducto, setSelectedProducto] = useState<string | null>(null);
@@ -123,13 +125,39 @@ const ABCXYZAnalysis: React.FC = () => {
     }
   };
 
-  // Filter and sort productos based on search term and sort settings
+  // Handler para click en clase ABC
+  const handleABCClick = (clase: string) => {
+    // Si ya está seleccionada, deseleccionar (mostrar todos)
+    if (selectedABC === clase) {
+      setSelectedABC('');
+    } else {
+      setSelectedABC(clase);
+    }
+    // Limpiar selección de matriz completa si existía
+    setSelectedMatriz('');
+  };
+
+  // Filter and sort productos based on search term, ABC filter, and sort settings
   const filteredAndSortedProductos = React.useMemo(() => {
-    // First filter by search term
     let filtered = productos;
+
+    // Filter by selected ABC class
+    if (selectedABC) {
+      filtered = filtered.filter(p => p.clasificacion_abc === selectedABC);
+    }
+
+    // Filter by selected matriz (for when XYZ is enabled)
+    if (selectedMatriz) {
+      filtered = filtered.filter(p =>
+        p.clasificacion_abc === selectedMatriz[0] &&
+        p.clasificacion_xyz === selectedMatriz[1]
+      );
+    }
+
+    // Filter by search term
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
-      filtered = productos.filter(p =>
+      filtered = filtered.filter(p =>
         p.codigo_producto.toLowerCase().includes(term) ||
         p.descripcion.toLowerCase().includes(term)
       );
@@ -153,7 +181,7 @@ const ABCXYZAnalysis: React.FC = () => {
       return sortOrder === 'asc' ? comparison : -comparison;
     });
     return sorted;
-  }, [productos, sortBy, sortOrder, searchTerm]);
+  }, [productos, sortBy, sortOrder, searchTerm, selectedABC, selectedMatriz]);
 
   if (loading) {
     return (
@@ -192,9 +220,9 @@ const ABCXYZAnalysis: React.FC = () => {
         </div>
       </div>
 
-      {/* Resumen ABC y XYZ lado a lado */}
+      {/* Resumen ABC (y XYZ si está habilitado) */}
       {matrizData && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className={`grid grid-cols-1 ${isXYZEnabled() ? 'md:grid-cols-2' : ''} gap-6`}>
           {/* Resumen ABC (Tabla Pareto) */}
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -212,7 +240,13 @@ const ABCXYZAnalysis: React.FC = () => {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {Object.entries(matrizData.resumen_abc).map(([clase, data]) => (
-                  <tr key={clase}>
+                  <tr
+                    key={clase}
+                    onClick={() => handleABCClick(clase)}
+                    className={`cursor-pointer transition-all hover:bg-gray-50 ${
+                      selectedABC === clase ? 'ring-2 ring-inset ring-blue-500 bg-blue-50' : ''
+                    }`}
+                  >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-3 py-1 rounded-full text-sm font-medium ${
                         clase === 'A' ? 'bg-red-100 text-red-800' :
@@ -247,63 +281,65 @@ const ABCXYZAnalysis: React.FC = () => {
             </div>
           </div>
 
-          {/* Resumen XYZ (Variabilidad) */}
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Resumen XYZ (Variabilidad)</h2>
-              <p className="text-xs text-gray-500 mt-1">Análisis por estabilidad de demanda</p>
-            </div>
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Clase</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Productos</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">% Productos</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {Object.entries(matrizData.resumen_xyz).map(([clase, data]) => (
-                  <tr key={clase}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                        clase === 'X' ? 'bg-green-100 text-green-800' :
-                        clase === 'Y' ? 'bg-blue-100 text-blue-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {clase}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {data.count}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {data.porcentaje_productos.toFixed(1)}%
-                    </td>
-                    <td className="px-6 py-4 text-xs text-gray-500">
-                      {clase === 'X' && 'Demanda estable (CV < 0.5)'}
-                      {clase === 'Y' && 'Demanda variable (0.5 ≤ CV < 1.0)'}
-                      {clase === 'Z' && 'Demanda errática (CV ≥ 1.0)'}
-                    </td>
+          {/* Resumen XYZ (Variabilidad) - Solo si está habilitado */}
+          {isXYZEnabled() && (
+            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900">Resumen XYZ (Variabilidad)</h2>
+                <p className="text-xs text-gray-500 mt-1">Análisis por estabilidad de demanda</p>
+              </div>
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Clase</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Productos</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">% Productos</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="px-6 py-4 bg-green-50 border-t border-green-100">
-              <p className="text-sm text-green-800 flex items-center gap-2">
-                💡 {matrizData.resumen_xyz.X?.porcentaje_productos.toFixed(1)}% de tus productos tienen demanda estable y predecible
-              </p>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Object.entries(matrizData.resumen_xyz).map(([clase, data]) => (
+                    <tr key={clase}>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                          clase === 'X' ? 'bg-green-100 text-green-800' :
+                          clase === 'Y' ? 'bg-blue-100 text-blue-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {clase}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {data.count}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {data.porcentaje_productos.toFixed(1)}%
+                      </td>
+                      <td className="px-6 py-4 text-xs text-gray-500">
+                        {clase === 'X' && 'Demanda estable (CV < 0.5)'}
+                        {clase === 'Y' && 'Demanda variable (0.5 ≤ CV < 1.0)'}
+                        {clase === 'Z' && 'Demanda errática (CV ≥ 1.0)'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="px-6 py-4 bg-green-50 border-t border-green-100">
+                <p className="text-sm text-green-800 flex items-center gap-2">
+                  💡 {matrizData.resumen_xyz.X?.porcentaje_productos.toFixed(1)}% de tus productos tienen demanda estable y predecible
+                </p>
+              </div>
+              {/* Chart XYZ */}
+              <div className="px-6 py-6 border-t border-gray-200">
+                <XYZDistributionChart resumenXYZ={matrizData.resumen_xyz} />
+              </div>
             </div>
-            {/* Chart XYZ */}
-            <div className="px-6 py-6 border-t border-gray-200">
-              <XYZDistributionChart resumenXYZ={matrizData.resumen_xyz} />
-            </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* Matriz ABC-XYZ */}
-      {matrizData && (
+      {/* Matriz ABC-XYZ - Solo si XYZ está habilitado */}
+      {matrizData && isXYZEnabled() && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Matriz ABC × XYZ</h2>
           <MatrizABCXYZ
@@ -321,10 +357,22 @@ const ABCXYZAnalysis: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">
-                  {selectedMatriz ? `Productos en clasificación: ${selectedMatriz}` : 'Todos los productos'}
+                  {selectedABC
+                    ? `Productos Clase ${selectedABC}`
+                    : selectedMatriz
+                      ? `Productos en clasificación: ${selectedMatriz}`
+                      : 'Todos los productos'}
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">
                   Mostrando {filteredAndSortedProductos.length} de {productos.length} productos
+                  {selectedABC && (
+                    <button
+                      onClick={() => setSelectedABC('')}
+                      className="ml-2 text-blue-600 hover:text-blue-800 underline"
+                    >
+                      Ver todos
+                    </button>
+                  )}
                 </p>
               </div>
             </div>
@@ -381,19 +429,21 @@ const ABCXYZAnalysis: React.FC = () => {
                       )}
                     </div>
                   </th>
-                  <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('xyz')}
-                  >
-                    <div className="flex items-center gap-1">
-                      XYZ
-                      {sortBy === 'xyz' && (
-                        <span className="text-blue-600">
-                          {sortOrder === 'asc' ? '↑' : '↓'}
-                        </span>
-                      )}
-                    </div>
-                  </th>
+                  {isXYZEnabled() && (
+                    <th
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                      onClick={() => handleSort('xyz')}
+                    >
+                      <div className="flex items-center gap-1">
+                        XYZ
+                        {sortBy === 'xyz' && (
+                          <span className="text-blue-600">
+                            {sortOrder === 'asc' ? '↑' : '↓'}
+                          </span>
+                        )}
+                      </div>
+                    </th>
+                  )}
                   {!ubicacionId && (
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                       Tiendas
@@ -455,15 +505,17 @@ const ABCXYZAnalysis: React.FC = () => {
                         {producto.clasificacion_abc} ({formatPercentageValue(producto.porcentaje_valor)})
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        producto.clasificacion_xyz === 'X' ? 'bg-green-100 text-green-800' :
-                        producto.clasificacion_xyz === 'Y' ? 'bg-blue-100 text-blue-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {producto.clasificacion_xyz} ({producto.coeficiente_variacion !== null ? producto.coeficiente_variacion.toFixed(2) : 'Sin datos'})
-                      </span>
-                    </td>
+                    {isXYZEnabled() && (
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                          producto.clasificacion_xyz === 'X' ? 'bg-green-100 text-green-800' :
+                          producto.clasificacion_xyz === 'Y' ? 'bg-blue-100 text-blue-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {producto.clasificacion_xyz} ({producto.coeficiente_variacion !== null ? producto.coeficiente_variacion.toFixed(2) : 'Sin datos'})
+                        </span>
+                      </td>
+                    )}
                     {!ubicacionId && producto.porcentaje_tiendas !== undefined && (
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <div className="flex flex-col">

@@ -198,7 +198,10 @@ class InventarioKLKTransformer:
             'stock_maximo': None,
 
             # Metadatos
-            'fecha_extraccion': df.get('fecha_extraccion', datetime.now())
+            'fecha_extraccion': df.get('fecha_extraccion', datetime.now()),
+
+            # Almacén KLK (nuevo campo para multi-almacén)
+            'almacen_codigo': df.get('almacen_codigo', None) if 'almacen_codigo' in df.columns else None
         })
 
         # Validaciones

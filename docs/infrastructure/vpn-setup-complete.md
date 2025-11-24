@@ -1,3 +1,4 @@
+
 # ✅ VPN WireGuard Bridge - Setup Completo
 
 **Fecha**: 2025-10-06

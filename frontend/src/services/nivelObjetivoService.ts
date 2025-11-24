@@ -97,6 +97,34 @@ export interface CalcularCantidadSugeridaResponse {
   data: CantidadSugeridaData;
 }
 
+export interface ClasificacionABCXYZData {
+  // Clasificación ABC
+  valor_ventas_total: number;
+  percentil_abc: number;
+  umbral_a: number;
+  umbral_b: number;
+
+  // Clasificación XYZ
+  demanda_promedio: number;
+  desviacion_estandar: number;
+  coeficiente_variacion: number;
+
+  // Parámetros aplicados
+  nivel_servicio_z: number;
+  multiplicador_demanda: number;
+  multiplicador_ss: number;
+  incluye_ss: boolean;
+  prioridad: number;
+}
+
+export interface ClasificacionABCXYZResponse {
+  success: boolean;
+  producto_id: string;
+  tienda_id: string;
+  matriz_abc_xyz: string;
+  clasificacion_data: ClasificacionABCXYZData;
+}
+
 // ============================================================================
 // FUNCIONES DEL SERVICIO
 // ============================================================================
@@ -297,5 +325,23 @@ export function obtenerClaseEstadoStock(diasStock: number, matriz: string): stri
     if (diasStock < 2) return 'bg-orange-500';
     if (diasStock < 3) return 'bg-yellow-500';
     return 'bg-green-500';
+  }
+}
+
+/**
+ * Obtiene los datos de clasificación ABC-XYZ de un producto
+ */
+export async function obtenerClasificacionProducto(
+  tiendaId: string,
+  productoId: string
+): Promise<ClasificacionABCXYZResponse> {
+  try {
+    const response = await http.get(
+      `/api/niveles-inventario/clasificacion/${tiendaId}/${productoId}`
+    );
+    return response.data as ClasificacionABCXYZResponse;
+  } catch (error) {
+    console.error('Error obteniendo clasificación ABC-XYZ:', error);
+    throw error;
   }
 }

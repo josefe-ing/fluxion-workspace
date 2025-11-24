@@ -57,6 +57,7 @@ from routers.config_inventario_router import router as config_inventario_router
 from routers.abc_v2_router import router as abc_v2_router
 from routers.nivel_objetivo_router import router as nivel_objetivo_router
 from routers.admin_ubicaciones_router import router as admin_ubicaciones_router
+from routers.etl_tracking_router import router as etl_tracking_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
 # Configurar logging
@@ -137,6 +138,7 @@ app.include_router(config_inventario_router)
 app.include_router(abc_v2_router)
 app.include_router(nivel_objetivo_router)
 app.include_router(admin_ubicaciones_router)
+app.include_router(etl_tracking_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
 # Global Exception Handler con CORS
@@ -306,6 +308,27 @@ class UbicacionSummaryResponse(BaseModel):
     stock_cero: int
     stock_negativo: int
     ultima_actualizacion: Optional[str]
+    # Campos para almacenes KLK (solo aplica a tiendas KLK)
+    almacen_codigo: Optional[str] = None
+    almacen_nombre: Optional[str] = None
+
+
+class AlmacenKLKResponse(BaseModel):
+    """Representa un almacén KLK"""
+    codigo: str
+    nombre: str
+    tipo: str  # "piso_venta" | "principal" | "procura" | etc.
+    incluir_en_deficit: bool
+    activo: bool
+
+
+class AlmacenesUbicacionResponse(BaseModel):
+    """Lista de almacenes para una ubicación KLK"""
+    ubicacion_id: str
+    ubicacion_nombre: str
+    sistema_pos: str
+    almacenes: List[AlmacenKLKResponse]
+
 
 class DashboardMetrics(BaseModel):
     total_ubicaciones: int
@@ -734,9 +757,12 @@ async def get_ubicaciones_summary():
 
             ubicaciones_codigo_map = {tid: mapear_ubicacion_codigo(tid) for tid in tiendas_klk_ids}
 
-            # Query combinado: stock_actual para KLK, inventario_raw para Stellar
+            # Obtener mapeo de almacenes KLK para nombres
+            from tiendas_config import get_almacenes_tienda, ALMACENES_KLK
+
+            # Query combinado: stock_actual para KLK (agrupado por almacén), inventario_raw para Stellar
             query = """
-                -- Tiendas KLK: desde stock_actual
+                -- Tiendas KLK: desde stock_actual, agrupado por almacén
                 SELECT
                     sa.ubicacion_id,
                     COALESCE(ubi.nombre, 'Desconocido') as ubicacion_nombre,
@@ -744,7 +770,8 @@ async def get_ubicaciones_summary():
                     COUNT(DISTINCT sa.producto_id) as total_productos,
                     SUM(CASE WHEN sa.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
                     SUM(CASE WHEN sa.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
-                    CAST(MAX(sa.ultima_actualizacion) AS VARCHAR) as ultima_actualizacion
+                    CAST(MAX(sa.ultima_actualizacion) AS VARCHAR) as ultima_actualizacion,
+                    sa.almacen_codigo
                 FROM stock_actual sa
                 LEFT JOIN ubicaciones ubi ON (
                     ubi.codigo = CASE
@@ -754,11 +781,11 @@ async def get_ubicaciones_summary():
                     END
                 )
                 WHERE sa.ubicacion_id IN ('""" + "','".join(tiendas_klk_ids) + """')
-                GROUP BY sa.ubicacion_id, ubi.nombre, ubi.tipo
+                GROUP BY sa.ubicacion_id, ubi.nombre, ubi.tipo, sa.almacen_codigo
 
                 UNION ALL
 
-                -- Tiendas Stellar: desde inventario_raw
+                -- Tiendas Stellar: desde inventario_raw (sin almacén)
                 SELECT
                     inv.ubicacion_id,
                     inv.ubicacion_nombre,
@@ -766,20 +793,30 @@ async def get_ubicaciones_summary():
                     COUNT(DISTINCT inv.codigo_producto) as total_productos,
                     SUM(CASE WHEN inv.cantidad_actual = 0 THEN 1 ELSE 0 END) as stock_cero,
                     SUM(CASE WHEN inv.cantidad_actual < 0 THEN 1 ELSE 0 END) as stock_negativo,
-                    CAST(MAX(inv.fecha_extraccion) AS VARCHAR) as ultima_actualizacion
+                    CAST(MAX(inv.fecha_extraccion) AS VARCHAR) as ultima_actualizacion,
+                    NULL as almacen_codigo
                 FROM inventario_raw inv
                 WHERE inv.activo = true
                     AND inv.tipo_ubicacion != 'mayorista'
                     AND inv.ubicacion_id NOT IN ('""" + "','".join(tiendas_klk_ids) + """')
                 GROUP BY inv.ubicacion_id, inv.ubicacion_nombre, inv.tipo_ubicacion
 
-                ORDER BY tipo_ubicacion, ubicacion_nombre
+                ORDER BY tipo_ubicacion, ubicacion_nombre, almacen_codigo
             """
 
             result = conn.execute(query).fetchall()
 
+            # Construir mapeo de código de almacén -> nombre
+            almacen_nombres = {}
+            for tienda_id, almacenes in ALMACENES_KLK.items():
+                for alm in almacenes:
+                    almacen_nombres[alm.codigo] = alm.nombre
+
             summary = []
             for row in result:
+                almacen_codigo = row[7]  # Nuevo campo
+                almacen_nombre = almacen_nombres.get(almacen_codigo) if almacen_codigo else None
+
                 summary.append(UbicacionSummaryResponse(
                     ubicacion_id=row[0],
                     ubicacion_nombre=row[1],
@@ -787,7 +824,9 @@ async def get_ubicaciones_summary():
                     total_productos=row[3],
                     stock_cero=row[4],
                     stock_negativo=row[5],
-                    ultima_actualizacion=row[6]
+                    ultima_actualizacion=row[6],
+                    almacen_codigo=almacen_codigo,
+                    almacen_nombre=almacen_nombre
                 ))
 
             return summary
@@ -824,6 +863,89 @@ async def get_stock_params(ubicacion_id: str):
     except Exception as e:
         logger.error(f"Error obteniendo parámetros de stock: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/ubicaciones/{ubicacion_id}/almacenes", response_model=AlmacenesUbicacionResponse, tags=["Ubicaciones"])
+async def get_almacenes_ubicacion(ubicacion_id: str):
+    """
+    Obtiene los almacenes KLK disponibles para una ubicación.
+
+    Solo aplica a tiendas con sistema_pos='klk'. Para tiendas Stellar
+    retorna una lista vacía de almacenes.
+    """
+    try:
+        from tiendas_config import TIENDAS_CONFIG, get_almacenes_tienda
+
+        if ubicacion_id not in TIENDAS_CONFIG:
+            raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+
+        config = TIENDAS_CONFIG[ubicacion_id]
+
+        # Obtener almacenes si es tienda KLK
+        almacenes = []
+        if config.sistema_pos == "klk":
+            almacenes_klk = get_almacenes_tienda(ubicacion_id)
+            almacenes = [
+                AlmacenKLKResponse(
+                    codigo=a.codigo,
+                    nombre=a.nombre,
+                    tipo=a.tipo,
+                    incluir_en_deficit=a.incluir_en_deficit,
+                    activo=a.activo
+                )
+                for a in almacenes_klk
+            ]
+
+        return AlmacenesUbicacionResponse(
+            ubicacion_id=config.ubicacion_id,
+            ubicacion_nombre=config.ubicacion_nombre,
+            sistema_pos=config.sistema_pos,
+            almacenes=almacenes
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo almacenes de ubicación: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/almacenes/klk", tags=["Ubicaciones"])
+async def get_all_almacenes_klk():
+    """
+    Obtiene todos los almacenes KLK de todas las tiendas.
+
+    Útil para la vista de inventarios que necesita mostrar
+    cada almacén como una fila separada.
+    """
+    try:
+        from tiendas_config import get_tiendas_klk, get_almacenes_tienda
+
+        result = []
+        tiendas_klk = get_tiendas_klk()
+
+        for tienda_id, config in tiendas_klk.items():
+            almacenes = get_almacenes_tienda(tienda_id)
+            for almacen in almacenes:
+                result.append({
+                    "ubicacion_id": tienda_id,
+                    "ubicacion_nombre": config.ubicacion_nombre,
+                    "almacen_codigo": almacen.codigo,
+                    "almacen_nombre": almacen.nombre,
+                    "almacen_tipo": almacen.tipo,
+                    "incluir_en_deficit": almacen.incluir_en_deficit,
+                    "activo": almacen.activo
+                })
+
+        return {
+            "total": len(result),
+            "almacenes": result
+        }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo almacenes KLK: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 
 @app.get("/api/productos", response_model=List[ProductoResponse], tags=["Productos"])
 async def get_productos(categoria: Optional[str] = None, activo: bool = True):

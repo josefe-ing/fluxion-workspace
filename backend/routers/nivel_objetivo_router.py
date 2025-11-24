@@ -549,3 +549,147 @@ async def obtener_niveles_tienda(
     except Exception as e:
         logger.error(f"Error obteniendo niveles de tienda: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ENDPOINT: Obtener Datos de Clasificación ABC-XYZ de un Producto
+# ============================================================================
+
+class ClasificacionABCXYZData(BaseModel):
+    """Datos de clasificación ABC-XYZ de un producto"""
+    # Clasificación ABC
+    valor_ventas_total: float
+    percentil_abc: float
+    umbral_a: float = 80.0
+    umbral_b: float = 50.0
+
+    # Clasificación XYZ
+    demanda_promedio: float
+    desviacion_estandar: float
+    coeficiente_variacion: float
+
+    # Parámetros aplicados
+    nivel_servicio_z: float
+    multiplicador_demanda: float
+    multiplicador_ss: float
+    incluye_ss: bool
+    prioridad: int
+
+
+class ClasificacionABCXYZResponse(BaseModel):
+    """Respuesta con datos de clasificación"""
+    success: bool = True
+    producto_id: str
+    tienda_id: str
+    matriz_abc_xyz: str
+    clasificacion_data: ClasificacionABCXYZData
+
+
+@router.get("/clasificacion/{tienda_id}/{producto_id}", response_model=ClasificacionABCXYZResponse)
+def obtener_clasificacion_producto(
+    tienda_id: str,
+    producto_id: str
+) -> ClasificacionABCXYZResponse:
+    """
+    Obtiene los datos de clasificación ABC-XYZ de un producto en una tienda específica.
+
+    Incluye:
+    - Matemática de clasificación ABC (valor de ventas, percentil)
+    - Matemática de clasificación XYZ (promedio, desviación, CV)
+    - Parámetros de reposición aplicados
+
+    Args:
+        tienda_id: ID de la tienda
+        producto_id: ID del producto
+
+    Returns:
+        ClasificacionABCXYZResponse con datos completos de clasificación
+    """
+    try:
+        with get_db_connection() as conn:
+            # 1. Obtener datos ABC-XYZ del producto
+            query_producto = """
+                SELECT
+                    p.codigo_producto,
+                    p.matriz_abc_xyz,
+                    p.demanda_promedio_semanal,
+                    p.desviacion_estandar_semanal,
+                    p.valor_consumo_total,
+                    p.porcentaje_acumulado,
+                    p.coeficiente_variacion
+                FROM productos_abc_v2 p
+                WHERE p.codigo_producto = ?
+                  AND p.ubicacion_id = ?
+                  AND p.matriz_abc_xyz IS NOT NULL
+                  AND p.clasificacion_abc_valor IN ('A', 'B', 'C')
+                LIMIT 1
+            """
+
+            result = conn.execute(query_producto, [producto_id, tienda_id]).fetchone()
+
+            if not result:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Producto {producto_id} no encontrado en tienda {tienda_id} o sin clasificación ABC-XYZ"
+                )
+
+            matriz_abc_xyz = result[1]
+            demanda_promedio_semanal = float(result[2]) if result[2] is not None else 0.0
+            desviacion_estandar_semanal = float(result[3]) if result[3] is not None else 0.0
+            valor_ventas_total = float(result[4]) if result[4] is not None else 0.0
+            percentil_abc = float(result[5]) if result[5] is not None else 0.0
+            coeficiente_variacion_db = float(result[6]) if result[6] is not None else 0.0
+
+            # Convertir demanda a diaria
+            demanda_promedio_diaria = demanda_promedio_semanal / 7.0
+            desviacion_estandar_diaria = desviacion_estandar_semanal / math.sqrt(7.0)
+
+            # Usar el CV ya calculado en la BD, o calcularlo si no existe
+            cv = coeficiente_variacion_db if coeficiente_variacion_db > 0 else (
+                desviacion_estandar_diaria / demanda_promedio_diaria if demanda_promedio_diaria > 0 else 0.0
+            )
+
+            # 2. Obtener parámetros de reposición para esta matriz
+            params = obtener_parametros_matriz(conn, tienda_id, matriz_abc_xyz)
+
+            # 3. Determinar prioridad
+            prioridades = {
+                'AX': 1, 'AY': 2, 'AZ': 3,
+                'BX': 4, 'BY': 5, 'BZ': 6,
+                'CX': 7, 'CY': 8, 'CZ': 9
+            }
+            prioridad = prioridades.get(matriz_abc_xyz, 99)
+
+            clasificacion_data = ClasificacionABCXYZData(
+                # ABC
+                valor_ventas_total=valor_ventas_total,
+                percentil_abc=percentil_abc,
+                umbral_a=80.0,
+                umbral_b=50.0,
+
+                # XYZ
+                demanda_promedio=demanda_promedio_diaria,
+                desviacion_estandar=desviacion_estandar_diaria,
+                coeficiente_variacion=cv,
+
+                # Parámetros
+                nivel_servicio_z=params['nivel_servicio_z'],
+                multiplicador_demanda=params['multiplicador_demanda'],
+                multiplicador_ss=params['multiplicador_ss'],
+                incluye_ss=params['incluir_stock_seguridad'],
+                prioridad=prioridad
+            )
+
+            return ClasificacionABCXYZResponse(
+                success=True,
+                producto_id=producto_id,
+                tienda_id=tienda_id,
+                matriz_abc_xyz=matriz_abc_xyz,
+                clasificacion_data=clasificacion_data
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo clasificación ABC-XYZ: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

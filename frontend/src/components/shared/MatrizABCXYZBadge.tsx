@@ -1,6 +1,7 @@
 import { obtenerColorMatriz, obtenerDescripcionMatriz, PRIORIDADES_MATRIZ } from '../../services/nivelObjetivoService';
 import { HelpCircle } from 'lucide-react';
 import { useState } from 'react';
+import { isXYZEnabled } from '../../config/featureFlags';
 
 interface MatrizABCXYZBadgeProps {
   matriz: string;
@@ -16,7 +17,12 @@ export default function MatrizABCXYZBadge({
   size = 'md'
 }: MatrizABCXYZBadgeProps) {
   const [mostrandoTooltip, setMostrandoTooltip] = useState(false);
-  const colores = obtenerColorMatriz(matriz);
+  const xyzHabilitado = isXYZEnabled();
+
+  // Si XYZ está deshabilitado, mostrar solo la clasificación ABC
+  const matrizMostrar = xyzHabilitado ? matriz : matriz[0];
+
+  const colores = obtenerColorMatriz(matriz); // Colores basados en matriz completa
   const descripcion = obtenerDescripcionMatriz(matriz);
   const prioridad = PRIORIDADES_MATRIZ[matriz] || 99;
 
@@ -38,8 +44,8 @@ export default function MatrizABCXYZBadge({
           inline-flex items-center gap-1.5
         `}
       >
-        {matriz}
-        {mostrarPrioridad && (
+        {matrizMostrar}
+        {mostrarPrioridad && xyzHabilitado && (
           <span className="text-xs opacity-70">
             (P{prioridad})
           </span>
@@ -61,34 +67,45 @@ export default function MatrizABCXYZBadge({
               <div className="space-y-2">
                 <div className="flex items-start gap-2">
                   <span className={`${colores.bg} ${colores.text} text-xs font-bold px-2 py-0.5 rounded border ${colores.border}`}>
-                    {matriz}
+                    {matrizMostrar}
                   </span>
                   <span className="text-xs font-semibold text-gray-700 flex-1">
-                    {descripcion.nombre}
+                    {xyzHabilitado ? descripcion.nombre : (
+                      matriz[0] === 'A' ? 'Alto Valor' :
+                      matriz[0] === 'B' ? 'Valor Medio' : 'Bajo Valor'
+                    )}
                   </span>
                 </div>
 
                 <p className="text-xs text-gray-600 leading-relaxed">
-                  {descripcion.descripcion}
+                  {xyzHabilitado ? descripcion.descripcion : (
+                    matriz[0] === 'A' ? 'Productos que representan el mayor valor económico. Prioridad alta en gestión de inventario.' :
+                    matriz[0] === 'B' ? 'Productos de valor intermedio. Gestión balanceada de inventario.' :
+                    'Productos de menor valor económico. Gestión simplificada de inventario.'
+                  )}
                 </p>
 
                 <div className="pt-2 border-t border-gray-200 text-xs text-gray-500">
-                  <div className="flex justify-between">
-                    <span>Prioridad:</span>
-                    <span className="font-semibold">{prioridad} de 9</span>
-                  </div>
-                  <div className="flex justify-between mt-1">
+                  {xyzHabilitado && (
+                    <div className="flex justify-between">
+                      <span>Prioridad:</span>
+                      <span className="font-semibold">{prioridad} de 9</span>
+                    </div>
+                  )}
+                  <div className={`flex justify-between ${xyzHabilitado ? 'mt-1' : ''}`}>
                     <span>Clase ABC:</span>
                     <span className="font-semibold">{matriz[0]} ({
                       matriz[0] === 'A' ? 'Alto' : matriz[0] === 'B' ? 'Medio' : 'Bajo'
                     } valor)</span>
                   </div>
-                  <div className="flex justify-between mt-1">
-                    <span>Variabilidad:</span>
-                    <span className="font-semibold">{matriz[1]} ({
-                      matriz[1] === 'X' ? 'Estable' : matriz[1] === 'Y' ? 'Media' : 'Errática'
-                    })</span>
-                  </div>
+                  {xyzHabilitado && (
+                    <div className="flex justify-between mt-1">
+                      <span>Variabilidad:</span>
+                      <span className="font-semibold">{matriz[1]} ({
+                        matriz[1] === 'X' ? 'Estable' : matriz[1] === 'Y' ? 'Media' : 'Errática'
+                      })</span>
+                    </div>
+                  )}
                 </div>
               </div>
 

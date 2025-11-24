@@ -4,9 +4,9 @@ Configuración de conexiones para todas las tiendas de La Granja Mercado
 Actualizado: 2024-09-25
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Cargar variables de entorno desde .env
@@ -75,6 +75,62 @@ def get_server_port(local_port: int, prod_port: int = None):
 # El routing del VPC automáticamente envía ese tráfico a través del WireGuard bridge (10.0.2.43)
 # NO se necesita usar la IP del bridge explícitamente - el VPC route table lo maneja transparentemente
 # Ver: docs/infrastructure/vpn-setup-complete.md y ETL_VPN_DIAGNOSIS_COMPLETE.md
+
+
+@dataclass
+class AlmacenKLK:
+    """Configuración de un almacén KLK"""
+    codigo: str                    # Código del almacén en KLK (ej: "APP-TPF")
+    nombre: str                    # Nombre descriptivo (ej: "PISO DE VENTA")
+    tipo: str                      # Tipo: "piso_venta" | "principal" | "procura" | "produccion" | "devoluciones" | "merma"
+    incluir_en_deficit: bool = True  # Si se incluye para calcular déficit de pedidos
+    activo: bool = True            # Si está activo para extracción
+
+
+# Configuraciones de almacenes por sucursal KLK
+ALMACENES_KLK: Dict[str, List[AlmacenKLK]] = {
+    # SUC001 - PERIFERICO (única tienda que usa ambos almacenes)
+    "tienda_01": [
+        AlmacenKLK(codigo="APP-TPF", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+        AlmacenKLK(codigo="APP-PPF", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True, activo=True),
+    ],
+    # SUC002 - EL BOSQUE
+    "tienda_08": [
+        AlmacenKLK(codigo="APP-TBQ", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+        AlmacenKLK(codigo="APP-PBQ", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=False, activo=False),  # No tiene stock
+    ],
+    # SUC003 - ARTIGAS
+    "tienda_17": [
+        AlmacenKLK(codigo="TANT", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+        AlmacenKLK(codigo="PANT", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=False, activo=False),  # No tiene stock
+    ],
+    # SUC004 - PARAISO
+    "tienda_18": [
+        AlmacenKLK(codigo="APP-TPAR", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+        AlmacenKLK(codigo="APP-PPAR", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=False, activo=False),  # No tiene stock
+    ],
+    # SUC005 - TAZAJAL
+    "tienda_20": [
+        AlmacenKLK(codigo="TTZ", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+        AlmacenKLK(codigo="PTZ", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=False, activo=False),  # No tiene stock
+    ],
+}
+
+
+def get_almacenes_tienda(tienda_id: str) -> List[AlmacenKLK]:
+    """Obtiene la lista de almacenes KLK para una tienda"""
+    return ALMACENES_KLK.get(tienda_id, [])
+
+
+def get_almacenes_activos_tienda(tienda_id: str) -> List[AlmacenKLK]:
+    """Obtiene solo los almacenes activos de una tienda KLK"""
+    return [a for a in ALMACENES_KLK.get(tienda_id, []) if a.activo]
+
+
+def get_almacenes_deficit_tienda(tienda_id: str) -> List[AlmacenKLK]:
+    """Obtiene los almacenes que se incluyen en el cálculo de déficit"""
+    return [a for a in ALMACENES_KLK.get(tienda_id, []) if a.incluir_en_deficit and a.activo]
+
 
 @dataclass
 class TiendaConfig:
@@ -301,6 +357,34 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         codigo_deposito="1602"
     ),
 
+    "tienda_17": TiendaConfig(
+        ubicacion_id="tienda_17",
+        ubicacion_nombre="ARTIGAS",
+        server_ip="192.168.0.0",  # TODO: Confirmar IP con cliente
+        database_name="VAD10",
+        username=get_sql_user(),
+        password=get_sql_pass(),
+        port=1433,
+        activo=True,
+        codigo_deposito="1702",
+        sistema_pos="klk",  # Migrado a KLK
+        codigo_almacen_klk="TANT"  # Código de almacén en KLK: ARTIGAS PV
+    ),
+
+    "tienda_18": TiendaConfig(
+        ubicacion_id="tienda_18",
+        ubicacion_nombre="PARAISO",
+        server_ip="192.168.0.0",  # TODO: Confirmar IP con cliente
+        database_name="VAD10",
+        username=get_sql_user(),
+        password=get_sql_pass(),
+        port=1433,
+        activo=True,
+        codigo_deposito="1802",
+        sistema_pos="klk",  # Migrado a KLK
+        codigo_almacen_klk="APP-TPAR"  # Código de almacén en KLK: PARAISO PV (corregido)
+    ),
+
     "tienda_19": TiendaConfig(
         ubicacion_id="tienda_19",
         ubicacion_nombre="GUIGUE",
@@ -322,8 +406,9 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=get_sql_pass(),
         port=1433,
         activo=True,
-        codigo_deposito="2001"
-        # NOTA: TAZAJAL tiene código KLK "TTZ" pero aún no migrado
+        codigo_deposito="2001",
+        sistema_pos="klk",  # Migrado a KLK
+        codigo_almacen_klk="TTZ"  # Código de almacén en KLK: TAZAJAL PV
     ),
 
     # CEDIs - Configurados con datos reales

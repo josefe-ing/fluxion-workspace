@@ -11,6 +11,9 @@ interface UbicacionSummary {
   stock_cero: number;
   stock_negativo: number;
   ultima_actualizacion: string | null;
+  // Campos para almacenes KLK (vienen del backend)
+  almacen_codigo?: string | null;
+  almacen_nombre?: string | null;
 }
 
 export default function InventorySummary() {
@@ -21,9 +24,13 @@ export default function InventorySummary() {
   const loadSummary = useCallback(async () => {
     try {
       setLoading(true);
+
+      // El backend ahora devuelve los datos ya separados por almacén
       const response = await http.get('/api/ubicaciones/summary');
-      console.log('✅ Data loaded:', response.data?.length, 'ubicaciones');
-      setSummaryData(response.data);
+
+      console.log('✅ Summary loaded:', response.data?.length, 'ubicaciones/almacenes');
+
+      setSummaryData(response.data || []);
     } catch (error) {
       console.error('❌ Error cargando resumen:', error);
     } finally {
@@ -149,6 +156,9 @@ export default function InventorySummary() {
                   Ubicación
                 </th>
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Almacén
+                </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Tipo
                 </th>
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -171,7 +181,7 @@ export default function InventorySummary() {
             <tbody className="bg-white divide-y divide-gray-200">
               {summaryData.map((item) => (
                 <tr
-                  key={item.ubicacion_id}
+                  key={`${item.ubicacion_id}-${item.almacen_codigo || 'default'}`}
                   className="hover:bg-gray-50 transition-colors"
                 >
                   <td className="px-6 py-4 whitespace-nowrap text-center">
@@ -180,12 +190,28 @@ export default function InventorySummary() {
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-center">
+                    {item.almacen_nombre ? (
+                      <div className="flex flex-col items-center">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          item.almacen_nombre?.includes('PISO')
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-orange-100 text-orange-800'
+                        }`}>
+                          {item.almacen_nombre}
+                        </span>
+                        <span className="text-xs text-gray-400 mt-1">{item.almacen_codigo}</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400">-</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                       item.tipo_ubicacion === 'tienda'
                         ? 'bg-blue-100 text-blue-800'
                         : 'bg-purple-100 text-purple-800'
                     }`}>
-                      {item.tipo_ubicacion.toUpperCase()}
+                      {item.tipo_ubicacion?.toUpperCase() || 'TIENDA'}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">
