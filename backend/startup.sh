@@ -9,8 +9,8 @@ S3_SOURCE="s3://fluxion-backups-611395766952/transfer/fluxion_production.db"
 if [ -f "$DB_PATH" ]; then
     DB_SIZE=$(du -h "$DB_PATH" | cut -f1)
     echo "✅ Database already exists in EFS: $DB_SIZE"
-    echo "🔓 Ensuring write permissions..."
-    chmod 666 "$DB_PATH" 2>/dev/null || echo "✅ Database file already has correct permissions"
+    # NOTE: chmod removed - causes hang on large EFS files
+    # EFS permissions are handled at mount level
 else
     echo "📦 Database not found in EFS, downloading from S3..."
     echo "⬇️  Source: $S3_SOURCE"
@@ -38,10 +38,8 @@ else
     if [ $DOWNLOAD_EXIT -eq 0 ] && [ -f "$DB_PATH" ]; then
         DB_SIZE=$(du -h "$DB_PATH" | cut -f1)
         echo "✅ Database downloaded successfully: $DB_SIZE"
-
-        # Set write permissions for DuckDB (running as UID 1000, EFS should already have correct ownership)
-        echo "🔓 Setting write permissions on database file..."
-        chmod 666 "$DB_PATH" 2>/dev/null || echo "✅ Database file already has correct permissions"
+        # NOTE: chmod removed - causes hang on large EFS files
+        # EFS permissions are handled at mount level
     else
         echo "❌ Error: Database download failed (exit code: $DOWNLOAD_EXIT)"
         echo "Checking S3 file existence..."
