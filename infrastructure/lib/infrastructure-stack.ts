@@ -443,8 +443,8 @@ PersistentKeepalive = 25`),
       this,
       'FluxionBackendTask',
       {
-        memoryLimitMiB: 3072,  // 3GB - punto medio para DuckDB + FastAPI startup
-        cpu: 1024,  // 1 vCPU
+        memoryLimitMiB: 4096,  // 4GB - necesario para DuckDB connections en FastAPI startup + VentasETLScheduler
+        cpu: 1024,  // 1 vCPU (suficiente, el bottleneck es memoria no CPU)
         volumes: [
           {
             name: 'fluxion-data',
