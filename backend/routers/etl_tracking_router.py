@@ -332,9 +332,11 @@ async def get_cron_status():
         fallidas_hoy = result[2] if result[2] else 0
 
         # Estimar próxima ejecución (cada 30 min)
+        from datetime import timedelta
         ahora = datetime.now()
         minutos_hasta_proxima = 30 - (ahora.minute % 30)
-        proxima = datetime(ahora.year, ahora.month, ahora.day, ahora.hour, ahora.minute + minutos_hasta_proxima, 0)
+        proxima = ahora + timedelta(minutes=minutos_hasta_proxima)
+        proxima = proxima.replace(second=0, microsecond=0)
 
         return CronStatusResponse(
             cron_activo=True,  # Asumimos que está activo
