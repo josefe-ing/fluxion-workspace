@@ -34,6 +34,7 @@ RUN mkdir -p /app/database
 COPY database/migrate_abc_v2_schema.sql /app/database/migrate_abc_v2_schema.sql
 COPY database/schema_abc_v2.sql /app/database/schema_abc_v2.sql
 COPY database/schema_abc_xyz.sql /app/database/schema_abc_xyz.sql
+COPY database/schema_etl_tracking.sql /app/database/schema_etl_tracking.sql
 
 # Copiar scripts de cálculo ABC-XYZ
 COPY database/calcular_abc_v2_por_tienda.py /app/database/calcular_abc_v2_por_tienda.py
