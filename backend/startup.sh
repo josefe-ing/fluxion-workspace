@@ -54,14 +54,17 @@ fi
 # via auto_bootstrap_admin() function in auth.py
 
 # Run database migrations
-echo "🔄 Running database migrations..."
-python3 /app/run_migrations.py
-if [ $? -eq 0 ]; then
-    echo "✅ Migrations completed successfully"
-else
-    echo "❌ Migration failed"
-    exit 1
-fi
+# TEMPORARILY DISABLED: Migrations cause lock conflicts during rolling deploys
+# since DuckDB doesn't support multiple connections during startup.
+# Migrations should be run as one-off ECS tasks or via admin endpoints.
+echo "⏭️  Skipping migrations (disabled to avoid lock conflicts during deploy)"
+# python3 /app/run_migrations.py
+# if [ $? -eq 0 ]; then
+#     echo "✅ Migrations completed successfully"
+# else
+#     echo "❌ Migration failed"
+#     exit 1
+# fi
 
 # Start the application
 echo "🚀 Starting Uvicorn server..."
