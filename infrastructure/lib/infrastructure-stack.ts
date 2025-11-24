@@ -443,8 +443,8 @@ PersistentKeepalive = 25`),
       this,
       'FluxionBackendTask',
       {
-        memoryLimitMiB: 2048,
-        cpu: 1024,
+        memoryLimitMiB: 4096,  // Increased from 2048 to fix OOM errors during startup
+        cpu: 2048,  // Increased from 1024 to match memory ratio (1:2)
         volumes: [
           {
             name: 'fluxion-data',
@@ -513,6 +513,7 @@ PersistentKeepalive = 25`),
     // 7. Backend Service with ALB (EC2)
     // ========================================
     const backendService = new ecs.FargateService(this, 'FluxionBackendService', {
+      serviceName: 'fluxion-backend',  // Short, readable service name
       cluster,
       taskDefinition: backendTask,
       desiredCount: 1,
