@@ -4,7 +4,7 @@ FastAPI Backend para Fluxion AI - La Granja Mercado
 Conecta con DuckDB para servir datos de inventario en tiempo real
 """
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -5405,6 +5405,112 @@ async def calcular_niveles_tienda_DISABLED(
     except Exception as e:
         logger.error(f"Error al calcular niveles para tienda: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ENDPOINT TEMPORAL - Aplicar Schema ETL Tracking (REMOVER DESPUÉS DE USO)
+# ============================================================================
+
+@app.post("/admin/apply-etl-tracking-schema")
+async def apply_etl_tracking_schema(admin_token: str = Header(None)):
+    """
+    TEMPORAL - Aplicar schema de ETL tracking a la base de datos de producción
+
+    Este endpoint es temporal y debe ser removido después de ejecutarse exitosamente.
+    Requiere token de autenticación simple para prevenir ejecuciones accidentales.
+
+    Headers requeridos:
+        admin-token: temp-deploy-2025-11-24
+    """
+    # Simple auth token
+    if admin_token != "temp-deploy-2025-11-24":
+        logger.warning(f"⚠️  Intento no autorizado de aplicar schema desde {admin_token}")
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    logger.info("🔧 Iniciando aplicación de schema ETL tracking...")
+
+    try:
+        schema_path = Path("/app/database/schema_etl_tracking.sql")
+
+        if not schema_path.exists():
+            logger.error(f"❌ Schema file not found: {schema_path}")
+            return {"success": False, "error": "Schema file not found"}
+
+        # Leer schema SQL
+        with open(schema_path, 'r') as f:
+            schema_sql = f.read()
+
+        logger.info(f"📄 Schema file loaded: {len(schema_sql)} characters")
+
+        # Conectar a la base de datos
+        with get_db_connection_write() as conn:
+            results = []
+            statements = [s.strip() for s in schema_sql.split(';') if s.strip()]
+
+            logger.info(f"🚀 Ejecutando {len(statements)} statements...")
+
+            for i, statement in enumerate(statements, 1):
+                try:
+                    conn.execute(statement)
+                    preview = statement[:80].replace('\n', ' ')
+                    results.append({
+                        "index": i,
+                        "statement_preview": preview,
+                        "status": "OK"
+                    })
+                    logger.info(f"  [{i}/{len(statements)}] ✅ {preview}")
+                except Exception as e:
+                    error_msg = str(e)[:100]
+                    preview = statement[:80].replace('\n', ' ')
+                    results.append({
+                        "index": i,
+                        "statement_preview": preview,
+                        "status": "ERROR",
+                        "error": error_msg
+                    })
+                    logger.warning(f"  [{i}/{len(statements)}] ⚠️  {preview} - {error_msg}")
+
+            # Verificar que la tabla fue creada
+            try:
+                count_result = conn.execute("SELECT COUNT(*) as count FROM etl_ejecuciones").fetchone()
+                table_count = count_result[0] if count_result else 0
+                logger.info(f"✅ Tabla etl_ejecuciones verificada: {table_count} registros")
+            except Exception as e:
+                logger.error(f"❌ Error verificando tabla: {e}")
+                return {
+                    "success": False,
+                    "error": f"Schema aplicado pero tabla no verificable: {str(e)}",
+                    "statements_executed": len([r for r in results if r['status'] == 'OK']),
+                    "results": results
+                }
+
+        success_count = len([r for r in results if r['status'] == 'OK'])
+        error_count = len([r for r in results if r['status'] == 'ERROR'])
+
+        logger.info(f"🎉 Schema aplicado exitosamente! {success_count} OK, {error_count} errores")
+
+        return {
+            "success": True,
+            "message": "Schema ETL tracking aplicado exitosamente",
+            "statements_executed": success_count,
+            "statements_with_errors": error_count,
+            "table_count": table_count,
+            "results": results[:10]  # Solo primeros 10 para no saturar response
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error crítico aplicando schema: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+# ============================================================================
+# FIN ENDPOINT TEMPORAL
+# ============================================================================
 
 
 if __name__ == "__main__":
