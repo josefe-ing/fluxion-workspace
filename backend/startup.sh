@@ -54,9 +54,6 @@ else
     fi
 fi
 
-# Note: Authentication schema will be initialized automatically by FastAPI startup event
-# via auto_bootstrap_admin() function in auth.py
-
 echo ""
 echo "📝 MIGRATIONS CHECK"
 # Run database migrations
@@ -71,6 +68,16 @@ echo "⏭️  Skipping migrations (disabled to avoid lock conflicts during deplo
 #     echo "❌ Migration failed"
 #     exit 1
 # fi
+
+echo ""
+echo "🔐 INITIALIZING AUTH TABLES"
+echo "Running lightweight auth table initialization..."
+python3 /app/init_auth_tables.py
+if [ $? -eq 0 ]; then
+    echo "✅ Auth tables initialized successfully"
+else
+    echo "⚠️  Auth tables initialization had issues (may already exist)"
+fi
 
 echo ""
 echo "🚀 STARTING UVICORN"
