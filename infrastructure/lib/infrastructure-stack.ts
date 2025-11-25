@@ -15,6 +15,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as rds from 'aws-cdk-lib/aws-rds';
 
 export class InfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -164,6 +165,72 @@ PersistentKeepalive = 25`),
         instanceId: wireguardInstance.instanceId,
       });
     });
+
+    // ========================================
+    // 1c. RDS PostgreSQL v2.0 Database
+    // ========================================
+
+    // PostgreSQL RDS Instance for Fluxion v2.0
+    const dbInstance = new rds.DatabaseInstance(this, 'FluxionPostgres', {
+      engine: rds.DatabaseInstanceEngine.postgres({
+        version: rds.PostgresEngineVersion.VER_16_3,
+      }),
+      instanceType: ec2.InstanceType.of(
+        ec2.InstanceClass.T3,
+        ec2.InstanceSize.SMALL  // t3.small: 2 vCPU, 2GB RAM
+      ),
+      vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      databaseName: 'fluxion_production',
+      instanceIdentifier: 'fluxion-postgres-v2',
+
+      // Credentials auto-generated and stored in Secrets Manager
+      credentials: rds.Credentials.fromGeneratedSecret('postgres', {
+        secretName: 'fluxion/postgres-credentials',
+      }),
+
+      // Storage configuration
+      allocatedStorage: 100,  // Initial: 100 GB
+      maxAllocatedStorage: 500,  // Auto-scale up to 500 GB
+      storageType: rds.StorageType.GP3,  // Latest generation SSD
+      storageEncrypted: true,
+
+      // Backup configuration
+      backupRetention: cdk.Duration.days(7),  // Keep backups for 7 days
+      deleteAutomatedBackups: false,  // Retain backups after deletion
+      preferredBackupWindow: '03:00-04:00',  // 11 PM - 12 AM Venezuela time
+
+      // High availability (disabled for cost savings - enable for production HA)
+      multiAz: false,  // Set to true for multi-AZ deployment
+
+      // Maintenance window
+      preferredMaintenanceWindow: 'sun:04:00-sun:05:00',  // Sunday 12 AM - 1 AM Venezuela time
+
+      // Monitoring
+      cloudwatchLogsExports: ['postgresql'],  // Export PostgreSQL logs to CloudWatch
+      cloudwatchLogsRetention: logs.RetentionDays.ONE_WEEK,
+      enablePerformanceInsights: false,  // Disable for cost savings (enable for production monitoring)
+
+      // Deletion protection
+      removalPolicy: cdk.RemovalPolicy.SNAPSHOT,  // Create final snapshot on stack deletion
+      deletionProtection: true,  // Prevent accidental deletion
+
+      // Performance
+      iops: 3000,  // GP3 baseline IOPS
+      publiclyAccessible: false,  // Only accessible from within VPC
+    });
+
+    // Security Group for PostgreSQL (will be configured below after ECS services are created)
+    // This allows Backend and ETL tasks to connect to PostgreSQL
+
+    // Grant WireGuard bridge access to PostgreSQL (for La Granja SQL Server ETL)
+    dbInstance.connections.allowFrom(
+      wireguardInstance,
+      ec2.Port.tcp(5432),
+      'Allow WireGuard bridge to access PostgreSQL'
+    );
 
     // ========================================
     // 2. EFS for DuckDB Persistence
@@ -494,11 +561,20 @@ PersistentKeepalive = 25`),
       }),
       environment: {
         ENVIRONMENT: 'production',
-        DATABASE_PATH: '/data/fluxion_production.db',
+        // DATABASE_PATH: '/data/fluxion_production.db',  // DISABLED - PostgreSQL v2.0 migration (prevent DuckDB loading)
         SENTRY_DSN: process.env.SENTRY_DSN || '',
         AWS_REGION: this.region,
         ECS_CLUSTER_NAME: cluster.clusterName,
         // ETL task definition ARN will be set after etlTask is created
+
+        // PostgreSQL v2.0 Configuration
+        POSTGRES_HOST: dbInstance.dbInstanceEndpointAddress,
+        POSTGRES_PORT: '5432',
+        POSTGRES_DB: 'fluxion_production',
+      },
+      secrets: {
+        POSTGRES_USER: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'username'),
+        POSTGRES_PASSWORD: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'password'),
       },
     });
 
@@ -527,6 +603,13 @@ PersistentKeepalive = 25`),
 
     // Allow ECS tasks to access EFS (keep for ETL compatibility)
     fileSystem.connections.allowDefaultPortFrom(backendService);
+
+    // Allow Backend to connect to PostgreSQL
+    dbInstance.connections.allowFrom(
+      backendService,
+      ec2.Port.tcp(5432),
+      'Allow Backend service to access PostgreSQL'
+    );
 
     const alb = new elbv2.ApplicationLoadBalancer(this, 'FluxionALB', {
       vpc,
@@ -626,7 +709,7 @@ PersistentKeepalive = 25`),
       environment: {
         ENVIRONMENT: 'production',
         AWS_REGION: this.region,
-        DATABASE_PATH: '/data/fluxion_production.db',  // Use EFS shared storage
+        // DATABASE_PATH: '/data/fluxion_production.db',  // DISABLED - PostgreSQL v2.0 migration (prevent DuckDB loading)
         ETL_MODE: 'etl_inventario.py',
         ETL_ARGS: '--todas',  // Todas las tiendas activas (20 ubicaciones)
         ETL_ENVIRONMENT: 'production',  // Usar IPs y puertos de producción via WireGuard
@@ -641,6 +724,11 @@ PersistentKeepalive = 25`),
         // El código Python (extractor_ventas.py) usa estos valores automáticamente
         SQL_ODBC_DRIVER: 'ODBC Driver 17 for SQL Server',
         VPN_GATEWAY_IP: '192.168.20.1',  // Para test de conectividad en entrypoint
+
+        // PostgreSQL v2.0 Configuration
+        POSTGRES_HOST: dbInstance.dbInstanceEndpointAddress,
+        POSTGRES_PORT: '5432',
+        POSTGRES_DB: 'fluxion_production',
       },
       secrets: {
         // SQL credentials from Secrets Manager
@@ -649,6 +737,10 @@ PersistentKeepalive = 25`),
 
         // Sentry DSN from SSM Parameter Store
         SENTRY_DSN: ecs.Secret.fromSsmParameter(sentryDsnParameter),
+
+        // PostgreSQL credentials from Secrets Manager
+        POSTGRES_USER: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'username'),
+        POSTGRES_PASSWORD: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'password'),
       },
       stopTimeout: cdk.Duration.seconds(120),  // Máximo permitido por Fargate
     });
@@ -676,6 +768,13 @@ PersistentKeepalive = 25`),
 
     // Allow ETL to access EFS
     fileSystem.connections.allowDefaultPortFrom(etlSecurityGroup);
+
+    // Allow ETL to connect to PostgreSQL
+    dbInstance.connections.allowFrom(
+      etlSecurityGroup,
+      ec2.Port.tcp(5432),
+      'Allow ETL tasks to access PostgreSQL'
+    );
 
     // ========================================
     // 10. ETL Scheduled Rules (Twice daily: 5:00 AM and 5:00 PM)
@@ -857,7 +956,7 @@ PersistentKeepalive = 25`),
         ENVIRONMENT: 'production',
         ETL_ENVIRONMENT: 'production',  // Used by tiendas_config.py to select VPN/production IPs
         AWS_REGION: this.region,
-        DATABASE_PATH: '/data/fluxion_production.db',  // Use EFS shared storage
+        // DATABASE_PATH: '/data/fluxion_production.db',  // DISABLED - PostgreSQL v2.0 migration (prevent DuckDB loading)
         ETL_MODE: 'etl_ventas_multi_tienda.py',
         ETL_ARGS: '--todas',  // startup-etl.sh calculará fecha de ayer automáticamente
         RUN_MODE: 'scheduled',
@@ -866,6 +965,11 @@ PersistentKeepalive = 25`),
         // Sentry Monitoring Configuration
         SENTRY_ENVIRONMENT: 'production',
         SENTRY_TRACES_SAMPLE_RATE: '0.1',
+
+        // PostgreSQL v2.0 Configuration
+        POSTGRES_HOST: dbInstance.dbInstanceEndpointAddress,
+        POSTGRES_PORT: '5432',
+        POSTGRES_DB: 'fluxion_production',
       },
       secrets: {
         // SQL credentials from Secrets Manager
@@ -874,6 +978,10 @@ PersistentKeepalive = 25`),
 
         // Sentry DSN from SSM Parameter Store
         SENTRY_DSN: ecs.Secret.fromSsmParameter(sentryDsnParameter),
+
+        // PostgreSQL credentials from Secrets Manager
+        POSTGRES_USER: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'username'),
+        POSTGRES_PASSWORD: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'password'),
       },
       stopTimeout: cdk.Duration.minutes(2),  // Fargate max is 120 seconds
     });
@@ -1141,6 +1249,34 @@ PersistentKeepalive = 25`),
     new cdk.CfnOutput(this, 'ClusterName', {
       value: cluster.clusterName,
       description: 'ECS Cluster Name',
+    });
+
+    // PostgreSQL v2.0 Outputs
+    new cdk.CfnOutput(this, 'PostgreSQLEndpoint', {
+      value: dbInstance.dbInstanceEndpointAddress,
+      description: 'PostgreSQL RDS Endpoint',
+      exportName: 'FluxionPostgreSQLEndpoint',
+    });
+
+    new cdk.CfnOutput(this, 'PostgreSQLPort', {
+      value: dbInstance.dbInstanceEndpointPort,
+      description: 'PostgreSQL Port',
+    });
+
+    new cdk.CfnOutput(this, 'PostgreSQLDatabase', {
+      value: 'fluxion_production',
+      description: 'PostgreSQL Database Name',
+    });
+
+    new cdk.CfnOutput(this, 'PostgreSQLSecretArn', {
+      value: dbInstance.secret!.secretArn,
+      description: 'PostgreSQL credentials secret ARN',
+      exportName: 'FluxionPostgreSQLSecretArn',
+    });
+
+    new cdk.CfnOutput(this, 'PostgreSQLConnectionString', {
+      value: `postgresql://{{username}}:{{password}}@${dbInstance.dbInstanceEndpointAddress}:${dbInstance.dbInstanceEndpointPort}/fluxion_production`,
+      description: 'PostgreSQL connection string template (retrieve credentials from Secrets Manager)',
     });
   }
 }
