@@ -599,6 +599,7 @@ PersistentKeepalive = 25`),
       minHealthyPercent: 0, // Allow stopping old task before starting new one (only 1 task)
       maxHealthyPercent: 100, // Only 1 task at a time
       healthCheckGracePeriod: cdk.Duration.seconds(600), // 10 minutes - allow time for DB download
+      enableExecuteCommand: true, // Enable ECS Exec for debugging and operations
     });
 
     // Allow ECS tasks to access EFS (keep for ETL compatibility)
@@ -897,6 +898,20 @@ PersistentKeepalive = 25`),
           etlTask.taskRole.roleArn,
           etlTask.executionRole!.roleArn,
         ],
+      })
+    );
+
+    // Grant Backend permission for ECS Exec (SSM Session Manager)
+    backendTask.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'ssmmessages:CreateControlChannel',
+          'ssmmessages:CreateDataChannel',
+          'ssmmessages:OpenControlChannel',
+          'ssmmessages:OpenDataChannel',
+        ],
+        resources: ['*'],
       })
     );
 
