@@ -38,6 +38,7 @@ COPY database/schema_etl_tracking.sql /app/database/schema_etl_tracking.sql
 
 # Copiar migraciones de PostgreSQL
 COPY database/migrations/ /app/database/migrations/
+COPY database/run_migrations.py /app/database/run_migrations.py
 
 # Copiar scripts de cálculo ABC-XYZ
 COPY database/calcular_abc_v2_por_tienda.py /app/database/calcular_abc_v2_por_tienda.py
