@@ -194,7 +194,7 @@ PersistentKeepalive = 25`),
       // Storage configuration
       allocatedStorage: 100,  // Initial: 100 GB
       maxAllocatedStorage: 500,  // Auto-scale up to 500 GB
-      storageType: rds.StorageType.GP3,  // Latest generation SSD
+      storageType: rds.StorageType.GP3,  // Latest generation SSD (3000 IOPS baseline included)
       storageEncrypted: true,
 
       // Backup configuration
@@ -217,8 +217,8 @@ PersistentKeepalive = 25`),
       removalPolicy: cdk.RemovalPolicy.SNAPSHOT,  // Create final snapshot on stack deletion
       deletionProtection: true,  // Prevent accidental deletion
 
-      // Performance
-      iops: 3000,  // GP3 baseline IOPS
+      // Performance - GP3 provides 3000 IOPS baseline for free (no need to specify)
+      // iops: 3000,  // REMOVED - GP3 baseline is 3000 IOPS automatically (requires 400GB minimum if specified)
       publiclyAccessible: false,  // Only accessible from within VPC
     });
 
