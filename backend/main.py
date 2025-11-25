@@ -89,13 +89,11 @@ async def startup_event():
     # Inicializar Sentry
     init_sentry()
 
-    # TEMPORARILY DISABLED: auto_bootstrap_admin causes OOM with 16GB database
-    # Opening DuckDB connection during startup consumes >4GB RAM
-    # TODO: Implement lazy authentication or increase memory to 8GB
-    # try:
-    #     auto_bootstrap_admin()
-    # except Exception as e:
-    #     logger.error(f"⚠️  Auto-bootstrap failed: {e}")
+    # Re-enabled with 8GB memory allocation
+    try:
+        auto_bootstrap_admin()
+    except Exception as e:
+        logger.error(f"⚠️  Auto-bootstrap failed: {e}")
 
     # TEMPORARILY DISABLED: VentasETLScheduler causes OOM during startup
     # This scheduler opens a second DuckDB connection during FastAPI startup

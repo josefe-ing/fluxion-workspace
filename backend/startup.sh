@@ -2,7 +2,7 @@
 set -e
 
 echo "🔍 STARTUP BEGIN - $(date)"
-echo "📊 Container memory limit: 4GB (4096 MiB)"
+echo "📊 Container memory limit: 8GB (8192 MiB)"
 echo "🖥️  Container CPU: 2 vCPU"
 
 # Database path
@@ -74,8 +74,8 @@ echo "⏭️  Skipping migrations (disabled to avoid lock conflicts during deplo
 
 echo ""
 echo "🚀 STARTING UVICORN"
-echo "✅ auto_bootstrap_admin() DISABLED - backend will start without opening DuckDB"
-echo "📊 Expected RAM usage: ~500MB (FastAPI only, no database connection)"
+echo "✅ auto_bootstrap_admin() ENABLED - authentication tables will be initialized"
+echo "📊 Expected RAM usage: ~2-3GB (FastAPI + DuckDB connection for auth)"
 echo ""
 
 # Start the application

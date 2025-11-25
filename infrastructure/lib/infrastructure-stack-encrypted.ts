@@ -204,8 +204,8 @@ export class InfrastructureStackEncrypted extends cdk.Stack {
       this,
       'FluxionBackendTask',
       {
-        memoryLimitMiB: 2048,
-        cpu: 1024,
+        memoryLimitMiB: 8192,
+        cpu: 2048,
         volumes: [
           {
             name: 'fluxion-data',
