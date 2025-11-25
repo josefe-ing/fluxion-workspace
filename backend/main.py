@@ -19,8 +19,15 @@ from contextlib import contextmanager
 from forecast_pmp import ForecastPMP
 from zoneinfo import ZoneInfo
 
-# Sentry para monitoreo de errores
-from sentry_config import init_sentry
+# Sentry para monitoreo de errores (optional)
+try:
+    from sentry_config import init_sentry
+    SENTRY_AVAILABLE = True
+except ImportError as e:
+    SENTRY_AVAILABLE = False
+    def init_sentry():
+        """Dummy function when Sentry is not available"""
+        pass
 
 # AWS SDK for ECS task execution in production
 try:
