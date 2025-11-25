@@ -36,6 +36,9 @@ COPY database/schema_abc_v2.sql /app/database/schema_abc_v2.sql
 COPY database/schema_abc_xyz.sql /app/database/schema_abc_xyz.sql
 COPY database/schema_etl_tracking.sql /app/database/schema_etl_tracking.sql
 
+# Copiar migraciones de PostgreSQL
+COPY database/migrations/ /app/database/migrations/
+
 # Copiar scripts de cálculo ABC-XYZ
 COPY database/calcular_abc_v2_por_tienda.py /app/database/calcular_abc_v2_por_tienda.py
 COPY database/calcular_xyz_por_tienda.py /app/database/calcular_xyz_por_tienda.py
