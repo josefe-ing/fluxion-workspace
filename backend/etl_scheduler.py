@@ -31,7 +31,7 @@ try:
     SENTRY_AVAILABLE = True
 except ImportError:
     SENTRY_AVAILABLE = False
-    logger.warning("⚠️  Sentry ETL module not available - monitoring disabled")
+    # Sentry ETL monitoring is optional - silently disabled if module not available
 
 @dataclass
 class RetryConfig:

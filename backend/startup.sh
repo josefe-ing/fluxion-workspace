@@ -1,13 +1,9 @@
 #!/bin/bash
 set -e
 
-# Helper function to log memory usage
-log_memory() {
-    echo "💾 MEMORY: $(free -h | awk '/^Mem:/ {print "Used: "$3" / Total: "$2" ("$3/$2*100"%)"}')"
-}
-
 echo "🔍 STARTUP BEGIN - $(date)"
-log_memory
+echo "📊 Container memory limit: 4GB (4096 MiB)"
+echo "🖥️  Container CPU: 2 vCPU"
 
 # Database path
 DB_PATH="/data/fluxion_production.db"
@@ -26,7 +22,6 @@ else
     echo "⏱️  Expected time: 3-5 minutes for 16GB database..."
 
     # Download from S3 in background and monitor progress
-    log_memory
     echo "⬇️  Starting S3 download..."
     aws s3 cp "$S3_SOURCE" "$DB_PATH" &
     DOWNLOAD_PID=$!
@@ -49,7 +44,6 @@ else
     if [ $DOWNLOAD_EXIT -eq 0 ] && [ -f "$DB_PATH" ]; then
         DB_SIZE=$(du -h "$DB_PATH" | cut -f1)
         echo "✅ Database downloaded successfully: $DB_SIZE"
-        log_memory
         # NOTE: chmod removed - causes hang on large EFS files
         # EFS permissions are handled at mount level
     else
@@ -65,7 +59,6 @@ fi
 
 echo ""
 echo "📝 MIGRATIONS CHECK"
-log_memory
 # Run database migrations
 # TEMPORARILY DISABLED: Migrations cause lock conflicts during rolling deploys
 # since DuckDB doesn't support multiple connections during startup.
@@ -81,7 +74,6 @@ echo "⏭️  Skipping migrations (disabled to avoid lock conflicts during deplo
 
 echo ""
 echo "🚀 STARTING UVICORN"
-log_memory
 echo "⚠️  CRITICAL: FastAPI startup will run auto_bootstrap_admin() which opens DuckDB connection"
 echo "📊 Expecting memory spike during FastAPI initialization..."
 echo ""

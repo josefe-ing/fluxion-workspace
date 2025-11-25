@@ -87,24 +87,31 @@ async def startup_event():
     except Exception as e:
         logger.error(f"⚠️  Auto-bootstrap failed: {e}")
 
-    # Inicializar scheduler de ventas automáticas
-    try:
-        db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
-        ventas_scheduler = VentasETLScheduler(
-            db_path=str(db_path),
-            execution_hour=5,  # 5:00 AM
-            execution_minute=0
-        )
+    # TEMPORARILY DISABLED: VentasETLScheduler causes OOM during startup
+    # This scheduler opens a second DuckDB connection during FastAPI startup
+    # Combined with auto_bootstrap_admin(), it exceeds 4GB RAM
+    # TODO: Re-enable after implementing lazy initialization or increasing memory to 8GB
+    #
+    # # Inicializar scheduler de ventas automáticas
+    # try:
+    #     db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
+    #     ventas_scheduler = VentasETLScheduler(
+    #         db_path=str(db_path),
+    #         execution_hour=5,  # 5:00 AM
+    #         execution_minute=0
+    #     )
+    #
+    #     # Registrar callback para ejecutar ETL
+    #     ventas_scheduler.set_etl_callback(run_etl_ventas_for_scheduler)
+    #
+    #     # Iniciar scheduler
+    #     ventas_scheduler.start()
+    #
+    #     logger.info("✅ Ventas ETL Scheduler iniciado - Ejecución diaria: 5:00 AM")
+    # except Exception as e:
+    #     logger.error(f"⚠️  Error iniciando scheduler de ventas: {e}")
 
-        # Registrar callback para ejecutar ETL
-        ventas_scheduler.set_etl_callback(run_etl_ventas_for_scheduler)
-
-        # Iniciar scheduler
-        ventas_scheduler.start()
-
-        logger.info("✅ Ventas ETL Scheduler iniciado - Ejecución diaria: 5:00 AM")
-    except Exception as e:
-        logger.error(f"⚠️  Error iniciando scheduler de ventas: {e}")
+    logger.info("⚠️  VentasETLScheduler DISABLED - Use manual ETL sync endpoints or increase RAM to 8GB")
 
 # Configurar CORS para el frontend
 app.add_middleware(
