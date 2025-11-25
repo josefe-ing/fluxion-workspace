@@ -74,8 +74,8 @@ echo "⏭️  Skipping migrations (disabled to avoid lock conflicts during deplo
 
 echo ""
 echo "🚀 STARTING UVICORN"
-echo "⚠️  CRITICAL: FastAPI startup will run auto_bootstrap_admin() which opens DuckDB connection"
-echo "📊 Expecting memory spike during FastAPI initialization..."
+echo "✅ auto_bootstrap_admin() DISABLED - backend will start without opening DuckDB"
+echo "📊 Expected RAM usage: ~500MB (FastAPI only, no database connection)"
 echo ""
 
 # Start the application
