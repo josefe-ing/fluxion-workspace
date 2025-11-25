@@ -26,13 +26,14 @@ CREATE TABLE IF NOT EXISTS inventario_historico (
     almacen_codigo VARCHAR(50),
     cantidad DECIMAL(15,3) NOT NULL,
     fecha_snapshot TIMESTAMP NOT NULL,
-    fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
-    -- Foreign Keys
-    CONSTRAINT fk_hist_ubicacion FOREIGN KEY (ubicacion_id)
-        REFERENCES ubicaciones(id) ON DELETE CASCADE,
-    CONSTRAINT fk_hist_producto FOREIGN KEY (producto_id)
-        REFERENCES productos(id) ON DELETE CASCADE
+    -- NOTE: Foreign keys commented out until base tables (ubicaciones, productos) are created
+    -- These will be added in a future migration
+    -- CONSTRAINT fk_hist_ubicacion FOREIGN KEY (ubicacion_id)
+    --     REFERENCES ubicaciones(id) ON DELETE CASCADE,
+    -- CONSTRAINT fk_hist_producto FOREIGN KEY (producto_id)
+    --     REFERENCES productos(id) ON DELETE CASCADE
 );
 
 -- -------------------------------------------------------------------------
@@ -74,38 +75,33 @@ COMMENT ON COLUMN inventario_historico.almacen_codigo IS
 -- -------------------------------------------------------------------------
 -- 4. Create view for common historical queries
 -- -------------------------------------------------------------------------
-CREATE OR REPLACE VIEW v_inventario_historico_reciente AS
-SELECT
-    h.id,
-    h.fecha_snapshot,
-    h.ubicacion_id,
-    u.nombre as ubicacion_nombre,
-    u.tipo as tipo_ubicacion,
-    h.producto_id,
-    p.codigo as codigo_producto,
-    p.descripcion as descripcion_producto,
-    p.categoria,
-    p.marca,
-    h.almacen_codigo,
-    h.cantidad,
-    h.fecha_carga,
-    -- Calculate variation vs previous snapshot
-    LAG(h.cantidad) OVER (
-        PARTITION BY h.producto_id, h.ubicacion_id
-        ORDER BY h.fecha_snapshot
-    ) as cantidad_anterior,
-    h.cantidad - LAG(h.cantidad) OVER (
-        PARTITION BY h.producto_id, h.ubicacion_id
-        ORDER BY h.fecha_snapshot
-    ) as variacion
-FROM inventario_historico h
-JOIN productos p ON h.producto_id = p.id
-JOIN ubicaciones u ON h.ubicacion_id = u.id
-WHERE h.fecha_snapshot >= CURRENT_DATE - INTERVAL '90 days'  -- Last 90 days
-ORDER BY h.fecha_snapshot DESC;
-
-COMMENT ON VIEW v_inventario_historico_reciente IS
-    'Vista del histórico de inventario de los últimos 90 días con cálculo de variaciones';
+-- NOTE: View creation commented out until base tables (ubicaciones, productos) are created
+-- This will be added in a future migration
+--
+-- CREATE OR REPLACE VIEW v_inventario_historico_reciente AS
+-- SELECT
+--     h.id,
+--     h.fecha_snapshot,
+--     h.ubicacion_id,
+--     h.producto_id,
+--     h.almacen_codigo,
+--     h.cantidad,
+--     h.fecha_carga,
+--     -- Calculate variation vs previous snapshot
+--     LAG(h.cantidad) OVER (
+--         PARTITION BY h.producto_id, h.ubicacion_id
+--         ORDER BY h.fecha_snapshot
+--     ) as cantidad_anterior,
+--     h.cantidad - LAG(h.cantidad) OVER (
+--         PARTITION BY h.producto_id, h.ubicacion_id
+--         ORDER BY h.fecha_snapshot
+--     ) as variacion
+-- FROM inventario_historico h
+-- WHERE h.fecha_snapshot >= CURRENT_DATE - INTERVAL '90 days'  -- Last 90 days
+-- ORDER BY h.fecha_snapshot DESC;
+--
+-- COMMENT ON VIEW v_inventario_historico_reciente IS
+--     'Vista del histórico de inventario de los últimos 90 días con cálculo de variaciones';
 
 -- -------------------------------------------------------------------------
 -- 5. Record this migration in schema_migrations
