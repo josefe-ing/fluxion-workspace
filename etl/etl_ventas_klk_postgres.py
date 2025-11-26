@@ -32,12 +32,9 @@ from core.loader_ventas_postgres import PostgreSQLVentasLoader
 from core.tiendas_config import get_tiendas_klk, TiendaConfig
 from core.config import ETLConfig
 
-# Tracking y Sentry (opcional)
-try:
-    from core.etl_tracker import ETLTracker, ETLEjecucion
-    TRACKER_AVAILABLE = True
-except ImportError:
-    TRACKER_AVAILABLE = False
+# Tracking - DESHABILITADO para PostgreSQL mode
+# El ETLTracker usa DuckDB local que no funciona en contenedores efímeros
+TRACKER_AVAILABLE = False
 
 try:
     from core.sentry_monitor import SentryETLMonitor

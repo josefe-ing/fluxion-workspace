@@ -376,9 +376,9 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         username=get_sql_user(),
         password=get_sql_pass(),
         port=1433,
-        activo=True,
+        activo=False,  # ⚠️ INACTIVA - Aún no inaugurada
         codigo_deposito="1802",
-        sistema_pos="klk",  # Migrado a KLK
+        sistema_pos="klk",  # Migrado a KLK (activar cuando inaugure)
         codigo_almacen_klk="APP-TPAR"  # Código de almacén en KLK: PARAISO PV (corregido)
     ),
 
