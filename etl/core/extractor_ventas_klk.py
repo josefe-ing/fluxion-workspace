@@ -333,8 +333,117 @@ class VentasKLKExtractor:
 
         return results
 
+    def extract_ventas_raw(
+        self,
+        sucursal: str,
+        fecha_desde: str,
+        fecha_hasta: str,
+        hora_desde: str = None,
+        hora_hasta: str = None,
+        almacen: str = None
+    ) -> Optional[Dict]:
+        """
+        Extrae ventas crudas desde KLK API (sin transformar).
+        Devuelve el JSON completo del response para carga directa.
+
+        Args:
+            sucursal: Codigo de sucursal KLK (ej: SUC001)
+            fecha_desde: Fecha inicio (YYYY-MM-DD)
+            fecha_hasta: Fecha fin (YYYY-MM-DD)
+            hora_desde: Hora inicio opcional (HH:MM)
+            hora_hasta: Hora fin opcional (HH:MM)
+            almacen: Codigo de almacen opcional
+
+        Returns:
+            Dict con 'meta' y 'ventas' o None si falla
+        """
+        self.logger.info(f"📡 Extrayendo ventas raw desde KLK API")
+        self.logger.info(f"   📋 Sucursal: {sucursal}")
+        self.logger.info(f"   📅 Periodo: {fecha_desde} a {fecha_hasta}")
+        if hora_desde and hora_hasta:
+            self.logger.info(f"   ⏰ Horario: {hora_desde} a {hora_hasta}")
+
+        endpoint = f"{self.api_config.base_url}/ventas"
+
+        # Construir payload
+        payload = {
+            "sucursal": sucursal,
+            "fecha_desde": fecha_desde,
+            "fecha_hasta": fecha_hasta
+        }
+
+        if almacen:
+            payload["almacen"] = almacen
+        if hora_desde:
+            payload["hora_desde"] = hora_desde
+        if hora_hasta:
+            payload["hora_hasta"] = hora_hasta
+
+        # Intentar extraccion con reintentos
+        for intento in range(1, self.api_config.max_retries + 1):
+            try:
+                self.logger.info(f"   🔄 Intento {intento}/{self.api_config.max_retries}")
+
+                start_time = time.time()
+
+                response = self.session.post(
+                    endpoint,
+                    json=payload,
+                    timeout=self.api_config.timeout_seconds
+                )
+                request_time = time.time() - start_time
+
+                self.logger.info(f"   📨 Status: {response.status_code}, Time: {request_time:.2f}s")
+
+                if response.status_code != 200:
+                    self.logger.error(f"❌ Error HTTP {response.status_code}: {response.text[:200]}")
+                    if intento < self.api_config.max_retries:
+                        time.sleep(self.api_config.retry_delay_seconds)
+                        continue
+                    return None
+
+                data = response.json()
+
+                # Validar respuesta
+                if isinstance(data, dict):
+                    if 'error' in data:
+                        self.logger.error(f"❌ Error de API: {data['error']}")
+                        return None
+
+                    ventas = data.get('ventas', [])
+                    meta = data.get('meta', {})
+                    self.logger.info(f"   ✅ {len(ventas):,} lineas de venta extraidas")
+                    return data
+
+                elif isinstance(data, list):
+                    # Si devuelve lista directa, envolverla
+                    self.logger.info(f"   ✅ {len(data):,} lineas de venta extraidas")
+                    return {'ventas': data, 'meta': {'total_registros': len(data)}}
+
+                else:
+                    self.logger.error(f"❌ Response inesperado: {type(data)}")
+                    return None
+
+            except requests.exceptions.Timeout:
+                self.logger.error(f"❌ Timeout despues de {self.api_config.timeout_seconds}s")
+                if intento < self.api_config.max_retries:
+                    time.sleep(self.api_config.retry_delay_seconds)
+                    continue
+            except requests.exceptions.RequestException as e:
+                self.logger.error(f"❌ Error de conexion: {e}")
+                if intento < self.api_config.max_retries:
+                    time.sleep(self.api_config.retry_delay_seconds)
+                    continue
+            except Exception as e:
+                self.logger.error(f"❌ Error inesperado: {e}")
+                if intento < self.api_config.max_retries:
+                    time.sleep(self.api_config.retry_delay_seconds)
+                    continue
+
+        return None
+
     def close(self):
-        """Cierra la sesión HTTP"""
+        """Cierra la sesion HTTP"""
         if self.session:
             self.session.close()
             self.logger.info("🔌 Sesión HTTP cerrada")

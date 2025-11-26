@@ -988,9 +988,43 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
-    // 11. Ventas ETL Scheduled Rule - TODO: Add when ready
+    // 11. Ventas ETL Scheduled Rule (Every 30 minutes at :10 and :40)
     // ========================================
-    // Will be added similar to inventorySyncRule when Ventas ETL is migrated to PostgreSQL
+    // Runs ventas sync for KLK stores (tienda_01, tienda_08, tienda_17, tienda_18, tienda_20)
+    // Executes at XX:10 and XX:40 every hour (10 min offset from inventory)
+    // This ensures inventory finishes before ventas starts
+    const ventasSyncRule = new events.Rule(this, 'FluxionVentasSync30Min', {
+      schedule: events.Schedule.cron({
+        minute: '10,40',  // Run at :10 and :40 of every hour (10 min after inventory)
+        hour: '*',
+        weekDay: '*',
+      }),
+      description: 'Sync ventas every 30 minutes for KLK stores (PostgreSQL)',
+      ruleName: 'fluxion-ventas-sync-30min',
+      enabled: true,
+    });
+
+    ventasSyncRule.addTarget(
+      new targets.EcsTask({
+        cluster,
+        taskDefinition: etlTask,  // Use same ETL task (has all dependencies)
+        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [etlSecurityGroup],
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+        taskCount: 1,
+        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+        containerOverrides: [{
+          containerName: 'etl',
+          command: [
+            'python', 'etl_ventas_klk_postgres.py'
+            // Sin args = últimos 30 minutos por defecto
+          ]
+        }],
+        // Prevent concurrent executions
+        maxEventAge: cdk.Duration.minutes(25),  // Discard if older than 25 min (avoid overlap)
+        retryAttempts: 1,  // Retry once if task launch fails
+      })
+    );
 
     // ========================================
     // 12. Configure Backend with Ventas ETL task information
