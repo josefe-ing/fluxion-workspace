@@ -1,109 +1,62 @@
 version: '3.8'
 
 services:
-  # =============================================
-  # Database Services
-  # =============================================
+  # ============================================================================
+  # PostgreSQL - Nueva base de datos para migración
+  # ============================================================================
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: fluxion-postgres
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: fluxion
+      POSTGRES_DB: fluxion_production
       POSTGRES_USER: fluxion
-      POSTGRES_PASSWORD: fluxion123
+      POSTGRES_PASSWORD: fluxion_dev_2025
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./database/postgresql_schema_simplified.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/backups:/backups
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fluxion"]
+      test: ["CMD-SHELL", "pg_isready -U fluxion -d fluxion_production"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - fluxion-network
 
-  redis:
-    image: redis:7-alpine
-    container_name: fluxion-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # =============================================
-  # Application Services
-  # =============================================
-  backend:
-    build:
-      context: ./services/backend
-      dockerfile: Dockerfile
-    container_name: fluxion-backend
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./services/backend:/app
-      - /app/node_modules
+  # ============================================================================
+  # pgAdmin - PostgreSQL Management (Opcional)
+  # ============================================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: fluxion-pgadmin
+    restart: unless-stopped
     environment:
-      NODE_ENV: development
-      PORT: 3000
-      DATABASE_URL: postgresql://fluxion:fluxion123@postgres:5432/fluxion
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET: fluxion-dev-secret
-      CORS_ORIGIN: http://localhost:3001
+      PGADMIN_DEFAULT_EMAIL: admin@fluxion.ai
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: npm run dev
-
-  frontend:
-    build:
-      context: ./services/frontend
-      dockerfile: Dockerfile
-    container_name: fluxion-frontend
-    ports:
-      - "3001:3000"
-    volumes:
-      - ./services/frontend:/app
-      - /app/node_modules
-    environment:
-      REACT_APP_API_URL: http://localhost:3000
-      REACT_APP_WS_URL: ws://localhost:3000
-    depends_on:
-      - backend
-    command: npm run dev
-
-  ai-engine:
-    build:
-      context: ./services/ai-engine
-      dockerfile: Dockerfile
-    container_name: fluxion-ai-engine
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./services/ai-engine:/app
-    environment:
-      PYTHONPATH: /app
-      DATABASE_URL: postgresql://fluxion:fluxion123@postgres:5432/fluxion
-      REDIS_URL: redis://redis:6379
-      MODEL_CACHE_DIR: /app/models
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - fluxion-network
+    profiles:
+      - tools
 
 volumes:
   postgres_data:
-  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
 
 networks:
-  default:
-    name: fluxion-network
+  fluxion-network:
+    driver: bridge

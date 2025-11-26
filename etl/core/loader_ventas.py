@@ -638,3 +638,163 @@ class VentasLoader:
         except Exception as e:
             self.logger.error(f"❌ Error obteniendo resumen: {str(e)}")
             return {}
+
+    def load_ventas_postgresql(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Carga datos de ventas en PostgreSQL v2.0
+
+        Args:
+            df: DataFrame con datos de ventas transformados
+
+        Returns:
+            Dict con resultados de la carga
+        """
+        if df.empty:
+            return {
+                "success": False,
+                "message": "DataFrame vacío",
+                "records_loaded": 0
+            }
+
+        # Import PostgreSQL connection at runtime
+        try:
+            from db_manager import get_postgres_connection
+        except ImportError:
+            self.logger.error("❌ No se pudo importar get_postgres_connection")
+            return {
+                "success": False,
+                "message": "Error importando db_manager",
+                "records_loaded": 0
+            }
+
+        self.logger.info(f"📦 Preparando carga de {len(df):,} registros de ventas a PostgreSQL")
+
+        # 1. RENOMBRAR CAMPOS para match con PostgreSQL v2.0
+        df_prep = df.copy()
+        if 'codigo_producto' in df_prep.columns:
+            df_prep['producto_id'] = df_prep['codigo_producto']
+
+        # 2. AGREGAR CAMPOS FALTANTES con defaults
+        if 'peso_calculado' not in df_prep.columns:
+            df_prep['peso_calculado'] = 0.0
+        if 'total_cantidad_por_unidad_medida' not in df_prep.columns:
+            df_prep['total_cantidad_por_unidad_medida'] = None
+
+        # 3. SINCRONIZAR UBICACIONES Y PRODUCTOS
+        try:
+            with get_postgres_connection() as pg_conn:
+                cursor = pg_conn.cursor()
+
+                # Sincronizar ubicaciones únicas
+                ubicaciones_unicas = df_prep['ubicacion_id'].unique()
+                for ubicacion_id in ubicaciones_unicas:
+                    cursor.execute("""
+                        INSERT INTO ubicaciones (id, nombre, activo)
+                        VALUES (%s, %s, TRUE)
+                        ON CONFLICT (id) DO UPDATE
+                        SET nombre = EXCLUDED.nombre
+                    """, (ubicacion_id, ubicacion_id))
+
+                # Sincronizar productos únicos (auto-registro)
+                productos_unicos = df_prep['producto_id'].unique()
+                for producto_id in productos_unicos:
+                    cursor.execute("""
+                        INSERT INTO productos (id, codigo, nombre, activo)
+                        VALUES (%s, %s, %s, TRUE)
+                        ON CONFLICT (codigo) DO NOTHING
+                    """, (producto_id, producto_id, f'Producto {producto_id}'))
+
+                pg_conn.commit()
+                self.logger.info(f"✅ Sincronizadas {len(ubicaciones_unicas)} ubicaciones y {len(productos_unicos)} productos")
+
+        except Exception as e:
+            self.logger.error(f"❌ Error sincronizando ubicaciones/productos: {e}")
+            return {
+                "success": False,
+                "message": f"Error sincronizando: {str(e)}",
+                "records_loaded": 0
+            }
+
+        # 4. INSERTAR VENTAS
+        records_loaded = 0
+        errors = 0
+
+        try:
+            with get_postgres_connection() as pg_conn:
+                cursor = pg_conn.cursor()
+
+                for idx, row in df_prep.iterrows():
+                    try:
+                        cursor.execute("""
+                            INSERT INTO ventas (
+                                numero_factura,
+                                fecha_venta,
+                                ubicacion_id,
+                                almacen_codigo,
+                                almacen_nombre,
+                                producto_id,
+                                cantidad_vendida,
+                                peso_unitario,
+                                peso_calculado,
+                                total_cantidad_por_unidad_medida,
+                                unidad_medida_venta,
+                                factor_unidad_medida,
+                                precio_unitario,
+                                costo_unitario,
+                                venta_total,
+                                costo_total,
+                                utilidad_bruta,
+                                margen_bruto_pct
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            row.get('numero_factura'),
+                            row.get('fecha_venta'),
+                            row['ubicacion_id'],
+                            row.get('almacen_codigo'),
+                            row.get('almacen_nombre'),
+                            row['producto_id'],
+                            row.get('cantidad_vendida', 0),
+                            row.get('peso_unitario', 0),
+                            row.get('peso_calculado', 0),
+                            row.get('total_cantidad_por_unidad_medida'),
+                            row.get('unidad_medida_venta'),
+                            row.get('factor_unidad_medida', 1),
+                            row.get('precio_unitario'),
+                            row.get('costo_unitario'),
+                            row.get('venta_total'),
+                            row.get('costo_total'),
+                            row.get('utilidad_bruta'),
+                            row.get('margen_bruto_pct')
+                        ))
+                        records_loaded += 1
+
+                        # Commit cada 1000 registros
+                        if records_loaded % 1000 == 0:
+                            pg_conn.commit()
+                            self.logger.info(f"   💾 Commit: {records_loaded:,} registros cargados...")
+
+                    except Exception as e:
+                        self.logger.error(f"❌ Error en registro {idx}: {str(e)}")
+                        errors += 1
+                        if errors > 10:  # Stop after 10 errors
+                            self.logger.error(f"⚠️  Demasiados errores, deteniendo carga")
+                            break
+
+                # Commit final
+                pg_conn.commit()
+                self.logger.info(f"✅ Carga completada: {records_loaded:,} registros, {errors} errores")
+
+        except Exception as e:
+            self.logger.error(f"❌ Error cargando ventas a PostgreSQL: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Error en carga: {str(e)}",
+                "records_loaded": records_loaded
+            }
+
+        return {
+            "success": errors == 0,
+            "message": f"Ventas cargadas (DB_MODE=postgresql)",
+            "records_loaded": records_loaded,
+            "errors": errors
+        }

@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 try:
     from extractor_ventas_klk import VentasKLKExtractor
     from transformer_ventas_klk import VentasKLKTransformer
-    from loader import DuckDBLoader
+    from loader_inventario import DuckDBLoader
     from tiendas_config import get_tiendas_klk, get_tienda_config
     from config import ETLConfig
     from etl_tracker import ETLTracker, ETLEjecucion
@@ -38,7 +38,7 @@ try:
 except ImportError:
     from core.extractor_ventas_klk import VentasKLKExtractor
     from core.transformer_ventas_klk import VentasKLKTransformer
-    from core.loader import DuckDBLoader
+    from core.loader_inventario import DuckDBLoader
     from core.tiendas_config import get_tiendas_klk, get_tienda_config
     from core.config import ETLConfig
     from core.etl_tracker import ETLTracker, ETLEjecucion

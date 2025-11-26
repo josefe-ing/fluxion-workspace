@@ -14,10 +14,10 @@ from dataclasses import dataclass
 import logging
 
 try:
-    from loader import DuckDBLoader
+    from loader_inventario import DuckDBLoader
     from config import ETLConfig
 except ImportError:
-    from core.loader import DuckDBLoader
+    from core.loader_inventario import DuckDBLoader
     from core.config import ETLConfig
 
 

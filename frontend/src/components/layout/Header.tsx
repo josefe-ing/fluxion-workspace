@@ -6,7 +6,7 @@ export default function Header() {
   const { username, nombreCompleto, logout } = useAuth();
 
   const navItems = [
-    { path: '/pedidos-sugeridos', label: 'Pedidos' },
+    // { path: '/pedidos-sugeridos', label: 'Pedidos' },  // DESHABILITADO: No migrado a PostgreSQL v2.0
     { path: '/inventarios', label: 'Inventarios' },
     { path: '/ventas', label: 'Ventas' },
     { path: '/productos', label: 'Productos' },
@@ -34,7 +34,7 @@ export default function Header() {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <div className="flex items-center">
-            <Link to="/pedidos-sugeridos" className="flex items-center">
+            <Link to="/ventas" className="flex items-center">
               <div className="text-2xl font-bold text-gray-900">
                 Fluxion <span className="text-gray-400">IA</span>
               </div>

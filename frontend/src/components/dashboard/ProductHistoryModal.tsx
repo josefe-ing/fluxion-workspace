@@ -1,0 +1,252 @@
+import { useState, useEffect } from 'react';
+import http from '../../services/http';
+import { formatInteger } from '../../utils/formatNumber';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+interface HistorySnapshot {
+  fecha_snapshot: string;
+  ubicacion_id: string;
+  ubicacion_nombre: string;
+  almacen_codigo: string | null;
+  cantidad: number;
+}
+
+interface HistoryResponse {
+  codigo_producto: string;
+  ubicacion_id: string | null;
+  almacen_codigo: string | null;
+  dias: number;
+  total_snapshots: number;
+  historico: HistorySnapshot[];
+}
+
+interface ProductHistoryModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  codigoProducto: string;
+  descripcionProducto: string;
+  ubicacionId?: string;
+  almacenCodigo?: string;
+}
+
+export default function ProductHistoryModal({
+  isOpen,
+  onClose,
+  codigoProducto,
+  descripcionProducto,
+  ubicacionId,
+  almacenCodigo,
+}: ProductHistoryModalProps) {
+  const [loading, setLoading] = useState(false);
+  const [historyData, setHistoryData] = useState<HistoryResponse | null>(null);
+  const [dias, setDias] = useState(90);
+
+  useEffect(() => {
+    if (isOpen && codigoProducto) {
+      loadHistory();
+    }
+  }, [isOpen, codigoProducto, ubicacionId, almacenCodigo, dias]);
+
+  const loadHistory = async () => {
+    try {
+      setLoading(true);
+      const params: Record<string, string> = { dias: dias.toString() };
+      if (ubicacionId) params.ubicacion_id = ubicacionId;
+      if (almacenCodigo) params.almacen_codigo = almacenCodigo;
+
+      const response = await http.get(`/api/productos/${codigoProducto}/historico-inventario`, { params });
+      setHistoryData(response.data);
+    } catch (error) {
+      console.error('Error cargando histórico:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatFecha = (fechaISO: string): string => {
+    const fecha = new Date(fechaISO);
+    return fecha.toLocaleString('es-VE', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const formatFechaCorta = (fechaISO: string): string => {
+    const fecha = new Date(fechaISO);
+    return fecha.toLocaleString('es-VE', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  // Preparar datos para la gráfica (ordenar por fecha ascendente y formatear)
+  const chartData = historyData?.historico
+    ?.slice()
+    .reverse()
+    .map((snap) => ({
+      fecha: formatFechaCorta(snap.fecha_snapshot),
+      cantidad: snap.cantidad,
+      fechaCompleta: formatFecha(snap.fecha_snapshot),
+    })) || [];
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Histórico de Inventario</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              {descripcionProducto} ({codigoProducto})
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Filtros */}
+        <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center space-x-4">
+            <label className="text-sm font-medium text-gray-700">Período:</label>
+            <select
+              value={dias}
+              onChange={(e) => setDias(Number(e.target.value))}
+              className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="30">Últimos 30 días</option>
+              <option value="60">Últimos 60 días</option>
+              <option value="90">Últimos 90 días</option>
+              <option value="180">Últimos 6 meses</option>
+              <option value="365">Último año</option>
+            </select>
+            {historyData && (
+              <span className="text-sm text-gray-600">
+                {historyData.total_snapshots} snapshots encontrados
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="text-gray-500">Cargando histórico...</div>
+            </div>
+          ) : historyData && historyData.historico.length > 0 ? (
+            <div className="space-y-6">
+              {/* Gráfica */}
+              <div className="bg-white border border-gray-200 rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Evolución del Inventario</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="fecha"
+                      tick={{ fontSize: 12 }}
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                    />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
+                      labelFormatter={(value) => `Fecha: ${value}`}
+                      formatter={(value: number) => [formatInteger(value), 'Cantidad']}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="cantidad"
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                      dot={{ r: 4 }}
+                      activeDot={{ r: 6 }}
+                      name="Cantidad en Stock"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Tabla */}
+              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+                  <h3 className="text-lg font-semibold text-gray-900">Detalle de Snapshots</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          Fecha
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          Ubicación
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          Almacén
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          Cantidad
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {historyData.historico.map((snapshot, index) => (
+                        <tr key={index} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 text-sm text-gray-900">
+                            {formatFecha(snapshot.fecha_snapshot)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-900">
+                            {snapshot.ubicacion_nombre}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600">
+                            {snapshot.almacen_codigo || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm font-semibold text-gray-900 text-right">
+                            {formatInteger(snapshot.cantidad)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+              <svg className="h-16 w-16 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <p>No hay datos históricos disponibles para este producto</p>
+              <p className="text-sm mt-1">Los snapshots se generan cada vez que se ejecuta el ETL de inventario</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

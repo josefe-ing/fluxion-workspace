@@ -63,7 +63,6 @@ from routers.analisis_xyz_router import router as analisis_xyz_router
 from routers.config_inventario_router import router as config_inventario_router
 from routers.abc_v2_router import router as abc_v2_router
 from routers.nivel_objetivo_router import router as nivel_objetivo_router
-from routers.admin_ubicaciones_router import router as admin_ubicaciones_router
 from routers.etl_tracking_router import router as etl_tracking_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
@@ -152,7 +151,6 @@ app.include_router(analisis_xyz_router)
 app.include_router(config_inventario_router)
 app.include_router(abc_v2_router)
 app.include_router(nivel_objetivo_router)
-app.include_router(admin_ubicaciones_router)
 app.include_router(etl_tracking_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
@@ -253,7 +251,8 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 # Importar utilidades de base de datos
-from database import get_db_connection, get_db_connection_write, DB_PATH
+from db_manager import get_db_connection, get_db_connection_write, execute_query_dict, is_postgres_mode, get_postgres_connection
+from database import DB_PATH
 
 # Modelos Pydantic
 class UbicacionResponse(BaseModel):
@@ -597,93 +596,6 @@ async def register(request: CreateUserRequest, current_user: Usuario = Depends(v
     logger.info(f"Usuario '{new_user.username}' creado por '{current_user.username}'")
     return new_user
 
-@app.post("/api/auth/init-db", tags=["Autenticación"])
-async def init_database():
-    """
-    Inicializa la tabla usuarios si no existe
-    Endpoint temporal para setup inicial de BD
-    """
-    try:
-        # Usar conexión de escritura para CREATE TABLE
-        with get_db_connection_write() as conn:
-            # Crear tabla usuarios
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS usuarios (
-                    id VARCHAR PRIMARY KEY,
-                    username VARCHAR UNIQUE NOT NULL,
-                    password_hash VARCHAR NOT NULL,
-                    nombre_completo VARCHAR,
-                    email VARCHAR,
-                    activo BOOLEAN DEFAULT true,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    ultimo_login TIMESTAMP
-                )
-            """)
-
-            logger.info("Tabla usuarios creada/verificada exitosamente")
-
-            # Check if admin user already exists
-            existing = conn.execute("SELECT COUNT(*) FROM usuarios WHERE username = 'admin'").fetchone()[0]
-
-            if existing == 0:
-                # Create admin user using the create_user function
-                admin_user = create_user(
-                    username="admin",
-                    password="admin123",
-                    nombre_completo="Administrador",
-                    email="admin@fluxion.ai"
-                )
-                logger.info("Usuario admin creado exitosamente")
-                return {"message": "Database initialized and admin user created successfully", "username": "admin"}
-            else:
-                logger.info("Usuario admin ya existe")
-                return {"message": "Database initialized successfully (admin already exists)", "username": "admin"}
-
-    except Exception as e:
-        logger.error(f"Error en init-db: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error inicializando BD: {str(e)}"
-        )
-
-@app.post("/api/auth/bootstrap-admin", response_model=Usuario, tags=["Autenticación"])
-async def bootstrap_admin():
-    """
-    Endpoint temporal para crear usuario admin inicial
-    SOLO FUNCIONA SI NO HAY USUARIOS EN LA BD
-    """
-    try:
-        # Verificar con read-only connection
-        with get_db_connection() as conn:
-            count = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
-
-        if count > 0:
-            raise HTTPException(
-                status_code=403,
-                detail="Ya existen usuarios en el sistema. Use /api/auth/register para crear nuevos usuarios."
-            )
-
-        # Crear usuario admin (create_user ya usa write connection)
-        admin_user = create_user(
-            username="admin",
-            password="admin123",
-            nombre_completo="Administrador",
-            email="admin@fluxion.ai"
-        )
-
-        logger.info("Usuario admin creado via bootstrap")
-        return admin_user
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error en bootstrap-admin: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error creando usuario admin: {str(e)}"
-        )
-
 # =====================================================================================
 # ENDPOINTS DE DATOS (PROTEGIDOS)
 # =====================================================================================
@@ -694,49 +606,40 @@ async def get_ubicaciones(
     visible_pedidos: Optional[bool] = None
 ):
     """
-    Obtiene todas las ubicaciones (tiendas y CEDIs) desde tiendas_config.py
+    Obtiene todas las ubicaciones (tiendas y CEDIs) desde la base de datos
 
     Query params:
     - tipo: Filtrar por tipo ('tienda' | 'cedi')
     - visible_pedidos: Filtrar por visibilidad en pedidos sugeridos
     """
     try:
-        # Import tiendas_config
-        import sys
-        from pathlib import Path
-        etl_core_path = Path(__file__).parent.parent / 'etl' / 'core'
-        if str(etl_core_path) not in sys.path:
-            sys.path.insert(0, str(etl_core_path))
+        # PostgreSQL v2.0: Simplified flat table with minimal schema
+        # Available columns: id, nombre, codigo_klk, ciudad, estado, direccion, activo, fecha_creacion
+        query = "SELECT id, nombre, codigo_klk, ciudad, estado, activo FROM ubicaciones WHERE activo = true"
 
-        from tiendas_config import TIENDAS_CONFIG
+        # tipo filter not supported in PostgreSQL v2.0 (all are tiendas by default)
+        # visible_pedidos filter not supported (no config column)
+
+        # Execute query using db_manager
+        ubicaciones_data = execute_query_dict(query)
 
         ubicaciones = []
-        for ubicacion_id, config in TIENDAS_CONFIG.items():
-            # Apply filters
-            if tipo and config.tipo != tipo:
-                continue
-
-            if visible_pedidos is not None and config.visible_pedidos != visible_pedidos:
-                continue
-
-            if not config.activo:
-                continue
-
+        for row in ubicaciones_data:
             ubicaciones.append(UbicacionResponse(
-                id=config.ubicacion_id,
-                codigo=config.codigo_deposito[:3] if config.codigo_deposito else ubicacion_id[:3],
-                nombre=config.ubicacion_nombre,
-                tipo=config.tipo,
-                region=None,
-                ciudad=None,
-                superficie_m2=None,
-                activo=config.activo,
-                visible_pedidos=config.visible_pedidos,
-                sistema_pos=getattr(config, 'sistema_pos', 'stellar')
+                id=row['id'],
+                codigo=row.get('codigo_klk', row['id']),  # Use codigo_klk or fallback to id
+                nombre=row['nombre'],
+                tipo='tienda',  # Default to 'tienda' (all locations are stores in v2.0)
+                region=None,  # Not in PostgreSQL v2.0
+                ciudad=row.get('ciudad'),
+                superficie_m2=None,  # Not in PostgreSQL v2.0
+                activo=row['activo'],
+                visible_pedidos=True,  # Default to True (all visible in v2.0)
+                sistema_pos='stellar'  # Default to 'stellar'
             ))
 
-        # Sort by tipo and nombre
-        ubicaciones.sort(key=lambda u: (u.tipo, u.nombre))
+        # Sort by nombre (tipo is always 'tienda' in v2.0)
+        ubicaciones.sort(key=lambda u: u.nombre)
 
         return ubicaciones
 
@@ -746,7 +649,12 @@ async def get_ubicaciones(
 
 @app.get("/api/ubicaciones/summary", response_model=List[UbicacionSummaryResponse], tags=["Ubicaciones"])
 async def get_ubicaciones_summary():
-    """Obtiene un resumen de inventario por ubicación (Stellar + KLK)"""
+    """
+    Obtiene un resumen de inventario por ubicación (Stellar + KLK)
+
+    Migrado a PostgreSQL v2.0: Tablas stock_actual e inventario_raw son INDEPENDIENTES.
+    No se hace JOIN con ubicaciones - los nombres vienen directamente de cada tabla.
+    """
     try:
         with get_db_connection() as conn:
             # Importar tiendas_config para saber qué tiendas usan KLK
@@ -756,70 +664,8 @@ async def get_ubicaciones_summary():
             if str(etl_core_path) not in sys.path:
                 sys.path.insert(0, str(etl_core_path))
 
-            from tiendas_config import get_tiendas_klk
+            from tiendas_config import get_tiendas_klk, ALMACENES_KLK
             tiendas_klk_ids = list(get_tiendas_klk().keys())
-
-            # Mapear tienda_01 → T01, tienda_08 → T08, etc.
-            def mapear_ubicacion_codigo(tienda_id):
-                """Convierte tienda_01 a T01, cedi_seco a CSECO, etc."""
-                if tienda_id.startswith('tienda_'):
-                    num = tienda_id.replace('tienda_', '')
-                    return f'T{num.zfill(2)}'
-                elif tienda_id.startswith('cedi_'):
-                    tipo = tienda_id.replace('cedi_', '').upper()
-                    return f'C{tipo[:4]}'
-                return tienda_id
-
-            ubicaciones_codigo_map = {tid: mapear_ubicacion_codigo(tid) for tid in tiendas_klk_ids}
-
-            # Obtener mapeo de almacenes KLK para nombres
-            from tiendas_config import get_almacenes_tienda, ALMACENES_KLK
-
-            # Query combinado: stock_actual para KLK (agrupado por almacén), inventario_raw para Stellar
-            query = """
-                -- Tiendas KLK: desde stock_actual, agrupado por almacén
-                SELECT
-                    sa.ubicacion_id,
-                    COALESCE(ubi.nombre, 'Desconocido') as ubicacion_nombre,
-                    COALESCE(ubi.tipo, 'tienda') as tipo_ubicacion,
-                    COUNT(DISTINCT sa.producto_id) as total_productos,
-                    SUM(CASE WHEN sa.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
-                    SUM(CASE WHEN sa.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
-                    CAST(MAX(sa.ultima_actualizacion) AS VARCHAR) as ultima_actualizacion,
-                    sa.almacen_codigo
-                FROM stock_actual sa
-                LEFT JOIN ubicaciones ubi ON (
-                    ubi.codigo = CASE
-                        WHEN sa.ubicacion_id LIKE 'tienda_%' THEN 'T' || LPAD(REPLACE(sa.ubicacion_id, 'tienda_', ''), 2, '0')
-                        WHEN sa.ubicacion_id LIKE 'cedi_%' THEN 'C' || UPPER(SUBSTR(REPLACE(sa.ubicacion_id, 'cedi_', ''), 1, 4))
-                        ELSE sa.ubicacion_id
-                    END
-                )
-                WHERE sa.ubicacion_id IN ('""" + "','".join(tiendas_klk_ids) + """')
-                GROUP BY sa.ubicacion_id, ubi.nombre, ubi.tipo, sa.almacen_codigo
-
-                UNION ALL
-
-                -- Tiendas Stellar: desde inventario_raw (sin almacén)
-                SELECT
-                    inv.ubicacion_id,
-                    inv.ubicacion_nombre,
-                    inv.tipo_ubicacion,
-                    COUNT(DISTINCT inv.codigo_producto) as total_productos,
-                    SUM(CASE WHEN inv.cantidad_actual = 0 THEN 1 ELSE 0 END) as stock_cero,
-                    SUM(CASE WHEN inv.cantidad_actual < 0 THEN 1 ELSE 0 END) as stock_negativo,
-                    CAST(MAX(inv.fecha_extraccion) AS VARCHAR) as ultima_actualizacion,
-                    NULL as almacen_codigo
-                FROM inventario_raw inv
-                WHERE inv.activo = true
-                    AND inv.tipo_ubicacion != 'mayorista'
-                    AND inv.ubicacion_id NOT IN ('""" + "','".join(tiendas_klk_ids) + """')
-                GROUP BY inv.ubicacion_id, inv.ubicacion_nombre, inv.tipo_ubicacion
-
-                ORDER BY tipo_ubicacion, ubicacion_nombre, almacen_codigo
-            """
-
-            result = conn.execute(query).fetchall()
 
             # Construir mapeo de código de almacén -> nombre
             almacen_nombres = {}
@@ -827,14 +673,77 @@ async def get_ubicaciones_summary():
                 for alm in almacenes:
                     almacen_nombres[alm.codigo] = alm.nombre
 
+            # Mapeo simple ubicacion_id -> nombre para tiendas KLK
+            ubicacion_nombres_klk = {}
+            for tienda_id in tiendas_klk_ids:
+                if tienda_id.startswith('tienda_'):
+                    num = int(tienda_id.replace('tienda_', ''))
+                    ubicacion_nombres_klk[tienda_id] = f"Tienda {num:02d}"
+                elif tienda_id.startswith('cedi_'):
+                    tipo = tienda_id.replace('cedi_', '').title()
+                    ubicacion_nombres_klk[tienda_id] = f"CEDI {tipo}"
+                else:
+                    ubicacion_nombres_klk[tienda_id] = tienda_id
+
+            # Query: Resumen de inventario por ubicación y almacén
+            # PostgreSQL v2.0: usa inventario_actual con LEFT JOIN a ubicaciones y almacenes
+            if is_postgres_mode():
+                query = """
+                    SELECT
+                        ia.ubicacion_id,
+                        u.nombre as ubicacion_nombre,
+                        'tienda' as tipo_ubicacion,
+                        COUNT(DISTINCT ia.producto_id) as total_productos,
+                        SUM(CASE WHEN ia.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
+                        SUM(CASE WHEN ia.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
+                        TO_CHAR(MAX(ia.fecha_actualizacion), 'YYYY-MM-DD HH24:MI:SS') as ultima_actualizacion,
+                        ia.almacen_codigo
+                    FROM inventario_actual ia
+                    LEFT JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                    GROUP BY ia.ubicacion_id, u.nombre, ia.almacen_codigo
+                    ORDER BY ia.ubicacion_id, ia.almacen_codigo
+                """
+            else:
+                # DuckDB usa CAST() para fechas y tiene tabla stock_actual
+                query = """
+                    SELECT
+                        sa.ubicacion_id,
+                        sa.ubicacion_id as ubicacion_nombre,
+                        'tienda' as tipo_ubicacion,
+                        COUNT(DISTINCT sa.producto_id) as total_productos,
+                        SUM(CASE WHEN sa.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
+                        SUM(CASE WHEN sa.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
+                        CAST(MAX(sa.ultima_actualizacion) AS VARCHAR) as ultima_actualizacion,
+                        sa.almacen_codigo
+                    FROM stock_actual sa
+                    WHERE sa.ubicacion_id IN ('""" + "','".join(tiendas_klk_ids) + """')
+                    GROUP BY sa.ubicacion_id, sa.almacen_codigo
+                    ORDER BY sa.ubicacion_id, sa.almacen_codigo
+                """
+
+            # Ejecutar query según base de datos
+            if is_postgres_mode():
+                cursor = conn.cursor()
+                cursor.execute(query)
+                result = cursor.fetchall()
+                cursor.close()
+            else:
+                result = conn.execute(query).fetchall()
+
             summary = []
             for row in result:
-                almacen_codigo = row[7]  # Nuevo campo
+                ubicacion_id = row[0]
+                ubicacion_nombre = row[1]
+                almacen_codigo = row[7]
                 almacen_nombre = almacen_nombres.get(almacen_codigo) if almacen_codigo else None
 
+                # Para tiendas KLK, reemplazar ubicacion_id con nombre legible
+                if ubicacion_id in ubicacion_nombres_klk:
+                    ubicacion_nombre = ubicacion_nombres_klk[ubicacion_id]
+
                 summary.append(UbicacionSummaryResponse(
-                    ubicacion_id=row[0],
-                    ubicacion_nombre=row[1],
+                    ubicacion_id=ubicacion_id,
+                    ubicacion_nombre=ubicacion_nombre,
                     tipo_ubicacion=row[2],
                     total_productos=row[3],
                     stock_cero=row[4],
@@ -966,38 +875,38 @@ async def get_all_almacenes_klk():
 async def get_productos(categoria: Optional[str] = None, activo: bool = True):
     """Obtiene todos los productos"""
     try:
-        with get_db_connection() as conn:
-            query = """
-                SELECT p.id, p.codigo, p.descripcion, p.categoria, p.marca,
-                       p.presentacion, p.precio_venta, p.costo_promedio, p.activo
-                FROM productos p
-                WHERE p.activo = ?
-            """
-            params = [activo]
+        # PostgreSQL v2.0: usar execute_query_dict para compatibilidad
+        query = """
+            SELECT p.id, p.codigo, p.nombre as descripcion, p.categoria, p.marca,
+                   NULL as presentacion, NULL as precio_venta, NULL as costo_promedio, p.activo
+            FROM productos p
+            WHERE p.activo = %s
+        """
+        params = [activo]
 
-            if categoria:
-                query += " AND p.categoria = ?"
-                params.append(categoria)
+        if categoria:
+            query += " AND p.categoria = %s"
+            params.append(categoria)
 
-            query += " ORDER BY p.categoria, p.descripcion"
+        query += " ORDER BY p.categoria, p.nombre LIMIT 1000"
 
-            result = conn.execute(query, params).fetchall()
+        results = execute_query_dict(query, tuple(params))
 
-            productos = []
-            for row in result:
-                productos.append(ProductoResponse(
-                    id=row[0],
-                    codigo=row[1],
-                    descripcion=row[2],
-                    categoria=row[3],
-                    marca=row[4],
-                    presentacion=row[5],
-                    precio_venta=row[6],
-                    costo_promedio=row[7],
-                    activo=row[8]
-                ))
+        productos = []
+        for row in results:
+            productos.append(ProductoResponse(
+                id=row['id'],
+                codigo=row['codigo'],
+                descripcion=row['descripcion'],
+                categoria=row['categoria'],
+                marca=row['marca'],
+                presentacion=row['presentacion'],
+                precio_venta=row['precio_venta'],
+                costo_promedio=row['costo_promedio'],
+                activo=row['activo']
+            ))
 
-            return productos
+        return productos
 
     except Exception as e:
         logger.error(f"Error obteniendo productos: {str(e)}")
@@ -1005,17 +914,41 @@ async def get_productos(categoria: Optional[str] = None, activo: bool = True):
 
 @app.get("/api/categorias", tags=["Productos"])
 async def get_categorias():
-    """Obtiene todas las categorías de productos desde inventario_raw"""
+    """
+    Obtiene todas las categorías de productos
+
+    PostgreSQL v2.0: usa tabla productos
+    DuckDB legacy: usa tabla inventario_raw
+    """
     try:
-        with get_db_connection() as conn:
-            result = conn.execute("""
+        if is_postgres_mode():
+            # PostgreSQL v2.0: obtener categorías desde tabla productos
+            query = """
+                SELECT DISTINCT categoria
+                FROM productos
+                WHERE activo = true
+                    AND categoria IS NOT NULL
+                ORDER BY categoria
+            """
+        else:
+            # DuckDB legacy: usa inventario_raw
+            query = """
                 SELECT DISTINCT categoria
                 FROM inventario_raw
                 WHERE activo = true
                     AND categoria IS NOT NULL
                     AND tipo_ubicacion != 'mayorista'
                 ORDER BY categoria
-            """).fetchall()
+            """
+
+        with get_db_connection() as conn:
+            if is_postgres_mode():
+                cursor = conn.cursor()
+                cursor.execute(query)
+                result = cursor.fetchall()
+                cursor.close()
+            else:
+                result = conn.execute(query).fetchall()
 
             return [row[0] for row in result]
 
@@ -1913,6 +1846,93 @@ async def get_historico_clasificacion(codigo: str, ubicacion_id: Optional[str] =
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
+@app.get("/api/productos/{codigo}/historico-inventario", tags=["Productos"])
+async def get_historico_inventario(
+    codigo: str,
+    ubicacion_id: Optional[str] = None,
+    almacen_codigo: Optional[str] = None,
+    dias: int = 90
+):
+    """
+    Obtiene el histórico de inventario de un producto específico.
+
+    Args:
+        codigo: Código del producto
+        ubicacion_id: Filtrar por ubicación específica
+        almacen_codigo: Filtrar por almacén específico (para tiendas KLK)
+        dias: Número de días hacia atrás (default 90)
+
+    Returns:
+        Lista de snapshots históricos con fecha y cantidad
+    """
+    try:
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener producto_id desde el código
+            cursor.execute("SELECT id FROM productos WHERE codigo = %s", (codigo,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Producto {codigo} no encontrado")
+
+            producto_id = row[0]
+
+            # Construir query para histórico
+            query = """
+                SELECT
+                    h.fecha_snapshot,
+                    h.ubicacion_id,
+                    u.nombre as ubicacion_nombre,
+                    h.almacen_codigo,
+                    h.cantidad
+                FROM inventario_historico h
+                JOIN ubicaciones u ON h.ubicacion_id = u.id
+                WHERE h.producto_id = %s
+                  AND h.fecha_snapshot >= CURRENT_DATE - INTERVAL '%s days'
+            """
+            params = [producto_id, dias]
+
+            if ubicacion_id:
+                query += " AND h.ubicacion_id = %s"
+                params.append(ubicacion_id)
+
+            if almacen_codigo:
+                query += " AND h.almacen_codigo = %s"
+                params.append(almacen_codigo)
+
+            query += " ORDER BY h.fecha_snapshot DESC"
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            historico = []
+            for row in rows:
+                historico.append({
+                    "fecha_snapshot": row[0].isoformat() if row[0] else None,
+                    "ubicacion_id": row[1],
+                    "ubicacion_nombre": row[2],
+                    "almacen_codigo": row[3],
+                    "cantidad": float(row[4])
+                })
+
+            cursor.close()
+
+            return {
+                "codigo_producto": codigo,
+                "ubicacion_id": ubicacion_id,
+                "almacen_codigo": almacen_codigo,
+                "dias": dias,
+                "total_snapshots": len(historico),
+                "historico": historico
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo histórico de inventario: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
 @app.get("/api/stock", response_model=PaginatedStockResponse, tags=["Inventario"])
 async def get_stock(
     ubicacion_id: Optional[str] = None,
@@ -1925,7 +1945,10 @@ async def get_stock(
     sort_order: Optional[str] = 'desc'
 ):
     """
-    Obtiene el estado del stock desde inventario_raw con paginación server-side
+    Obtiene el estado del stock actual con paginación server-side
+
+    PostgreSQL v2.0: usa inventario_actual con JOINs a productos y ubicaciones
+    DuckDB legacy: usa inventario_raw
 
     Args:
         ubicacion_id: Filtrar por ID de ubicación
@@ -1934,7 +1957,7 @@ async def get_stock(
         page: Número de página (inicia en 1)
         page_size: Cantidad de items por página (máx 500)
         search: Buscar por código o descripción de producto
-        sort_by: Campo por el cual ordenar (stock, categoria, estado)
+        sort_by: Campo por el cual ordenar (stock, peso)
         sort_order: Orden ascendente (asc) o descendente (desc)
     """
     try:
@@ -1944,15 +1967,138 @@ async def get_stock(
         if page_size < 1 or page_size > 500:
             raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 500")
 
-        with get_db_connection() as conn:
-            # Query base para contar total de registros
+        if is_postgres_mode():
+            # ===================================================================
+            # PostgreSQL v2.0: Query simplificado usando inventario_actual
+            # ===================================================================
+            count_query = """
+                SELECT COUNT(*)
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                WHERE p.activo = true AND u.activo = true
+            """
+
+            query = """
+                SELECT DISTINCT ON (ia.producto_id, ia.ubicacion_id)
+                    ia.ubicacion_id,
+                    u.nombre as ubicacion_nombre,
+                    'tienda' as tipo_ubicacion,
+                    ia.producto_id,
+                    COALESCE(p.codigo, '') as codigo_producto,
+                    COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
+                    COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
+                    COALESCE(p.marca, '') as marca,
+                    ia.cantidad as stock_actual,
+                    NULL as stock_minimo,
+                    NULL as stock_maximo,
+                    NULL as punto_reorden,
+                    NULL as precio_venta,
+                    NULL as cantidad_bultos,
+                    CASE
+                        WHEN ia.cantidad = 0 THEN 'sin_stock'
+                        WHEN ia.cantidad < 0 THEN 'stock_negativo'
+                        ELSE 'normal'
+                    END as estado_stock,
+                    NULL as dias_cobertura_actual,
+                    false as es_producto_estrella,
+                    TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion,
+                    NULL as peso_producto_kg,
+                    NULL as peso_total_kg
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                WHERE p.activo = true AND u.activo = true
+            """
+
+            stats_query = """
+                SELECT
+                    SUM(CASE WHEN ia.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
+                    SUM(CASE WHEN ia.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                WHERE p.activo = true AND u.activo = true
+            """
+
+            params = []
+
+            # Aplicar filtros
+            if ubicacion_id:
+                query += " AND ia.ubicacion_id = %s"
+                count_query += " AND ia.ubicacion_id = %s"
+                stats_query += " AND ia.ubicacion_id = %s"
+                params.append(ubicacion_id)
+
+            if categoria:
+                query += " AND p.categoria = %s"
+                count_query += " AND p.categoria = %s"
+                stats_query += " AND p.categoria = %s"
+                params.append(categoria)
+
+            if search:
+                search_term = f"%{search}%"
+                query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
+                count_query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
+                stats_query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
+                params.extend([search_term, search_term])
+
+            # Ejecutar queries con PostgreSQL
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+
+                # Count
+                cursor.execute(count_query, tuple(params))
+                total_items = cursor.fetchone()[0]
+
+                # Stats
+                cursor.execute(stats_query, tuple(params))
+                stats_result = cursor.fetchone()
+                stock_cero = stats_result[0] if stats_result[0] is not None else 0
+                stock_negativo = stats_result[1] if stats_result[1] is not None else 0
+
+                # Paginación
+                total_pages = (total_items + page_size - 1) // page_size
+                offset = (page - 1) * page_size
+
+                # Ordenamiento - DISTINCT ON columns must appear first, but then sorted by user-requested field
+                if sort_by == 'stock':
+                    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                    # DISTINCT ON requires these fields first, but we can sub-sort by cantidad
+                    query += f" ORDER BY ia.producto_id, ia.ubicacion_id"
+                    # Now add pagination query with proper sort by cantidad
+                    paginated_query = f"""
+                        SELECT * FROM ({query}) AS distinct_rows
+                        ORDER BY stock_actual {order_direction}
+                    """
+                    query = paginated_query
+                elif sort_by == 'peso':
+                    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                    query += f" ORDER BY ia.producto_id, ia.ubicacion_id"
+                    paginated_query = f"""
+                        SELECT * FROM ({query}) AS distinct_rows
+                        ORDER BY peso_total_kg {order_direction} NULLS LAST
+                    """
+                    query = paginated_query
+                else:
+                    query += " ORDER BY ia.producto_id, ia.ubicacion_id, ia.fecha_actualizacion DESC"
+
+                query += f" LIMIT {page_size} OFFSET {offset}"
+
+                cursor.execute(query, tuple(params))
+                result = cursor.fetchall()
+                cursor.close()
+
+        else:
+            # ===================================================================
+            # DuckDB legacy: mantener query original con inventario_raw
+            # ===================================================================
             count_query = """
                 SELECT COUNT(*)
                 FROM inventario_raw inv
                 WHERE inv.activo = true
             """
 
-            # Query principal
             query = """
                 SELECT
                     inv.ubicacion_id,
@@ -1979,35 +2125,6 @@ async def get_stock(
                 WHERE inv.activo = true
             """
 
-            params = []
-
-            # Aplicar filtros
-            if ubicacion_id:
-                query += " AND inv.ubicacion_id = ?"
-                count_query += " AND inv.ubicacion_id = ?"
-                params.append(ubicacion_id)
-
-            if categoria:
-                query += " AND inv.categoria = ?"
-                count_query += " AND inv.categoria = ?"
-                params.append(categoria)
-
-            if estado:
-                query += " AND inv.estado_stock = ?"
-                count_query += " AND inv.estado_stock = ?"
-                params.append(estado)
-
-            if search:
-                search_term = f"%{search}%"
-                query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
-                count_query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
-                params.append(search_term)
-                params.append(search_term)
-
-            # Obtener total de registros
-            total_items = conn.execute(count_query, params).fetchone()[0]
-
-            # Calcular estadísticas de stock (stock en cero y stock negativo)
             stats_query = """
                 SELECT
                     SUM(CASE WHEN inv.cantidad_actual = 0 THEN 1 ELSE 0 END) as stock_cero,
@@ -2016,96 +2133,104 @@ async def get_stock(
                 WHERE inv.activo = true
             """
 
-            # Aplicar los mismos filtros que en count_query
-            stats_params = []
+            params = []
+
+            # Aplicar filtros
             if ubicacion_id:
+                query += " AND inv.ubicacion_id = ?"
+                count_query += " AND inv.ubicacion_id = ?"
                 stats_query += " AND inv.ubicacion_id = ?"
-                stats_params.append(ubicacion_id)
+                params.append(ubicacion_id)
+
             if categoria:
+                query += " AND inv.categoria = ?"
+                count_query += " AND inv.categoria = ?"
                 stats_query += " AND inv.categoria = ?"
-                stats_params.append(categoria)
+                params.append(categoria)
+
             if estado:
+                query += " AND inv.estado_stock = ?"
+                count_query += " AND inv.estado_stock = ?"
                 stats_query += " AND inv.estado_stock = ?"
-                stats_params.append(estado)
+                params.append(estado)
+
             if search:
                 search_term = f"%{search}%"
+                query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
+                count_query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
                 stats_query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
-                stats_params.append(search_term)
-                stats_params.append(search_term)
+                params.extend([search_term, search_term])
 
-            stats_result = conn.execute(stats_query, stats_params).fetchone()
-            stock_cero = stats_result[0] if stats_result[0] is not None else 0
-            stock_negativo = stats_result[1] if stats_result[1] is not None else 0
+            # Ejecutar queries con DuckDB
+            with get_db_connection() as conn:
+                # Count
+                total_items = conn.execute(count_query, params).fetchone()[0]
 
-            # Calcular paginación
-            total_pages = (total_items + page_size - 1) // page_size  # Ceiling division
-            offset = (page - 1) * page_size
+                # Stats
+                stats_result = conn.execute(stats_query, params).fetchone()
+                stock_cero = stats_result[0] if stats_result[0] is not None else 0
+                stock_negativo = stats_result[1] if stats_result[1] is not None else 0
 
-            # Agregar ORDER BY según sort_by
-            if sort_by == 'stock':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                # Ordenar por bultos (cantidad_actual / cantidad_bultos)
-                # Si no tiene bultos, usar cantidad_actual directamente
-                query += f" ORDER BY (CASE WHEN inv.cantidad_bultos > 0 THEN inv.cantidad_actual / inv.cantidad_bultos ELSE inv.cantidad_actual END) {order_direction}, inv.descripcion_producto"
-            elif sort_by == 'peso':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                # Ordenar por peso total en kg (cantidad_actual * peso_producto)
-                query += f" ORDER BY (inv.cantidad_actual * inv.peso_producto) {order_direction} NULLS LAST, inv.descripcion_producto"
-            elif sort_by == 'categoria':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                query += f" ORDER BY inv.categoria {order_direction}, inv.descripcion_producto"
-            elif sort_by == 'estado':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                query += f" ORDER BY inv.estado_stock {order_direction}, inv.descripcion_producto"
-            else:
-                # Orden por defecto
-                query += " ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre, inv.categoria, inv.descripcion_producto"
+                # Paginación
+                total_pages = (total_items + page_size - 1) // page_size
+                offset = (page - 1) * page_size
 
-            query += f" LIMIT {page_size} OFFSET {offset}"
+                # Ordenamiento
+                if sort_by == 'stock':
+                    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                    query += f" ORDER BY (CASE WHEN inv.cantidad_bultos > 0 THEN inv.cantidad_actual / inv.cantidad_bultos ELSE inv.cantidad_actual END) {order_direction}, inv.descripcion_producto"
+                elif sort_by == 'peso':
+                    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                    query += f" ORDER BY (inv.cantidad_actual * inv.peso_producto) {order_direction} NULLS LAST, inv.descripcion_producto"
+                else:
+                    query += " ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre, inv.categoria, inv.descripcion_producto"
 
-            result = conn.execute(query, params).fetchall()
+                query += f" LIMIT {page_size} OFFSET {offset}"
 
-            stock_data = []
-            for row in result:
-                stock_data.append(StockResponse(
-                    ubicacion_id=row[0],
-                    ubicacion_nombre=row[1],
-                    ubicacion_tipo=row[2],
-                    producto_id=row[3],
-                    codigo_producto=row[4],
-                    descripcion_producto=row[5],
-                    categoria=row[6],
-                    marca=row[7],
-                    stock_actual=row[8],
-                    stock_minimo=row[9],
-                    stock_maximo=row[10],
-                    punto_reorden=row[11],
-                    precio_venta=row[12],
-                    cantidad_bultos=row[13],
-                    estado_stock=row[14],
-                    dias_cobertura_actual=row[15],
-                    es_producto_estrella=row[16],
-                    fecha_extraccion=row[17],
-                    peso_producto_kg=row[18],
-                    peso_total_kg=row[19]
-                ))
+                result = conn.execute(query, params).fetchall()
 
-            # Crear metadata de paginación
-            pagination = PaginationMetadata(
-                total_items=total_items,
-                total_pages=total_pages,
-                current_page=page,
-                page_size=page_size,
-                has_next=page < total_pages,
-                has_previous=page > 1,
-                stock_cero=stock_cero,
-                stock_negativo=stock_negativo
-            )
+        # Construir respuesta (común para ambos modos)
+        stock_data = []
+        for row in result:
+            stock_data.append(StockResponse(
+                ubicacion_id=row[0],
+                ubicacion_nombre=row[1],
+                ubicacion_tipo=row[2],
+                producto_id=row[3],
+                codigo_producto=row[4],
+                descripcion_producto=row[5],
+                categoria=row[6],
+                marca=row[7],
+                stock_actual=row[8],
+                stock_minimo=row[9],
+                stock_maximo=row[10],
+                punto_reorden=row[11],
+                precio_venta=row[12],
+                cantidad_bultos=row[13],
+                estado_stock=row[14],
+                dias_cobertura_actual=row[15],
+                es_producto_estrella=row[16],
+                fecha_extraccion=row[17],
+                peso_producto_kg=row[18],
+                peso_total_kg=row[19]
+            ))
 
-            return PaginatedStockResponse(
-                data=stock_data,
-                pagination=pagination
-            )
+        # Crear metadata de paginación
+        pagination = PaginationMetadata(
+            total_items=total_items,
+            total_pages=total_pages,
+            current_page=page,
+            page_size=page_size,
+            has_next=page < total_pages,
+            has_previous=page > 1,
+            stock_cero=stock_cero,
+            stock_negativo=stock_negativo
+        )
+
+        return PaginatedStockResponse(
+            data=stock_data,
+            pagination=pagination
+        )
 
     except HTTPException:
         raise
@@ -3568,24 +3693,50 @@ async def get_ventas_etl_logs():
 
 @app.get("/api/ventas/summary", response_model=List[VentasSummaryResponse], tags=["Ventas"])
 async def get_ventas_summary():
-    """Obtiene resumen de ventas por ubicación"""
+    """
+    Obtiene resumen de ventas por ubicación
+    Soporta PostgreSQL v2.0 y DuckDB (legacy)
+    """
     try:
         with get_db_connection() as conn:
-            query = """
-                SELECT
-                    v.ubicacion_id,
-                    v.ubicacion_nombre,
-                    'tienda' as tipo_ubicacion,
-                    COUNT(DISTINCT v.numero_factura) as total_transacciones,
-                    COUNT(DISTINCT v.codigo_producto) as productos_unicos,
-                    CAST(SUM(CAST(v.cantidad_vendida AS DECIMAL)) AS INTEGER) as unidades_vendidas,
-                    MAX(v.fecha) as ultima_venta
-                FROM ventas_raw v
-                GROUP BY v.ubicacion_id, v.ubicacion_nombre
-                ORDER BY v.ubicacion_nombre
-            """
-
-            result = conn.execute(query).fetchall()
+            # Adaptar query según base de datos
+            if is_postgres_mode():
+                # PostgreSQL v2.0: usa tabla ventas con JOIN a ubicaciones
+                query = """
+                    SELECT
+                        u.id as ubicacion_id,
+                        u.nombre as ubicacion_nombre,
+                        'tienda' as tipo_ubicacion,
+                        COUNT(DISTINCT v.numero_factura) as total_transacciones,
+                        COUNT(DISTINCT v.producto_id) as productos_unicos,
+                        CAST(SUM(v.cantidad_vendida) AS INTEGER) as unidades_vendidas,
+                        TO_CHAR(MAX(v.fecha_venta), 'YYYY-MM-DD') as ultima_venta
+                    FROM ventas v
+                    INNER JOIN ubicaciones u ON v.ubicacion_id = u.id
+                    GROUP BY u.id, u.nombre
+                    ORDER BY u.nombre
+                """
+                # PostgreSQL - usar cursor
+                cursor = conn.cursor()
+                cursor.execute(query)
+                result = cursor.fetchall()
+                cursor.close()
+            else:
+                # DuckDB (legacy): usa ventas_raw con ubicacion_id/nombre dentro
+                query = """
+                    SELECT
+                        v.ubicacion_id,
+                        v.ubicacion_nombre,
+                        'tienda' as tipo_ubicacion,
+                        COUNT(DISTINCT v.numero_factura) as total_transacciones,
+                        COUNT(DISTINCT v.codigo_producto) as productos_unicos,
+                        CAST(SUM(CAST(v.cantidad_vendida AS DECIMAL)) AS INTEGER) as unidades_vendidas,
+                        MAX(v.fecha) as ultima_venta
+                    FROM ventas_raw v
+                    GROUP BY v.ubicacion_id, v.ubicacion_nombre
+                    ORDER BY v.ubicacion_nombre
+                """
+                result = conn.execute(query).fetchall()
 
             return [
                 VentasSummaryResponse(

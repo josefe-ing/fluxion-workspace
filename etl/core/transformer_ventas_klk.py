@@ -77,6 +77,7 @@ class VentasKLKTransformer:
 
             # Fecha y hora
             'fecha': df['fecha'].astype(str),
+            'fecha_venta': df['fecha_hora_completa'],  # Para PostgreSQL v2.0
             'hora': df['hora_parsed'].astype(str),
             'fecha_hora_completa': df['fecha_hora_completa'].astype(str),
 
@@ -106,34 +107,34 @@ class VentasKLKTransformer:
             'categoria_precio': '',  # No disponible en KLK
             'tipo_venta': 'normal',  # Default para KLK
 
-            # Cantidades
-            'cantidad_vendida': pd.to_numeric(df['cantidad_vendida'], errors='coerce').fillna(0).astype(str),
-            'cantidad_bultos': '0',  # No disponible en KLK
-            'peso_unitario': pd.to_numeric(df['peso_unitario'], errors='coerce').fillna(0).astype(str),
-            'volumen_unitario': '0',  # No disponible en KLK
-            'peso_calculado': '0',  # No disponible en KLK
-            'peso_total_vendido': '0',  # No disponible en KLK
-            'volumen_total_vendido': '0',  # No disponible en KLK
+            # Cantidades - mantener como float para agregaciones correctas
+            'cantidad_vendida': pd.to_numeric(df['cantidad_vendida'], errors='coerce').fillna(0),
+            'cantidad_bultos': 0.0,  # No disponible en KLK
+            'peso_unitario': pd.to_numeric(df['peso_unitario'], errors='coerce').fillna(0),
+            'volumen_unitario': 0.0,  # No disponible en KLK
+            'peso_calculado': 0.0,  # No disponible en KLK
+            'peso_total_vendido': 0.0,  # No disponible en KLK
+            'volumen_total_vendido': 0.0,  # No disponible en KLK
             'tipo_peso': df['unidad_medida_venta'].fillna('UNIDAD').astype(str),
 
-            # Financiero - usar USD como base (más estable que Bs)
-            'costo_unitario': pd.to_numeric(df['costo_unitario_usd'], errors='coerce').fillna(0).astype(str),
-            'precio_unitario': pd.to_numeric(df['precio_unitario_usd'], errors='coerce').fillna(0).astype(str),
-            'impuesto_porcentaje': pd.to_numeric(df['impuesto_porcentaje'], errors='coerce').fillna(0).astype(str),
-            'precio_por_kg': '0',  # No disponible en KLK
-            'costo_total': pd.to_numeric(df['costo_total_usd'], errors='coerce').fillna(0).astype(str),
-            'venta_total': pd.to_numeric(df['venta_total_usd'], errors='coerce').fillna(0).astype(str),
-            'utilidad_bruta': pd.to_numeric(df['utilidad_bruta_usd'], errors='coerce').fillna(0).astype(str),
+            # Financiero - mantener como float para agregaciones correctas (usar USD como base - más estable que Bs)
+            'costo_unitario': pd.to_numeric(df['costo_unitario_usd'], errors='coerce').fillna(0),
+            'precio_unitario': pd.to_numeric(df['precio_unitario_usd'], errors='coerce').fillna(0),
+            'impuesto_porcentaje': pd.to_numeric(df['impuesto_porcentaje'], errors='coerce').fillna(0),
+            'precio_por_kg': 0.0,  # No disponible en KLK
+            'costo_total': pd.to_numeric(df['costo_total_usd'], errors='coerce').fillna(0),
+            'venta_total': pd.to_numeric(df['venta_total_usd'], errors='coerce').fillna(0),
+            'utilidad_bruta': pd.to_numeric(df['utilidad_bruta_usd'], errors='coerce').fillna(0),
             'margen_bruto_pct': self._calcular_margen(
                 pd.to_numeric(df['utilidad_bruta_usd'], errors='coerce').fillna(0),
                 pd.to_numeric(df['venta_total_usd'], errors='coerce').fillna(0)
-            ).astype(str),
-            'impuesto_total': pd.to_numeric(df['impuesto_monto'], errors='coerce').fillna(0).astype(str),
+            ),
+            'impuesto_total': pd.to_numeric(df['impuesto_monto'], errors='coerce').fillna(0),
             'venta_sin_impuesto': (
                 pd.to_numeric(df['venta_total_usd'], errors='coerce').fillna(0) -
                 pd.to_numeric(df['impuesto_monto'], errors='coerce').fillna(0) /
                 pd.to_numeric(df['tasa_usd'], errors='coerce').fillna(1)
-            ).astype(str),
+            ),
 
             # Flags
             'es_peso_variable': (df['unidad_medida_venta'] == 'KG').astype(str).str.lower(),

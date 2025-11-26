@@ -94,25 +94,25 @@ ALMACENES_KLK: Dict[str, List[AlmacenKLK]] = {
         AlmacenKLK(codigo="APP-TPF", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
         AlmacenKLK(codigo="APP-PPF", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True, activo=True),
     ],
-    # SUC002 - EL BOSQUE
+    # SUC002 - EL BOSQUE (NO en lista KLK - pendiente confirmación)
     "tienda_08": [
         AlmacenKLK(codigo="APP-TBQ", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
-        AlmacenKLK(codigo="APP-PBQ", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=False, activo=False),  # No tiene stock
+        AlmacenKLK(codigo="APP-PBQ", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True, activo=True),
     ],
     # SUC003 - ARTIGAS
     "tienda_17": [
         AlmacenKLK(codigo="TANT", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
-        AlmacenKLK(codigo="PANT", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=False, activo=False),  # No tiene stock
+        AlmacenKLK(codigo="PANT", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True, activo=True),
     ],
     # SUC004 - PARAISO
     "tienda_18": [
         AlmacenKLK(codigo="APP-TPAR", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
-        AlmacenKLK(codigo="APP-PPAR", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=False, activo=False),  # No tiene stock
+        AlmacenKLK(codigo="APP-PPAR", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True, activo=True),
     ],
     # SUC005 - TAZAJAL
     "tienda_20": [
         AlmacenKLK(codigo="TTZ", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
-        AlmacenKLK(codigo="PTZ", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=False, activo=False),  # No tiene stock
+        AlmacenKLK(codigo="PTZ", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True, activo=True),
     ],
 }
 

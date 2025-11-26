@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 try:
     from extractor_inventario_klk import InventarioKLKExtractor, KLKAPIConfig
     from transformer_inventario_klk import InventarioKLKTransformer
-    from loader import DuckDBLoader
+    from loader_inventario import DuckDBLoader
     from tiendas_config import get_tiendas_klk, get_tienda_config
     from config import ETLConfig
     from etl_tracker import ETLTracker, ETLEjecucion
@@ -35,7 +35,7 @@ try:
 except ImportError:
     from core.extractor_inventario_klk import InventarioKLKExtractor, KLKAPIConfig
     from core.transformer_inventario_klk import InventarioKLKTransformer
-    from core.loader import DuckDBLoader
+    from core.loader_inventario import DuckDBLoader
     from core.tiendas_config import get_tiendas_klk, get_tienda_config
     from core.config import ETLConfig
     from core.etl_tracker import ETLTracker, ETLEjecucion
@@ -195,7 +195,19 @@ class ETLInventarioKLK:
                 self.stats['total_productos_cargados'] += productos_cargados
 
                 # PASO 3B: Cargar stock actual
+                # DEBUG: Verificar contenido de df_stock antes de cargar
+                self.logger.info(f"   🔍 DEBUG - df_stock shape: {df_stock.shape}")
+                self.logger.info(f"   🔍 DEBUG - df_stock.empty: {df_stock.empty}")
+                self.logger.info(f"   🔍 DEBUG - df_stock columns: {list(df_stock.columns)}")
+                if not df_stock.empty:
+                    self.logger.info(f"   🔍 DEBUG - Primeras 3 filas de df_stock:")
+                    self.logger.info(f"\n{df_stock.head(3).to_string()}")
+
+                self.logger.info(f"   🔍 DEBUG - ABOUT TO CALL update_stock_actual_table()")
+                self.logger.info(f"   🔍 DEBUG - Loader type: {type(self.loader)}")
+                self.logger.info(f"   🔍 DEBUG - Loader hasattr 'update_stock_actual_table': {hasattr(self.loader, 'update_stock_actual_table')}")
                 result_stock = self.loader.update_stock_actual_table(df_stock)
+                self.logger.info(f"   🔍 DEBUG - RETURNED FROM update_stock_actual_table(): {result_stock}")
                 records_updated = result_stock.get('records_updated', 0)
                 self.logger.info(f"   ✅ Stock cargado: {records_updated:,}")
                 self.stats['total_stock_cargado'] += records_updated

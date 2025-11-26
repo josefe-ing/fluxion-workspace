@@ -130,6 +130,12 @@ class VentasKLKExtractor:
         for intento in range(1, self.api_config.max_retries + 1):
             try:
                 self.logger.info(f"   🔄 Intento {intento}/{self.api_config.max_retries}")
+
+                # LOGGING DETALLADO DE LA REQUEST
+                self.logger.info(f"   📡 Endpoint: {endpoint}")
+                self.logger.info(f"   📦 Payload: {payload}")
+                self.logger.info(f"   🔑 Headers: {dict(self.session.headers)}")
+
                 start_time = time.time()
 
                 response = self.session.post(
@@ -138,6 +144,12 @@ class VentasKLKExtractor:
                     timeout=self.api_config.timeout_seconds
                 )
                 request_time = time.time() - start_time
+
+                # LOGGING DETALLADO DE LA RESPONSE
+                self.logger.info(f"   📨 Status Code: {response.status_code}")
+                self.logger.info(f"   ⏱️  Request Time: {request_time:.2f}s")
+                self.logger.info(f"   📄 Response Headers: {dict(response.headers)}")
+                self.logger.info(f"   📝 Response Body (primeros 500 chars): {response.text[:500]}")
 
                 if response.status_code != 200:
                     self.logger.error(f"❌ Error HTTP {response.status_code}: {response.text[:200]}")

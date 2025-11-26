@@ -17,6 +17,7 @@ sys.path.append(str(Path(__file__).parent))
 
 from tiendas_config import TIENDAS_CONFIG, get_tiendas_activas
 from config import ETLConfig, DatabaseConfig
+from db_config import get_db_mode
 
 # Stellar (SQL Server) components
 from extractor_ventas import VentasExtractor
@@ -235,10 +236,19 @@ class VentasETL:
             # 3. CARGA
             logger.info(f"   💾 Cargando a base de datos...")
 
-            result = self.loader.load_ventas_data(transformed_data)
+            # Usar PostgreSQL o DuckDB según DB_MODE
+            if get_db_mode() == 'postgresql':
+                result = self.loader.load_ventas_postgresql(transformed_data)
+            else:
+                result = self.loader.load_ventas_data(transformed_data)
 
             if result["success"]:
-                logger.info(f"   ✅ Cargados: {result['stats']['insertados']:,} registros")
+                # Manejar diferente estructura de resultado según DB_MODE
+                if get_db_mode() == 'postgresql':
+                    records_loaded = result.get('records_loaded', 0)
+                else:
+                    records_loaded = result.get('stats', {}).get('insertados', 0)
+                logger.info(f"   ✅ Cargados: {records_loaded:,} registros")
 
                 # Obtener resumen final
                 resumen = self.loader.get_ventas_summary(
@@ -257,7 +267,7 @@ class VentasETL:
                     "message": "ETL de ventas Stellar completado exitosamente",
                     "registros_extraidos": registros_extraidos,
                     "registros_transformados": registros_transformados,
-                    "registros_cargados": result['stats']['insertados'],
+                    "registros_cargados": result.get('records_loaded', 0) if get_db_mode() == 'postgresql' else result.get('stats', {}).get('insertados', 0),
                     "tiempo_ejecucion": duracion,
                     "periodo": f"{fecha_inicio} - {fecha_fin}",
                     "validacion": validacion,
@@ -361,7 +371,7 @@ class VentasETL:
             logger.info(f"   ✅ Transformados: {registros_transformados:,} registros")
 
             # Calcular métricas básicas
-            venta_total = transformed_data['venta_total'].sum() if 'venta_total' in transformed_data.columns else 0
+            venta_total = float(transformed_data['venta_total'].sum()) if 'venta_total' in transformed_data.columns else 0.0
             facturas_unicas = transformed_data['numero_factura'].nunique() if 'numero_factura' in transformed_data.columns else 0
 
             logger.info(f"   📊 Tasa supervivencia: {(registros_transformados/registros_extraidos*100):.1f}%")
@@ -371,10 +381,19 @@ class VentasETL:
             # 3. CARGA
             logger.info(f"   💾 Cargando a base de datos...")
 
-            result = self.loader.load_ventas_data(transformed_data)
+            # Usar PostgreSQL o DuckDB según DB_MODE
+            if get_db_mode() == 'postgresql':
+                result = self.loader.load_ventas_postgresql(transformed_data)
+            else:
+                result = self.loader.load_ventas_data(transformed_data)
 
             if result["success"]:
-                logger.info(f"   ✅ Cargados: {result['stats']['insertados']:,} registros")
+                # Manejar diferente estructura de resultado según DB_MODE
+                if get_db_mode() == 'postgresql':
+                    records_loaded = result.get('records_loaded', 0)
+                else:
+                    records_loaded = result.get('stats', {}).get('insertados', 0)
+                logger.info(f"   ✅ Cargados: {records_loaded:,} registros")
 
                 # Obtener resumen final
                 resumen = self.loader.get_ventas_summary(
@@ -393,7 +412,7 @@ class VentasETL:
                     "message": "ETL de ventas KLK completado exitosamente",
                     "registros_extraidos": registros_extraidos,
                     "registros_transformados": registros_transformados,
-                    "registros_cargados": result['stats']['insertados'],
+                    "registros_cargados": result.get('records_loaded', 0) if get_db_mode() == 'postgresql' else result.get('stats', {}).get('insertados', 0),
                     "tiempo_ejecucion": duracion,
                     "periodo": f"{fecha_inicio} - {fecha_fin}",
                     "estadisticas": {

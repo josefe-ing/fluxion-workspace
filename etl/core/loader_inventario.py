@@ -2,6 +2,7 @@
 """
 Cargador de datos para ETL - La Granja Mercado
 Inserta datos transformados en DuckDB
+Soporta dual-database mode para migración a PostgreSQL
 """
 
 import duckdb
@@ -13,6 +14,10 @@ from pathlib import Path
 import json
 
 from config import ETLConfig
+
+# Dual-database support - Import at runtime to avoid module caching issues
+# DO NOT import DB_MODE here - it will be cached with wrong value!
+# Instead, import dynamically in methods that need it
 
 class DuckDBLoader:
     """Cargador de datos a DuckDB"""
@@ -33,6 +38,67 @@ class DuckDBLoader:
         logger.addHandler(handler)
 
         return logger
+
+    def _map_ubicacion_to_klk_code(self, ubicacion_id: str) -> str:
+        """
+        Mapea ubicacion_id del ETL a código KLK para PostgreSQL
+
+        ETL usa: tienda_01, tienda_08, cedi_seco, etc.
+        PostgreSQL usa: SUC001, SUC002, CEDI01, etc.
+
+        Args:
+            ubicacion_id: Código interno del ETL (ej: 'tienda_01', 'cedi_seco')
+
+        Returns:
+            Código KLK (ej: 'SUC001', 'CEDI01')
+        """
+        # Mapeo tienda_XX → SUCXXX
+        if ubicacion_id.startswith('tienda_'):
+            num = ubicacion_id.replace('tienda_', '')
+            # tienda_01 → SUC001, tienda_08 → SUC002, etc.
+            # Mapeo según KLK_STORES_MAPPING.md
+            tienda_to_suc = {
+                '01': 'SUC001',  # PERIFERICO
+                '08': 'SUC002',  # EL BOSQUE
+                '17': 'SUC003',  # ARTIGAS
+                '18': 'SUC004',  # PARAISO
+                '20': 'SUC005',  # TAZAJAL
+                '02': 'SUC006',  # Por si hay más tiendas
+                '03': 'SUC007',
+                '04': 'SUC008',
+                '05': 'SUC009',
+                '06': 'SUC010',
+                '07': 'SUC011',
+                '09': 'SUC012',
+                '10': 'SUC013',
+                '11': 'SUC014',
+                '12': 'SUC015',
+                '13': 'SUC016',
+                '14': 'SUC017',
+                '15': 'SUC018',
+                '16': 'SUC019',
+                '19': 'SUC020',
+            }
+            return tienda_to_suc.get(num, f'SUC{num.zfill(3)}')
+
+        # Mapeo CEDI
+        elif ubicacion_id.startswith('cedi'):
+            # cedi_seco → CEDI01, cedi_refrigerado → CEDI02, etc.
+            if 'seco' in ubicacion_id:
+                return 'CEDI01'
+            elif 'refri' in ubicacion_id or 'frio' in ubicacion_id:
+                return 'CEDI02'
+            else:
+                return 'CEDI01'  # Default
+
+        # Si ya tiene formato KLK, devolverlo sin cambios
+        elif ubicacion_id.startswith('SUC') or ubicacion_id.startswith('CEDI'):
+            return ubicacion_id
+
+        # Fallback: devolver como está
+        else:
+            self.logger.warning(f"⚠️  Ubicación desconocida: {ubicacion_id}, usando tal cual")
+            return ubicacion_id
 
     def get_connection(self) -> duckdb.DuckDBPyConnection:
         """Obtiene conexión a DuckDB"""
@@ -368,15 +434,46 @@ class DuckDBLoader:
             }
 
     def update_stock_actual_table(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Actualiza la tabla stock_actual con los datos más recientes"""
+        """
+        Actualiza la tabla stock_actual con los datos más recientes
+        Soporta dual-database mode: escribe en DuckDB y/o PostgreSQL según DB_MODE
+        """
+        # DEBUG: Log antes de cualquier check
+        self.logger.info(f"🔍 [DEBUG] update_stock_actual_table llamado")
+        self.logger.info(f"   🔍 DataFrame recibido: shape={df.shape}, empty={df.empty}")
+        self.logger.info(f"   🔍 Columnas: {list(df.columns)}")
 
         if df.empty:
+            self.logger.warning(f"   ⚠️  DataFrame está vacío, retornando sin actualizar")
             return {"success": False, "message": "Sin datos para actualizar"}
 
-        try:
-            conn = self.get_connection()
+        # Read DB_MODE directly from environment to avoid module caching issues
+        import os
+        DB_MODE = os.getenv('DB_MODE', 'duckdb')
 
+        # Try to import db_manager for PostgreSQL connection function
+        try:
+            # Import db_manager from same directory (ETL adds core/ to sys.path)
+            import sys
+            from pathlib import Path
+            core_dir = Path(__file__).parent
+            if str(core_dir) not in sys.path:
+                sys.path.insert(0, str(core_dir))
+
+            import db_manager
+            get_postgres_connection = db_manager.get_postgres_connection
+            DUAL_DB_AVAILABLE = True
+            self.logger.info(f"   ✅ Successfully loaded db_manager")
+        except ImportError as e:
+            self.logger.warning(f"⚠️  Could not import db_manager: {e}")
+            DUAL_DB_AVAILABLE = False
+
+        try:
             self.logger.info(f"🔄 Actualizando tabla stock_actual con {len(df):,} registros")
+            self.logger.info(f"   🔍 DEBUG - DB_MODE value: '{DB_MODE}'")
+            self.logger.info(f"   🔍 DEBUG - DUAL_DB_AVAILABLE: {DUAL_DB_AVAILABLE}")
+            self.logger.info(f"   🔍 DEBUG - Checking DB_MODE == 'duckdb': {DB_MODE == 'duckdb'}")
+            self.logger.info(f"   🔍 DEBUG - Checking DB_MODE in ('dual', 'postgresql'): {DB_MODE in ('dual', 'postgresql')}")
 
             # Preparar datos para stock_actual
             columnas_base = [
@@ -391,6 +488,21 @@ class DuckDBLoader:
                 columnas_base.append('almacen_codigo')
                 self.logger.info(f"   📦 Incluye almacen_codigo en actualización")
 
+            # DEBUG: Verificar columnas disponibles vs esperadas
+            self.logger.info(f"   🔍 DEBUG - DataFrame shape: {df.shape}")
+            self.logger.info(f"   🔍 DEBUG - Columnas en DataFrame: {df.columns.tolist()}")
+            self.logger.info(f"   🔍 DEBUG - Columnas esperadas: {columnas_base}")
+
+            # Verificar que todas las columnas esperadas existen
+            missing_cols = [col for col in columnas_base if col not in df.columns]
+            if missing_cols:
+                self.logger.error(f"   ❌ Columnas faltantes: {missing_cols}")
+                return {
+                    "success": False,
+                    "records_updated": 0,
+                    "message": f"Columnas faltantes en DataFrame: {missing_cols}"
+                }
+
             stock_df = df[columnas_base].copy()
 
             stock_df = stock_df.rename(columns={
@@ -401,61 +513,70 @@ class DuckDBLoader:
                 'fecha_extraccion': 'ultima_actualizacion'
             })
 
-            # Usar REPLACE para actualizar/insertar
-            conn.execute("BEGIN TRANSACTION")
+            # =================================================================
+            # DUCKDB MODE - Lógica original sin cambios
+            # =================================================================
+            if DB_MODE == "duckdb":
+                conn = self.get_connection()
+                conn.execute("BEGIN TRANSACTION")
+                conn.register('stock_updates', stock_df)
 
-            # Registrar DataFrame temporalmente
-            conn.register('stock_updates', stock_df)
+                if tiene_almacen:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO stock_actual
+                        (ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
+                         stock_minimo, stock_maximo, ultima_actualizacion, almacen_codigo)
+                        SELECT
+                            s.ubicacion_id,
+                            p.id as producto_id,
+                            s.cantidad,
+                            s.valor_inventario,
+                            s.costo_promedio,
+                            s.stock_minimo,
+                            s.stock_maximo,
+                            s.ultima_actualizacion,
+                            s.almacen_codigo
+                        FROM stock_updates s
+                        INNER JOIN productos p ON p.codigo = s.producto_id
+                    """)
+                else:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO stock_actual
+                        (ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
+                         stock_minimo, stock_maximo, ultima_actualizacion)
+                        SELECT
+                            s.ubicacion_id,
+                            p.id as producto_id,
+                            s.cantidad,
+                            s.valor_inventario,
+                            s.costo_promedio,
+                            s.stock_minimo,
+                            s.stock_maximo,
+                            s.ultima_actualizacion
+                        FROM stock_updates s
+                        INNER JOIN productos p ON p.codigo = s.producto_id
+                    """)
 
-            # Actualizar stock_actual usando MERGE-like operation
-            # IMPORTANTE: Hacer JOIN con productos para obtener el UUID correcto
-            # stock_updates.producto_id contiene el CODIGO del producto
-            # pero stock_actual.producto_id debe ser el UUID (productos.id)
-            if tiene_almacen:
-                conn.execute("""
-                    INSERT OR REPLACE INTO stock_actual
-                    (ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
-                     stock_minimo, stock_maximo, ultima_actualizacion, almacen_codigo)
-                    SELECT
-                        s.ubicacion_id,
-                        p.id as producto_id,
-                        s.cantidad,
-                        s.valor_inventario,
-                        s.costo_promedio,
-                        s.stock_minimo,
-                        s.stock_maximo,
-                        s.ultima_actualizacion,
-                        s.almacen_codigo
-                    FROM stock_updates s
-                    INNER JOIN productos p ON p.codigo = s.producto_id
-                """)
-            else:
-                conn.execute("""
-                    INSERT OR REPLACE INTO stock_actual
-                    (ubicacion_id, producto_id, cantidad, valor_inventario, costo_promedio,
-                     stock_minimo, stock_maximo, ultima_actualizacion)
-                    SELECT
-                        s.ubicacion_id,
-                        p.id as producto_id,
-                        s.cantidad,
-                        s.valor_inventario,
-                        s.costo_promedio,
-                        s.stock_minimo,
-                        s.stock_maximo,
-                        s.ultima_actualizacion
-                    FROM stock_updates s
-                    INNER JOIN productos p ON p.codigo = s.producto_id
-                """)
+                conn.execute("COMMIT")
+                conn.close()
+                self.logger.info("✅ Tabla stock_actual actualizada en DuckDB")
 
-            conn.execute("COMMIT")
-            conn.close()
+            # =================================================================
+            # POSTGRESQL MODE ONLY - Escribe SOLO en PostgreSQL
+            # =================================================================
+            elif DB_MODE in ("dual", "postgresql"):
+                self.logger.info(f"   🔄 PostgreSQL mode: DB_MODE={DB_MODE}")
+                if not DUAL_DB_AVAILABLE:
+                    raise ImportError(f"DB_MODE={DB_MODE} pero db_manager/db_config no disponibles")
 
-            self.logger.info("✅ Tabla stock_actual actualizada")
+                # Escribir en PostgreSQL
+                self._write_stock_to_postgres(stock_df, tiene_almacen)
+                self.logger.info("✅ Tabla inventario_actual actualizada en PostgreSQL")
 
             return {
                 "success": True,
                 "records_updated": len(stock_df),
-                "message": "stock_actual actualizado correctamente"
+                "message": f"stock_actual actualizado correctamente (DB_MODE={DB_MODE})"
             }
 
         except Exception as e:
@@ -465,6 +586,126 @@ class DuckDBLoader:
                 "error": str(e),
                 "message": "Error actualizando stock_actual"
             }
+
+    def _write_stock_to_postgres(self, stock_df: pd.DataFrame, tiene_almacen: bool) -> None:
+        """
+        Escribe datos de inventario a PostgreSQL (schema v2.0 con almacen_codigo en PK)
+        SOLO POSTGRESQL MODE - sin DuckDB
+
+        Args:
+            stock_df: DataFrame preparado para stock_actual (ya renombrado con producto_id)
+            tiene_almacen: Si incluye columna almacen_codigo
+        """
+        import psycopg2.extras
+        import importlib
+        import sys
+
+        # Force fresh import to get current DB_MODE
+        if 'db_manager' in sys.modules:
+            db_manager = importlib.reload(sys.modules['db_manager'])
+        else:
+            db_manager = importlib.import_module('db_manager')
+
+        get_postgres_connection = db_manager.get_postgres_connection
+
+        # VALIDACIÓN CRÍTICA: almacen_codigo es OBLIGATORIO en schema v2.0
+        if 'almacen_codigo' not in stock_df.columns:
+            self.logger.warning("⚠️  almacen_codigo no existe en DataFrame, agregando APP-TPF por defecto")
+            stock_df['almacen_codigo'] = 'APP-TPF'
+        elif stock_df['almacen_codigo'].isna().any():
+            null_count = stock_df['almacen_codigo'].isna().sum()
+            self.logger.warning(f"⚠️  {null_count} registros con almacen_codigo NULL, usando APP-TPF por defecto")
+            stock_df['almacen_codigo'] = stock_df['almacen_codigo'].fillna('APP-TPF')
+
+        with get_postgres_connection() as pg_conn:
+            cursor = pg_conn.cursor()
+
+            # 1. Insertar/actualizar ubicaciones (tiendas)
+            ubicaciones_unicas = stock_df['ubicacion_id'].unique()
+            self.logger.info(f"   🔄 Sincronizando {len(ubicaciones_unicas)} ubicaciones en PostgreSQL")
+
+            for ubicacion_id in ubicaciones_unicas:
+                # Obtener nombre de ubicacion desde TIENDAS_CONFIG
+                from tiendas_config import TIENDAS_CONFIG
+                tienda_config = TIENDAS_CONFIG.get(ubicacion_id, None)
+                # TiendaConfig es un dataclass, no un dict - acceder atributos directamente
+                nombre = tienda_config.ubicacion_nombre if tienda_config else ubicacion_id.upper()
+
+                cursor.execute("""
+                    INSERT INTO ubicaciones (id, nombre, codigo_klk, ciudad, estado, activo)
+                    VALUES (%s, %s, %s, %s, %s, TRUE)
+                    ON CONFLICT (id) DO UPDATE SET
+                        nombre = EXCLUDED.nombre,
+                        codigo_klk = EXCLUDED.codigo_klk,
+                        fecha_creacion = CURRENT_TIMESTAMP
+                """, (ubicacion_id, nombre, ubicacion_id, 'Caracas', 'Miranda'))
+
+            self.logger.info("   ✅ Ubicaciones sincronizadas")
+
+            # 2. Sincronizar almacenes (crear APP-TPF y APP-PPF si no existen)
+            almacenes_unicos = stock_df['almacen_codigo'].unique()
+            self.logger.info(f"   🔄 Sincronizando {len(almacenes_unicos)} almacenes")
+
+            for almacen_codigo in almacenes_unicos:
+                for ubicacion_id in ubicaciones_unicas:
+                    # Mapeo nombre de almacén
+                    almacen_nombre = 'PISO DE VENTA' if 'TPF' in almacen_codigo else 'PRINCIPAL'
+
+                    cursor.execute("""
+                        INSERT INTO almacenes (codigo, nombre, ubicacion_id, activo)
+                        VALUES (%s, %s, %s, TRUE)
+                        ON CONFLICT (codigo) DO UPDATE SET
+                            nombre = EXCLUDED.nombre,
+                            ubicacion_id = EXCLUDED.ubicacion_id
+                    """, (almacen_codigo, almacen_nombre, ubicacion_id))
+
+            self.logger.info("   ✅ Almacenes sincronizados")
+
+            # 3. Sincronizar productos con datos completos desde KLK
+            # Necesitamos acceder al DataFrame original (df_raw) para obtener campos KLK
+            # Por ahora, auto-registro mínimo (se puede mejorar después con datos completos)
+            productos_unicos = stock_df[['producto_id']].drop_duplicates()
+            self.logger.info(f"   🔄 Sincronizando {len(productos_unicos)} productos únicos")
+
+            for _, row in productos_unicos.iterrows():
+                producto_id = row['producto_id']
+                # Auto-registro con datos mínimos (schema v2.0)
+                # TODO: Pasar datos completos desde transformer (nombre, marca, categoria, etc.)
+                cursor.execute("""
+                    INSERT INTO productos (id, codigo, nombre, activo)
+                    VALUES (%s, %s, %s, TRUE)
+                    ON CONFLICT (codigo) DO NOTHING
+                """, (producto_id, producto_id, f'Producto {producto_id}'))
+
+            self.logger.info("   ✅ Productos sincronizados")
+
+            # 4. Insertar/actualizar inventario_actual (SCHEMA V2.0)
+            self.logger.info(f"   🔄 Sincronizando {len(stock_df)} registros de inventario en PostgreSQL")
+
+            for _, row in stock_df.iterrows():
+                # SCHEMA V2.0: Solo 4 campos (ubicacion_id, producto_id, almacen_codigo, cantidad)
+                # fecha_creacion y fecha_actualizacion se auto-generan con DEFAULT CURRENT_TIMESTAMP
+                cursor.execute("""
+                    INSERT INTO inventario_actual (
+                        ubicacion_id,
+                        producto_id,
+                        almacen_codigo,
+                        cantidad
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (ubicacion_id, producto_id, almacen_codigo) DO UPDATE SET
+                        cantidad = EXCLUDED.cantidad,
+                        fecha_actualizacion = CURRENT_TIMESTAMP
+                """, (
+                    row['ubicacion_id'],        # Foreign key a ubicaciones
+                    row['producto_id'],         # Foreign key a productos (renombrado desde codigo_producto)
+                    row['almacen_codigo'],      # Foreign key a almacenes (CRÍTICO: ahora en PK)
+                    row['cantidad']             # Cantidad actual (renombrado desde cantidad_actual)
+                ))
+
+            pg_conn.commit()
+            cursor.close()
+            self.logger.info("   ✅ Inventario sincronizado en PostgreSQL (schema v2.0)")
 
     def get_etl_statistics(self, dias: int = 7) -> Dict[str, Any]:
         """Obtiene estadísticas del ETL de los últimos días"""

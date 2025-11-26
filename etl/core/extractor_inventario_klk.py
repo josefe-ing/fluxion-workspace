@@ -222,7 +222,7 @@ class InventarioKLKExtractor:
                 # Agregar metadatos de la tienda
                 df['ubicacion_id'] = ubicacion_id
                 df['ubicacion_nombre'] = ubicacion_nombre
-                df['codigo_almacen_klk'] = codigo_almacen
+                df['almacen_codigo'] = codigo_almacen
                 df['fecha_extraccion'] = datetime.now()
                 df['fuente_sistema'] = 'KLK'
 

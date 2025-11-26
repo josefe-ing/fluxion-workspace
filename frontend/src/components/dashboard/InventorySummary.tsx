@@ -16,6 +16,38 @@ interface UbicacionSummary {
   almacen_nombre?: string | null;
 }
 
+// Mapping de ubicaciones a nombres amigables
+const UBICACION_FRIENDLY_NAMES: Record<string, string> = {
+  'tienda_01': 'PERIFERICO',
+  'tienda_02': 'AV. BOLIVAR',
+  'tienda_03': 'MAÑONGO',
+  'tienda_04': 'SAN DIEGO',
+  'tienda_05': 'VIVIENDA',
+  'tienda_06': 'NAGUANAGUA',
+  'tienda_07': 'CENTRO',
+  'tienda_08': 'BOSQUE',
+  'tienda_09': 'GUACARA',
+  'tienda_10': 'FERIAS',
+  'tienda_11': 'FLOR AMARILLO',
+  'tienda_12': 'PARAPARAL',
+  'tienda_13': 'NAGUANAGUA III',
+  'tienda_15': 'ISABELICA',
+  'tienda_16': 'TOCUYITO',
+  'tienda_17': 'ARTIGAS',
+  'tienda_18': 'PARAISO',
+  'tienda_19': 'GUIGUE',
+  'tienda_20': 'TAZAJAL',
+  'cedi_seco': 'CEDI SECO',
+  'cedi_frio': 'CEDI FRIO',
+  'cedi_verde': 'CEDI VERDE',
+  'cedi_frutas': 'CEDI FRUTAS',
+};
+
+// Función helper para obtener el nombre amigable de la ubicación
+const getFriendlyLocationName = (ubicacionId: string, ubicacionNombre: string): string => {
+  return UBICACION_FRIENDLY_NAMES[ubicacionId] || ubicacionNombre;
+};
+
 export default function InventorySummary() {
   const [summaryData, setSummaryData] = useState<UbicacionSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -186,7 +218,7 @@ export default function InventorySummary() {
                 >
                   <td className="px-6 py-4 whitespace-nowrap text-center">
                     <div className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600" onClick={() => handleUbicacionClick(item.ubicacion_id)}>
-                      {item.ubicacion_nombre}
+                      {getFriendlyLocationName(item.ubicacion_id, item.ubicacion_nombre)}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-center">

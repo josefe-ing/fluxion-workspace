@@ -32,15 +32,17 @@ function ProtectedRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<Navigate to="/pedidos-sugeridos" replace />} />
-        <Route path="dashboard" element={<Navigate to="/pedidos-sugeridos" replace />} />
+        {/* Default route: Ventas (migrado a PostgreSQL v2.0) */}
+        <Route index element={<Navigate to="/ventas" replace />} />
+        <Route path="dashboard" element={<Navigate to="/ventas" replace />} />
         <Route path="inventarios" element={<InventorySummary />} />
         <Route path="dashboard/:ubicacionId" element={<InventoryDashboard />} />
         <Route path="ventas" element={<SalesSummary />} />
         <Route path="ventas/:ubicacionId" element={<SalesDashboard />} />
-        <Route path="pedidos-sugeridos" element={<SuggestedOrder />} />
-        <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} />
-        <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
+        {/* Pedidos routes deshabilitados - No migrados a PostgreSQL v2.0 */}
+        {/* <Route path="pedidos-sugeridos" element={<SuggestedOrder />} /> */}
+        {/* <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} /> */}
+        {/* <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} /> */}
         <Route path="administrador" element={<ETLControlCenter />} />
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="administrador/config-inventario" element={<ConfiguracionInventario />} />

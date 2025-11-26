@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
+import ProductHistoryModal from './ProductHistoryModal';
 
 interface StockItem {
   ubicacion_id: string;
@@ -81,6 +82,10 @@ export default function InventoryDashboard() {
   const [sortOrderStock, setSortOrderStock] = useState<'asc' | 'desc'>('desc');
   const [sortByPeso, setSortByPeso] = useState(false);
   const [sortOrderPeso, setSortOrderPeso] = useState<'asc' | 'desc'>('desc');
+
+  // Modal de histórico de inventario
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<{ codigo: string; descripcion: string } | null>(null);
 
   // Debounce search term
   useEffect(() => {
@@ -424,12 +429,15 @@ export default function InventoryDashboard() {
                       )}
                     </div>
                   </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Histórico
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {stockData.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
+                    <td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-500">
                       No se encontraron productos con los filtros seleccionados
                     </td>
                   </tr>
@@ -479,6 +487,23 @@ export default function InventoryDashboard() {
                           <div className="text-lg font-semibold text-gray-500">-</div>
                         )}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                        <button
+                          onClick={() => {
+                            setSelectedProduct({
+                              codigo: item.codigo_producto,
+                              descripcion: item.descripcion_producto
+                            });
+                            setShowHistoryModal(true);
+                          }}
+                          className="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                        >
+                          <svg className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          Ver
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -517,6 +542,20 @@ export default function InventoryDashboard() {
           </div>
         )}
       </div>
+
+      {/* Modal de Histórico de Inventario */}
+      {selectedProduct && (
+        <ProductHistoryModal
+          isOpen={showHistoryModal}
+          onClose={() => {
+            setShowHistoryModal(false);
+            setSelectedProduct(null);
+          }}
+          codigoProducto={selectedProduct.codigo}
+          descripcionProducto={selectedProduct.descripcion}
+          ubicacionId={selectedUbicacion}
+        />
+      )}
     </div>
   );
 }
