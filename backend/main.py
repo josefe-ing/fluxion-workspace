@@ -4048,6 +4048,135 @@ async def get_ventas_detail(
             raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 500")
 
         with get_db_connection() as conn:
+            # PostgreSQL v2.0 - versión simplificada (sin categorías ni descripciones)
+            if is_postgres_mode():
+                cursor = conn.cursor()
+
+                # Calcular fechas por defecto
+                if not fecha_fin:
+                    fecha_fin = datetime.now().strftime('%Y-%m-%d')
+                if not fecha_inicio:
+                    fecha_inicio = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+
+                # Construir filtros
+                where_clauses = ["fecha_venta >= %s::timestamp AND fecha_venta < (%s::date + interval '1 day')::timestamp"]
+                params = [fecha_inicio, fecha_fin]
+
+                if ubicacion_id:
+                    where_clauses.append("ubicacion_id = %s")
+                    params.append(ubicacion_id)
+
+                if search:
+                    # Buscar en código de producto y descripción (JOIN con productos)
+                    where_clauses.append("""
+                        (producto_id ILIKE %s OR EXISTS (
+                            SELECT 1 FROM productos p WHERE p.codigo = ventas.producto_id AND p.descripcion ILIKE %s
+                        ))
+                    """)
+                    params.append(f"%{search}%")
+                    params.append(f"%{search}%")
+
+                # Filtro por categoría (requiere JOIN con productos)
+                categoria_filter = ""
+                if categoria:
+                    categoria_filter = f" AND p.categoria = %s"
+
+                where_clause = " AND ".join(where_clauses)
+
+                # Contar productos únicos
+                count_query = f"""
+                    SELECT COUNT(DISTINCT producto_id)
+                    FROM ventas
+                    WHERE {where_clause}
+                """
+                cursor.execute(count_query, params)
+                total_items = cursor.fetchone()[0]
+
+                total_pages = (total_items + page_size - 1) // page_size
+                offset = (page - 1) * page_size
+
+                # Calcular días distintos en el rango
+                dias_query = f"""
+                    SELECT COUNT(DISTINCT fecha_venta::date) FROM ventas WHERE {where_clause}
+                """
+                cursor.execute(dias_query, params)
+                dias_distintos = cursor.fetchone()[0] or 1
+
+                # Query principal
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                order_by = 'cantidad_total' if sort_by in ['cantidad_total', None] else 'cantidad_total'
+
+                # Construir parámetros finales (incluyendo categoría si se especificó)
+                final_params = params.copy()
+                if categoria:
+                    final_params.append(categoria)
+
+                main_query = f"""
+                    WITH producto_stats AS (
+                        SELECT
+                            producto_id,
+                            SUM(cantidad_vendida) as cantidad_total,
+                            SUM(venta_total) as venta_total_sum
+                        FROM ventas
+                        WHERE {where_clause}
+                        GROUP BY producto_id
+                    ),
+                    totales AS (
+                        SELECT SUM(cantidad_total) as gran_total FROM producto_stats
+                    )
+                    SELECT
+                        ps.producto_id,
+                        COALESCE(p.descripcion, ps.producto_id) as descripcion,
+                        COALESCE(p.categoria, 'Sin categoría') as categoria,
+                        ps.cantidad_total,
+                        ps.cantidad_total / {dias_distintos}::float as promedio_diario,
+                        0 as promedio_mismo_dia_semana,
+                        NULL as comparacion_ano_anterior,
+                        (ps.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
+                        NULL as cantidad_bultos,
+                        NULL as total_bultos,
+                        NULL as promedio_bultos_diario
+                    FROM producto_stats ps
+                    CROSS JOIN totales t
+                    LEFT JOIN productos p ON ps.producto_id = p.codigo
+                    WHERE 1=1 {categoria_filter}
+                    ORDER BY {order_by} {order_direction}
+                    LIMIT %s OFFSET %s
+                """
+                cursor.execute(main_query, final_params + [page_size, offset])
+                result = cursor.fetchall()
+                cursor.close()
+
+                items = [
+                    VentasDetailResponse(
+                        codigo_producto=row[0],
+                        descripcion_producto=row[1],
+                        categoria=row[2],
+                        cantidad_total=float(row[3]) if row[3] else 0,
+                        promedio_diario=float(row[4]) if row[4] else 0,
+                        promedio_mismo_dia_semana=float(row[5]) if row[5] else 0,
+                        comparacion_ano_anterior=float(row[6]) if row[6] else None,
+                        porcentaje_total=float(row[7]) if row[7] else 0,
+                        cantidad_bultos=float(row[8]) if row[8] else None,
+                        total_bultos=float(row[9]) if row[9] else None,
+                        promedio_bultos_diario=float(row[10]) if row[10] else None
+                    )
+                    for row in result
+                ]
+
+                return PaginatedVentasResponse(
+                    data=items,
+                    pagination=PaginationMetadata(
+                        total_items=total_items,
+                        total_pages=total_pages,
+                        current_page=page,
+                        page_size=page_size,
+                        has_next=page < total_pages,
+                        has_previous=page > 1
+                    )
+                )
+
+            # DuckDB (legacy)
             # Si no se especifican fechas, usar último mes
             if not fecha_inicio or not fecha_fin:
                 fecha_fin = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()[0]
@@ -4210,14 +4339,28 @@ async def get_ventas_categorias():
     """Obtiene todas las categorías de productos vendidos"""
     try:
         with get_db_connection() as conn:
-            result = conn.execute("""
-                SELECT DISTINCT categoria_producto
-                FROM ventas_raw
-                WHERE categoria_producto IS NOT NULL
-                ORDER BY categoria_producto
-            """).fetchall()
-
-            return [{"value": row[0], "label": row[0]} for row in result]
+            if is_postgres_mode():
+                # PostgreSQL v2.0: Obtener categorías desde tabla productos
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT DISTINCT p.categoria
+                    FROM productos p
+                    WHERE p.categoria IS NOT NULL
+                      AND EXISTS (SELECT 1 FROM ventas v WHERE v.producto_id = p.codigo)
+                    ORDER BY p.categoria
+                """)
+                result = cursor.fetchall()
+                cursor.close()
+                return [{"value": row[0], "label": row[0]} for row in result]
+            else:
+                # DuckDB (legacy)
+                result = conn.execute("""
+                    SELECT DISTINCT categoria_producto
+                    FROM ventas_raw
+                    WHERE categoria_producto IS NOT NULL
+                    ORDER BY categoria_producto
+                """).fetchall()
+                return [{"value": row[0], "label": row[0]} for row in result]
 
     except Exception as e:
         logger.error(f"Error obteniendo categorías de ventas: {str(e)}")
@@ -4245,45 +4388,88 @@ async def get_ventas_producto_diario(
             fecha_inicio = (datetime.now() - timedelta(days=56)).strftime('%Y-%m-%d')
 
         with get_db_connection() as conn:
-            # Obtener información del producto
-            producto_info = conn.execute("""
-                SELECT DISTINCT
+            # PostgreSQL v2.0
+            if is_postgres_mode():
+                cursor = conn.cursor()
+
+                # Obtener información del producto desde tabla productos
+                cursor.execute("""
+                    SELECT codigo, descripcion, categoria
+                    FROM productos
+                    WHERE codigo = %s
+                """, [codigo_producto])
+                producto_info = cursor.fetchone()
+
+                if not producto_info:
+                    cursor.close()
+                    raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+                # Obtener ventas diarias por tienda
+                # En PostgreSQL v2.0, cantidad_vendida ya está en unidades
+                # No tenemos cantidad_bultos, así que usamos cantidad_vendida directamente
+                # Agrupamos solo por ubicacion_id y hacemos JOIN con ubicaciones para obtener nombre real
+                ventas_query = """
+                    SELECT
+                        v.fecha_venta::date as fecha,
+                        v.ubicacion_id,
+                        COALESCE(u.nombre, v.ubicacion_id) as ubicacion_nombre,
+                        SUM(v.cantidad_vendida) as total_bultos,
+                        SUM(v.cantidad_vendida) as total_unidades,
+                        SUM(v.venta_total) as venta_total
+                    FROM ventas v
+                    LEFT JOIN ubicaciones u ON v.ubicacion_id = u.id
+                    WHERE v.producto_id = %s
+                        AND v.fecha_venta::date BETWEEN %s AND %s
+                        AND v.cantidad_vendida > 0
+                    GROUP BY v.fecha_venta::date, v.ubicacion_id, u.nombre
+                    ORDER BY v.fecha_venta::date, v.ubicacion_id
+                """
+
+                cursor.execute(ventas_query, [codigo_producto, fecha_inicio, fecha_fin])
+                ventas_result = cursor.fetchall()
+                cursor.close()
+
+            else:
+                # DuckDB (legacy)
+                # Obtener información del producto
+                producto_info = conn.execute("""
+                    SELECT DISTINCT
+                        codigo_producto,
+                        descripcion_producto,
+                        categoria_producto
+                    FROM ventas_raw
+                    WHERE codigo_producto = ?
+                    LIMIT 1
+                """, [codigo_producto]).fetchone()
+
+                if not producto_info:
+                    raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+                # Obtener ventas diarias por tienda
+                # Calcular bultos correctamente: cantidad_vendida / cantidad_bultos
+                # cantidad_bultos representa las unidades por bulto para ese producto
+                ventas_query = """
+                    SELECT
+                        TRY_CAST(fecha AS DATE) as fecha,
+                        ubicacion_id,
+                        ubicacion_nombre,
+                        SUM(TRY_CAST(cantidad_vendida AS DOUBLE) / NULLIF(TRY_CAST(cantidad_bultos AS DOUBLE), 0)) as total_bultos,
+                        SUM(TRY_CAST(cantidad_vendida AS DOUBLE)) as total_unidades,
+                        SUM(TRY_CAST(venta_total AS DOUBLE)) as venta_total
+                    FROM ventas_raw
+                    WHERE codigo_producto = ?
+                        AND TRY_CAST(fecha AS DATE) BETWEEN ? AND ?
+                        AND TRY_CAST(cantidad_vendida AS DOUBLE) > 0
+                        AND TRY_CAST(cantidad_bultos AS DOUBLE) > 0
+                    GROUP BY fecha, ubicacion_id, ubicacion_nombre
+                    ORDER BY fecha, ubicacion_id
+                """
+
+                ventas_result = conn.execute(ventas_query, [
                     codigo_producto,
-                    descripcion_producto,
-                    categoria_producto
-                FROM ventas_raw
-                WHERE codigo_producto = ?
-                LIMIT 1
-            """, [codigo_producto]).fetchone()
-
-            if not producto_info:
-                raise HTTPException(status_code=404, detail="Producto no encontrado")
-
-            # Obtener ventas diarias por tienda
-            # Calcular bultos correctamente: cantidad_vendida / cantidad_bultos
-            # cantidad_bultos representa las unidades por bulto para ese producto
-            ventas_query = """
-                SELECT
-                    TRY_CAST(fecha AS DATE) as fecha,
-                    ubicacion_id,
-                    ubicacion_nombre,
-                    SUM(TRY_CAST(cantidad_vendida AS DOUBLE) / NULLIF(TRY_CAST(cantidad_bultos AS DOUBLE), 0)) as total_bultos,
-                    SUM(TRY_CAST(cantidad_vendida AS DOUBLE)) as total_unidades,
-                    SUM(TRY_CAST(venta_total AS DOUBLE)) as venta_total
-                FROM ventas_raw
-                WHERE codigo_producto = ?
-                    AND TRY_CAST(fecha AS DATE) BETWEEN ? AND ?
-                    AND TRY_CAST(cantidad_vendida AS DOUBLE) > 0
-                    AND TRY_CAST(cantidad_bultos AS DOUBLE) > 0
-                GROUP BY fecha, ubicacion_id, ubicacion_nombre
-                ORDER BY fecha, ubicacion_id
-            """
-
-            ventas_result = conn.execute(ventas_query, [
-                codigo_producto,
-                fecha_inicio,
-                fecha_fin
-            ]).fetchall()
+                    fecha_inicio,
+                    fecha_fin
+                ]).fetchall()
 
             # Organizar datos por fecha y tienda
             ventas_por_fecha = {}
@@ -4484,6 +4670,200 @@ async def get_ventas_ultimos_20_dias(
     except Exception as e:
         logger.error(f"Error obteniendo ventas últimos 20 días: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error obteniendo ventas: {str(e)}")
+
+
+@app.get("/api/ventas/producto/{codigo_producto}/transacciones", tags=["Ventas"])
+async def get_transacciones_producto(
+    codigo_producto: str,
+    ubicacion_id: str,
+    fecha_inicio: str = None,
+    fecha_fin: str = None,
+    page: int = 1,
+    page_size: int = 50
+):
+    """
+    Obtiene las transacciones individuales (facturas) de un producto en una ubicación.
+
+    PostgreSQL v2.0: Usa tabla 'ventas' con datos granulares por línea de factura.
+
+    Args:
+        codigo_producto: Código SKU del producto
+        ubicacion_id: ID de la tienda (tienda_01, tienda_08, etc.)
+        fecha_inicio: Fecha inicio (opcional, default: últimos 30 días)
+        fecha_fin: Fecha fin (opcional, default: hoy)
+        page: Número de página para paginación
+        page_size: Tamaño de página (max 100)
+
+    Returns:
+        transacciones: Lista de transacciones con factura, fecha, cantidad, precio, total
+        pagination: Metadata de paginación
+        totales: Totales agregados (cantidad, venta, costo, utilidad)
+    """
+    try:
+        # Validar page_size
+        page_size = min(page_size, 100)
+        offset = (page - 1) * page_size
+
+        # Si no hay fechas, usar últimos 30 días
+        if not fecha_fin:
+            fecha_fin = datetime.now().strftime('%Y-%m-%d')
+        if not fecha_inicio:
+            fecha_inicio = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+
+        with get_db_connection() as conn:
+            if is_postgres_mode():
+                # PostgreSQL v2.0: tabla ventas
+                cursor = conn.cursor()
+
+                # Query para contar total de registros
+                count_query = """
+                    SELECT COUNT(*)
+                    FROM ventas
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_venta >= %s::timestamp
+                      AND fecha_venta < (%s::date + interval '1 day')::timestamp
+                """
+                cursor.execute(count_query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin])
+                total_items = cursor.fetchone()[0]
+
+                # Query para totales agregados
+                totales_query = """
+                    SELECT
+                        COALESCE(SUM(cantidad_vendida), 0) as total_cantidad,
+                        COALESCE(SUM(venta_total), 0) as total_venta,
+                        COALESCE(SUM(costo_total), 0) as total_costo,
+                        COALESCE(SUM(utilidad_bruta), 0) as total_utilidad,
+                        COUNT(DISTINCT SPLIT_PART(numero_factura, '_L', 1)) as total_facturas
+                    FROM ventas
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_venta >= %s::timestamp
+                      AND fecha_venta < (%s::date + interval '1 day')::timestamp
+                """
+                cursor.execute(totales_query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin])
+                totales_row = cursor.fetchone()
+
+                # Query principal con paginación
+                query = """
+                    SELECT
+                        numero_factura,
+                        TO_CHAR(fecha_venta, 'YYYY-MM-DD HH24:MI') as fecha_venta,
+                        almacen_nombre,
+                        cantidad_vendida,
+                        unidad_medida_venta,
+                        precio_unitario,
+                        costo_unitario,
+                        venta_total,
+                        costo_total,
+                        utilidad_bruta,
+                        margen_bruto_pct
+                    FROM ventas
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_venta >= %s::timestamp
+                      AND fecha_venta < (%s::date + interval '1 day')::timestamp
+                    ORDER BY fecha_venta DESC
+                    LIMIT %s OFFSET %s
+                """
+                cursor.execute(query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin, page_size, offset])
+                result = cursor.fetchall()
+
+                # Obtener información del producto desde tabla productos
+                cursor.execute("""
+                    SELECT descripcion, categoria
+                    FROM productos
+                    WHERE codigo = %s
+                """, [codigo_producto])
+                producto_info = cursor.fetchone()
+                cursor.close()
+
+                descripcion_producto = producto_info[0] if producto_info else codigo_producto
+                categoria_producto = producto_info[1] if producto_info else "Sin categoría"
+
+                transacciones = []
+                for row in result:
+                    # Extraer número de factura sin el sufijo _L{linea}
+                    factura_completa = row[0]
+                    factura_base = factura_completa.split('_L')[0] if '_L' in factura_completa else factura_completa
+
+                    transacciones.append({
+                        "numero_factura": factura_base,
+                        "numero_factura_linea": factura_completa,
+                        "fecha_venta": row[1],
+                        "almacen": row[2] or "N/A",
+                        "cantidad": float(row[3]) if row[3] else 0,
+                        "unidad_medida": row[4] or "UNIDAD",
+                        "precio_unitario": float(row[5]) if row[5] else 0,
+                        "costo_unitario": float(row[6]) if row[6] else 0,
+                        "venta_total": float(row[7]) if row[7] else 0,
+                        "costo_total": float(row[8]) if row[8] else 0,
+                        "utilidad": float(row[9]) if row[9] else 0,
+                        "margen_pct": float(row[10]) if row[10] else 0
+                    })
+
+                total_pages = (total_items + page_size - 1) // page_size
+
+                return {
+                    "transacciones": transacciones,
+                    "pagination": {
+                        "total_items": total_items,
+                        "total_pages": total_pages,
+                        "current_page": page,
+                        "page_size": page_size,
+                        "has_next": page < total_pages,
+                        "has_previous": page > 1
+                    },
+                    "totales": {
+                        "total_cantidad": float(totales_row[0]) if totales_row[0] else 0,
+                        "total_venta": float(totales_row[1]) if totales_row[1] else 0,
+                        "total_costo": float(totales_row[2]) if totales_row[2] else 0,
+                        "total_utilidad": float(totales_row[3]) if totales_row[3] else 0,
+                        "total_facturas": totales_row[4] if totales_row[4] else 0
+                    },
+                    "filtros": {
+                        "codigo_producto": codigo_producto,
+                        "ubicacion_id": ubicacion_id,
+                        "fecha_inicio": fecha_inicio,
+                        "fecha_fin": fecha_fin
+                    },
+                    "producto": {
+                        "codigo": codigo_producto,
+                        "descripcion": descripcion_producto,
+                        "categoria": categoria_producto
+                    }
+                }
+            else:
+                # DuckDB (legacy) - no implementado para transacciones
+                return {
+                    "transacciones": [],
+                    "pagination": {
+                        "total_items": 0,
+                        "total_pages": 0,
+                        "current_page": 1,
+                        "page_size": page_size,
+                        "has_next": False,
+                        "has_previous": False
+                    },
+                    "totales": {
+                        "total_cantidad": 0,
+                        "total_venta": 0,
+                        "total_costo": 0,
+                        "total_utilidad": 0,
+                        "total_facturas": 0
+                    },
+                    "filtros": {
+                        "codigo_producto": codigo_producto,
+                        "ubicacion_id": ubicacion_id,
+                        "fecha_inicio": fecha_inicio,
+                        "fecha_fin": fecha_fin
+                    },
+                    "error": "Transacciones solo disponibles en PostgreSQL v2.0"
+                }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo transacciones de producto: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error obteniendo transacciones: {str(e)}")
 
 
 # ========== ENDPOINTS PEDIDOS SUGERIDOS ==========
