@@ -224,18 +224,21 @@ class PostgreSQLInventarioLoader:
             """, (ubicacion_id, ubicacion_nombre, ubicacion_id, ubicacion_tipo))
             self.logger.info(f"   ✅ Ubicación sincronizada: {ubicacion_id}")
 
-            # PASO 0B: Crear almacén si no existe (requerido por FK de inventario_actual)
-            if almacen_codigo:
+            # PASO 0B: Crear TODOS los almacenes únicos del DataFrame (requerido por FK de inventario_actual)
+            # Nota: df puede tener múltiples almacenes (APP-TPF, APP-PPF, etc.)
+            almacenes_unicos = df['almacen_codigo'].dropna().unique() if 'almacen_codigo' in df.columns else []
+            for alm_codigo in almacenes_unicos:
                 cursor.execute("""
                     INSERT INTO almacenes (codigo, nombre, ubicacion_id, activo)
                     VALUES (%s, %s, %s, TRUE)
                     ON CONFLICT (codigo) DO NOTHING
-                """, (almacen_codigo, f'Almacén {ubicacion_nombre}', ubicacion_id))
-                self.logger.info(f"   ✅ Almacén sincronizado: {almacen_codigo}")
+                """, (alm_codigo, f'Almacén {ubicacion_nombre} - {alm_codigo}', ubicacion_id))
+            if len(almacenes_unicos) > 0:
+                self.logger.info(f"   ✅ Almacenes sincronizados: {list(almacenes_unicos)}")
 
             # PASO 1: Guardar snapshot histórico ANTES de eliminar
-            # Solo si hay datos previos en inventario_actual
-            self.logger.info(f"📸 Guardando snapshot histórico para ubicacion_id={ubicacion_id}, almacen={almacen_codigo}")
+            # Para TODOS los almacenes de esta ubicación que vamos a actualizar
+            self.logger.info(f"📸 Guardando snapshot histórico para ubicacion_id={ubicacion_id}, almacenes={list(almacenes_unicos)}")
 
             historico_insert = """
                 INSERT INTO inventario_historico (
@@ -249,18 +252,18 @@ class PostgreSQLInventarioLoader:
                     ia.fecha_actualizacion
                 FROM inventario_actual ia
                 WHERE ia.ubicacion_id = %s
-                  AND (ia.almacen_codigo = %s OR (ia.almacen_codigo IS NULL AND %s IS NULL))
+                  AND ia.almacen_codigo = ANY(%s)
             """
-            cursor.execute(historico_insert, (ubicacion_id, almacen_codigo, almacen_codigo))
+            cursor.execute(historico_insert, (ubicacion_id, list(almacenes_unicos) if len(almacenes_unicos) > 0 else [None]))
             historico_saved = cursor.rowcount
             self.logger.info(f"✅ {historico_saved} registros guardados en histórico")
 
-            # PASO 2: Eliminar stock anterior de esta ubicación
+            # PASO 2: Eliminar stock anterior de esta ubicación para los almacenes que vamos a actualizar
             cursor.execute("""
                 DELETE FROM inventario_actual
                 WHERE ubicacion_id = %s
-                  AND (almacen_codigo = %s OR (almacen_codigo IS NULL AND %s IS NULL))
-            """, (ubicacion_id, almacen_codigo, almacen_codigo))
+                  AND almacen_codigo = ANY(%s)
+            """, (ubicacion_id, list(almacenes_unicos) if len(almacenes_unicos) > 0 else [None]))
 
             # PASO 3: INSERT stock nuevo
             insert_query = """

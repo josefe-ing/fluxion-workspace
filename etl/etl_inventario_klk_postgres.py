@@ -201,13 +201,16 @@ class InventarioKLKETLPostgres:
 
             self.logger.info(f"\n✅ {tienda_nombre} procesada exitosamente")
 
-            # Tracking: Finalizar exitosamente
+            # Tracking: Finalizar exitosamente (no-crítico, no debe fallar el ETL)
             if self.tracker and ejecucion_id:
-                self.tracker.finalizar_ejecucion_exitosa(
-                    ejecucion_id,
-                    registros_extraidos=registros_extraidos,
-                    registros_cargados=registros_extraidos  # Para inventario, extraídos = cargados
-                )
+                try:
+                    self.tracker.finalizar_ejecucion_exitosa(
+                        ejecucion_id,
+                        registros_extraidos=registros_extraidos,
+                        registros_cargados=registros_extraidos  # Para inventario, extraídos = cargados
+                    )
+                except Exception as tracker_err:
+                    self.logger.warning(f"⚠️ Error en tracker (no-crítico): {tracker_err}")
 
             # Sentry: Reportar métricas
             if sentry_monitor:
@@ -221,22 +224,25 @@ class InventarioKLKETLPostgres:
         except Exception as e:
             self.logger.error(f"❌ Error procesando {tienda_nombre}: {e}", exc_info=True)
 
-            # Tracking: Finalizar con error
+            # Tracking: Finalizar con error (no-crítico, no debe fallar el ETL)
             if self.tracker and ejecucion_id:
-                error_tipo = 'api_error'
-                if 'timeout' in str(e).lower():
-                    error_tipo = 'timeout'
-                elif 'connection' in str(e).lower():
-                    error_tipo = 'conexion'
-                elif 'postgres' in str(e).lower():
-                    error_tipo = 'db_error'
+                try:
+                    error_tipo = 'api_error'
+                    if 'timeout' in str(e).lower():
+                        error_tipo = 'timeout'
+                    elif 'connection' in str(e).lower():
+                        error_tipo = 'conexion'
+                    elif 'postgres' in str(e).lower():
+                        error_tipo = 'db_error'
 
-                self.tracker.finalizar_ejecucion_fallida(
-                    ejecucion_id,
-                    error_mensaje=str(e),
-                    error_tipo=error_tipo,
-                    registros_extraidos=registros_extraidos
-                )
+                    self.tracker.finalizar_ejecucion_fallida(
+                        ejecucion_id,
+                        error_mensaje=str(e),
+                        error_tipo=error_tipo,
+                        registros_extraidos=registros_extraidos
+                    )
+                except Exception as tracker_err:
+                    self.logger.warning(f"⚠️ Error en tracker (no-crítico): {tracker_err}")
 
             # Sentry: Reportar error
             if sentry_monitor:
