@@ -48,11 +48,16 @@ export default function SalesSummary() {
 
   const formatFecha = (fechaStr: string) => {
     if (!fechaStr) return 'N/A';
-    const fecha = new Date(fechaStr + 'T00:00:00');
+    // El formato viene como "YYYY-MM-DD HH:MI" desde el backend
+    // Si solo viene fecha, agregar hora por defecto
+    const fechaConHora = fechaStr.includes(' ') ? fechaStr.replace(' ', 'T') : fechaStr + 'T00:00:00';
+    const fecha = new Date(fechaConHora);
     return fecha.toLocaleDateString('es-VE', {
       year: 'numeric',
       month: 'short',
-      day: 'numeric'
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     });
   };
 
@@ -157,7 +162,7 @@ export default function SalesSummary() {
                     Unidades Vendidas
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Última Venta
+                    Última Venta Sincronizada
                   </th>
                 </tr>
               </thead>

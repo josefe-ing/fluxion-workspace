@@ -3743,6 +3743,7 @@ async def get_ventas_summary():
             # Adaptar query según base de datos
             if is_postgres_mode():
                 # PostgreSQL v2.0: usa tabla ventas con JOIN a ubicaciones
+                # Incluye fecha Y hora de última venta sincronizada
                 query = """
                     SELECT
                         u.id as ubicacion_id,
@@ -3751,7 +3752,7 @@ async def get_ventas_summary():
                         COUNT(DISTINCT v.numero_factura) as total_transacciones,
                         COUNT(DISTINCT v.producto_id) as productos_unicos,
                         CAST(SUM(v.cantidad_vendida) AS INTEGER) as unidades_vendidas,
-                        TO_CHAR(MAX(v.fecha_venta), 'YYYY-MM-DD') as ultima_venta
+                        TO_CHAR(MAX(v.fecha_venta), 'YYYY-MM-DD HH24:MI') as ultima_venta
                     FROM ventas v
                     INNER JOIN ubicaciones u ON v.ubicacion_id = u.id
                     GROUP BY u.id, u.nombre
