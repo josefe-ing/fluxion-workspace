@@ -201,6 +201,35 @@ class PostgreSQLInventarioLoader:
             almacen_codigo = df['almacen_codigo'].iloc[0] if 'almacen_codigo' in df.columns else None
             fecha_snapshot = df['fecha_extraccion'].iloc[0] if 'fecha_extraccion' in df.columns else datetime.now()
 
+            # Get ubicacion name from tiendas_config or use ubicacion_id
+            ubicacion_nombre = ubicacion_id.replace('_', ' ').upper()
+            try:
+                from core.tiendas_config import TIENDAS_CONFIG
+                if ubicacion_id in TIENDAS_CONFIG:
+                    ubicacion_nombre = TIENDAS_CONFIG[ubicacion_id].get('nombre', ubicacion_id)
+            except Exception:
+                pass
+
+            # PASO 0A: Crear/actualizar ubicación (requerido por FK de inventario_actual)
+            self.logger.info(f"📍 Verificando ubicación: {ubicacion_nombre} ({ubicacion_id})")
+            cursor.execute("""
+                INSERT INTO ubicaciones (id, nombre, codigo_klk, activo)
+                VALUES (%s, %s, %s, TRUE)
+                ON CONFLICT (id) DO UPDATE SET
+                    nombre = EXCLUDED.nombre,
+                    codigo_klk = EXCLUDED.codigo_klk
+            """, (ubicacion_id, ubicacion_nombre, ubicacion_id))
+            self.logger.info(f"   ✅ Ubicación sincronizada: {ubicacion_id}")
+
+            # PASO 0B: Crear almacén si no existe (requerido por FK de inventario_actual)
+            if almacen_codigo:
+                cursor.execute("""
+                    INSERT INTO almacenes (codigo, nombre, ubicacion_id, activo)
+                    VALUES (%s, %s, %s, TRUE)
+                    ON CONFLICT (codigo) DO NOTHING
+                """, (almacen_codigo, f'Almacén {ubicacion_nombre}', ubicacion_id))
+                self.logger.info(f"   ✅ Almacén sincronizado: {almacen_codigo}")
+
             # PASO 1: Guardar snapshot histórico ANTES de eliminar
             # Solo si hay datos previos en inventario_actual
             self.logger.info(f"📸 Guardando snapshot histórico para ubicacion_id={ubicacion_id}, almacen={almacen_codigo}")
