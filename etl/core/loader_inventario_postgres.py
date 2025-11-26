@@ -211,14 +211,17 @@ class PostgreSQLInventarioLoader:
                 pass
 
             # PASO 0A: Crear/actualizar ubicación (requerido por FK de inventario_actual)
-            self.logger.info(f"📍 Verificando ubicación: {ubicacion_nombre} ({ubicacion_id})")
+            # Determinar tipo: 'cedi' si es CEDI, 'tienda' si no
+            ubicacion_tipo = 'cedi' if 'cedi' in ubicacion_id.lower() else 'tienda'
+            self.logger.info(f"📍 Verificando ubicación: {ubicacion_nombre} ({ubicacion_id}) - tipo: {ubicacion_tipo}")
             cursor.execute("""
-                INSERT INTO ubicaciones (id, nombre, codigo_klk, activo)
-                VALUES (%s, %s, %s, TRUE)
+                INSERT INTO ubicaciones (id, nombre, codigo_klk, tipo, activo)
+                VALUES (%s, %s, %s, %s, TRUE)
                 ON CONFLICT (id) DO UPDATE SET
                     nombre = EXCLUDED.nombre,
-                    codigo_klk = EXCLUDED.codigo_klk
-            """, (ubicacion_id, ubicacion_nombre, ubicacion_id))
+                    codigo_klk = EXCLUDED.codigo_klk,
+                    tipo = EXCLUDED.tipo
+            """, (ubicacion_id, ubicacion_nombre, ubicacion_id, ubicacion_tipo))
             self.logger.info(f"   ✅ Ubicación sincronizada: {ubicacion_id}")
 
             # PASO 0B: Crear almacén si no existe (requerido por FK de inventario_actual)
