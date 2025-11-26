@@ -742,6 +742,11 @@ PersistentKeepalive = 25`),
         // PostgreSQL credentials from Secrets Manager
         POSTGRES_USER: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'username'),
         POSTGRES_PASSWORD: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'password'),
+
+        // SendGrid credentials for email notifications (from fluxion/production secret)
+        SENDGRID_API_KEY: ecs.Secret.fromSecretsManager(productionSecrets, 'SENDGRID_API_KEY'),
+        SENDGRID_FROM_EMAIL: ecs.Secret.fromSecretsManager(productionSecrets, 'SENDGRID_FROM_EMAIL'),
+        NOTIFICATION_EMAILS: ecs.Secret.fromSecretsManager(productionSecrets, 'NOTIFICATION_EMAILS'),
       },
       stopTimeout: cdk.Duration.seconds(120),  // Máximo permitido por Fargate
     });
@@ -997,6 +1002,11 @@ PersistentKeepalive = 25`),
         // PostgreSQL credentials from Secrets Manager
         POSTGRES_USER: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'username'),
         POSTGRES_PASSWORD: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'password'),
+
+        // SendGrid credentials for email notifications (from fluxion/production secret)
+        SENDGRID_API_KEY: ecs.Secret.fromSecretsManager(productionSecrets, 'SENDGRID_API_KEY'),
+        SENDGRID_FROM_EMAIL: ecs.Secret.fromSecretsManager(productionSecrets, 'SENDGRID_FROM_EMAIL'),
+        NOTIFICATION_EMAILS: ecs.Secret.fromSecretsManager(productionSecrets, 'NOTIFICATION_EMAILS'),
       },
       stopTimeout: cdk.Duration.minutes(2),  // Fargate max is 120 seconds
     });

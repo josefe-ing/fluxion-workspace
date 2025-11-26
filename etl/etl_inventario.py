@@ -458,12 +458,38 @@ def main():
 
     if args.tiendas:
         # Ejecutar múltiples tiendas específicas (secuencialmente)
+        etl_start_time = datetime.now()
         logger.info(f"🎯 Ejecutando ETL para {len(args.tiendas)} tiendas: {args.tiendas}")
         resultados = []
         for tienda_id in args.tiendas:
             resultado = etl.ejecutar_etl_tienda(tienda_id)
             resultados.append(resultado)
+        etl_end_time = datetime.now()
         etl.generar_resumen(resultados)
+
+        # Send email notification (only in production)
+        if NOTIFICATIONS_AVAILABLE:
+            try:
+                exitosos = [r for r in resultados if r["success"]]
+                total_registros = sum(r["registros"] for r in exitosos)
+                tiempo_promedio = sum(r.get("tiempo_proceso", 0) for r in exitosos) / len(exitosos) if exitosos else 0
+
+                global_summary = {
+                    'Tiendas seleccionadas': ', '.join(args.tiendas),
+                    'Productos únicos': f"{total_registros:,}",
+                    'Promedio por tienda': f"{tiempo_promedio:.1f}s"
+                }
+
+                send_etl_notification(
+                    etl_name='ETL Inventario (Scheduled)',
+                    etl_type='inventario',
+                    start_time=etl_start_time,
+                    end_time=etl_end_time,
+                    tiendas_results=resultados,
+                    global_summary=global_summary
+                )
+            except Exception as e:
+                logger.error(f"Error sending email notification: {e}")
 
     elif args.tienda:
         # Ejecutar una tienda específica
