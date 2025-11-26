@@ -338,15 +338,19 @@ class PostgreSQLInventarioLoader:
             self.logger.info(f"📦 Cargando inventario Stellar: {ubicacion_nombre} ({ubicacion_id})")
             self.logger.info(f"   Almacén: {almacen_codigo}, Registros: {len(df)}")
 
+            # Determinar tipo de ubicación
+            ubicacion_tipo = 'cedi' if 'cedi' in ubicacion_id.lower() else 'tienda'
+
             # PASO 1: Crear/actualizar ubicación
+            # Nota: el schema tiene id (PK), codigo (UNIQUE NOT NULL), tipo (NOT NULL)
             cursor.execute("""
-                INSERT INTO ubicaciones (id, nombre, codigo_klk, activo)
-                VALUES (%s, %s, %s, TRUE)
+                INSERT INTO ubicaciones (id, codigo, nombre, tipo, activo)
+                VALUES (%s, %s, %s, %s, TRUE)
                 ON CONFLICT (id) DO UPDATE SET
                     nombre = EXCLUDED.nombre,
-                    codigo_klk = EXCLUDED.codigo_klk
-            """, (ubicacion_id, ubicacion_nombre, ubicacion_id))
-            self.logger.info(f"   ✅ Ubicación sincronizada: {ubicacion_id}")
+                    tipo = EXCLUDED.tipo
+            """, (ubicacion_id, ubicacion_id, ubicacion_nombre, ubicacion_tipo))
+            self.logger.info(f"   ✅ Ubicación sincronizada: {ubicacion_id} (tipo: {ubicacion_tipo})")
 
             # PASO 2: Crear almacén si no existe
             cursor.execute("""
