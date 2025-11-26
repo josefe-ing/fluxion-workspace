@@ -246,7 +246,7 @@ class MultiTiendaETL:
             }
 
     def _ejecutar_etl_klk(self, tienda_id: str, config, start_time: float, monitor) -> Dict[str, Any]:
-        """Ejecuta ETL para tiendas con KLK POS (REST API)"""
+        """Ejecuta ETL para tiendas con KLK POS (REST API) - procesa TODOS los almacenes activos"""
         if not KLK_AVAILABLE:
             logger.error("   ❌ KLK ETL components not available")
             return {
@@ -260,25 +260,27 @@ class MultiTiendaETL:
 
         try:
             logger.info(f"   📡 API: {self.klk_extractor.api_config.base_url}")
-            logger.info(f"   🏪 Almacén: {config.codigo_almacen_klk}")
 
-            # 1. EXTRACCIÓN
-            logger.info(f"   📥 Extrayendo datos desde KLK API...")
-            df_raw = self.klk_extractor.extract_inventario_data(config)
+            # 1. EXTRACCIÓN - Extraer TODOS los almacenes activos de la tienda
+            logger.info(f"   📥 Extrayendo datos desde KLK API (todos los almacenes)...")
+            dfs_raw = self.klk_extractor.extract_all_almacenes_tienda(config)
 
-            if df_raw is None or df_raw.empty:
+            if not dfs_raw:
                 logger.warning(f"   ⚠️ Sin datos para {config.ubicacion_nombre}")
                 return {
                     "tienda_id": tienda_id,
                     "nombre": config.ubicacion_nombre,
                     "success": False,
-                    "message": "Sin datos extraídos",
+                    "message": "Sin datos extraídos de ningún almacén",
                     "registros": 0,
                     "tiempo_proceso": time.time() - start_time
                 }
 
+            # Combinar DataFrames de todos los almacenes
+            import pandas as pd
+            df_raw = pd.concat(dfs_raw, ignore_index=True)
             registros_extraidos = len(df_raw)
-            logger.info(f"   ✅ Extraídos: {registros_extraidos} registros")
+            logger.info(f"   ✅ Extraídos: {registros_extraidos} registros de {len(dfs_raw)} almacén(es)")
 
             # 2. TRANSFORMACIÓN
             logger.info(f"   🔄 Transformando datos...")
@@ -313,6 +315,7 @@ class MultiTiendaETL:
             if monitor:
                 tiempo_proceso = time.time() - start_time
                 monitor.add_metric("registros_cargados", stock_cargado)
+                monitor.add_metric("almacenes_procesados", len(dfs_raw))
                 monitor.add_metric("tiempo_proceso", tiempo_proceso)
                 monitor.set_success(registros_cargados=stock_cargado)
 
@@ -320,8 +323,9 @@ class MultiTiendaETL:
                 "tienda_id": tienda_id,
                 "nombre": config.ubicacion_nombre,
                 "success": True,
-                "message": "ETL KLK completado exitosamente",
+                "message": f"ETL KLK completado ({len(dfs_raw)} almacenes)",
                 "registros": stock_cargado,
+                "almacenes_procesados": len(dfs_raw),
                 "tiempo_proceso": time.time() - start_time
             }
 
