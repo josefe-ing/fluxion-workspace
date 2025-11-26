@@ -325,6 +325,16 @@ def init_etl_tables():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Add codigo_klk column if it doesn't exist (for existing tables)
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='ubicaciones' AND column_name='codigo_klk') THEN
+                        ALTER TABLE ubicaciones ADD COLUMN codigo_klk VARCHAR(50);
+                    END IF;
+                END $$;
+            """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_ubicaciones_codigo_klk ON ubicaciones(codigo_klk)")
 
             # 2. Tabla productos
@@ -340,6 +350,20 @@ def init_etl_tables():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
+            """)
+            # Add nombre column if it doesn't exist (for existing tables with only descripcion)
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='nombre') THEN
+                        ALTER TABLE productos ADD COLUMN nombre VARCHAR(200);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='fecha_actualizacion') THEN
+                        ALTER TABLE productos ADD COLUMN fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                    END IF;
+                END $$;
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_productos_codigo ON productos(codigo)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_productos_categoria ON productos(categoria)")
