@@ -15,6 +15,62 @@ from pydantic import BaseModel
 # Import db_manager para conexiones cross-database
 from db_manager import get_db_connection, get_db_connection_write, is_postgres_mode, execute_query_dict
 
+# =====================================================================================
+# INICIALIZACIÓN DE TABLA USUARIOS (AUTO-CREATE SI NO EXISTE)
+# =====================================================================================
+
+def init_usuarios_table():
+    """
+    Crea la tabla usuarios si no existe.
+    Se ejecuta automáticamente al importar el módulo.
+    """
+    try:
+        with get_db_connection_write() as conn:
+            if is_postgres_mode():
+                cursor = conn.cursor()
+                # Crear tabla usuarios si no existe
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS usuarios (
+                        id VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+                        username VARCHAR(50) NOT NULL UNIQUE,
+                        password_hash VARCHAR(255) NOT NULL,
+                        nombre_completo VARCHAR(100),
+                        email VARCHAR(100),
+                        activo BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ultimo_login TIMESTAMP
+                    )
+                """)
+                # Crear índices si no existen
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios(username)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_activo ON usuarios(activo) WHERE activo = TRUE")
+                conn.commit()
+                cursor.close()
+                print("✅ Tabla usuarios verificada/creada en PostgreSQL")
+            else:
+                # DuckDB
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS usuarios (
+                        id VARCHAR PRIMARY KEY,
+                        username VARCHAR(50) NOT NULL UNIQUE,
+                        password_hash VARCHAR(255) NOT NULL,
+                        nombre_completo VARCHAR(100),
+                        email VARCHAR(100),
+                        activo BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ultimo_login TIMESTAMP
+                    )
+                """)
+                print("✅ Tabla usuarios verificada/creada en DuckDB")
+    except Exception as e:
+        print(f"⚠️ Error inicializando tabla usuarios: {e}")
+
+# Ejecutar inicialización al importar el módulo
+init_usuarios_table()
+
 # Configuración
 SECRET_KEY = "fluxion-ai-secret-key-change-in-production-2024"  # Cambiar en producción
 ALGORITHM = "HS256"
