@@ -297,10 +297,6 @@ class MultiTiendaETL:
 
             logger.info(f"   ✅ Transformados: {len(df_productos)} productos, {len(df_stock)} stock")
 
-            # 2B. TRANSFORMAR TAMBIÉN A INVENTARIO_RAW (para dashboard)
-            logger.info(f"   🔄 Transformando a inventario_raw (para dashboard)...")
-            df_inventario_raw = self.klk_transformer.transform_to_inventario_raw(df_raw)
-
             # 3. CARGA
             logger.info(f"   💾 Cargando a base de datos...")
 
@@ -308,17 +304,10 @@ class MultiTiendaETL:
             productos_cargados = self._cargar_productos_klk(df_productos)
             logger.info(f"   ✅ Productos cargados: {productos_cargados}")
 
-            # 3B: Cargar stock
+            # 3B: Cargar stock (a inventario_actual con almacenes KLK correctos)
             result_stock = self.loader.update_stock_actual_table(df_stock)
             stock_cargado = result_stock.get('records_updated', 0)
             logger.info(f"   ✅ Stock cargado: {stock_cargado}")
-
-            # 3C: Cargar a inventario_raw (IMPORTANTE: esto actualiza el dashboard)
-            result_raw = self.loader.load_inventory_data(df_inventario_raw)
-            if result_raw['success']:
-                logger.info(f"   ✅ inventario_raw cargado: {result_raw['stats']['insertados']} registros")
-            else:
-                logger.warning(f"   ⚠️ Error cargando inventario_raw: {result_raw.get('message')}")
 
             # Reportar métricas a Sentry
             if monitor:
