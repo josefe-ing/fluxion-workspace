@@ -1855,6 +1855,7 @@ async def get_historico_inventario(
 ):
     """
     Obtiene el histórico de inventario de un producto específico.
+    Incluye tanto los snapshots históricos como el estado actual.
 
     Args:
         codigo: Código del producto
@@ -1863,7 +1864,7 @@ async def get_historico_inventario(
         dias: Número de días hacia atrás (default 90)
 
     Returns:
-        Lista de snapshots históricos con fecha y cantidad
+        Lista de snapshots históricos + estado actual (marcado con es_actual=true)
     """
     try:
         with get_postgres_connection() as conn:
@@ -1877,8 +1878,8 @@ async def get_historico_inventario(
 
             producto_id = row[0]
 
-            # Construir query para histórico
-            query = """
+            # 1. Construir query para histórico
+            query_historico = """
                 SELECT
                     h.fecha_snapshot,
                     h.ubicacion_id,
@@ -1890,30 +1891,70 @@ async def get_historico_inventario(
                 WHERE h.producto_id = %s
                   AND h.fecha_snapshot >= CURRENT_DATE - INTERVAL '%s days'
             """
-            params = [producto_id, dias]
+            params_historico = [producto_id, dias]
 
             if ubicacion_id:
-                query += " AND h.ubicacion_id = %s"
-                params.append(ubicacion_id)
+                query_historico += " AND h.ubicacion_id = %s"
+                params_historico.append(ubicacion_id)
 
             if almacen_codigo:
-                query += " AND h.almacen_codigo = %s"
-                params.append(almacen_codigo)
+                query_historico += " AND h.almacen_codigo = %s"
+                params_historico.append(almacen_codigo)
 
-            query += " ORDER BY h.fecha_snapshot DESC"
+            query_historico += " ORDER BY h.fecha_snapshot ASC"
 
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
+            cursor.execute(query_historico, params_historico)
+            rows_historico = cursor.fetchall()
 
             historico = []
-            for row in rows:
+            for row in rows_historico:
                 historico.append({
                     "fecha_snapshot": row[0].isoformat() if row[0] else None,
                     "ubicacion_id": row[1],
                     "ubicacion_nombre": row[2],
                     "almacen_codigo": row[3],
-                    "cantidad": float(row[4])
+                    "cantidad": float(row[4]),
+                    "es_actual": False
                 })
+
+            # 2. Obtener inventario actual
+            query_actual = """
+                SELECT
+                    ia.fecha_actualizacion,
+                    ia.ubicacion_id,
+                    u.nombre as ubicacion_nombre,
+                    ia.almacen_codigo,
+                    ia.cantidad
+                FROM inventario_actual ia
+                JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                WHERE ia.producto_id = %s
+            """
+            params_actual = [producto_id]
+
+            if ubicacion_id:
+                query_actual += " AND ia.ubicacion_id = %s"
+                params_actual.append(ubicacion_id)
+
+            if almacen_codigo:
+                query_actual += " AND ia.almacen_codigo = %s"
+                params_actual.append(almacen_codigo)
+
+            cursor.execute(query_actual, params_actual)
+            rows_actual = cursor.fetchall()
+
+            # Agregar el inventario actual al final (marcado como es_actual=True)
+            for row in rows_actual:
+                historico.append({
+                    "fecha_snapshot": row[0].isoformat() if row[0] else None,
+                    "ubicacion_id": row[1],
+                    "ubicacion_nombre": row[2],
+                    "almacen_codigo": row[3],
+                    "cantidad": float(row[4]),
+                    "es_actual": True
+                })
+
+            # Ordenar todo por fecha (histórico + actual)
+            historico.sort(key=lambda x: x["fecha_snapshot"] if x["fecha_snapshot"] else "")
 
             cursor.close()
 

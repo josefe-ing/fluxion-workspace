@@ -9,6 +9,7 @@ interface HistorySnapshot {
   ubicacion_nombre: string;
   almacen_codigo: string | null;
   cantidad: number;
+  es_actual: boolean;
 }
 
 interface HistoryResponse {
@@ -84,15 +85,30 @@ export default function ProductHistoryModal({
     });
   };
 
-  // Preparar datos para la gráfica (ordenar por fecha ascendente y formatear)
+  // Preparar datos para la gráfica (los datos ya vienen ordenados por fecha ASC desde el backend)
   const chartData = historyData?.historico
-    ?.slice()
-    .reverse()
-    .map((snap) => ({
-      fecha: formatFechaCorta(snap.fecha_snapshot),
+    ?.map((snap) => ({
+      fecha: snap.es_actual ? `${formatFechaCorta(snap.fecha_snapshot)} (Actual)` : formatFechaCorta(snap.fecha_snapshot),
       cantidad: snap.cantidad,
       fechaCompleta: formatFecha(snap.fecha_snapshot),
+      esActual: snap.es_actual,
     })) || [];
+
+  // Custom dot para mostrar el valor al lado del punto actual
+  const CustomDot = (props: { cx: number; cy: number; payload: { cantidad: number; esActual: boolean }}) => {
+    const { cx, cy, payload } = props;
+    if (payload.esActual) {
+      return (
+        <g>
+          <circle cx={cx} cy={cy} r={6} fill="#10b981" stroke="#fff" strokeWidth={2} />
+          <text x={cx + 12} y={cy + 4} fill="#10b981" fontSize={12} fontWeight="bold">
+            {formatInteger(payload.cantidad)}
+          </text>
+        </g>
+      );
+    }
+    return <circle cx={cx} cy={cy} r={4} fill="#3b82f6" />;
+  };
 
   if (!isOpen) return null;
 
@@ -173,8 +189,8 @@ export default function ProductHistoryModal({
                       dataKey="cantidad"
                       stroke="#3b82f6"
                       strokeWidth={2}
-                      dot={{ r: 4 }}
-                      activeDot={{ r: 6 }}
+                      dot={<CustomDot cx={0} cy={0} payload={{ cantidad: 0, esActual: false }} />}
+                      activeDot={{ r: 8 }}
                       name="Cantidad en Stock"
                     />
                   </LineChart>
@@ -206,9 +222,19 @@ export default function ProductHistoryModal({
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {historyData.historico.map((snapshot, index) => (
-                        <tr key={index} className="hover:bg-gray-50 transition-colors">
+                        <tr
+                          key={index}
+                          className={`hover:bg-gray-50 transition-colors ${snapshot.es_actual ? 'bg-green-50' : ''}`}
+                        >
                           <td className="px-4 py-3 text-sm text-gray-900">
-                            {formatFecha(snapshot.fecha_snapshot)}
+                            <div className="flex items-center gap-2">
+                              {formatFecha(snapshot.fecha_snapshot)}
+                              {snapshot.es_actual && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                  Actual
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900">
                             {snapshot.ubicacion_nombre}
@@ -216,7 +242,7 @@ export default function ProductHistoryModal({
                           <td className="px-4 py-3 text-sm text-gray-600">
                             {snapshot.almacen_codigo || '-'}
                           </td>
-                          <td className="px-4 py-3 text-sm font-semibold text-gray-900 text-right">
+                          <td className={`px-4 py-3 text-sm font-semibold text-right ${snapshot.es_actual ? 'text-green-700' : 'text-gray-900'}`}>
                             {formatInteger(snapshot.cantidad)}
                           </td>
                         </tr>
