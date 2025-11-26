@@ -325,13 +325,19 @@ def init_etl_tables():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Add codigo_klk column if it doesn't exist (for existing tables)
+            # Add missing columns to ubicaciones table and fix NOT NULL constraint on codigo
             cursor.execute("""
                 DO $$
                 BEGIN
+                    -- Add codigo_klk column if not exists
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='ubicaciones' AND column_name='codigo_klk') THEN
                         ALTER TABLE ubicaciones ADD COLUMN codigo_klk VARCHAR(50);
+                    END IF;
+                    -- Make 'codigo' nullable (migration 002 created it as NOT NULL but loader doesn't use it)
+                    IF EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_name='ubicaciones' AND column_name='codigo' AND is_nullable='NO') THEN
+                        ALTER TABLE ubicaciones ALTER COLUMN codigo DROP NOT NULL;
                     END IF;
                 END $$;
             """)
@@ -351,17 +357,39 @@ def init_etl_tables():
                     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Add nombre column if it doesn't exist (for existing tables with only descripcion)
+            # Add missing columns to productos table (for RDS production schema compatibility)
             cursor.execute("""
                 DO $$
                 BEGIN
+                    -- nombre column
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='productos' AND column_name='nombre') THEN
                         ALTER TABLE productos ADD COLUMN nombre VARCHAR(200);
                     END IF;
+                    -- fecha_actualizacion column
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='productos' AND column_name='fecha_actualizacion') THEN
                         ALTER TABLE productos ADD COLUMN fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                    END IF;
+                    -- codigo_barras column (ETL loader requirement)
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='codigo_barras') THEN
+                        ALTER TABLE productos ADD COLUMN codigo_barras VARCHAR(50);
+                    END IF;
+                    -- modelo column (ETL loader requirement)
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='modelo') THEN
+                        ALTER TABLE productos ADD COLUMN modelo VARCHAR(100);
+                    END IF;
+                    -- grupo_articulo column (ETL loader requirement)
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='grupo_articulo') THEN
+                        ALTER TABLE productos ADD COLUMN grupo_articulo VARCHAR(100);
+                    END IF;
+                    -- subgrupo column (ETL loader requirement)
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='subgrupo') THEN
+                        ALTER TABLE productos ADD COLUMN subgrupo VARCHAR(100);
                     END IF;
                 END $$;
             """)
