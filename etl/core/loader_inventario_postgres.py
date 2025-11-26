@@ -25,10 +25,77 @@ class PostgreSQLInventarioLoader:
     def __init__(self):
         self.dsn = POSTGRES_DSN
         self.logger = logger
+        self._ensure_schema_compatibility()
 
     def _get_connection(self):
         """Obtiene conexión a PostgreSQL"""
         return psycopg2.connect(self.dsn)
+
+    def _ensure_schema_compatibility(self):
+        """
+        Asegura que el schema de PostgreSQL tiene todas las columnas necesarias.
+        Ejecuta ALTER TABLE para agregar columnas faltantes y hacer nullable
+        las columnas que el ETL no usa.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Fix ubicaciones table
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    -- Add codigo_klk column if not exists
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='ubicaciones' AND column_name='codigo_klk') THEN
+                        ALTER TABLE ubicaciones ADD COLUMN codigo_klk VARCHAR(50);
+                    END IF;
+                    -- Make 'codigo' nullable (migration 002 created it as NOT NULL but loader doesn't use it)
+                    IF EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_name='ubicaciones' AND column_name='codigo' AND is_nullable='NO') THEN
+                        ALTER TABLE ubicaciones ALTER COLUMN codigo DROP NOT NULL;
+                    END IF;
+                END $$;
+            """)
+
+            # Fix productos table
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='nombre') THEN
+                        ALTER TABLE productos ADD COLUMN nombre VARCHAR(200);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='fecha_actualizacion') THEN
+                        ALTER TABLE productos ADD COLUMN fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='codigo_barras') THEN
+                        ALTER TABLE productos ADD COLUMN codigo_barras VARCHAR(50);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='modelo') THEN
+                        ALTER TABLE productos ADD COLUMN modelo VARCHAR(100);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='grupo_articulo') THEN
+                        ALTER TABLE productos ADD COLUMN grupo_articulo VARCHAR(100);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='productos' AND column_name='subgrupo') THEN
+                        ALTER TABLE productos ADD COLUMN subgrupo VARCHAR(100);
+                    END IF;
+                END $$;
+            """)
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+            self.logger.info("✅ Schema PostgreSQL verificado/actualizado")
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error verificando schema (ignorable si tablas no existen aún): {e}")
 
     def load_productos(self, df: pd.DataFrame) -> int:
         """
