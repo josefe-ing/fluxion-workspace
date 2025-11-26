@@ -783,21 +783,22 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 10. ETL Scheduled Rules (Twice daily: 5:00 AM and 5:00 PM)
+    // 10. Inventory ETL Scheduled Rule (Every 30 minutes at :00 and :30)
     // ========================================
-    // Morning ETL at 5:00 AM UTC-4 (9:00 AM UTC)
-    const etlRuleMorning = new events.Rule(this, 'FluxionETLScheduleMorning', {
+    // Runs inventory sync for 5 stores sequentially: tienda_01, tienda_08, tienda_17, tienda_20, cedi_seco
+    // Executes at exactly XX:00 and XX:30 every hour (e.g., 2:00pm, 2:30pm, 3:00pm, 3:30pm)
+    const inventorySyncRule = new events.Rule(this, 'FluxionInventorySync30Min', {
       schedule: events.Schedule.cron({
-        minute: '0',
-        hour: '9',  // 5:00 AM Venezuela time (UTC-4)
+        minute: '0,30',  // Run at :00 and :30 of every hour
+        hour: '*',
         weekDay: '*',
       }),
-      description: 'Run Fluxion ETL at 5:00 AM Venezuela time',
-      ruleName: 'fluxion-etl-schedule-morning',
+      description: 'Sync inventory every 30 minutes for tienda_01, tienda_08, tienda_17, tienda_20, cedi_seco',
+      ruleName: 'fluxion-inventario-sync-30min',
       enabled: true,
     });
 
-    etlRuleMorning.addTarget(
+    inventorySyncRule.addTarget(
       new targets.EcsTask({
         cluster,
         taskDefinition: etlTask,
@@ -808,46 +809,14 @@ PersistentKeepalive = 25`),
         propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
         containerOverrides: [{
           containerName: 'etl',
-          environment: [
-            { name: 'ETL_SCHEDULE_TYPE', value: 'morning' }
+          command: [
+            'python', 'etl_inventario.py',
+            '--tiendas', 'tienda_01', 'tienda_08', 'tienda_17', 'tienda_20', 'cedi_seco'
           ]
         }],
-        // Prevent concurrent executions: retry with backoff if task already running
-        maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
-        retryAttempts: 2,  // Retry up to 2 times if task launch fails
-      })
-    );
-
-    // Afternoon ETL at 3:00 PM UTC-4 (7:00 PM UTC)
-    const etlRuleAfternoon = new events.Rule(this, 'FluxionETLScheduleAfternoon', {
-      schedule: events.Schedule.cron({
-        minute: '0',
-        hour: '19',  // 3:00 PM Venezuela time (UTC-4)
-        weekDay: '*',
-      }),
-      description: 'Run Fluxion ETL at 3:00 PM Venezuela time',
-      ruleName: 'fluxion-etl-schedule-afternoon',
-      enabled: true,
-    });
-
-    etlRuleAfternoon.addTarget(
-      new targets.EcsTask({
-        cluster,
-        taskDefinition: etlTask,
-        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        securityGroups: [etlSecurityGroup],
-        platformVersion: ecs.FargatePlatformVersion.LATEST,
-        taskCount: 1,
-        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
-        containerOverrides: [{
-          containerName: 'etl',
-          environment: [
-            { name: 'ETL_SCHEDULE_TYPE', value: 'afternoon' }
-          ]
-        }],
-        // Prevent concurrent executions: retry with backoff if task already running
-        maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
-        retryAttempts: 2,  // Retry up to 2 times if task launch fails
+        // Prevent concurrent executions
+        maxEventAge: cdk.Duration.minutes(25),  // Discard if older than 25 min (avoid overlap)
+        retryAttempts: 1,  // Retry once if task launch fails
       })
     );
 
@@ -1019,61 +988,9 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
-    // 11. Ventas ETL Scheduled Rule (Once daily: 1:00 AM)
+    // 11. Ventas ETL Scheduled Rule - TODO: Add when ready
     // ========================================
-    // Daily Ventas ETL at 1:00 AM UTC-4 (5:00 AM UTC) - Fetches previous day's sales
-    const ventasEtlRuleMorning = new events.Rule(this, 'FluxionVentasETLScheduleMorning', {
-      schedule: events.Schedule.cron({
-        minute: '0',
-        hour: '5',  // 1:00 AM Venezuela time (UTC-4)
-        weekDay: '*',
-      }),
-      description: 'Run Fluxion Ventas ETL at 1:00 AM Venezuela time (daily)',
-      ruleName: 'fluxion-ventas-etl-schedule-morning',
-      enabled: true,
-    });
-
-    ventasEtlRuleMorning.addTarget(
-      new targets.EcsTask({
-        cluster,
-        taskDefinition: ventasEtlTask,
-        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        securityGroups: [etlSecurityGroup],
-        platformVersion: ecs.FargatePlatformVersion.LATEST,
-        taskCount: 1,
-        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
-        // Prevent concurrent executions: retry with backoff if task already running
-        maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
-        retryAttempts: 2,  // Retry up to 2 times if task launch fails
-      })
-    );
-
-    // Afternoon Ventas ETL DISABLED (sales only run once daily at 1:00 AM)
-    const ventasEtlRuleAfternoon = new events.Rule(this, 'FluxionVentasETLScheduleAfternoon', {
-      schedule: events.Schedule.cron({
-        minute: '0',
-        hour: '18',  // 2:00 PM Venezuela time (UTC-4)
-        weekDay: '*',
-      }),
-      description: 'Run Fluxion Ventas ETL at 2:00 PM Venezuela time (DISABLED)',
-      ruleName: 'fluxion-ventas-etl-schedule-afternoon',
-      enabled: false,  // DISABLED - Ventas ETL only runs once daily at 1:00 AM
-    });
-
-    ventasEtlRuleAfternoon.addTarget(
-      new targets.EcsTask({
-        cluster,
-        taskDefinition: ventasEtlTask,
-        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        securityGroups: [etlSecurityGroup],
-        platformVersion: ecs.FargatePlatformVersion.LATEST,
-        taskCount: 1,
-        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
-        // Prevent concurrent executions: retry with backoff if task already running
-        maxEventAge: cdk.Duration.hours(1),  // Discard events older than 1 hour
-        retryAttempts: 2,  // Retry up to 2 times if task launch fails
-      })
-    );
+    // Will be added similar to inventorySyncRule when Ventas ETL is migrated to PostgreSQL
 
     // ========================================
     // 12. Configure Backend with Ventas ETL task information
