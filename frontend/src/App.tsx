@@ -9,10 +9,11 @@ import InventorySummary from './components/dashboard/InventorySummary';
 import InventoryDashboard from './components/dashboard/InventoryDashboard';
 import SalesSummary from './components/sales/SalesSummary';
 import SalesDashboard from './components/sales/SalesDashboard';
-import SuggestedOrder from './components/orders/SuggestedOrder';
+// Pedidos deshabilitados - No migrados a PostgreSQL v2.0
+// import SuggestedOrder from './components/orders/SuggestedOrder';
+// import OrderWizard from './components/orders/OrderWizard';
+// import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
-import OrderWizard from './components/orders/OrderWizard';
-import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import ETLControlCenter from './components/settings/ETLControlCenter';
 import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
 import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
