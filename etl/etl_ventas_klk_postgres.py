@@ -42,6 +42,13 @@ try:
 except ImportError:
     SENTRY_AVAILABLE = False
 
+# Email notifications (solo en produccion)
+try:
+    from etl_notifier import send_etl_notification
+    NOTIFIER_AVAILABLE = True
+except ImportError:
+    NOTIFIER_AVAILABLE = False
+
 
 class VentasKLKETLPostgres:
     """
@@ -100,7 +107,7 @@ class VentasKLKETLPostgres:
 
         return logger
 
-    def procesar_tienda(self, config: TiendaConfig, fecha_desde: datetime, fecha_hasta: datetime) -> bool:
+    def procesar_tienda(self, config: TiendaConfig, fecha_desde: datetime, fecha_hasta: datetime) -> Dict[str, Any]:
         """
         Procesa ventas de una tienda individual
 
@@ -110,11 +117,12 @@ class VentasKLKETLPostgres:
             fecha_hasta: Fecha/hora fin
 
         Returns:
-            True si exitoso, False si fallo
+            Dict con resultado: tienda_id, nombre, success, registros, tiempo_proceso, message
         """
         tienda_id = config.ubicacion_id
         tienda_nombre = config.ubicacion_nombre
         codigo_sucursal = self.extractor.get_codigo_sucursal(tienda_id)
+        tiempo_inicio = datetime.now()
 
         self.logger.info(f"\n{'='*80}")
         self.logger.info(f"🏪 PROCESANDO: {tienda_nombre} ({tienda_id})")
@@ -167,7 +175,15 @@ class VentasKLKETLPostgres:
                 # No es error si no hay ventas en el rango
                 if self.tracker and ejecucion_id:
                     self.tracker.finalizar_ejecucion_exitosa(ejecucion_id, 0, 0)
-                return True
+                tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
+                return {
+                    'tienda_id': tienda_id,
+                    'nombre': tienda_nombre,
+                    'success': True,
+                    'registros': 0,
+                    'tiempo_proceso': tiempo_proceso,
+                    'message': 'Sin ventas en el rango'
+                }
 
             ventas_data = response.get('ventas', [])
             registros_extraidos = len(ventas_data)
@@ -179,7 +195,15 @@ class VentasKLKETLPostgres:
                 self.logger.info(f"ℹ️ No hay ventas nuevas en el rango especificado")
                 if self.tracker and ejecucion_id:
                     self.tracker.finalizar_ejecucion_exitosa(ejecucion_id, 0, 0)
-                return True
+                tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
+                return {
+                    'tienda_id': tienda_id,
+                    'nombre': tienda_nombre,
+                    'success': True,
+                    'registros': 0,
+                    'tiempo_proceso': tiempo_proceso,
+                    'message': 'Sin ventas nuevas'
+                }
 
             # PASO 2: CARGA A POSTGRESQL
             if self.dry_run:
@@ -226,7 +250,16 @@ class VentasKLKETLPostgres:
                 sentry_monitor.set_success(registros_procesados=registros_extraidos)
                 sentry_monitor.__exit__(None, None, None)
 
-            return True
+            tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
+            registros_cargados = result.get('records_loaded', 0) if not self.dry_run else registros_extraidos
+            return {
+                'tienda_id': tienda_id,
+                'nombre': tienda_nombre,
+                'success': True,
+                'registros': registros_cargados,
+                'tiempo_proceso': tiempo_proceso,
+                'message': f'{registros_cargados:,} ventas cargadas'
+            }
 
         except Exception as e:
             self.logger.error(f"❌ Error procesando {tienda_nombre}: {e}", exc_info=True)
@@ -255,7 +288,15 @@ class VentasKLKETLPostgres:
             if sentry_monitor:
                 sentry_monitor.__exit__(type(e), e, e.__traceback__)
 
-            return False
+            tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
+            return {
+                'tienda_id': tienda_id,
+                'nombre': tienda_nombre,
+                'success': False,
+                'registros': 0,
+                'tiempo_proceso': tiempo_proceso,
+                'message': str(e)
+            }
 
     def ejecutar(self, tienda_ids: List[str] = None, fecha_desde: datetime = None, fecha_hasta: datetime = None) -> bool:
         """
@@ -304,13 +345,17 @@ class VentasKLKETLPostgres:
             codigo_sucursal = self.extractor.get_codigo_sucursal(tienda_id)
             self.logger.info(f"   - {config.ubicacion_nombre} ({tienda_id}) - Sucursal: {codigo_sucursal}")
 
+        # Lista para recolectar resultados (para email notification)
+        tiendas_results = []
+
         # Procesar cada tienda
         for tienda_id, config in tiendas_klk.items():
             self.stats['tiendas_procesadas'] += 1
 
-            exitoso = self.procesar_tienda(config, fecha_desde, fecha_hasta)
+            resultado = self.procesar_tienda(config, fecha_desde, fecha_hasta)
+            tiendas_results.append(resultado)
 
-            if exitoso:
+            if resultado['success']:
                 self.stats['tiendas_exitosas'] += 1
             else:
                 self.stats['tiendas_fallidas'] += 1
@@ -330,6 +375,31 @@ class VentasKLKETLPostgres:
         self.logger.info(f"💾 Total ventas cargadas: {self.stats['total_ventas_cargadas']:,}")
         self.logger.info(f"⏭️  Total duplicados omitidos: {self.stats['total_duplicados_omitidos']:,}")
         self.logger.info(f"{'#'*80}\n")
+
+        # Enviar notificacion por email (solo en produccion)
+        if NOTIFIER_AVAILABLE and not self.dry_run:
+            try:
+                global_summary = {
+                    'total_tiendas': self.stats['tiendas_procesadas'],
+                    'tiendas_exitosas': self.stats['tiendas_exitosas'],
+                    'tiendas_fallidas': self.stats['tiendas_fallidas'],
+                    'total_registros': self.stats['total_ventas_cargadas'],
+                    'duplicados_omitidos': self.stats['total_duplicados_omitidos'],
+                    'duracion_segundos': duracion,
+                    'rango_fechas': f"{fecha_desde.strftime('%Y-%m-%d %H:%M')} - {fecha_hasta.strftime('%Y-%m-%d %H:%M')}"
+                }
+
+                send_etl_notification(
+                    etl_name="ETL Ventas KLK PostgreSQL",
+                    etl_type="ventas",
+                    start_time=self.stats['inicio'],
+                    end_time=self.stats['fin'],
+                    tiendas_results=tiendas_results,
+                    global_summary=global_summary
+                )
+                self.logger.info("📧 Notificacion por email enviada")
+            except Exception as email_err:
+                self.logger.warning(f"⚠️ Error enviando email (no-critico): {email_err}")
 
         return self.stats['tiendas_fallidas'] == 0
 
