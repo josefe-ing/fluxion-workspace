@@ -440,6 +440,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='ETL Multi-Tienda para La Granja Mercado')
     parser.add_argument('--tienda', type=str, help='ID de tienda específica (ej: tienda_01)')
+    parser.add_argument('--tiendas', nargs='+', help='Lista de IDs de tiendas (ej: tienda_01 tienda_08 cedi_seco)')
     parser.add_argument('--todas', action='store_true', help='Ejecutar para todas las tiendas activas')
     parser.add_argument('--listar', action='store_true', help='Listar tiendas configuradas')
     parser.add_argument('--paralelo', action='store_true', help='Ejecutar en paralelo (experimental)')
@@ -455,7 +456,16 @@ def main():
     # Ejecutar ETL
     etl = MultiTiendaETL()
 
-    if args.tienda:
+    if args.tiendas:
+        # Ejecutar múltiples tiendas específicas (secuencialmente)
+        logger.info(f"🎯 Ejecutando ETL para {len(args.tiendas)} tiendas: {args.tiendas}")
+        resultados = []
+        for tienda_id in args.tiendas:
+            resultado = etl.ejecutar_etl_tienda(tienda_id)
+            resultados.append(resultado)
+        etl.generar_resumen(resultados)
+
+    elif args.tienda:
         # Ejecutar una tienda específica
         resultado = etl.ejecutar_etl_tienda(args.tienda)
         etl.generar_resumen([resultado])
@@ -466,9 +476,10 @@ def main():
         etl.generar_resumen(resultados)
 
     else:
-        print("❌ Debe especificar --tienda ID o --todas")
-        print("   Ejemplo: python3 etl_multi_tienda.py --tienda tienda_01")
-        print("   Ejemplo: python3 etl_multi_tienda.py --todas")
+        print("❌ Debe especificar --tienda ID, --tiendas IDs o --todas")
+        print("   Ejemplo: python3 etl_inventario.py --tienda tienda_01")
+        print("   Ejemplo: python3 etl_inventario.py --tiendas tienda_01 tienda_08 cedi_seco")
+        print("   Ejemplo: python3 etl_inventario.py --todas")
         print("   Use --listar para ver las tiendas disponibles")
         sys.exit(1)
 
