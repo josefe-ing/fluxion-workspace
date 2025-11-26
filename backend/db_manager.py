@@ -288,3 +288,117 @@ __all__ = [
     'is_postgres_mode',
     'get_primary_db'
 ]
+
+
+# =============================================================================
+# AUTO-INITIALIZATION OF ETL TABLES (PostgreSQL Only)
+# =============================================================================
+
+def init_etl_tables():
+    """
+    Crea las tablas necesarias para el ETL de inventario si no existen.
+    Se ejecuta automáticamente al importar el módulo en modo PostgreSQL.
+
+    Tablas creadas:
+    - ubicaciones: Tiendas y CEDIs
+    - productos: Catálogo de productos
+    - almacenes: Almacenes por ubicación
+    - inventario_actual: Stock actual
+    - inventario_historico: Snapshots históricos
+    """
+    if not is_postgres_mode():
+        return
+
+    try:
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            # 1. Tabla ubicaciones
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ubicaciones (
+                    id VARCHAR(50) PRIMARY KEY,
+                    nombre VARCHAR(100) NOT NULL,
+                    codigo_klk VARCHAR(50),
+                    tipo VARCHAR(20) DEFAULT 'tienda',
+                    activo BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ubicaciones_codigo_klk ON ubicaciones(codigo_klk)")
+
+            # 2. Tabla productos
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS productos (
+                    id VARCHAR(50) PRIMARY KEY,
+                    codigo VARCHAR(50) UNIQUE NOT NULL,
+                    nombre VARCHAR(200),
+                    descripcion VARCHAR(500),
+                    categoria VARCHAR(100),
+                    marca VARCHAR(100),
+                    activo BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_productos_codigo ON productos(codigo)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_productos_categoria ON productos(categoria)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_productos_marca ON productos(marca)")
+
+            # 3. Tabla almacenes
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS almacenes (
+                    codigo VARCHAR(50) PRIMARY KEY,
+                    nombre VARCHAR(100) NOT NULL,
+                    ubicacion_id VARCHAR(50) REFERENCES ubicaciones(id),
+                    activo BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_almacenes_ubicacion ON almacenes(ubicacion_id)")
+
+            # 4. Tabla inventario_actual
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS inventario_actual (
+                    id SERIAL PRIMARY KEY,
+                    ubicacion_id VARCHAR(50) NOT NULL REFERENCES ubicaciones(id),
+                    producto_id VARCHAR(50) NOT NULL,
+                    almacen_codigo VARCHAR(50) NOT NULL REFERENCES almacenes(codigo),
+                    cantidad NUMERIC(12,4) DEFAULT 0,
+                    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT inventario_actual_unique UNIQUE (ubicacion_id, producto_id, almacen_codigo)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventario_actual_ubicacion ON inventario_actual(ubicacion_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventario_actual_producto ON inventario_actual(producto_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventario_actual_almacen ON inventario_actual(almacen_codigo)")
+
+            # 5. Tabla inventario_historico
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS inventario_historico (
+                    id SERIAL PRIMARY KEY,
+                    ubicacion_id VARCHAR(50) NOT NULL,
+                    producto_id VARCHAR(50) NOT NULL,
+                    almacen_codigo VARCHAR(50) NOT NULL,
+                    cantidad NUMERIC(12,4) DEFAULT 0,
+                    fecha_snapshot TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventario_historico_ubicacion ON inventario_historico(ubicacion_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventario_historico_fecha ON inventario_historico(fecha_snapshot)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventario_historico_producto ON inventario_historico(producto_id)")
+
+            conn.commit()
+            cursor.close()
+
+            logger.info("✅ Tablas ETL verificadas/creadas en PostgreSQL:")
+            logger.info("   - ubicaciones, productos, almacenes")
+            logger.info("   - inventario_actual, inventario_historico")
+
+    except Exception as e:
+        logger.error(f"⚠️ Error inicializando tablas ETL: {e}")
+
+
+# Ejecutar inicialización al importar el módulo
+init_etl_tables()
