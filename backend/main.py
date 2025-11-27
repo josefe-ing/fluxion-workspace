@@ -7,7 +7,7 @@ Conecta con DuckDB para servir datos de inventario en tiempo real
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import duckdb
 from pathlib import Path
 from datetime import datetime, date, timedelta
@@ -15,6 +15,7 @@ import logging
 import subprocess
 import asyncio
 import os
+import time
 from contextlib import contextmanager
 from forecast_pmp import ForecastPMP
 from zoneinfo import ZoneInfo
@@ -153,6 +154,28 @@ app.include_router(abc_v2_router)
 app.include_router(nivel_objetivo_router)
 app.include_router(etl_tracking_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
+
+# ============================================================================
+# CACHE CONFIGURATION
+# ============================================================================
+# Simple TTL cache for expensive queries
+# Format: {"data": [...], "timestamp": float}
+_ventas_summary_cache: Dict[str, Any] = {}
+VENTAS_SUMMARY_CACHE_TTL = 300  # 5 minutes in seconds
+
+def get_cached_ventas_summary() -> Optional[List[Any]]:
+    """Returns cached data if valid, None otherwise"""
+    if "data" in _ventas_summary_cache:
+        if time.time() - _ventas_summary_cache.get("timestamp", 0) < VENTAS_SUMMARY_CACHE_TTL:
+            logger.info("📦 Ventas summary served from cache")
+            return _ventas_summary_cache["data"]
+    return None
+
+def set_ventas_summary_cache(data: List[Any]) -> None:
+    """Store data in cache with current timestamp"""
+    _ventas_summary_cache["data"] = data
+    _ventas_summary_cache["timestamp"] = time.time()
+    logger.info("💾 Ventas summary cached for 5 minutes")
 
 # Global Exception Handler con CORS
 @app.middleware("http")
@@ -3738,7 +3761,13 @@ async def get_ventas_summary():
     """
     Obtiene resumen de ventas por ubicación
     Soporta PostgreSQL v2.0 y DuckDB (legacy)
+    Incluye cache TTL de 5 minutos para mejorar rendimiento
     """
+    # Check cache first
+    cached = get_cached_ventas_summary()
+    if cached is not None:
+        return cached
+
     try:
         with get_db_connection() as conn:
             # Adaptar query según base de datos
@@ -3783,7 +3812,7 @@ async def get_ventas_summary():
                 """
                 result = conn.execute(query).fetchall()
 
-            return [
+            response_data = [
                 VentasSummaryResponse(
                     ubicacion_id=row[0],
                     ubicacion_nombre=row[1],
@@ -3796,6 +3825,10 @@ async def get_ventas_summary():
                 )
                 for row in result
             ]
+
+            # Store in cache before returning
+            set_ventas_summary_cache(response_data)
+            return response_data
 
     except Exception as e:
         logger.error(f"Error obteniendo resumen de ventas: {str(e)}")

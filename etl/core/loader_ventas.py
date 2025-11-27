@@ -688,12 +688,13 @@ class VentasLoader:
                 # Sincronizar ubicaciones únicas
                 ubicaciones_unicas = df_prep['ubicacion_id'].unique()
                 for ubicacion_id in ubicaciones_unicas:
+                    # Determinar tipo: 'cedi' si contiene 'cedi', sino 'tienda'
+                    ubicacion_tipo = 'cedi' if 'cedi' in ubicacion_id.lower() else 'tienda'
                     cursor.execute("""
-                        INSERT INTO ubicaciones (id, nombre, activo)
-                        VALUES (%s, %s, TRUE)
-                        ON CONFLICT (id) DO UPDATE
-                        SET nombre = EXCLUDED.nombre
-                    """, (ubicacion_id, ubicacion_id))
+                        INSERT INTO ubicaciones (id, nombre, tipo, activo)
+                        VALUES (%s, %s, %s, TRUE)
+                        ON CONFLICT (id) DO NOTHING
+                    """, (ubicacion_id, ubicacion_id, ubicacion_tipo))
 
                 # Sincronizar productos únicos (auto-registro)
                 productos_unicos = df_prep['producto_id'].unique()

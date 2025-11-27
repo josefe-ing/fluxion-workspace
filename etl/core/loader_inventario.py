@@ -630,15 +630,14 @@ class DuckDBLoader:
                 tienda_config = TIENDAS_CONFIG.get(ubicacion_id, None)
                 # TiendaConfig es un dataclass, no un dict - acceder atributos directamente
                 nombre = tienda_config.ubicacion_nombre if tienda_config else ubicacion_id.upper()
+                # Determinar tipo: usar config si existe, sino inferir de ubicacion_id
+                ubicacion_tipo = tienda_config.tipo if tienda_config and hasattr(tienda_config, 'tipo') else ('cedi' if 'cedi' in ubicacion_id.lower() else 'tienda')
 
                 cursor.execute("""
-                    INSERT INTO ubicaciones (id, nombre, codigo_klk, ciudad, estado, activo)
-                    VALUES (%s, %s, %s, %s, %s, TRUE)
-                    ON CONFLICT (id) DO UPDATE SET
-                        nombre = EXCLUDED.nombre,
-                        codigo_klk = EXCLUDED.codigo_klk,
-                        fecha_creacion = CURRENT_TIMESTAMP
-                """, (ubicacion_id, nombre, ubicacion_id, 'Caracas', 'Miranda'))
+                    INSERT INTO ubicaciones (id, nombre, codigo_klk, tipo, ciudad, estado, activo)
+                    VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+                    ON CONFLICT (id) DO NOTHING
+                """, (ubicacion_id, nombre, ubicacion_id, ubicacion_tipo, 'Caracas', 'Miranda'))
 
             self.logger.info("   ✅ Ubicaciones sincronizadas")
 
