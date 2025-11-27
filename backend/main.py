@@ -2003,20 +2003,20 @@ async def get_reconciliacion_inventario(
     codigo: str,
     ubicacion_id: str,
     almacen_codigo: Optional[str] = None,
-    horas: int = 6
+    horas: int = 24
 ):
     """
     Obtiene la reconciliación de inventario vs ventas para un producto.
-    Compara los cambios de inventario entre snapshots con las ventas registradas.
+    Agrupa los datos en períodos de 2 horas para un análisis más compacto.
 
     Args:
         codigo: Código del producto
         ubicacion_id: Ubicación específica (requerido)
         almacen_codigo: Filtrar por almacén específico
-        horas: Número de horas hacia atrás (default 6)
+        horas: Número de horas hacia atrás (default 24)
 
     Returns:
-        Lista de períodos con stock_inicio, stock_fin, ventas y diferencia
+        Lista de períodos (cada 2 horas) con stock_inicio, stock_fin, ventas y diferencia
     """
     try:
         with get_postgres_connection() as conn:
@@ -2030,15 +2030,17 @@ async def get_reconciliacion_inventario(
 
             producto_id = row[0]
 
-            # Query de reconciliación
+            # Query de reconciliación agrupada cada 2 horas
+            # Usamos date_trunc para agrupar en bloques de 2 horas
             query = """
-                WITH snapshots AS (
+                WITH snapshots_raw AS (
                     SELECT
                         fecha_snapshot,
                         almacen_codigo,
                         cantidad,
-                        LAG(cantidad) OVER (PARTITION BY almacen_codigo ORDER BY fecha_snapshot) as cantidad_anterior,
-                        LAG(fecha_snapshot) OVER (PARTITION BY almacen_codigo ORDER BY fecha_snapshot) as snapshot_anterior
+                        -- Agrupar en bloques de 2 horas (0-2, 2-4, 4-6, etc.)
+                        DATE_TRUNC('hour', fecha_snapshot) -
+                            INTERVAL '1 hour' * (EXTRACT(HOUR FROM fecha_snapshot)::int % 2) as bloque_2h
                     FROM inventario_historico
                     WHERE ubicacion_id = %s
                         AND producto_id = %s
@@ -2051,25 +2053,42 @@ async def get_reconciliacion_inventario(
                 params.append(almacen_codigo)
 
             query += """
+                ),
+                -- Obtener primer y último snapshot de cada bloque de 2 horas
+                bloques AS (
+                    SELECT
+                        bloque_2h,
+                        almacen_codigo,
+                        MIN(fecha_snapshot) as fecha_inicio,
+                        MAX(fecha_snapshot) as fecha_fin,
+                        (SELECT cantidad FROM snapshots_raw sr2
+                         WHERE sr2.bloque_2h = sr.bloque_2h
+                           AND sr2.almacen_codigo = sr.almacen_codigo
+                         ORDER BY sr2.fecha_snapshot ASC LIMIT 1) as stock_inicio,
+                        (SELECT cantidad FROM snapshots_raw sr2
+                         WHERE sr2.bloque_2h = sr.bloque_2h
+                           AND sr2.almacen_codigo = sr.almacen_codigo
+                         ORDER BY sr2.fecha_snapshot DESC LIMIT 1) as stock_fin
+                    FROM snapshots_raw sr
+                    GROUP BY bloque_2h, almacen_codigo
                 )
                 SELECT
-                    s.snapshot_anterior as fecha_inicio,
-                    s.fecha_snapshot as fecha_fin,
-                    s.almacen_codigo,
-                    s.cantidad_anterior as stock_inicio,
-                    s.cantidad as stock_fin,
-                    s.cantidad - s.cantidad_anterior as cambio_inventario,
+                    b.fecha_inicio,
+                    b.fecha_fin,
+                    b.almacen_codigo,
+                    b.stock_inicio,
+                    b.stock_fin,
+                    b.stock_fin - b.stock_inicio as cambio_inventario,
                     COALESCE((
                         SELECT SUM(cantidad_vendida)
                         FROM ventas
                         WHERE ubicacion_id = %s
                         AND producto_id = %s
-                        AND fecha_venta > s.snapshot_anterior
-                        AND fecha_venta <= s.fecha_snapshot
+                        AND fecha_venta >= b.fecha_inicio
+                        AND fecha_venta <= b.fecha_fin
                     ), 0) as ventas_periodo
-                FROM snapshots s
-                WHERE s.cantidad_anterior IS NOT NULL
-                ORDER BY s.almacen_codigo, s.fecha_snapshot
+                FROM bloques b
+                ORDER BY b.almacen_codigo, b.bloque_2h
             """
             params.extend([ubicacion_id, producto_id])
 
