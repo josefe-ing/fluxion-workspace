@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 import ProductHistoryModal from './ProductHistoryModal';
@@ -59,6 +59,8 @@ interface StockStats {
 export default function InventoryDashboard() {
   const { ubicacionId } = useParams<{ ubicacionId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const almacenParam = searchParams.get('almacen');
 
   const [stockData, setStockData] = useState<StockItem[]>([]);
   const [stats, setStats] = useState<StockStats>({ total_productos: 0, stock_cero: 0, stock_negativo: 0 });
@@ -67,6 +69,7 @@ export default function InventoryDashboard() {
 
   // Filtros
   const [selectedUbicacion, setSelectedUbicacion] = useState<string>(ubicacionId || 'tienda_08');
+  const [selectedAlmacen, setSelectedAlmacen] = useState<string | null>(almacenParam);
   const [selectedCategoria, setSelectedCategoria] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
@@ -106,7 +109,7 @@ export default function InventoryDashboard() {
   useEffect(() => {
     loadStock();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedUbicacion, selectedCategoria, currentPage, debouncedSearchTerm, sortByStock, sortOrderStock, sortByPeso, sortOrderPeso]);
+  }, [selectedUbicacion, selectedAlmacen, selectedCategoria, currentPage, debouncedSearchTerm, sortByStock, sortOrderStock, sortByPeso, sortOrderPeso]);
 
   // Resetear a página 1 cuando cambian filtros (pero no cuando cambia el ordenamiento)
   useEffect(() => {
@@ -171,6 +174,10 @@ export default function InventoryDashboard() {
 
       if (selectedUbicacion !== 'all') {
         params.ubicacion_id = selectedUbicacion;
+      }
+
+      if (selectedAlmacen) {
+        params.almacen_codigo = selectedAlmacen;
       }
 
       if (selectedCategoria !== 'all') {
@@ -554,6 +561,7 @@ export default function InventoryDashboard() {
           codigoProducto={selectedProduct.codigo}
           descripcionProducto={selectedProduct.descripcion}
           ubicacionId={selectedUbicacion}
+          almacenCodigo={selectedAlmacen || undefined}
         />
       )}
     </div>

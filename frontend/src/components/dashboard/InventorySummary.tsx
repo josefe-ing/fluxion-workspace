@@ -86,8 +86,12 @@ export default function InventorySummary() {
     });
   };
 
-  const handleUbicacionClick = (ubicacionId: string) => {
-    navigate(`/dashboard/${ubicacionId}`);
+  const handleUbicacionClick = (ubicacionId: string, almacenCodigo?: string | null) => {
+    if (almacenCodigo) {
+      navigate(`/dashboard/${ubicacionId}?almacen=${almacenCodigo}`);
+    } else {
+      navigate(`/dashboard/${ubicacionId}`);
+    }
   };
 
   // Calcular totales
@@ -217,7 +221,7 @@ export default function InventorySummary() {
                   className="hover:bg-gray-50 transition-colors"
                 >
                   <td className="px-6 py-4 whitespace-nowrap text-center">
-                    <div className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600" onClick={() => handleUbicacionClick(item.ubicacion_id)}>
+                    <div className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600" onClick={() => handleUbicacionClick(item.ubicacion_id, item.almacen_codigo)}>
                       {getFriendlyLocationName(item.ubicacion_id, item.ubicacion_nombre)}
                     </div>
                   </td>

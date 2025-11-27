@@ -2001,6 +2001,7 @@ async def get_historico_inventario(
 @app.get("/api/stock", response_model=PaginatedStockResponse, tags=["Inventario"])
 async def get_stock(
     ubicacion_id: Optional[str] = None,
+    almacen_codigo: Optional[str] = None,
     categoria: Optional[str] = None,
     estado: Optional[str] = None,
     page: int = 1,
@@ -2017,6 +2018,7 @@ async def get_stock(
 
     Args:
         ubicacion_id: Filtrar por ID de ubicación
+        almacen_codigo: Filtrar por código de almacén (ej: APP-TPF, APP-PPF)
         categoria: Filtrar por categoría
         estado: Filtrar por estado de stock
         page: Número de página (inicia en 1)
@@ -2094,6 +2096,12 @@ async def get_stock(
                 count_query += " AND ia.ubicacion_id = %s"
                 stats_query += " AND ia.ubicacion_id = %s"
                 params.append(ubicacion_id)
+
+            if almacen_codigo:
+                query += " AND ia.almacen_codigo = %s"
+                count_query += " AND ia.almacen_codigo = %s"
+                stats_query += " AND ia.almacen_codigo = %s"
+                params.append(almacen_codigo)
 
             if categoria:
                 query += " AND p.categoria = %s"

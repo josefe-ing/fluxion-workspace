@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import http from '../../services/http';
 import { formatInteger } from '../../utils/formatNumber';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from 'recharts';
 
 interface HistorySnapshot {
   fecha_snapshot: string;
@@ -40,7 +40,7 @@ export default function ProductHistoryModal({
 }: ProductHistoryModalProps) {
   const [loading, setLoading] = useState(false);
   const [historyData, setHistoryData] = useState<HistoryResponse | null>(null);
-  const [dias, setDias] = useState(90);
+  const [dias, setDias] = useState(1);
 
   useEffect(() => {
     if (isOpen && codigoProducto) {
@@ -94,20 +94,41 @@ export default function ProductHistoryModal({
       esActual: snap.es_actual,
     })) || [];
 
-  // Custom dot para mostrar el valor al lado del punto actual
+  // Renderizar etiqueta personalizada para cada punto
+  const renderCustomLabel = (props: { x: number; y: number; value: number; index: number }) => {
+    const { x, y, value, index } = props;
+    const totalPoints = chartData.length;
+    const isLast = index === totalPoints - 1;
+
+    // Determinar si mostrar la etiqueta:
+    // - Siempre mostrar si hay <= 20 puntos
+    // - Si hay más, mostrar cada N puntos para evitar solapamiento
+    const showEveryN = totalPoints <= 20 ? 1 : Math.ceil(totalPoints / 15);
+    const shouldShow = isLast || index % showEveryN === 0;
+
+    if (!shouldShow) return null;
+
+    return (
+      <text
+        x={x}
+        y={y - 10}
+        fill={isLast ? '#10b981' : '#3b82f6'}
+        fontSize={11}
+        fontWeight={isLast ? 'bold' : 'normal'}
+        textAnchor="middle"
+      >
+        {formatInteger(value)}
+      </text>
+    );
+  };
+
+  // Custom dot para diferenciar el punto actual
   const CustomDot = (props: { cx: number; cy: number; payload: { cantidad: number; esActual: boolean }}) => {
     const { cx, cy, payload } = props;
     if (payload.esActual) {
-      return (
-        <g>
-          <circle cx={cx} cy={cy} r={6} fill="#10b981" stroke="#fff" strokeWidth={2} />
-          <text x={cx + 12} y={cy + 4} fill="#10b981" fontSize={12} fontWeight="bold">
-            {formatInteger(payload.cantidad)}
-          </text>
-        </g>
-      );
+      return <circle cx={cx} cy={cy} r={6} fill="#10b981" stroke="#fff" strokeWidth={2} />;
     }
-    return <circle cx={cx} cy={cy} r={4} fill="#3b82f6" />;
+    return <circle cx={cx} cy={cy} r={3} fill="#3b82f6" />;
   };
 
   if (!isOpen) return null;
@@ -142,11 +163,11 @@ export default function ProductHistoryModal({
               onChange={(e) => setDias(Number(e.target.value))}
               className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
+              <option value="1">Últimas 24 horas</option>
+              <option value="2">Últimos 2 días</option>
+              <option value="7">Últimos 7 días</option>
               <option value="30">Últimos 30 días</option>
-              <option value="60">Últimos 60 días</option>
               <option value="90">Últimos 90 días</option>
-              <option value="180">Últimos 6 meses</option>
-              <option value="365">Último año</option>
             </select>
             {historyData && (
               <span className="text-sm text-gray-600">
@@ -167,15 +188,16 @@ export default function ProductHistoryModal({
               {/* Gráfica */}
               <div className="bg-white border border-gray-200 rounded-lg p-4">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Evolución del Inventario</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={chartData}>
+                <ResponsiveContainer width="100%" height={350}>
+                  <LineChart data={chartData} margin={{ top: 25, right: 30, left: 20, bottom: 80 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis
                       dataKey="fecha"
-                      tick={{ fontSize: 12 }}
+                      tick={{ fontSize: 10 }}
                       angle={-45}
                       textAnchor="end"
                       height={80}
+                      interval={chartData.length <= 20 ? 0 : Math.ceil(chartData.length / 12)}
                     />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip
@@ -183,7 +205,6 @@ export default function ProductHistoryModal({
                       labelFormatter={(value) => `Fecha: ${value}`}
                       formatter={(value: number) => [formatInteger(value), 'Cantidad']}
                     />
-                    <Legend />
                     <Line
                       type="monotone"
                       dataKey="cantidad"
@@ -192,7 +213,9 @@ export default function ProductHistoryModal({
                       dot={<CustomDot cx={0} cy={0} payload={{ cantidad: 0, esActual: false }} />}
                       activeDot={{ r: 8 }}
                       name="Cantidad en Stock"
-                    />
+                    >
+                      <LabelList dataKey="cantidad" content={renderCustomLabel} />
+                    </Line>
                   </LineChart>
                 </ResponsiveContainer>
               </div>
