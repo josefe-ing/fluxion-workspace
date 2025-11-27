@@ -41,6 +41,7 @@ export default function ProductHistoryModal({
   const [loading, setLoading] = useState(false);
   const [historyData, setHistoryData] = useState<HistoryResponse | null>(null);
   const [dias, setDias] = useState(1);
+  const [ocultarNoche, setOcultarNoche] = useState(true); // Por defecto ocultar horario nocturno
 
   useEffect(() => {
     if (isOpen && codigoProducto) {
@@ -85,14 +86,33 @@ export default function ProductHistoryModal({
     });
   };
 
+  // Función para verificar si una hora está en horario nocturno (10pm - 6am)
+  const esHorarioNocturno = (fechaISO: string): boolean => {
+    const fecha = new Date(fechaISO);
+    const hora = fecha.getHours();
+    return hora >= 22 || hora < 6; // 10pm a 6am
+  };
+
+  // Filtrar datos según el toggle de horario nocturno
+  const datosFiltrados = historyData?.historico?.filter((snap) => {
+    if (!ocultarNoche) return true; // Mostrar todo si el toggle está desactivado
+    // Siempre mostrar el actual, nunca filtrar snapshots nocturnos
+    return snap.es_actual || !esHorarioNocturno(snap.fecha_snapshot);
+  }) || [];
+
+  // Contar cuántos snapshots nocturnos hay ocultos
+  const snapshotsNocturnos = (historyData?.historico?.filter((snap) =>
+    !snap.es_actual && esHorarioNocturno(snap.fecha_snapshot)
+  ) || []).length;
+
   // Preparar datos para la gráfica (los datos ya vienen ordenados por fecha ASC desde el backend)
-  const chartData = historyData?.historico
-    ?.map((snap) => ({
+  const chartData = datosFiltrados
+    .map((snap) => ({
       fecha: snap.es_actual ? `${formatFechaCorta(snap.fecha_snapshot)} (Actual)` : formatFechaCorta(snap.fecha_snapshot),
       cantidad: snap.cantidad,
       fechaCompleta: formatFecha(snap.fecha_snapshot),
       esActual: snap.es_actual,
-    })) || [];
+    }));
 
   // Renderizar etiqueta personalizada para cada punto
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -159,24 +179,50 @@ export default function ProductHistoryModal({
 
         {/* Filtros */}
         <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
-          <div className="flex items-center space-x-4">
-            <label className="text-sm font-medium text-gray-700">Período:</label>
-            <select
-              value={dias}
-              onChange={(e) => setDias(Number(e.target.value))}
-              className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="1">Últimas 24 horas</option>
-              <option value="2">Últimos 2 días</option>
-              <option value="7">Últimos 7 días</option>
-              <option value="30">Últimos 30 días</option>
-              <option value="90">Últimos 90 días</option>
-            </select>
-            {historyData && (
-              <span className="text-sm text-gray-600">
-                {historyData.total_snapshots} snapshots encontrados
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center space-x-4">
+              <label className="text-sm font-medium text-gray-700">Período:</label>
+              <select
+                value={dias}
+                onChange={(e) => setDias(Number(e.target.value))}
+                className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="1">Últimas 24 horas</option>
+                <option value="2">Últimos 2 días</option>
+                <option value="7">Últimos 7 días</option>
+                <option value="30">Últimos 30 días</option>
+                <option value="90">Últimos 90 días</option>
+              </select>
+              {historyData && (
+                <span className="text-sm text-gray-600">
+                  {chartData.length} de {historyData.total_snapshots} snapshots
+                </span>
+              )}
+            </div>
+
+            {/* Toggle para ocultar horario nocturno */}
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setOcultarNoche(!ocultarNoche)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  ocultarNoche ? 'bg-blue-600' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    ocultarNoche ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+              <span className="text-sm text-gray-700">
+                Solo horario laboral (6am-10pm)
               </span>
-            )}
+              {ocultarNoche && snapshotsNocturnos > 0 && (
+                <span className="text-xs text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">
+                  {snapshotsNocturnos} nocturnos ocultos
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -247,7 +293,7 @@ export default function ProductHistoryModal({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {historyData.historico.map((snapshot, index) => (
+                      {datosFiltrados.map((snapshot, index) => (
                         <tr
                           key={index}
                           className={`hover:bg-gray-50 transition-colors ${snapshot.es_actual ? 'bg-green-50' : ''}`}
