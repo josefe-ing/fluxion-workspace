@@ -2040,11 +2040,11 @@ async def get_reconciliacion_inventario(
                         cantidad,
                         -- Agrupar en bloques de 2 horas (0-2, 2-4, 4-6, etc.)
                         DATE_TRUNC('hour', fecha_snapshot) -
-                            INTERVAL '1 hour' * (EXTRACT(HOUR FROM fecha_snapshot)::int % 2) as bloque_2h
+                            INTERVAL '1 hour' * (EXTRACT(HOUR FROM fecha_snapshot)::int %% 2) as bloque_2h
                     FROM inventario_historico
                     WHERE ubicacion_id = %s
                         AND producto_id = %s
-                        AND fecha_snapshot >= NOW() - INTERVAL '%s hours'
+                        AND fecha_snapshot >= NOW() - INTERVAL '1 hour' * %s
             """
             params = [ubicacion_id, producto_id, horas]
 
