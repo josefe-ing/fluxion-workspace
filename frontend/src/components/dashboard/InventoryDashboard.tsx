@@ -69,7 +69,7 @@ export default function InventoryDashboard() {
 
   // Filtros
   const [selectedUbicacion, setSelectedUbicacion] = useState<string>(ubicacionId || 'tienda_08');
-  const [selectedAlmacen, setSelectedAlmacen] = useState<string | null>(almacenParam);
+  const [selectedAlmacen, _setSelectedAlmacen] = useState<string | null>(almacenParam);
   const [selectedCategoria, setSelectedCategoria] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
