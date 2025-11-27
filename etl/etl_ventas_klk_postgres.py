@@ -332,6 +332,9 @@ class VentasKLKETLPostgres:
             self.logger.error("❌ No hay tiendas configuradas con sistema KLK")
             return False
 
+        # Excluir CEDIs - no tienen ventas
+        tiendas_klk = {k: v for k, v in tiendas_klk.items() if v.tipo != 'cedi'}
+
         # Filtrar por tienda_ids si se especifico
         if tienda_ids:
             tiendas_klk = {k: v for k, v in tiendas_klk.items() if k in tienda_ids}

@@ -206,7 +206,7 @@ class PostgreSQLInventarioLoader:
             try:
                 from core.tiendas_config import TIENDAS_CONFIG
                 if ubicacion_id in TIENDAS_CONFIG:
-                    ubicacion_nombre = TIENDAS_CONFIG[ubicacion_id].get('nombre', ubicacion_id)
+                    ubicacion_nombre = TIENDAS_CONFIG[ubicacion_id].ubicacion_nombre
             except Exception:
                 pass
 
@@ -214,12 +214,12 @@ class PostgreSQLInventarioLoader:
             # Determinar tipo: 'cedi' si es CEDI, 'tienda' si no
             ubicacion_tipo = 'cedi' if 'cedi' in ubicacion_id.lower() else 'tienda'
             self.logger.info(f"📍 Verificando ubicación: {ubicacion_nombre} ({ubicacion_id}) - tipo: {ubicacion_tipo}")
+            # Solo insertar si no existe, NO sobrescribir nombre existente
             cursor.execute("""
                 INSERT INTO ubicaciones (id, nombre, codigo_klk, tipo, activo)
                 VALUES (%s, %s, %s, %s, TRUE)
                 ON CONFLICT (id) DO UPDATE SET
-                    nombre = EXCLUDED.nombre,
-                    codigo_klk = EXCLUDED.codigo_klk,
+                    codigo_klk = COALESCE(EXCLUDED.codigo_klk, ubicaciones.codigo_klk),
                     tipo = EXCLUDED.tipo
             """, (ubicacion_id, ubicacion_nombre, ubicacion_id, ubicacion_tipo))
             self.logger.info(f"   ✅ Ubicación sincronizada: {ubicacion_id}")
@@ -343,11 +343,11 @@ class PostgreSQLInventarioLoader:
 
             # PASO 1: Crear/actualizar ubicación
             # Nota: el schema tiene id (PK), codigo (UNIQUE NOT NULL), tipo (NOT NULL)
+            # NO sobrescribir nombre existente para preservar cambios manuales
             cursor.execute("""
                 INSERT INTO ubicaciones (id, codigo, nombre, tipo, activo)
                 VALUES (%s, %s, %s, %s, TRUE)
                 ON CONFLICT (id) DO UPDATE SET
-                    nombre = EXCLUDED.nombre,
                     tipo = EXCLUDED.tipo
             """, (ubicacion_id, ubicacion_id, ubicacion_nombre, ubicacion_tipo))
             self.logger.info(f"   ✅ Ubicación sincronizada: {ubicacion_id} (tipo: {ubicacion_tipo})")

@@ -111,6 +111,14 @@ ALMACENES_KLK: Dict[str, List[AlmacenKLK]] = {
     "tienda_20": [
         AlmacenKLK(codigo="TTZ", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
     ],
+    # SUC006 - ISABELICA: Solo piso de venta
+    "tienda_15": [
+        AlmacenKLK(codigo="TTISBC", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    # SUC0099 - CEDI CARACAS: Solo principal
+    "cedi_caracas": [
+        AlmacenKLK(codigo="PCDICS", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True),
+    ],
 }
 
 
@@ -339,7 +347,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=get_sql_pass(),
         port=1433,
         activo=True,
-        codigo_deposito="1502"
+        codigo_deposito="1502",
+        visible_pedidos=True,  # ✅ Visible en Pedidos Sugeridos
+        sistema_pos="klk",  # 🆕 Migrado a KLK
+        codigo_almacen_klk="TTISBC"  # Código de almacén en KLK: EL BOSQUE PV
     ),
 
     "tienda_16": TiendaConfig(
@@ -459,6 +470,20 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         port=14348,
         activo=False,  # Activar cuando tengamos la IP
         tipo="cedi"
+    ),
+    "cedi_caracas": TiendaConfig(
+        ubicacion_id="cedi_caracas",
+        ubicacion_nombre="CEDI Caracas",
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
+        activo=True,
+        tipo="cedi",
+        sistema_pos="klk",
+        codigo_almacen_klk="PCDICS",
+        visible_pedidos=True
     ),
 }
 

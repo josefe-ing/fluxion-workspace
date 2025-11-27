@@ -34,6 +34,7 @@ TIENDA_TO_SUCURSAL = {
     "tienda_17": "SUC003",  # ARTIGAS
     "tienda_18": "SUC004",  # PARAISO
     "tienda_20": "SUC005",  # TAZAJAL
+    "tienda_15": "SUC006",  # ISABELICA
 }
 
 

@@ -179,6 +179,7 @@ class PostgreSQLVentasLoader:
                     'SUC003': 'tienda_17',
                     'SUC004': 'tienda_18',
                     'SUC005': 'tienda_20',
+                    'SUC006': 'tienda_15',
                 }
                 ubicacion_id = ubicacion_map.get(tienda_codigo, tienda_codigo)
 
