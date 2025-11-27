@@ -21,6 +21,31 @@ interface HistoryResponse {
   historico: HistorySnapshot[];
 }
 
+interface ReconciliacionPeriodo {
+  fecha_inicio: string;
+  fecha_fin: string;
+  almacen_codigo: string | null;
+  stock_inicio: number;
+  stock_fin: number;
+  cambio_inventario: number;
+  ventas: number;
+  diferencia: number;
+}
+
+interface ReconciliacionResponse {
+  codigo_producto: string;
+  ubicacion_id: string;
+  almacen_codigo: string | null;
+  horas: number;
+  total_periodos: number;
+  resumen: {
+    total_ventas: number;
+    total_cambio_inventario: number;
+    total_diferencia: number;
+  };
+  periodos: ReconciliacionPeriodo[];
+}
+
 interface ProductHistoryModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -40,12 +65,18 @@ export default function ProductHistoryModal({
 }: ProductHistoryModalProps) {
   const [loading, setLoading] = useState(false);
   const [historyData, setHistoryData] = useState<HistoryResponse | null>(null);
+  const [reconciliacionData, setReconciliacionData] = useState<ReconciliacionResponse | null>(null);
+  const [loadingReconciliacion, setLoadingReconciliacion] = useState(false);
   const [dias, setDias] = useState(1);
   const [ocultarNoche, setOcultarNoche] = useState(true); // Por defecto ocultar horario nocturno
+  const [mostrarReconciliacion, setMostrarReconciliacion] = useState(false);
 
   useEffect(() => {
     if (isOpen && codigoProducto) {
       loadHistory();
+      if (ubicacionId) {
+        loadReconciliacion();
+      }
     }
   }, [isOpen, codigoProducto, ubicacionId, almacenCodigo, dias]);
 
@@ -63,6 +94,36 @@ export default function ProductHistoryModal({
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadReconciliacion = async () => {
+    if (!ubicacionId) return;
+
+    try {
+      setLoadingReconciliacion(true);
+      const horas = dias * 24; // Convertir días a horas
+      const params: Record<string, string> = {
+        ubicacion_id: ubicacionId,
+        horas: horas.toString()
+      };
+      if (almacenCodigo) params.almacen_codigo = almacenCodigo;
+
+      const response = await http.get(`/api/productos/${codigoProducto}/reconciliacion-inventario`, { params });
+      setReconciliacionData(response.data);
+    } catch (error) {
+      console.error('Error cargando reconciliación:', error);
+      setReconciliacionData(null);
+    } finally {
+      setLoadingReconciliacion(false);
+    }
+  };
+
+  const formatHora = (fechaISO: string): string => {
+    const fecha = new Date(fechaISO);
+    return fecha.toLocaleString('es-VE', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   const formatFecha = (fechaISO: string): string => {
@@ -336,6 +397,142 @@ export default function ProductHistoryModal({
                   </LineChart>
                 </ResponsiveContainer>
               </div>
+
+              {/* Reconciliación Inventario vs Ventas */}
+              {ubicacionId && (
+                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                  <div
+                    className="px-4 py-3 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-indigo-50 flex items-center justify-between cursor-pointer"
+                    onClick={() => setMostrarReconciliacion(!mostrarReconciliacion)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                      </svg>
+                      <h3 className="text-lg font-semibold text-gray-900">Reconciliación: Inventario vs Ventas</h3>
+                      {reconciliacionData && reconciliacionData.periodos.length > 0 && (
+                        <span className={`text-sm font-medium px-2 py-0.5 rounded-full ${
+                          reconciliacionData.resumen.total_diferencia === 0
+                            ? 'bg-green-100 text-green-700'
+                            : Math.abs(reconciliacionData.resumen.total_diferencia) < 5
+                              ? 'bg-yellow-100 text-yellow-700'
+                              : 'bg-red-100 text-red-700'
+                        }`}>
+                          {reconciliacionData.resumen.total_diferencia === 0
+                            ? '✓ Cuadrado'
+                            : reconciliacionData.resumen.total_diferencia > 0
+                              ? `+${formatInteger(reconciliacionData.resumen.total_diferencia)} entrada`
+                              : `${formatInteger(reconciliacionData.resumen.total_diferencia)} diferencia`
+                          }
+                        </span>
+                      )}
+                    </div>
+                    <svg
+                      className={`h-5 w-5 text-gray-500 transition-transform ${mostrarReconciliacion ? 'rotate-180' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+
+                  {mostrarReconciliacion && (
+                    <div className="p-4">
+                      {loadingReconciliacion ? (
+                        <div className="text-center py-4 text-gray-500">Cargando reconciliación...</div>
+                      ) : reconciliacionData && reconciliacionData.periodos.length > 0 ? (
+                        <>
+                          {/* Resumen */}
+                          <div className="grid grid-cols-3 gap-4 mb-4">
+                            <div className="bg-blue-50 rounded-lg p-3 text-center">
+                              <p className="text-xs text-blue-600 font-medium">Total Vendido</p>
+                              <p className="text-xl font-bold text-blue-700">{formatInteger(reconciliacionData.resumen.total_ventas)}</p>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg p-3 text-center">
+                              <p className="text-xs text-gray-600 font-medium">Cambio Inventario</p>
+                              <p className={`text-xl font-bold ${reconciliacionData.resumen.total_cambio_inventario < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                {reconciliacionData.resumen.total_cambio_inventario > 0 ? '+' : ''}{formatInteger(reconciliacionData.resumen.total_cambio_inventario)}
+                              </p>
+                            </div>
+                            <div className={`rounded-lg p-3 text-center ${
+                              reconciliacionData.resumen.total_diferencia === 0
+                                ? 'bg-green-50'
+                                : Math.abs(reconciliacionData.resumen.total_diferencia) < 5
+                                  ? 'bg-yellow-50'
+                                  : 'bg-red-50'
+                            }`}>
+                              <p className="text-xs text-gray-600 font-medium">Diferencia</p>
+                              <p className={`text-xl font-bold ${
+                                reconciliacionData.resumen.total_diferencia === 0
+                                  ? 'text-green-600'
+                                  : reconciliacionData.resumen.total_diferencia > 0
+                                    ? 'text-blue-600'
+                                    : 'text-red-600'
+                              }`}>
+                                {reconciliacionData.resumen.total_diferencia > 0 ? '+' : ''}{formatInteger(reconciliacionData.resumen.total_diferencia)}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Tabla de períodos */}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Período</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Stock Inicio</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Stock Fin</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Δ Inventario</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Ventas</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Diferencia</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-200">
+                                {reconciliacionData.periodos.map((periodo, index) => (
+                                  <tr key={index} className="hover:bg-gray-50">
+                                    <td className="px-3 py-2 text-gray-900 whitespace-nowrap">
+                                      {formatHora(periodo.fecha_inicio)} → {formatHora(periodo.fecha_fin)}
+                                    </td>
+                                    <td className="px-3 py-2 text-right text-gray-700">{formatInteger(periodo.stock_inicio)}</td>
+                                    <td className="px-3 py-2 text-right text-gray-700">{formatInteger(periodo.stock_fin)}</td>
+                                    <td className={`px-3 py-2 text-right font-medium ${periodo.cambio_inventario < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                      {periodo.cambio_inventario > 0 ? '+' : ''}{formatInteger(periodo.cambio_inventario)}
+                                    </td>
+                                    <td className="px-3 py-2 text-right text-blue-600 font-medium">{formatInteger(periodo.ventas)}</td>
+                                    <td className={`px-3 py-2 text-right font-bold ${
+                                      periodo.diferencia === 0
+                                        ? 'text-green-600'
+                                        : periodo.diferencia > 0
+                                          ? 'text-blue-600'
+                                          : 'text-red-600'
+                                    }`}>
+                                      {periodo.diferencia > 0 ? '+' : ''}{formatInteger(periodo.diferencia)}
+                                      {periodo.diferencia === 0 && ' ✓'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Leyenda */}
+                          <div className="mt-3 text-xs text-gray-500 flex flex-wrap gap-4">
+                            <span><span className="text-green-600 font-medium">Diferencia = 0:</span> Inventario cuadra con ventas</span>
+                            <span><span className="text-blue-600 font-medium">Diferencia &gt; 0:</span> Entrada de mercancía o ajuste</span>
+                            <span><span className="text-red-600 font-medium">Diferencia &lt; 0:</span> Posible merma o error</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center py-4 text-gray-500">
+                          <p>No hay datos de reconciliación disponibles</p>
+                          <p className="text-xs mt-1">Se requieren al menos 2 snapshots de inventario</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Tabla */}
               <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">

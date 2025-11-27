@@ -1998,6 +1998,133 @@ async def get_historico_inventario(
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
+@app.get("/api/productos/{codigo}/reconciliacion-inventario", tags=["Productos"])
+async def get_reconciliacion_inventario(
+    codigo: str,
+    ubicacion_id: str,
+    almacen_codigo: Optional[str] = None,
+    horas: int = 6
+):
+    """
+    Obtiene la reconciliación de inventario vs ventas para un producto.
+    Compara los cambios de inventario entre snapshots con las ventas registradas.
+
+    Args:
+        codigo: Código del producto
+        ubicacion_id: Ubicación específica (requerido)
+        almacen_codigo: Filtrar por almacén específico
+        horas: Número de horas hacia atrás (default 6)
+
+    Returns:
+        Lista de períodos con stock_inicio, stock_fin, ventas y diferencia
+    """
+    try:
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener producto_id desde el código
+            cursor.execute("SELECT id FROM productos WHERE codigo = %s", (codigo,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Producto {codigo} no encontrado")
+
+            producto_id = row[0]
+
+            # Query de reconciliación
+            query = """
+                WITH snapshots AS (
+                    SELECT
+                        fecha_snapshot,
+                        almacen_codigo,
+                        cantidad,
+                        LAG(cantidad) OVER (PARTITION BY almacen_codigo ORDER BY fecha_snapshot) as cantidad_anterior,
+                        LAG(fecha_snapshot) OVER (PARTITION BY almacen_codigo ORDER BY fecha_snapshot) as snapshot_anterior
+                    FROM inventario_historico
+                    WHERE ubicacion_id = %s
+                        AND producto_id = %s
+                        AND fecha_snapshot >= NOW() - INTERVAL '%s hours'
+            """
+            params = [ubicacion_id, producto_id, horas]
+
+            if almacen_codigo:
+                query += " AND almacen_codigo = %s"
+                params.append(almacen_codigo)
+
+            query += """
+                )
+                SELECT
+                    s.snapshot_anterior as fecha_inicio,
+                    s.fecha_snapshot as fecha_fin,
+                    s.almacen_codigo,
+                    s.cantidad_anterior as stock_inicio,
+                    s.cantidad as stock_fin,
+                    s.cantidad - s.cantidad_anterior as cambio_inventario,
+                    COALESCE((
+                        SELECT SUM(cantidad_vendida)
+                        FROM ventas
+                        WHERE ubicacion_id = %s
+                        AND producto_id = %s
+                        AND fecha_venta > s.snapshot_anterior
+                        AND fecha_venta <= s.fecha_snapshot
+                    ), 0) as ventas_periodo
+                FROM snapshots s
+                WHERE s.cantidad_anterior IS NOT NULL
+                ORDER BY s.almacen_codigo, s.fecha_snapshot
+            """
+            params.extend([ubicacion_id, producto_id])
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            reconciliacion = []
+            for row in rows:
+                cambio_inv = float(row[5]) if row[5] else 0
+                ventas = float(row[6]) if row[6] else 0
+                # Diferencia = cambio_inventario + ventas
+                # Si es 0, todo cuadra (el inventario bajó exactamente lo que se vendió)
+                # Si es positivo, hay entrada de mercancía o ajuste positivo
+                # Si es negativo, hay merma/pérdida no explicada
+                diferencia = cambio_inv + ventas
+
+                reconciliacion.append({
+                    "fecha_inicio": row[0].isoformat() if row[0] else None,
+                    "fecha_fin": row[1].isoformat() if row[1] else None,
+                    "almacen_codigo": row[2],
+                    "stock_inicio": float(row[3]) if row[3] else 0,
+                    "stock_fin": float(row[4]) if row[4] else 0,
+                    "cambio_inventario": cambio_inv,
+                    "ventas": ventas,
+                    "diferencia": diferencia
+                })
+
+            cursor.close()
+
+            # Calcular totales
+            total_ventas = sum(r["ventas"] for r in reconciliacion)
+            total_cambio = sum(r["cambio_inventario"] for r in reconciliacion)
+            total_diferencia = sum(r["diferencia"] for r in reconciliacion)
+
+            return {
+                "codigo_producto": codigo,
+                "ubicacion_id": ubicacion_id,
+                "almacen_codigo": almacen_codigo,
+                "horas": horas,
+                "total_periodos": len(reconciliacion),
+                "resumen": {
+                    "total_ventas": total_ventas,
+                    "total_cambio_inventario": total_cambio,
+                    "total_diferencia": total_diferencia
+                },
+                "periodos": reconciliacion
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo reconciliación de inventario: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
 @app.get("/api/stock", response_model=PaginatedStockResponse, tags=["Inventario"])
 async def get_stock(
     ubicacion_id: Optional[str] = None,
