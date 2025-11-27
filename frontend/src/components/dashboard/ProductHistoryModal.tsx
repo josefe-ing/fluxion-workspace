@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 import { formatInteger } from '../../utils/formatNumber';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, ReferenceArea } from 'recharts';
 
 interface HistorySnapshot {
   fecha_snapshot: string;
@@ -70,6 +70,13 @@ export default function ProductHistoryModal({
   const [dias, setDias] = useState(1);
   const [ocultarNoche, setOcultarNoche] = useState(true); // Por defecto ocultar horario nocturno
   const [mostrarReconciliacion, setMostrarReconciliacion] = useState(false);
+
+  // Estados para zoom interactivo
+  const [zoomLeft, setZoomLeft] = useState<string | null>(null);
+  const [zoomRight, setZoomRight] = useState<string | null>(null);
+  const [refAreaLeft, setRefAreaLeft] = useState<string>('');
+  const [refAreaRight, setRefAreaRight] = useState<string>('');
+  const [isSelecting, setIsSelecting] = useState(false);
 
   useEffect(() => {
     if (isOpen && codigoProducto) {
@@ -175,34 +182,6 @@ export default function ProductHistoryModal({
       esActual: snap.es_actual,
     }));
 
-  // Calcular dominio del eje Y para mejor visualización
-  const calcularDominioY = (): [number, number] => {
-    if (chartData.length === 0) return [0, 100];
-
-    const cantidades = chartData.map(d => d.cantidad);
-    const minValue = Math.min(...cantidades);
-    const maxValue = Math.max(...cantidades);
-    const rango = maxValue - minValue;
-
-    // Si la variación es menor al 10% del máximo, ajustar escala para ver mejor los cambios
-    if (rango < maxValue * 0.1 && rango > 0) {
-      const margen = rango * 0.5; // 50% de margen arriba y abajo del rango
-      return [
-        Math.max(0, Math.floor(minValue - margen)),
-        Math.ceil(maxValue + margen)
-      ];
-    }
-
-    // Si no hay variación o es muy poca, mostrar margen del 5%
-    if (rango === 0) {
-      const margen = maxValue * 0.05 || 10;
-      return [Math.max(0, Math.floor(minValue - margen)), Math.ceil(maxValue + margen)];
-    }
-
-    // Variación normal: empezar desde 0 o un poco por debajo del mínimo
-    return [0, Math.ceil(maxValue * 1.05)];
-  };
-
   // Calcular estadísticas de cambio
   const calcularCambio = () => {
     if (chartData.length < 2) return null;
@@ -213,8 +192,139 @@ export default function ProductHistoryModal({
     return { inicial, final, diferencia, porcentaje };
   };
 
-  const dominioY = calcularDominioY();
+  // Reset zoom cuando cambian los datos
+  useEffect(() => {
+    setZoomLeft(null);
+    setZoomRight(null);
+    setRefAreaLeft('');
+    setRefAreaRight('');
+  }, [historyData, dias, ocultarNoche]);
+
+  // Datos filtrados por zoom
+  const chartDataZoomed = useCallback(() => {
+    if (!zoomLeft || !zoomRight) return chartData;
+
+    const leftIndex = chartData.findIndex(d => d.fecha === zoomLeft);
+    const rightIndex = chartData.findIndex(d => d.fecha === zoomRight);
+
+    if (leftIndex === -1 || rightIndex === -1) return chartData;
+
+    const start = Math.min(leftIndex, rightIndex);
+    const end = Math.max(leftIndex, rightIndex);
+
+    return chartData.slice(start, end + 1);
+  }, [chartData, zoomLeft, zoomRight])();
+
+  // Calcular dominio Y para datos con zoom
+  const calcularDominioYZoom = (): [number, number] => {
+    const data = chartDataZoomed;
+    if (data.length === 0) return [0, 100];
+
+    const cantidades = data.map(d => d.cantidad);
+    const minValue = Math.min(...cantidades);
+    const maxValue = Math.max(...cantidades);
+    const rango = maxValue - minValue;
+
+    // Siempre ajustar para ver mejor la variación cuando hay zoom
+    if (zoomLeft && zoomRight) {
+      const margen = Math.max(rango * 0.2, maxValue * 0.02, 5);
+      return [
+        Math.max(0, Math.floor(minValue - margen)),
+        Math.ceil(maxValue + margen)
+      ];
+    }
+
+    // Sin zoom: comportamiento original
+    if (rango < maxValue * 0.1 && rango > 0) {
+      const margen = rango * 0.5;
+      return [
+        Math.max(0, Math.floor(minValue - margen)),
+        Math.ceil(maxValue + margen)
+      ];
+    }
+
+    if (rango === 0) {
+      const margen = maxValue * 0.05 || 10;
+      return [Math.max(0, Math.floor(minValue - margen)), Math.ceil(maxValue + margen)];
+    }
+
+    return [0, Math.ceil(maxValue * 1.05)];
+  };
+
+  // Auto-zoom: detecta el rango con mayor variación
+  const autoZoomVariacion = () => {
+    if (chartData.length < 3) return;
+
+    // Encontrar el punto donde hay un cambio significativo (>20% del rango total)
+    const cantidades = chartData.map(d => d.cantidad);
+    const rangoTotal = Math.max(...cantidades) - Math.min(...cantidades);
+
+    if (rangoTotal === 0) return;
+
+    // Buscar el último cambio grande (entrada de mercancía)
+    let lastBigChangeIndex = 0;
+    for (let i = 1; i < chartData.length; i++) {
+      const cambio = Math.abs(cantidades[i] - cantidades[i - 1]);
+      if (cambio > rangoTotal * 0.2) {
+        lastBigChangeIndex = i;
+      }
+    }
+
+    // Hacer zoom desde el último cambio grande hasta el final
+    if (lastBigChangeIndex > 0 && lastBigChangeIndex < chartData.length - 1) {
+      setZoomLeft(chartData[lastBigChangeIndex].fecha);
+      setZoomRight(chartData[chartData.length - 1].fecha);
+    }
+  };
+
+  // Reset zoom
+  const resetZoom = () => {
+    setZoomLeft(null);
+    setZoomRight(null);
+    setRefAreaLeft('');
+    setRefAreaRight('');
+  };
+
+  // Handlers para selección de rango con mouse
+  const handleMouseDown = (e: { activeLabel?: string }) => {
+    if (e.activeLabel) {
+      setRefAreaLeft(e.activeLabel);
+      setIsSelecting(true);
+    }
+  };
+
+  const handleMouseMove = (e: { activeLabel?: string }) => {
+    if (isSelecting && e.activeLabel) {
+      setRefAreaRight(e.activeLabel);
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (refAreaLeft && refAreaRight && refAreaLeft !== refAreaRight) {
+      // Ordenar los puntos
+      const leftIndex = chartData.findIndex(d => d.fecha === refAreaLeft);
+      const rightIndex = chartData.findIndex(d => d.fecha === refAreaRight);
+
+      if (leftIndex !== -1 && rightIndex !== -1) {
+        const start = Math.min(leftIndex, rightIndex);
+        const end = Math.max(leftIndex, rightIndex);
+
+        // Solo zoom si seleccionó al menos 2 puntos
+        if (end - start >= 1) {
+          setZoomLeft(chartData[start].fecha);
+          setZoomRight(chartData[end].fecha);
+        }
+      }
+    }
+
+    setRefAreaLeft('');
+    setRefAreaRight('');
+    setIsSelecting(false);
+  };
+
+  const dominioY = calcularDominioYZoom();
   const cambioStats = calcularCambio();
+  const isZoomed = zoomLeft !== null && zoomRight !== null;
 
   // Renderizar etiqueta personalizada para cada punto
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -222,7 +332,7 @@ export default function ProductHistoryModal({
     const { x, y, value, index } = props;
     if (x === undefined || y === undefined || value === undefined || index === undefined) return null;
 
-    const totalPoints = chartData.length;
+    const totalPoints = chartDataZoomed.length;
     const isLast = index === totalPoints - 1;
 
     // Determinar si mostrar la etiqueta:
@@ -339,7 +449,17 @@ export default function ProductHistoryModal({
               {/* Gráfica */}
               <div className="bg-white border border-gray-200 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-gray-900">Evolución del Inventario</h3>
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-lg font-semibold text-gray-900">Evolución del Inventario</h3>
+                    {isZoomed && (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full flex items-center gap-1">
+                        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                        </svg>
+                        Zoom activo ({chartDataZoomed.length} puntos)
+                      </span>
+                    )}
+                  </div>
                   {cambioStats && (
                     <div className="flex items-center gap-4 text-sm">
                       <span className="text-gray-500">
@@ -362,8 +482,44 @@ export default function ProductHistoryModal({
                     </div>
                   )}
                 </div>
+
+                {/* Controles de zoom */}
+                <div className="flex items-center gap-2 mb-3">
+                  <button
+                    onClick={autoZoomVariacion}
+                    disabled={chartData.length < 3}
+                    className="px-3 py-1.5 text-xs font-medium bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                    </svg>
+                    Auto-zoom variación
+                  </button>
+                  {isZoomed && (
+                    <button
+                      onClick={resetZoom}
+                      className="px-3 py-1.5 text-xs font-medium bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors flex items-center gap-1"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Ver todo
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-500 ml-2">
+                    💡 Arrastra en el gráfico para hacer zoom manual
+                  </span>
+                </div>
+
                 <ResponsiveContainer width="100%" height={350}>
-                  <LineChart data={chartData} margin={{ top: 25, right: 30, left: 20, bottom: 80 }}>
+                  <LineChart
+                    data={chartDataZoomed}
+                    margin={{ top: 25, right: 30, left: 20, bottom: 80 }}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis
                       dataKey="fecha"
@@ -371,12 +527,14 @@ export default function ProductHistoryModal({
                       angle={-45}
                       textAnchor="end"
                       height={80}
-                      interval={chartData.length <= 20 ? 0 : Math.ceil(chartData.length / 12)}
+                      interval={chartDataZoomed.length <= 20 ? 0 : Math.ceil(chartDataZoomed.length / 12)}
+                      allowDataOverflow
                     />
                     <YAxis
                       tick={{ fontSize: 12 }}
                       domain={dominioY}
                       tickFormatter={(value) => formatInteger(value)}
+                      allowDataOverflow
                     />
                     <Tooltip
                       contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
@@ -394,6 +552,15 @@ export default function ProductHistoryModal({
                     >
                       <LabelList dataKey="cantidad" content={renderCustomLabel} />
                     </Line>
+                    {refAreaLeft && refAreaRight && (
+                      <ReferenceArea
+                        x1={refAreaLeft}
+                        x2={refAreaRight}
+                        strokeOpacity={0.3}
+                        fill="#3b82f6"
+                        fillOpacity={0.2}
+                      />
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
