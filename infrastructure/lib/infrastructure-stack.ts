@@ -793,7 +793,7 @@ PersistentKeepalive = 25`),
         hour: '*',
         weekDay: '*',
       }),
-      description: 'Sync inventory every 30 minutes for tienda_01, tienda_08, tienda_17, tienda_20, cedi_seco',
+      description: 'Sync inventory every 30 minutes for KLK stores (tienda_01, tienda_08, tienda_15, tienda_17, tienda_20, cedi_seco, cedi_caracas)',
       ruleName: 'fluxion-inventario-sync-30min',
       enabled: true,
     });
@@ -811,7 +811,7 @@ PersistentKeepalive = 25`),
           containerName: 'etl',
           command: [
             'python', 'etl_inventario.py',
-            '--tiendas', 'tienda_01', 'tienda_08', 'tienda_17', 'tienda_20', 'cedi_seco'
+            '--tiendas', 'tienda_01', 'tienda_08', 'tienda_15', 'tienda_17', 'tienda_20', 'cedi_seco', 'cedi_caracas'
           ]
         }],
         // Prevent concurrent executions
