@@ -95,8 +95,11 @@ export default function ProductHistoryModal({
     })) || [];
 
   // Renderizar etiqueta personalizada para cada punto
-  const renderCustomLabel = (props: { x: number; y: number; value: number; index: number }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const renderCustomLabel = (props: any) => {
     const { x, y, value, index } = props;
+    if (x === undefined || y === undefined || value === undefined || index === undefined) return null;
+
     const totalPoints = chartData.length;
     const isLast = index === totalPoints - 1;
 
@@ -111,7 +114,7 @@ export default function ProductHistoryModal({
     return (
       <text
         x={x}
-        y={y - 10}
+        y={Number(y) - 10}
         fill={isLast ? '#10b981' : '#3b82f6'}
         fontSize={11}
         fontWeight={isLast ? 'bold' : 'normal'}
