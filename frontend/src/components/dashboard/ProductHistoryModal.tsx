@@ -114,6 +114,47 @@ export default function ProductHistoryModal({
       esActual: snap.es_actual,
     }));
 
+  // Calcular dominio del eje Y para mejor visualización
+  const calcularDominioY = (): [number, number] => {
+    if (chartData.length === 0) return [0, 100];
+
+    const cantidades = chartData.map(d => d.cantidad);
+    const minValue = Math.min(...cantidades);
+    const maxValue = Math.max(...cantidades);
+    const rango = maxValue - minValue;
+
+    // Si la variación es menor al 10% del máximo, ajustar escala para ver mejor los cambios
+    if (rango < maxValue * 0.1 && rango > 0) {
+      const margen = rango * 0.5; // 50% de margen arriba y abajo del rango
+      return [
+        Math.max(0, Math.floor(minValue - margen)),
+        Math.ceil(maxValue + margen)
+      ];
+    }
+
+    // Si no hay variación o es muy poca, mostrar margen del 5%
+    if (rango === 0) {
+      const margen = maxValue * 0.05 || 10;
+      return [Math.max(0, Math.floor(minValue - margen)), Math.ceil(maxValue + margen)];
+    }
+
+    // Variación normal: empezar desde 0 o un poco por debajo del mínimo
+    return [0, Math.ceil(maxValue * 1.05)];
+  };
+
+  // Calcular estadísticas de cambio
+  const calcularCambio = () => {
+    if (chartData.length < 2) return null;
+    const inicial = chartData[0].cantidad;
+    const final = chartData[chartData.length - 1].cantidad;
+    const diferencia = final - inicial;
+    const porcentaje = inicial !== 0 ? ((diferencia / inicial) * 100) : 0;
+    return { inicial, final, diferencia, porcentaje };
+  };
+
+  const dominioY = calcularDominioY();
+  const cambioStats = calcularCambio();
+
   // Renderizar etiqueta personalizada para cada punto
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const renderCustomLabel = (props: any) => {
@@ -236,7 +277,30 @@ export default function ProductHistoryModal({
             <div className="space-y-6">
               {/* Gráfica */}
               <div className="bg-white border border-gray-200 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Evolución del Inventario</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Evolución del Inventario</h3>
+                  {cambioStats && (
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="text-gray-500">
+                        Inicio: <span className="font-medium text-gray-700">{formatInteger(cambioStats.inicial)}</span>
+                      </span>
+                      <span className="text-gray-400">→</span>
+                      <span className="text-gray-500">
+                        Actual: <span className="font-medium text-green-600">{formatInteger(cambioStats.final)}</span>
+                      </span>
+                      <span className={`font-semibold px-2 py-0.5 rounded ${
+                        cambioStats.diferencia < 0
+                          ? 'bg-red-100 text-red-700'
+                          : cambioStats.diferencia > 0
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {cambioStats.diferencia > 0 ? '+' : ''}{formatInteger(cambioStats.diferencia)}
+                        {' '}({cambioStats.porcentaje > 0 ? '+' : ''}{cambioStats.porcentaje.toFixed(1)}%)
+                      </span>
+                    </div>
+                  )}
+                </div>
                 <ResponsiveContainer width="100%" height={350}>
                   <LineChart data={chartData} margin={{ top: 25, right: 30, left: 20, bottom: 80 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -248,7 +312,11 @@ export default function ProductHistoryModal({
                       height={80}
                       interval={chartData.length <= 20 ? 0 : Math.ceil(chartData.length / 12)}
                     />
-                    <YAxis tick={{ fontSize: 12 }} />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      domain={dominioY}
+                      tickFormatter={(value) => formatInteger(value)}
+                    />
                     <Tooltip
                       contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
                       labelFormatter={(value) => `Fecha: ${value}`}
