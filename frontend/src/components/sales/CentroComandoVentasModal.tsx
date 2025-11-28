@@ -152,17 +152,17 @@ export default function CentroComandoVentasModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden">
+    <div className="fixed inset-0 z-50 overflow-hidden flex items-center justify-center p-4">
       {/* Overlay */}
       <div
         className="absolute inset-0 bg-black bg-opacity-50 transition-opacity"
         onClick={onClose}
       />
 
-      {/* Modal Panel */}
-      <div className="absolute inset-y-0 right-0 w-full max-w-4xl bg-white shadow-xl flex flex-col">
+      {/* Modal Panel - Centrado */}
+      <div className="relative w-full max-w-5xl max-h-[90vh] bg-white shadow-xl rounded-xl flex flex-col">
         {/* Header */}
-        <div className="flex-shrink-0 px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-purple-600 to-indigo-600">
+        <div className="flex-shrink-0 px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-t-xl">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold text-white flex items-center">
