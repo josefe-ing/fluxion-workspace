@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 import ProductHistoryModal from './ProductHistoryModal';
+import CentroComandoCorreccionModal from './CentroComandoCorreccionModal';
 
 interface StockItem {
   ubicacion_id: string;
@@ -90,6 +91,10 @@ export default function InventoryDashboard() {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<{ codigo: string; descripcion: string } | null>(null);
 
+  // Modal Centro de Comando de Corrección
+  const [showCorreccionModal, setShowCorreccionModal] = useState(false);
+  const [anomaliasCount, setAnomaliasCount] = useState<number>(0);
+
   // Debounce search term
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -104,6 +109,15 @@ export default function InventoryDashboard() {
     loadUbicaciones();
     loadCategorias();
   }, []);
+
+  // Cargar conteo de anomalías cuando cambia la ubicación
+  useEffect(() => {
+    if (selectedUbicacion && selectedUbicacion !== 'all') {
+      loadAnomaliasCount();
+    } else {
+      setAnomaliasCount(0);
+    }
+  }, [selectedUbicacion, selectedAlmacen]);
 
   // Cargar stock cuando cambian los filtros o la página
   useEffect(() => {
@@ -131,6 +145,20 @@ export default function InventoryDashboard() {
       setCategorias(response.data);
     } catch (error) {
       console.error('Error cargando categorías:', error);
+    }
+  };
+
+  const loadAnomaliasCount = async () => {
+    try {
+      const params: Record<string, string> = {};
+      if (selectedAlmacen) {
+        params.almacen_codigo = selectedAlmacen;
+      }
+      const response = await http.get(`/api/stock/anomalias/${selectedUbicacion}/count`, { params });
+      setAnomaliasCount(response.data.total_anomalias || 0);
+    } catch (error) {
+      console.error('Error cargando conteo de anomalías:', error);
+      setAnomaliasCount(0);
     }
   };
 
@@ -267,49 +295,73 @@ export default function InventoryDashboard() {
         </p>
       </div>
 
-      {/* Métricas Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Productos</p>
-              <p className="mt-2 text-3xl font-semibold text-gray-900">{formatInteger(stats.total_productos)}</p>
+      {/* Header con Métricas y Botón de Corrección */}
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
+        {/* Métricas Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1">
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Productos</p>
+                <p className="mt-2 text-3xl font-semibold text-gray-900">{formatInteger(stats.total_productos)}</p>
+              </div>
+              <div className="h-12 w-12 bg-gray-100 rounded-lg flex items-center justify-center">
+                <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+              </div>
             </div>
-            <div className="h-12 w-12 bg-gray-100 rounded-lg flex items-center justify-center">
-              <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-              </svg>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Stock en Cero</p>
+                <p className="mt-2 text-3xl font-semibold text-yellow-600">{formatInteger(stats.stock_cero)}</p>
+              </div>
+              <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+                <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Stock Negativo</p>
+                <p className="mt-2 text-3xl font-semibold text-red-600">{formatInteger(stats.stock_negativo)}</p>
+              </div>
+              <div className="h-12 w-12 bg-red-100 rounded-lg flex items-center justify-center">
+                <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Stock en Cero</p>
-              <p className="mt-2 text-3xl font-semibold text-yellow-600">{formatInteger(stats.stock_cero)}</p>
-            </div>
-            <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-              <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        {/* Botón Centro de Comando de Corrección */}
+        {selectedUbicacion && selectedUbicacion !== 'all' && (
+          <div className="lg:flex-shrink-0">
+            <button
+              onClick={() => setShowCorreccionModal(true)}
+              className="relative w-full lg:w-auto inline-flex items-center justify-center px-5 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors shadow-lg"
+            >
+              <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
               </svg>
-            </div>
+              Centro de Comando de Corrección
+              {/* Badge con conteo de anomalías */}
+              {anomaliasCount > 0 && (
+                <span className="absolute -top-2 -right-2 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white bg-red-600 rounded-full min-w-[24px]">
+                  {anomaliasCount > 99 ? '99+' : anomaliasCount}
+                </span>
+              )}
+            </button>
           </div>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Stock Negativo</p>
-              <p className="mt-2 text-3xl font-semibold text-red-600">{formatInteger(stats.stock_negativo)}</p>
-            </div>
-            <div className="h-12 w-12 bg-red-100 rounded-lg flex items-center justify-center">
-              <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Filtros */}
@@ -564,6 +616,20 @@ export default function InventoryDashboard() {
           almacenCodigo={selectedAlmacen || undefined}
         />
       )}
+
+      {/* Modal Centro de Comando de Corrección */}
+      <CentroComandoCorreccionModal
+        isOpen={showCorreccionModal}
+        onClose={() => setShowCorreccionModal(false)}
+        ubicacionId={selectedUbicacion}
+        ubicacionNombre={ubicaciones.find(u => u.id === selectedUbicacion)?.nombre || selectedUbicacion}
+        almacenCodigo={selectedAlmacen}
+        onAjustesAplicados={() => {
+          // Recargar datos después de aplicar ajustes
+          loadStock();
+          loadAnomaliasCount();
+        }}
+      />
     </div>
   );
 }

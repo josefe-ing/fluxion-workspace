@@ -359,6 +359,81 @@ class AlmacenKLKResponse(BaseModel):
     activo: bool
 
 
+# ============================================================================
+# MODELOS PARA CENTRO DE COMANDO DE CORRECCIÓN
+# ============================================================================
+
+class EvidenciaVenta(BaseModel):
+    """Una venta como evidencia de anomalía"""
+    numero_factura: str
+    fecha_venta: str
+    cantidad_vendida: float
+    hora: str  # Solo la hora para mostrar
+    stock_al_momento: Optional[float] = None  # Stock en el snapshot más cercano a la venta
+
+
+class AnomaliaStockItem(BaseModel):
+    """Producto con anomalía de stock detectada"""
+    producto_id: str
+    codigo_producto: str
+    descripcion_producto: str
+    categoria: Optional[str]
+    stock_actual: float
+    tipo_anomalia: str  # "negativo" | "venta_zombie"
+    prioridad: int  # 1 = alta (negativo), 2 = media (venta zombie)
+    # Evidencia: lista de ventas recientes
+    total_ventas_evidencia: int
+    suma_cantidad_vendida: float
+    evidencias: List[EvidenciaVenta]  # Lista de facturas como evidencia
+    # Histórico del día (para análisis)
+    stock_max_hoy: Optional[float] = None  # Máximo stock durante el día
+    stock_min_hoy: Optional[float] = None  # Mínimo stock durante el día
+    snapshots_hoy: Optional[int] = None  # Número de snapshots del día
+
+
+class AnomaliaStockResponse(BaseModel):
+    """Respuesta con lista de anomalías de stock"""
+    ubicacion_id: str
+    ubicacion_nombre: str
+    total_anomalias: int
+    anomalias_negativas: int
+    anomalias_venta_zombie: int
+    items: List[AnomaliaStockItem]
+
+
+class AjusteAuditoriaItem(BaseModel):
+    """Item individual de ajuste de auditoría"""
+    producto_id: str
+    conteo_fisico: float  # Lo que el usuario contó
+
+
+class AjusteAuditoriaRequest(BaseModel):
+    """Request para aplicar ajustes de auditoría"""
+    ubicacion_id: str
+    almacen_codigo: Optional[str] = None
+    ajustes: List[AjusteAuditoriaItem]
+    observaciones: Optional[str] = None
+
+
+class AjusteAuditoriaResultItem(BaseModel):
+    """Resultado de un ajuste individual"""
+    producto_id: str
+    stock_anterior: float
+    conteo_fisico: float
+    diferencia: float
+    ajuste_aplicado: bool
+    mensaje: Optional[str] = None
+
+
+class AjusteAuditoriaResponse(BaseModel):
+    """Respuesta después de aplicar ajustes"""
+    success: bool
+    ubicacion_id: str
+    total_procesados: int
+    total_ajustados: int
+    resultados: List[AjusteAuditoriaResultItem]
+
+
 class AlmacenesUbicacionResponse(BaseModel):
     """Lista de almacenes para una ubicación KLK"""
     ubicacion_id: str
@@ -981,202 +1056,200 @@ async def get_categorias():
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 # =====================================================================================
-# ENDPOINTS PARA SECCIÓN PRODUCTOS (ABC-XYZ)
+# HELPERS PARA CÁLCULO ABC-XYZ ON-DEMAND (PostgreSQL)
+# =====================================================================================
+
+def calcular_abc_xyz_on_demand(ubicacion_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Calcula clasificación ABC-XYZ on-demand usando PostgreSQL
+
+    ABC: Basado en valor de consumo (Principio de Pareto)
+        - A: Productos que acumulan 80% del valor
+        - B: Productos que acumulan 80-95% del valor
+        - C: Productos que acumulan 95-100% del valor
+
+    XYZ: Basado en Coeficiente de Variación de demanda semanal
+        - X: CV < 0.5 (demanda estable y predecible)
+        - Y: 0.5 ≤ CV < 1.0 (demanda variable)
+        - Z: CV ≥ 1.0 (demanda errática e impredecible)
+
+    Returns:
+        Dict con matriz completa, resumenes ABC y XYZ
+    """
+    ubicacion_filter = ""
+    params = []
+
+    if ubicacion_id:
+        ubicacion_filter = "AND v.ubicacion_id = %s"
+        params = [ubicacion_id]
+
+    # Clasificación ABC por cantidad de SKUs (no por valor Pareto)
+    # Regla simple:
+    # - A: Top 20% de SKUs por valor de ventas
+    # - B: Siguientes 30% de SKUs
+    # - C: Resto 50% de SKUs
+    # - Excluye productos nuevos (< 4 semanas de historial)
+
+    query = f"""
+    WITH ventas_6m AS (
+        -- Ventas últimos 6 meses agregadas por producto (todas las tiendas)
+        SELECT
+            v.producto_id,
+            p.nombre as descripcion,
+            SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo,
+            COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) as semanas_con_venta
+        FROM ventas v
+        JOIN productos p ON v.producto_id = p.id
+        WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
+            {ubicacion_filter}
+        GROUP BY v.producto_id, p.nombre
+        HAVING COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) >= 4  -- Mínimo 4 semanas
+    ),
+    productos_rankeados AS (
+        -- Rankear productos por valor de consumo
+        SELECT
+            producto_id,
+            descripcion,
+            valor_consumo,
+            semanas_con_venta,
+            ROW_NUMBER() OVER (ORDER BY valor_consumo DESC) as ranking,
+            COUNT(*) OVER () as total_productos
+        FROM ventas_6m
+        WHERE valor_consumo > 0
+    ),
+    productos_clasificados AS (
+        -- Asignar clasificación ABC por percentiles de cantidad
+        SELECT
+            producto_id,
+            descripcion,
+            valor_consumo,
+            semanas_con_venta,
+            ranking,
+            total_productos,
+            CASE
+                WHEN ranking <= (total_productos * 0.20) THEN 'A'  -- Top 20%
+                WHEN ranking <= (total_productos * 0.50) THEN 'B'  -- 20-50% (siguiente 30%)
+                ELSE 'C'  -- Resto 50%
+            END as clasificacion_abc
+        FROM productos_rankeados
+    )
+    SELECT
+        clasificacion_abc,
+        COUNT(*) as count,
+        SUM(valor_consumo) as total_valor,
+        AVG(semanas_con_venta) as promedio_semanas_historial
+    FROM productos_clasificados
+    GROUP BY clasificacion_abc
+    ORDER BY clasificacion_abc
+    """
+
+    results = execute_query_dict(query, tuple(params) if params else None)
+
+    # Calcular totales
+    total_productos = sum(int(r['count']) for r in results)
+    total_valor = sum(float(r['total_valor'] or 0) for r in results)
+
+    # Construir resumen ABC (solo clasificación ABC, sin XYZ)
+    resumen_abc = {'A': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0},
+                   'B': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0},
+                   'C': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0}}
+
+    for row in results:
+        abc = row['clasificacion_abc']
+        count = int(row['count'])
+        valor = float(row['total_valor']) if row['total_valor'] else 0.0
+
+        resumen_abc[abc]['count'] = count
+        resumen_abc[abc]['porcentaje_productos'] = round(float(count) * 100.0 / float(total_productos), 2) if total_productos > 0 else 0
+        resumen_abc[abc]['porcentaje_valor'] = round(valor * 100.0 / float(total_valor), 2) if total_valor > 0 else 0
+
+    return {
+        'total_productos': int(total_productos),
+        'total_valor': round(float(total_valor), 2),
+        'resumen_abc': resumen_abc
+    }
+
+
+def calculate_ventas_semanales_metricas(semanas: List[Dict]) -> Dict[str, Any]:
+    """
+    Calcula métricas agregadas de ventas semanales
+
+    Args:
+        semanas: Lista de ventas por semana con 'unidades' y 'valor'
+
+    Returns:
+        Dict con métricas: semanas_con_ventas, total_unidades, total_valor,
+        promedio_semanal, coeficiente_variacion
+    """
+    if not semanas:
+        return {
+            'semanas_con_ventas': 0,
+            'total_unidades': 0,
+            'total_valor': 0,
+            'promedio_semanal': 0,
+            'coeficiente_variacion': None
+        }
+
+    unidades = [s.get('unidades', 0) for s in semanas]
+    total_unidades = sum(unidades)
+    promedio = total_unidades / len(unidades) if len(unidades) > 0 else 0
+
+    # Calcular CV = desviación estándar / media
+    if promedio > 0 and len(unidades) > 1:
+        varianza = sum((x - promedio) ** 2 for x in unidades) / len(unidades)
+        desviacion = varianza ** 0.5
+        cv = desviacion / promedio
+    else:
+        cv = None
+
+    return {
+        'semanas_con_ventas': len([u for u in unidades if u > 0]),
+        'total_unidades': int(total_unidades),
+        'total_valor': round(sum(s.get('valor', 0) for s in semanas), 2),
+        'promedio_semanal': round(promedio, 2),
+        'coeficiente_variacion': round(cv, 4) if cv is not None else None
+    }
+
+
+# =====================================================================================
+# ENDPOINTS PARA SECCIÓN PRODUCTOS (ABC-XYZ) - PostgreSQL v2.0
 # =====================================================================================
 
 @app.get("/api/productos/matriz-abc-xyz", tags=["Productos"])
 async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
     """
-    Retorna matriz 3×3 ABC-XYZ con conteos y porcentajes
+    Calcula y retorna clasificación ABC on-demand (PostgreSQL v2.0)
+
+    ABC: Clasificación por valor de consumo (Principio de Pareto)
+        - A: Productos que acumulan 80% del valor (top performers)
+        - B: Productos que acumulan 80-95% del valor (middle performers)
+        - C: Productos que acumulan 95-100% del valor (low performers)
+
+    IMPORTANTE: Calcula ABC POR TIENDA, luego cuenta productos 100% consistentes.
+    Un producto aparece como "A" solo si es A en TODAS las tiendas donde se vende.
 
     Args:
         ubicacion_id: Filtro por tienda (opcional, None = todas las tiendas)
 
     Returns:
         {
-            "total_productos": 3133,
-            "matriz": {
-                "AX": { "count": 45, "porcentaje_productos": 1.4, "porcentaje_valor": 35.2 },
-                ...
-            },
-            "resumen_abc": { "A": {...}, "B": {...}, "C": {...} },
-            "resumen_xyz": { "X": {...}, "Y": {...}, "Z": {...} }
+            "total_productos": 150,
+            "total_valor": 1234567.89,
+            "resumen_abc": {
+                "A": { "count": 15, "porcentaje_productos": 10.0, "porcentaje_valor": 80.0 },
+                "B": { "count": 45, "porcentaje_productos": 30.0, "porcentaje_valor": 15.0 },
+                "C": { "count": 90, "porcentaje_productos": 60.0, "porcentaje_valor": 5.0 }
+            }
         }
     """
     try:
-        with get_db_connection() as conn:
-            if ubicacion_id:
-                # Si hay ubicacion_id, mostrar datos de esa tienda específica
-                where_clause = "WHERE matriz_abc_xyz IS NOT NULL AND ubicacion_id = ?"
-                params = [ubicacion_id]
-
-                # Contar productos por matriz
-                matriz_query = f"""
-                    SELECT
-                        matriz_abc_xyz,
-                        COUNT(DISTINCT codigo_producto) as count,
-                        SUM(valor_consumo_total) as valor_total
-                    FROM productos_abc_v2
-                    {where_clause}
-                    GROUP BY matriz_abc_xyz
-                """
-
-                matriz_result = conn.execute(matriz_query, params).fetchall()
-
-                # Resumen por ABC
-                abc_query = f"""
-                    SELECT
-                        clasificacion_abc_valor,
-                        COUNT(DISTINCT codigo_producto) as count,
-                        SUM(valor_consumo_total) as valor_total
-                    FROM productos_abc_v2
-                    {where_clause}
-                    GROUP BY clasificacion_abc_valor
-                """
-
-                abc_result = conn.execute(abc_query, params).fetchall()
-
-                # Resumen por XYZ
-                xyz_query = f"""
-                    SELECT
-                        clasificacion_xyz,
-                        COUNT(DISTINCT codigo_producto) as count
-                    FROM productos_abc_v2
-                    {where_clause}
-                        AND clasificacion_xyz IS NOT NULL
-                    GROUP BY clasificacion_xyz
-                """
-
-                xyz_result = conn.execute(xyz_query, params).fetchall()
-
-            else:
-                # Sin ubicacion_id: agregar por producto primero, luego clasificar
-                # Esto evita contar el mismo producto múltiples veces si tiene diferentes
-                # clasificaciones en diferentes tiendas
-
-                # Matriz: tomar la clasificación más común por producto
-                matriz_query = """
-                    WITH producto_matriz AS (
-                        SELECT
-                            codigo_producto,
-                            matriz_abc_xyz,
-                            SUM(valor_consumo_total) as valor_total,
-                            COUNT(*) as tiendas_count
-                        FROM productos_abc_v2
-                        WHERE matriz_abc_xyz IS NOT NULL
-                        GROUP BY codigo_producto, matriz_abc_xyz
-                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC, valor_total DESC) = 1
-                    )
-                    SELECT
-                        matriz_abc_xyz,
-                        COUNT(codigo_producto) as count,
-                        SUM(valor_total) as valor_total
-                    FROM producto_matriz
-                    GROUP BY matriz_abc_xyz
-                """
-
-                matriz_result = conn.execute(matriz_query).fetchall()
-
-                # Resumen ABC: tomar la clasificación más común por producto
-                abc_query = """
-                    WITH producto_abc AS (
-                        SELECT
-                            codigo_producto,
-                            clasificacion_abc_valor,
-                            SUM(valor_consumo_total) as valor_total,
-                            COUNT(*) as tiendas_count
-                        FROM productos_abc_v2
-                        WHERE clasificacion_abc_valor IS NOT NULL
-                        GROUP BY codigo_producto, clasificacion_abc_valor
-                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC, valor_total DESC) = 1
-                    )
-                    SELECT
-                        clasificacion_abc_valor,
-                        COUNT(codigo_producto) as count,
-                        SUM(valor_total) as valor_total
-                    FROM producto_abc
-                    GROUP BY clasificacion_abc_valor
-                """
-
-                abc_result = conn.execute(abc_query).fetchall()
-
-                # Resumen XYZ: tomar la clasificación más común por producto
-                xyz_query = """
-                    WITH producto_xyz AS (
-                        SELECT
-                            codigo_producto,
-                            clasificacion_xyz,
-                            COUNT(*) as tiendas_count
-                        FROM productos_abc_v2
-                        WHERE clasificacion_xyz IS NOT NULL
-                        GROUP BY codigo_producto, clasificacion_xyz
-                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC) = 1
-                    )
-                    SELECT
-                        clasificacion_xyz,
-                        COUNT(codigo_producto) as count
-                    FROM producto_xyz
-                    GROUP BY clasificacion_xyz
-                """
-
-                xyz_result = conn.execute(xyz_query).fetchall()
-
-            # Calcular totales
-            total_productos = sum(row[1] for row in matriz_result)
-            total_valor = sum(row[2] if row[2] else 0 for row in matriz_result)
-
-            # Construir matriz con todos los cuadrantes
-            matriz = {}
-            for abc in ['A', 'B', 'C']:
-                for xyz in ['X', 'Y', 'Z']:
-                    key = f"{abc}{xyz}"
-                    matriz[key] = {
-                        "count": 0,
-                        "porcentaje_productos": 0.0,
-                        "porcentaje_valor": 0.0
-                    }
-
-            # Llenar con datos reales
-            for row in matriz_result:
-                if row[0]:  # matriz_abc_xyz no es NULL
-                    matriz[row[0]] = {
-                        "count": row[1],
-                        "porcentaje_productos": round((row[1] / total_productos * 100), 2) if total_productos > 0 else 0,
-                        "porcentaje_valor": round((row[2] / total_valor * 100), 2) if total_valor > 0 else 0
-                    }
-
-            # Procesar resumen ABC (derivar de la matriz para consistencia)
-            resumen_abc = {}
-            for abc in ['A', 'B', 'C']:
-                abc_count = sum(matriz[f"{abc}{xyz}"]["count"] for xyz in ['X', 'Y', 'Z'])
-                abc_porcentaje_valor = sum(matriz[f"{abc}{xyz}"]["porcentaje_valor"] for xyz in ['X', 'Y', 'Z'])
-                if abc_count > 0:
-                    resumen_abc[abc] = {
-                        "count": abc_count,
-                        "porcentaje_productos": round((abc_count / total_productos * 100), 2) if total_productos > 0 else 0,
-                        "porcentaje_valor": round(abc_porcentaje_valor, 2)
-                    }
-
-            # Procesar resumen XYZ (derivar de la matriz para consistencia)
-            resumen_xyz = {}
-            for xyz in ['X', 'Y', 'Z']:
-                xyz_count = sum(matriz[f"{abc}{xyz}"]["count"] for abc in ['A', 'B', 'C'])
-                if xyz_count > 0:
-                    resumen_xyz[xyz] = {
-                        "count": xyz_count,
-                        "porcentaje_productos": round((xyz_count / total_productos * 100), 2) if total_productos > 0 else 0
-                    }
-
-            return {
-                "total_productos": total_productos,
-                "total_valor": float(total_valor) if total_valor else 0,
-                "matriz": matriz,
-                "resumen_abc": resumen_abc,
-                "resumen_xyz": resumen_xyz
-            }
+        logger.info(f"📊 Calculando clasificación ABC on-demand (ubicacion_id={ubicacion_id})")
+        resultado = calcular_abc_xyz_on_demand(ubicacion_id)
+        logger.info(f"✅ Clasificación ABC calculada: {resultado['total_productos']} productos")
+        return resultado
 
     except Exception as e:
-        logger.error(f"Error obteniendo matriz ABC-XYZ: {str(e)}")
+        logger.error(f"Error calculando clasificación ABC: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @app.get("/api/productos/lista-por-matriz", tags=["Productos"])
@@ -1187,7 +1260,9 @@ async def get_productos_por_matriz(
     offset: int = 0
 ):
     """
-    Retorna lista de productos con clasificación ABC-XYZ
+    Retorna lista de productos filtrada por clasificación ABC-XYZ (PostgreSQL v2.0)
+
+    Calcula ABC-XYZ on-demand y filtra resultados.
 
     Args:
         matriz: "AX", "AY", "AZ", "BX", "BY", "BZ", "CX", "CY", "CZ" (opcional, None = todos)
@@ -1196,157 +1271,114 @@ async def get_productos_por_matriz(
         offset: Offset para paginación
 
     Returns:
-        Lista de productos con clasificación ABC-XYZ
+        Lista de productos con clasificación ABC-XYZ, stock e insights
     """
     try:
-        with get_db_connection() as conn:
-            if ubicacion_id:
-                # Si hay ubicacion_id, mostrar productos de esa tienda específica
-                # Usar COALESCE para obtener descripción de inventario o ventas
-                where_clause = "WHERE ubicacion_id = ?"
-                params_ventas = [ubicacion_id]
+        ubicacion_filter = ""
+        params = []
 
-                if matriz:
-                    where_clause += " AND matriz_abc_xyz = ?"
-                    params_ventas.append(matriz)
+        if ubicacion_id:
+            ubicacion_filter = "AND v.ubicacion_id = %s"
+            params.append(ubicacion_id)
 
-                query = f"""
-                    WITH producto_ventas AS (
-                        SELECT
-                            codigo_producto,
-                            descripcion_producto,
-                            categoria_producto
-                        FROM ventas_raw
-                        WHERE codigo_producto IN (
-                            SELECT codigo_producto FROM productos_abc_v2
-                            {where_clause}
-                        )
-                        GROUP BY codigo_producto, descripcion_producto, categoria_producto
-                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY COUNT(*) DESC) = 1
-                    )
-                    SELECT
-                        abc.codigo_producto,
-                        COALESCE(inv.descripcion_producto, pv.descripcion_producto, 'Sin descripción') as descripcion,
-                        COALESCE(inv.categoria, pv.categoria_producto, 'Sin categoría') as categoria,
-                        abc.clasificacion_abc_valor,
-                        abc.clasificacion_xyz,
-                        abc.matriz_abc_xyz,
-                        abc.valor_consumo_total,
-                        abc.porcentaje_valor,
-                        abc.ranking_valor,
-                        abc.coeficiente_variacion,
-                        COALESCE(inv.cantidad_actual, 0) as stock_actual
-                    FROM productos_abc_v2 abc
-                    LEFT JOIN inventario_raw inv ON abc.codigo_producto = inv.codigo_producto
-                        AND abc.ubicacion_id = inv.ubicacion_id
-                    LEFT JOIN producto_ventas pv ON abc.codigo_producto = pv.codigo_producto
-                    {where_clause.replace('ubicacion_id', 'abc.ubicacion_id').replace('matriz_abc_xyz', 'abc.matriz_abc_xyz')}
-                    ORDER BY abc.ranking_valor ASC
-                    LIMIT ? OFFSET ?
-                """
-                params = params_ventas + params_ventas + [limit, offset]
-            else:
-                # Sin ubicacion_id: usar la clasificación más común para cada producto
-                # Esto asegura que cada producto aparezca una sola vez con su clasificación principal
-                where_filter = "WHERE matriz_abc_xyz IS NOT NULL" if not matriz else "WHERE matriz_abc_xyz = ?"
-                params = [] if not matriz else [matriz]
+        # SIEMPRE calculamos ABC por producto-tienda
+        # Cuando NO hay filtro, agregamos columnas de "tiendas_con_clasificacion"
 
-                query = f"""
-                    WITH total_tiendas AS (
-                        SELECT COUNT(DISTINCT ubicacion_id) as total
-                        FROM productos_abc_v2
-                    ),
-                    producto_clasificacion AS (
-                        SELECT
-                            codigo_producto,
-                            matriz_abc_xyz,
-                            clasificacion_abc_valor,
-                            clasificacion_xyz,
-                            SUM(valor_consumo_total) as valor_total,
-                            AVG(porcentaje_valor) as porcentaje_promedio,
-                            AVG(coeficiente_variacion) as cv_promedio,
-                            COUNT(*) as tiendas_count
-                        FROM productos_abc_v2
-                        {where_filter}
-                        GROUP BY codigo_producto, matriz_abc_xyz, clasificacion_abc_valor, clasificacion_xyz
-                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY tiendas_count DESC, valor_total DESC) = 1
-                    ),
-                    producto_ranked AS (
-                        SELECT
-                            pc.*,
-                            tt.total as total_tiendas,
-                            ROW_NUMBER() OVER (ORDER BY pc.tiendas_count DESC, pc.valor_total DESC) as ranking_global
-                        FROM producto_clasificacion pc
-                        CROSS JOIN total_tiendas tt
-                    ),
-                    producto_stock AS (
-                        SELECT
-                            codigo_producto,
-                            MIN(descripcion_producto) as descripcion_inv,
-                            MIN(categoria) as categoria_inv,
-                            SUM(cantidad_actual) as stock_total
-                        FROM inventario_raw
-                        GROUP BY codigo_producto
-                    ),
-                    producto_ventas AS (
-                        SELECT
-                            codigo_producto,
-                            descripcion_producto,
-                            categoria_producto
-                        FROM ventas_raw
-                        WHERE codigo_producto IN (SELECT codigo_producto FROM producto_clasificacion)
-                        GROUP BY codigo_producto, descripcion_producto, categoria_producto
-                        QUALIFY ROW_NUMBER() OVER (PARTITION BY codigo_producto ORDER BY COUNT(*) DESC) = 1
-                    )
-                    SELECT
-                        pr.codigo_producto,
-                        COALESCE(ps.descripcion_inv, pv.descripcion_producto) as descripcion,
-                        COALESCE(ps.categoria_inv, pv.categoria_producto) as categoria,
-                        pr.clasificacion_abc_valor,
-                        pr.clasificacion_xyz,
-                        pr.matriz_abc_xyz,
-                        pr.valor_total,
-                        pr.porcentaje_promedio,
-                        pr.ranking_global,
-                        pr.cv_promedio,
-                        ps.stock_total,
-                        pr.tiendas_count,
-                        pr.total_tiendas
-                    FROM producto_ranked pr
-                    LEFT JOIN producto_stock ps ON pr.codigo_producto = ps.codigo_producto
-                    LEFT JOIN producto_ventas pv ON pr.codigo_producto = pv.codigo_producto
-                    ORDER BY pr.tiendas_count DESC, pr.valor_total DESC
-                    LIMIT ? OFFSET ?
-                """
-                params = params + [limit, offset]
+        query = f"""
+        WITH ventas_6m AS (
+            -- Ventas últimos 6 meses por producto-tienda
+            SELECT
+                v.producto_id,
+                v.ubicacion_id,
+                p.nombre as descripcion,
+                p.categoria,
+                SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo
+            FROM ventas v
+            JOIN productos p ON v.producto_id = p.id
+            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
+                {ubicacion_filter}
+            GROUP BY v.producto_id, v.ubicacion_id, p.nombre, p.categoria
+        ),
+        abc_classification AS (
+            -- Clasificación ABC POR TIENDA
+            SELECT
+                producto_id,
+                ubicacion_id,
+                descripcion,
+                categoria,
+                valor_consumo,
+                SUM(valor_consumo) OVER (
+                    PARTITION BY ubicacion_id
+                    ORDER BY valor_consumo DESC
+                ) / NULLIF(SUM(valor_consumo) OVER (PARTITION BY ubicacion_id), 0) * 100 as pct_acumulado,
+                CASE
+                    WHEN SUM(valor_consumo) OVER (
+                        PARTITION BY ubicacion_id
+                        ORDER BY valor_consumo DESC
+                    ) / NULLIF(SUM(valor_consumo) OVER (PARTITION BY ubicacion_id), 0) * 100 <= 80 THEN 'A'
+                    WHEN SUM(valor_consumo) OVER (
+                        PARTITION BY ubicacion_id
+                        ORDER BY valor_consumo DESC
+                    ) / NULLIF(SUM(valor_consumo) OVER (PARTITION BY ubicacion_id), 0) * 100 <= 95 THEN 'B'
+                    ELSE 'C'
+                END as clasificacion_abc,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ubicacion_id
+                    ORDER BY valor_consumo DESC
+                ) as ranking_en_tienda
+            FROM ventas_6m
+            WHERE valor_consumo > 0
+        ),
+        producto_agregado AS (
+            -- Agregar datos por producto (todas las tiendas)
+            SELECT
+                producto_id,
+                MAX(descripcion) as descripcion,
+                MAX(categoria) as categoria,
+                SUM(valor_consumo) as valor_total,
+                COUNT(DISTINCT ubicacion_id) as total_tiendas,
+                COUNT(DISTINCT CASE WHEN clasificacion_abc = '{matriz}' THEN ubicacion_id END) as tiendas_con_clasificacion,
+                AVG(pct_acumulado) as pct_promedio,
+                MIN(ranking_en_tienda) as mejor_ranking
+            FROM abc_classification
+            {f"WHERE clasificacion_abc = '{matriz}'" if matriz else ""}
+            GROUP BY producto_id
+        ),
+        stock_productos AS (
+            SELECT
+                producto_id,
+                SUM(cantidad) as stock_actual
+            FROM inventario_actual
+            {f"WHERE ubicacion_id = %s" if ubicacion_id else ""}
+            GROUP BY producto_id
+        )
+        SELECT
+            pa.producto_id as codigo_producto,
+            pa.descripcion,
+            pa.categoria,
+            '{matriz if matriz else 'ALL'}' as clasificacion_abc,
+            pa.valor_total as valor_consumo_total,
+            pa.pct_promedio as porcentaje_valor,
+            pa.mejor_ranking as ranking_valor,
+            {'pa.tiendas_con_clasificacion,' if not ubicacion_id else ''}
+            {'pa.total_tiendas,' if not ubicacion_id else ''}
+            {f'ROUND((pa.tiendas_con_clasificacion::float / NULLIF(pa.total_tiendas, 0)) * 100, 1) as porcentaje_tiendas,' if not ubicacion_id else ''}
+            COALESCE(sp.stock_actual, 0) as stock_actual
+        FROM producto_agregado pa
+        LEFT JOIN stock_productos sp ON pa.producto_id = sp.producto_id
+        {f"WHERE pa.tiendas_con_clasificacion > 0" if matriz else ""}
+        ORDER BY pa.valor_total DESC
+        LIMIT %s OFFSET %s
+        """
 
-            result = conn.execute(query, params).fetchall()
+        # Agregar ubicacion_id a params para stock_productos si aplica
+        if ubicacion_id:
+            params.append(ubicacion_id)
 
-            productos = []
-            for row in result:
-                producto = {
-                    "codigo_producto": row[0],
-                    "descripcion": row[1],
-                    "categoria": row[2],
-                    "clasificacion_abc": row[3],
-                    "clasificacion_xyz": row[4],
-                    "matriz": row[5],
-                    "valor_consumo_total": float(row[6]) if row[6] else 0,
-                    "porcentaje_valor": float(row[7]) if row[7] else 0,
-                    "ranking_valor": row[8],
-                    "coeficiente_variacion": float(row[9]) if row[9] else None,
-                    "stock_actual": float(row[10]) if row[10] else 0
-                }
+        params.extend([limit, offset])
+        results = execute_query_dict(query, tuple(params))
 
-                # Si es vista global (sin ubicacion_id), agregar info de tiendas
-                if not ubicacion_id:
-                    producto["tiendas_con_clasificacion"] = row[11]
-                    producto["total_tiendas"] = row[12]
-                    producto["porcentaje_tiendas"] = round((row[11] / row[12] * 100), 1) if row[12] > 0 else 0
-
-                productos.append(producto)
-
-            return productos
+        return results
 
     except Exception as e:
         logger.error(f"Error obteniendo productos por matriz: {str(e)}")
@@ -2456,6 +2488,705 @@ async def get_stock(
     except Exception as e:
         logger.error(f"Error obteniendo stock: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+# ============================================================================
+# ENDPOINTS CENTRO DE COMANDO DE CORRECCIÓN (Auditoría de Inventario)
+# ============================================================================
+
+@app.get("/api/stock/anomalias/{ubicacion_id}", response_model=AnomaliaStockResponse, tags=["Auditoría Inventario"])
+async def get_anomalias_stock(
+    ubicacion_id: str,
+    almacen_codigo: Optional[str] = None,
+    tipo_anomalia: Optional[str] = None  # "negativo" | "venta_zombie" | None (todos)
+):
+    """
+    Detecta anomalías de stock para una ubicación específica.
+
+    Criterios de detección:
+    - **Stock Negativo (Prioridad 1)**: Productos con cantidad < 0
+    - **Venta Zombie (Prioridad 2)**: Productos que durante TODO el día de hoy
+      nunca tuvieron inventario disponible (stock ≤ 0 en todos los snapshots)
+      Y tuvieron ventas ese mismo día. Esto indica ventas sin stock real.
+
+    Args:
+        ubicacion_id: ID de la tienda (ej: tienda_08, cedi_caracas)
+        almacen_codigo: Código del almacén (opcional, ej: APP-TPF, APP-PPF)
+        tipo_anomalia: Filtrar por tipo: "negativo", "venta_zombie", o None para todos
+
+    Returns:
+        Lista de productos con anomalías y su evidencia (lista de facturas)
+    """
+    try:
+        if is_postgres_mode():
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
+
+                # Obtener nombre de la ubicación
+                cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", (ubicacion_id,))
+                ubicacion_row = cursor.fetchone()
+                if not ubicacion_row:
+                    raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+                ubicacion_nombre = ubicacion_row[0]
+
+                # Fecha de hoy (inicio del día) para ventas zombie
+                hoy_inicio = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+                items = []
+                negativos_count = 0
+                zombies_count = 0
+
+                # Query 1: Stock Negativo (Prioridad 1)
+                if tipo_anomalia is None or tipo_anomalia == "negativo":
+                    query_negativos = """
+                        SELECT
+                            ia.producto_id,
+                            p.codigo as codigo_producto,
+                            COALESCE(NULLIF(p.descripcion, ''), p.nombre, 'Sin Descripción') as descripcion_producto,
+                            p.categoria,
+                            ia.cantidad as stock_actual
+                        FROM inventario_actual ia
+                        INNER JOIN productos p ON ia.producto_id = p.id
+                        WHERE ia.ubicacion_id = %s
+                          AND ia.cantidad < 0
+                          AND p.activo = true
+                    """
+                    params_negativos = [ubicacion_id]
+
+                    if almacen_codigo:
+                        query_negativos += " AND ia.almacen_codigo = %s"
+                        params_negativos.append(almacen_codigo)
+
+                    query_negativos += " ORDER BY ia.cantidad ASC"
+
+                    cursor.execute(query_negativos, params_negativos)
+                    negativos = cursor.fetchall()
+                    negativos_count = len(negativos)
+
+                    # Para cada producto negativo, obtener las últimas 10 ventas como evidencia
+                    for row in negativos:
+                        producto_id, codigo, descripcion, categoria, stock = row
+
+                        # Obtener últimas ventas de este producto en esta tienda
+                        cursor.execute("""
+                            SELECT numero_factura, fecha_venta,
+                                   TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
+                                   TO_CHAR(fecha_venta, 'HH24:MI') as hora, cantidad_vendida
+                            FROM ventas
+                            WHERE producto_id = %s AND ubicacion_id = %s
+                            ORDER BY fecha_venta DESC
+                            LIMIT 10
+                        """, [producto_id, ubicacion_id])
+                        ventas_evidencia = cursor.fetchall()
+
+                        # Para cada venta, buscar el stock histórico más cercano
+                        evidencias = []
+                        for v in ventas_evidencia:
+                            numero_factura, fecha_venta_ts, fecha_str, hora_str, cantidad = v
+
+                            # Buscar el snapshot más cercano (antes o igual) a la fecha de venta
+                            stock_query = """
+                                SELECT cantidad
+                                FROM inventario_historico
+                                WHERE producto_id = %s
+                                  AND ubicacion_id = %s
+                                  AND fecha_snapshot <= %s
+                            """
+                            stock_params = [producto_id, ubicacion_id, fecha_venta_ts]
+                            if almacen_codigo:
+                                stock_query += " AND almacen_codigo = %s"
+                                stock_params.append(almacen_codigo)
+                            stock_query += " ORDER BY fecha_snapshot DESC LIMIT 1"
+
+                            cursor.execute(stock_query, stock_params)
+                            stock_row = cursor.fetchone()
+
+                            if stock_row:
+                                stock_al_momento = float(stock_row[0])
+                            else:
+                                # Si no hay histórico antes de la venta, usar el stock actual
+                                # (el problema persiste desde antes del tracking)
+                                stock_al_momento = float(stock)
+
+                            evidencias.append(EvidenciaVenta(
+                                numero_factura=numero_factura,
+                                fecha_venta=fecha_str,
+                                hora=hora_str,
+                                cantidad_vendida=float(cantidad),
+                                stock_al_momento=stock_al_momento
+                            ))
+
+                        suma_cantidad = sum(e.cantidad_vendida for e in evidencias)
+
+                        # Obtener histórico del día para este producto
+                        hist_query = """
+                            SELECT MAX(cantidad) as max_stock,
+                                   MIN(cantidad) as min_stock,
+                                   COUNT(*) as snapshots
+                            FROM inventario_historico
+                            WHERE producto_id = %s
+                              AND ubicacion_id = %s
+                              AND fecha_snapshot >= %s
+                        """
+                        hist_params = [producto_id, ubicacion_id, hoy_inicio]
+                        if almacen_codigo:
+                            hist_query += " AND almacen_codigo = %s"
+                            hist_params.append(almacen_codigo)
+
+                        cursor.execute(hist_query, hist_params)
+                        hist_row = cursor.fetchone()
+                        stock_max_hoy = float(hist_row[0]) if hist_row and hist_row[0] is not None else None
+                        stock_min_hoy = float(hist_row[1]) if hist_row and hist_row[1] is not None else None
+                        snapshots_hoy = hist_row[2] if hist_row else 0
+
+                        items.append(AnomaliaStockItem(
+                            producto_id=producto_id,
+                            codigo_producto=codigo,
+                            descripcion_producto=descripcion,
+                            categoria=categoria,
+                            stock_actual=float(stock),
+                            tipo_anomalia="negativo",
+                            prioridad=1,
+                            total_ventas_evidencia=len(evidencias),
+                            suma_cantidad_vendida=suma_cantidad,
+                            evidencias=evidencias,
+                            stock_max_hoy=stock_max_hoy,
+                            stock_min_hoy=stock_min_hoy,
+                            snapshots_hoy=snapshots_hoy
+                        ))
+
+                # Query 2: Venta Zombie (Prioridad 2)
+                # Criterio: Productos que durante TODO el día de hoy tuvieron stock <= 0
+                #           (nunca hubo inventario disponible) Y tuvieron ventas hoy
+                if tipo_anomalia is None or tipo_anomalia == "venta_zombie":
+                    # Construir filtro de almacén
+                    almacen_filter_hist = ""
+                    almacen_filter_hist2 = ""
+                    almacen_filter_actual = ""
+                    if almacen_codigo:
+                        almacen_filter_hist = "AND ih.almacen_codigo = %s"
+                        almacen_filter_hist2 = "AND almacen_codigo = %s"  # Sin alias para subquery
+                        almacen_filter_actual = "AND ia.almacen_codigo = %s"
+
+                    query_zombies = f"""
+                        WITH productos_con_ventas_hoy AS (
+                            -- Productos que tuvieron ventas hoy
+                            SELECT DISTINCT v.producto_id
+                            FROM ventas v
+                            WHERE v.ubicacion_id = %s
+                              AND v.fecha_venta >= %s
+                        ),
+                        productos_sin_stock_todo_el_dia AS (
+                            -- Productos cuyo stock fue <= 0 en TODOS los snapshots de hoy
+                            -- (MAX <= 0 significa que nunca fue positivo)
+                            SELECT ih.producto_id
+                            FROM inventario_historico ih
+                            WHERE ih.ubicacion_id = %s
+                              AND ih.fecha_snapshot >= %s
+                              {almacen_filter_hist}
+                            GROUP BY ih.producto_id
+                            HAVING MAX(ih.cantidad) <= 0
+                        ),
+                        productos_con_historico_hoy AS (
+                            -- Productos que tienen al menos un snapshot hoy
+                            SELECT DISTINCT producto_id
+                            FROM inventario_historico
+                            WHERE ubicacion_id = %s
+                              AND fecha_snapshot >= %s
+                              {almacen_filter_hist2}
+                        )
+                        SELECT DISTINCT
+                            ia.producto_id,
+                            p.codigo as codigo_producto,
+                            COALESCE(NULLIF(p.descripcion, ''), p.nombre, 'Sin Descripción') as descripcion_producto,
+                            p.categoria,
+                            ia.cantidad as stock_actual
+                        FROM inventario_actual ia
+                        INNER JOIN productos p ON ia.producto_id = p.id
+                        INNER JOIN productos_con_ventas_hoy pv ON pv.producto_id = ia.producto_id
+                        WHERE ia.ubicacion_id = %s
+                          AND ia.cantidad = 0
+                          AND p.activo = true
+                          {almacen_filter_actual}
+                          -- El producto debe haber estado sin stock todo el día
+                          -- O no tener histórico hoy (lo cual significa que estuvo en 0 todo el día)
+                          AND (
+                              ia.producto_id IN (SELECT producto_id FROM productos_sin_stock_todo_el_dia)
+                              OR ia.producto_id NOT IN (SELECT producto_id FROM productos_con_historico_hoy)
+                          )
+                        ORDER BY p.codigo
+                    """
+
+                    # Construir parámetros según si hay filtro de almacén
+                    if almacen_codigo:
+                        params_zombies = [
+                            ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
+                            ubicacion_id, hoy_inicio, almacen_codigo,  # productos_sin_stock_todo_el_dia
+                            ubicacion_id, hoy_inicio, almacen_codigo,  # productos_con_historico_hoy
+                            ubicacion_id, almacen_codigo,  # SELECT principal
+                        ]
+                    else:
+                        params_zombies = [
+                            ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
+                            ubicacion_id, hoy_inicio,  # productos_sin_stock_todo_el_dia
+                            ubicacion_id, hoy_inicio,  # productos_con_historico_hoy
+                            ubicacion_id,  # SELECT principal
+                        ]
+
+                    cursor.execute(query_zombies, params_zombies)
+                    zombies = cursor.fetchall()
+                    zombies_count = len(zombies)
+
+                    # Para cada zombie, obtener las ventas de HOY como evidencia y el histórico del día
+                    for row in zombies:
+                        producto_id, codigo, descripcion, categoria, stock = row
+
+                        # Obtener ventas de HOY de este producto en esta tienda
+                        cursor.execute("""
+                            SELECT numero_factura, fecha_venta,
+                                   TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
+                                   TO_CHAR(fecha_venta, 'HH24:MI') as hora, cantidad_vendida
+                            FROM ventas
+                            WHERE producto_id = %s AND ubicacion_id = %s AND fecha_venta >= %s
+                            ORDER BY fecha_venta DESC
+                        """, [producto_id, ubicacion_id, hoy_inicio])
+                        ventas_evidencia = cursor.fetchall()
+
+                        # Para cada venta, buscar el stock histórico más cercano
+                        evidencias = []
+                        for v in ventas_evidencia:
+                            numero_factura, fecha_venta_ts, fecha_str, hora_str, cantidad = v
+
+                            # Buscar el snapshot más cercano (antes o igual) a la fecha de venta
+                            stock_query = """
+                                SELECT cantidad
+                                FROM inventario_historico
+                                WHERE producto_id = %s
+                                  AND ubicacion_id = %s
+                                  AND fecha_snapshot <= %s
+                            """
+                            stock_params = [producto_id, ubicacion_id, fecha_venta_ts]
+                            if almacen_codigo:
+                                stock_query += " AND almacen_codigo = %s"
+                                stock_params.append(almacen_codigo)
+                            stock_query += " ORDER BY fecha_snapshot DESC LIMIT 1"
+
+                            cursor.execute(stock_query, stock_params)
+                            stock_row = cursor.fetchone()
+                            if stock_row:
+                                stock_al_momento = float(stock_row[0])
+                            else:
+                                # Si no hay histórico antes de la venta, usar el stock actual
+                                # (el problema persiste desde antes del tracking)
+                                stock_al_momento = float(stock)
+
+                            evidencias.append(EvidenciaVenta(
+                                numero_factura=numero_factura,
+                                fecha_venta=fecha_str,
+                                hora=hora_str,
+                                cantidad_vendida=float(cantidad),
+                                stock_al_momento=stock_al_momento
+                            ))
+
+                        suma_cantidad = sum(e.cantidad_vendida for e in evidencias)
+
+                        # Obtener histórico del día para este producto
+                        hist_query = """
+                            SELECT MAX(cantidad) as max_stock,
+                                   MIN(cantidad) as min_stock,
+                                   COUNT(*) as snapshots
+                            FROM inventario_historico
+                            WHERE producto_id = %s
+                              AND ubicacion_id = %s
+                              AND fecha_snapshot >= %s
+                        """
+                        hist_params = [producto_id, ubicacion_id, hoy_inicio]
+                        if almacen_codigo:
+                            hist_query += " AND almacen_codigo = %s"
+                            hist_params.append(almacen_codigo)
+
+                        cursor.execute(hist_query, hist_params)
+                        hist_row = cursor.fetchone()
+                        stock_max_hoy = float(hist_row[0]) if hist_row and hist_row[0] is not None else None
+                        stock_min_hoy = float(hist_row[1]) if hist_row and hist_row[1] is not None else None
+                        snapshots_hoy = hist_row[2] if hist_row else 0
+
+                        items.append(AnomaliaStockItem(
+                            producto_id=producto_id,
+                            codigo_producto=codigo,
+                            descripcion_producto=descripcion,
+                            categoria=categoria,
+                            stock_actual=float(stock),
+                            tipo_anomalia="venta_zombie",
+                            prioridad=2,
+                            total_ventas_evidencia=len(evidencias),
+                            suma_cantidad_vendida=suma_cantidad,
+                            evidencias=evidencias,
+                            stock_max_hoy=stock_max_hoy,
+                            stock_min_hoy=stock_min_hoy,
+                            snapshots_hoy=snapshots_hoy
+                        ))
+
+                cursor.close()
+
+                return AnomaliaStockResponse(
+                    ubicacion_id=ubicacion_id,
+                    ubicacion_nombre=ubicacion_nombre,
+                    total_anomalias=len(items),
+                    anomalias_negativas=negativos_count,
+                    anomalias_venta_zombie=zombies_count,
+                    items=items
+                )
+        else:
+            # DuckDB legacy mode - query simplificada (sin evidencia detallada)
+            with get_db_connection() as conn:
+                ubicacion_row = conn.execute(
+                    "SELECT nombre FROM ubicaciones WHERE id = ?", [ubicacion_id]
+                ).fetchone()
+
+                if not ubicacion_row:
+                    raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+                ubicacion_nombre = ubicacion_row[0]
+
+                query = """
+                    SELECT
+                        inv.codigo_producto as producto_id,
+                        inv.codigo_producto,
+                        inv.descripcion_producto,
+                        inv.categoria,
+                        inv.cantidad_actual as stock_actual,
+                        CASE WHEN inv.cantidad_actual < 0 THEN 'negativo' ELSE 'venta_zombie' END as tipo_anomalia,
+                        CASE WHEN inv.cantidad_actual < 0 THEN 1 ELSE 2 END as prioridad
+                    FROM inventario_raw inv
+                    WHERE inv.ubicacion_id = ?
+                      AND inv.cantidad_actual <= 0
+                      AND inv.activo = true
+                    ORDER BY inv.cantidad_actual ASC
+                """
+
+                result = conn.execute(query, [ubicacion_id]).fetchall()
+
+                items = []
+                negativos_count = 0
+                zombies_count = 0
+
+                for row in result:
+                    producto_id, codigo, descripcion, categoria, stock, tipo, prioridad = row
+
+                    if tipo_anomalia and tipo != tipo_anomalia:
+                        continue
+
+                    if tipo == 'negativo':
+                        negativos_count += 1
+                    else:
+                        zombies_count += 1
+
+                    items.append(AnomaliaStockItem(
+                        producto_id=producto_id,
+                        codigo_producto=codigo,
+                        descripcion_producto=descripcion,
+                        categoria=categoria,
+                        stock_actual=float(stock),
+                        tipo_anomalia=tipo,
+                        prioridad=prioridad,
+                        total_ventas_evidencia=0,
+                        suma_cantidad_vendida=0,
+                        evidencias=[]
+                    ))
+
+                return AnomaliaStockResponse(
+                    ubicacion_id=ubicacion_id,
+                    ubicacion_nombre=ubicacion_nombre,
+                    total_anomalias=len(items),
+                    anomalias_negativas=negativos_count,
+                    anomalias_venta_zombie=zombies_count,
+                    items=items
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo anomalías de stock: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.post("/api/stock/ajustes", response_model=AjusteAuditoriaResponse, tags=["Auditoría Inventario"])
+async def aplicar_ajustes_auditoria(request: AjusteAuditoriaRequest):
+    """
+    Aplica ajustes de auditoría basados en conteo físico.
+
+    El sistema calcula el diferencial: Ajuste = Conteo_Físico - Stock_Sistema
+    Y genera un registro de movimiento tipo "Ajuste por Auditoría".
+
+    Args:
+        request: Datos de los ajustes a aplicar
+
+    Returns:
+        Resultado de cada ajuste aplicado
+    """
+    try:
+        resultados = []
+        total_ajustados = 0
+
+        if is_postgres_mode():
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
+
+                for ajuste in request.ajustes:
+                    try:
+                        # Obtener stock actual del producto
+                        query_stock = """
+                            SELECT cantidad
+                            FROM inventario_actual
+                            WHERE ubicacion_id = %s AND producto_id = %s
+                        """
+                        params = [request.ubicacion_id, ajuste.producto_id]
+
+                        if request.almacen_codigo:
+                            query_stock += " AND almacen_codigo = %s"
+                            params.append(request.almacen_codigo)
+
+                        cursor.execute(query_stock, params)
+                        row = cursor.fetchone()
+
+                        if not row:
+                            resultados.append(AjusteAuditoriaResultItem(
+                                producto_id=ajuste.producto_id,
+                                stock_anterior=0,
+                                conteo_fisico=ajuste.conteo_fisico,
+                                diferencia=ajuste.conteo_fisico,
+                                ajuste_aplicado=False,
+                                mensaje="Producto no encontrado en inventario"
+                            ))
+                            continue
+
+                        stock_anterior = float(row[0])
+                        diferencia = ajuste.conteo_fisico - stock_anterior
+
+                        # Si no hay diferencia, no hacer nada
+                        if diferencia == 0:
+                            resultados.append(AjusteAuditoriaResultItem(
+                                producto_id=ajuste.producto_id,
+                                stock_anterior=stock_anterior,
+                                conteo_fisico=ajuste.conteo_fisico,
+                                diferencia=0,
+                                ajuste_aplicado=False,
+                                mensaje="Sin diferencia - no se requiere ajuste"
+                            ))
+                            continue
+
+                        # Actualizar inventario_actual
+                        update_query = """
+                            UPDATE inventario_actual
+                            SET cantidad = %s, fecha_actualizacion = CURRENT_TIMESTAMP
+                            WHERE ubicacion_id = %s AND producto_id = %s
+                        """
+                        update_params = [ajuste.conteo_fisico, request.ubicacion_id, ajuste.producto_id]
+
+                        if request.almacen_codigo:
+                            update_query += " AND almacen_codigo = %s"
+                            update_params.append(request.almacen_codigo)
+
+                        cursor.execute(update_query, update_params)
+
+                        # Registrar en inventario_historico como snapshot de auditoría
+                        insert_historico = """
+                            INSERT INTO inventario_historico
+                            (ubicacion_id, producto_id, almacen_codigo, fecha_snapshot, cantidad, cantidad_cambio, etl_batch_id)
+                            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
+                        """
+                        almacen = request.almacen_codigo or 'APP-TPF'
+                        batch_id = f"AUDITORIA_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        cursor.execute(insert_historico, [
+                            request.ubicacion_id,
+                            ajuste.producto_id,
+                            almacen,
+                            ajuste.conteo_fisico,
+                            diferencia,
+                            batch_id
+                        ])
+
+                        total_ajustados += 1
+                        resultados.append(AjusteAuditoriaResultItem(
+                            producto_id=ajuste.producto_id,
+                            stock_anterior=stock_anterior,
+                            conteo_fisico=ajuste.conteo_fisico,
+                            diferencia=diferencia,
+                            ajuste_aplicado=True,
+                            mensaje=f"Ajuste aplicado: {'+' if diferencia > 0 else ''}{diferencia:.2f} unidades"
+                        ))
+
+                    except Exception as e:
+                        logger.error(f"Error procesando ajuste para {ajuste.producto_id}: {str(e)}")
+                        resultados.append(AjusteAuditoriaResultItem(
+                            producto_id=ajuste.producto_id,
+                            stock_anterior=0,
+                            conteo_fisico=ajuste.conteo_fisico,
+                            diferencia=0,
+                            ajuste_aplicado=False,
+                            mensaje=f"Error: {str(e)}"
+                        ))
+
+                # Commit de la transacción
+                conn.commit()
+                cursor.close()
+        else:
+            # DuckDB no soporta escritura fácilmente en este contexto
+            raise HTTPException(
+                status_code=501,
+                detail="Los ajustes de auditoría solo están disponibles en modo PostgreSQL"
+            )
+
+        return AjusteAuditoriaResponse(
+            success=True,
+            ubicacion_id=request.ubicacion_id,
+            total_procesados=len(request.ajustes),
+            total_ajustados=total_ajustados,
+            resultados=resultados
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error aplicando ajustes de auditoría: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/stock/anomalias/{ubicacion_id}/count", tags=["Auditoría Inventario"])
+async def get_anomalias_count(
+    ubicacion_id: str,
+    almacen_codigo: Optional[str] = None
+):
+    """
+    Obtiene solo el conteo de anomalías (para mostrar badge sin cargar todos los datos).
+
+    Args:
+        ubicacion_id: ID de la tienda
+        almacen_codigo: Código del almacén (opcional)
+
+    Returns:
+        Conteo de anomalías
+    """
+    try:
+        if is_postgres_mode():
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
+
+                query = """
+                    SELECT COUNT(*)
+                    FROM inventario_actual ia
+                    INNER JOIN productos p ON ia.producto_id = p.id
+                    WHERE ia.ubicacion_id = %s
+                      AND ia.cantidad < 0
+                      AND p.activo = true
+                """
+                params = [ubicacion_id]
+
+                if almacen_codigo:
+                    query += " AND ia.almacen_codigo = %s"
+                    params.append(almacen_codigo)
+
+                cursor.execute(query, params)
+                negativos = cursor.fetchone()[0]
+
+                # Contar ventas zombie (stock <= 0 TODO el día Y con ventas HOY)
+                hoy_inicio = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+                # Construir filtros de almacén
+                almacen_filter_hist = ""
+                almacen_filter_hist2 = ""
+                almacen_filter_actual = ""
+                if almacen_codigo:
+                    almacen_filter_hist = "AND ih.almacen_codigo = %s"
+                    almacen_filter_hist2 = "AND almacen_codigo = %s"
+                    almacen_filter_actual = "AND ia.almacen_codigo = %s"
+
+                query_zombies = f"""
+                    WITH productos_con_ventas_hoy AS (
+                        SELECT DISTINCT v.producto_id
+                        FROM ventas v
+                        WHERE v.ubicacion_id = %s
+                          AND v.fecha_venta >= %s
+                    ),
+                    productos_sin_stock_todo_el_dia AS (
+                        SELECT ih.producto_id
+                        FROM inventario_historico ih
+                        WHERE ih.ubicacion_id = %s
+                          AND ih.fecha_snapshot >= %s
+                          {almacen_filter_hist}
+                        GROUP BY ih.producto_id
+                        HAVING MAX(ih.cantidad) <= 0
+                    ),
+                    productos_con_historico_hoy AS (
+                        SELECT DISTINCT producto_id
+                        FROM inventario_historico
+                        WHERE ubicacion_id = %s
+                          AND fecha_snapshot >= %s
+                          {almacen_filter_hist2}
+                    )
+                    SELECT COUNT(DISTINCT ia.producto_id)
+                    FROM inventario_actual ia
+                    INNER JOIN productos p ON ia.producto_id = p.id
+                    INNER JOIN productos_con_ventas_hoy pv ON pv.producto_id = ia.producto_id
+                    WHERE ia.ubicacion_id = %s
+                      AND ia.cantidad = 0
+                      AND p.activo = true
+                      {almacen_filter_actual}
+                      AND (
+                          ia.producto_id IN (SELECT producto_id FROM productos_sin_stock_todo_el_dia)
+                          OR ia.producto_id NOT IN (SELECT producto_id FROM productos_con_historico_hoy)
+                      )
+                """
+
+                if almacen_codigo:
+                    params_zombies = [
+                        ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
+                        ubicacion_id, hoy_inicio, almacen_codigo,  # productos_sin_stock_todo_el_dia
+                        ubicacion_id, hoy_inicio, almacen_codigo,  # productos_con_historico_hoy
+                        ubicacion_id, almacen_codigo,  # SELECT principal
+                    ]
+                else:
+                    params_zombies = [
+                        ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
+                        ubicacion_id, hoy_inicio,  # productos_sin_stock_todo_el_dia
+                        ubicacion_id, hoy_inicio,  # productos_con_historico_hoy
+                        ubicacion_id,  # SELECT principal
+                    ]
+
+                cursor.execute(query_zombies, params_zombies)
+                zombies = cursor.fetchone()[0]
+
+                cursor.close()
+
+                return {
+                    "ubicacion_id": ubicacion_id,
+                    "total_anomalias": negativos + zombies,
+                    "anomalias_negativas": negativos,
+                    "anomalias_venta_zombie": zombies
+                }
+        else:
+            with get_db_connection() as conn:
+                query = """
+                    SELECT COUNT(*)
+                    FROM inventario_raw inv
+                    WHERE inv.ubicacion_id = ?
+                      AND inv.cantidad_actual <= 0
+                      AND inv.activo = true
+                """
+                result = conn.execute(query, [ubicacion_id]).fetchone()
+                total = result[0] if result else 0
+
+                return {
+                    "ubicacion_id": ubicacion_id,
+                    "total_anomalias": total,
+                    "anomalias_negativas": total,
+                    "anomalias_venta_zombie": 0
+                }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo conteo de anomalías: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 
 @app.get("/api/dashboard/metrics", response_model=DashboardMetrics, tags=["Dashboard"])
 async def get_dashboard_metrics():
