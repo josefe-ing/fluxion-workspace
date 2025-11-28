@@ -392,12 +392,10 @@ class AnomaliaStockItem(BaseModel):
 
 
 class AnomaliaStockResponse(BaseModel):
-    """Respuesta con lista de anomalías de stock"""
+    """Respuesta con lista de anomalías de stock (productos con stock negativo)"""
     ubicacion_id: str
     ubicacion_nombre: str
     total_anomalias: int
-    anomalias_negativas: int
-    anomalias_venta_zombie: int
     items: List[AnomaliaStockItem]
 
 
@@ -2544,25 +2542,20 @@ async def get_stock(
 @app.get("/api/stock/anomalias/{ubicacion_id}", response_model=AnomaliaStockResponse, tags=["Auditoría Inventario"])
 async def get_anomalias_stock(
     ubicacion_id: str,
-    almacen_codigo: Optional[str] = None,
-    tipo_anomalia: Optional[str] = None  # "negativo" | "venta_zombie" | None (todos)
+    almacen_codigo: Optional[str] = None
 ):
     """
-    Detecta anomalías de stock para una ubicación específica.
+    Detecta productos con stock negativo para una ubicación específica.
 
-    Criterios de detección:
-    - **Stock Negativo (Prioridad 1)**: Productos con cantidad < 0
-    - **Venta Zombie (Prioridad 2)**: Productos que durante TODO el día de hoy
-      nunca tuvieron inventario disponible (stock ≤ 0 en todos los snapshots)
-      Y tuvieron ventas ese mismo día. Esto indica ventas sin stock real.
+    Muestra productos con cantidad < 0, junto con evidencia de ventas recientes
+    (últimos 7 días) que pueden haber causado el problema.
 
     Args:
         ubicacion_id: ID de la tienda (ej: tienda_08, cedi_caracas)
         almacen_codigo: Código del almacén (opcional, ej: APP-TPF, APP-PPF)
-        tipo_anomalia: Filtrar por tipo: "negativo", "venta_zombie", o None para todos
 
     Returns:
-        Lista de productos con anomalías y su evidencia (lista de facturas)
+        Lista de productos con stock negativo y su evidencia de ventas
     """
     try:
         if is_postgres_mode():
@@ -2576,316 +2569,138 @@ async def get_anomalias_stock(
                     raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
                 ubicacion_nombre = ubicacion_row[0]
 
-                # Fecha de hoy (inicio del día) para ventas zombie
+                # Fecha de hace 7 días para buscar ventas recientes como evidencia
                 hoy_inicio = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
                 items = []
-                negativos_count = 0
-                zombies_count = 0
 
-                # Query 1: Stock Negativo (Prioridad 1)
-                if tipo_anomalia is None or tipo_anomalia == "negativo":
-                    query_negativos = """
-                        SELECT
-                            ia.producto_id,
-                            p.codigo as codigo_producto,
-                            COALESCE(NULLIF(p.descripcion, ''), p.nombre, 'Sin Descripción') as descripcion_producto,
-                            p.categoria,
-                            ia.cantidad as stock_actual
-                        FROM inventario_actual ia
-                        INNER JOIN productos p ON ia.producto_id = p.id
-                        WHERE ia.ubicacion_id = %s
-                          AND ia.cantidad < 0
-                          AND p.activo = true
-                    """
-                    params_negativos = [ubicacion_id]
+                # Query: Productos con Stock Negativo
+                query_negativos = """
+                    SELECT
+                        ia.producto_id,
+                        p.codigo as codigo_producto,
+                        COALESCE(NULLIF(p.descripcion, ''), p.nombre, 'Sin Descripción') as descripcion_producto,
+                        p.categoria,
+                        ia.cantidad as stock_actual
+                    FROM inventario_actual ia
+                    INNER JOIN productos p ON ia.producto_id = p.id
+                    WHERE ia.ubicacion_id = %s
+                      AND ia.cantidad < 0
+                      AND p.activo = true
+                """
+                params_negativos = [ubicacion_id]
 
-                    if almacen_codigo:
-                        query_negativos += " AND ia.almacen_codigo = %s"
-                        params_negativos.append(almacen_codigo)
+                if almacen_codigo:
+                    query_negativos += " AND ia.almacen_codigo = %s"
+                    params_negativos.append(almacen_codigo)
 
-                    query_negativos += " ORDER BY ia.cantidad ASC"
+                query_negativos += " ORDER BY ia.cantidad ASC"
 
-                    cursor.execute(query_negativos, params_negativos)
-                    negativos = cursor.fetchall()
-                    negativos_count = len(negativos)
+                cursor.execute(query_negativos, params_negativos)
+                negativos = cursor.fetchall()
 
-                    # Para cada producto negativo, obtener las últimas 10 ventas como evidencia
-                    # Para stock negativo, buscar ventas de los últimos 7 días como evidencia
-                    hace_7_dias = hoy_inicio - timedelta(days=7)
+                # Buscar ventas de los últimos 7 días como evidencia
+                hace_7_dias = hoy_inicio - timedelta(days=7)
 
-                    for row in negativos:
-                        producto_id, codigo, descripcion, categoria, stock = row
+                for row in negativos:
+                    producto_id, codigo, descripcion, categoria, stock = row
 
-                        # Contar total de ventas RECIENTES (últimos 7 días) para este producto
-                        cursor.execute("""
-                            SELECT COUNT(*), COALESCE(SUM(cantidad_vendida), 0)
-                            FROM ventas
-                            WHERE producto_id = %s AND ubicacion_id = %s
-                              AND fecha_venta >= %s
-                        """, [producto_id, ubicacion_id, hace_7_dias])
-                        count_row = cursor.fetchone()
-                        total_ventas_recientes = count_row[0] if count_row else 0
-                        suma_cantidad_recientes = float(count_row[1]) if count_row else 0.0
+                    # Contar total de ventas RECIENTES (últimos 7 días) para este producto
+                    cursor.execute("""
+                        SELECT COUNT(*), COALESCE(SUM(cantidad_vendida), 0)
+                        FROM ventas
+                        WHERE producto_id = %s AND ubicacion_id = %s
+                          AND fecha_venta >= %s
+                    """, [producto_id, ubicacion_id, hace_7_dias])
+                    count_row = cursor.fetchone()
+                    total_ventas_recientes = count_row[0] if count_row else 0
+                    suma_cantidad_recientes = float(count_row[1]) if count_row else 0.0
 
-                        # Obtener últimas 10 ventas RECIENTES como evidencia (para mostrar detalles)
-                        cursor.execute("""
-                            SELECT numero_factura, fecha_venta,
-                                   TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
-                                   TO_CHAR(fecha_venta, 'HH24:MI') as hora, cantidad_vendida
-                            FROM ventas
-                            WHERE producto_id = %s AND ubicacion_id = %s
-                              AND fecha_venta >= %s
-                            ORDER BY fecha_venta DESC
-                            LIMIT 10
-                        """, [producto_id, ubicacion_id, hace_7_dias])
-                        ventas_evidencia = cursor.fetchall()
+                    # Obtener últimas 10 ventas RECIENTES como evidencia (para mostrar detalles)
+                    cursor.execute("""
+                        SELECT numero_factura, fecha_venta,
+                               TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
+                               TO_CHAR(fecha_venta, 'HH24:MI') as hora, cantidad_vendida
+                        FROM ventas
+                        WHERE producto_id = %s AND ubicacion_id = %s
+                          AND fecha_venta >= %s
+                        ORDER BY fecha_venta DESC
+                        LIMIT 10
+                    """, [producto_id, ubicacion_id, hace_7_dias])
+                    ventas_evidencia = cursor.fetchall()
 
-                        # Para cada venta, buscar el stock histórico más cercano
-                        evidencias = []
-                        for v in ventas_evidencia:
-                            numero_factura, fecha_venta_ts, fecha_str, hora_str, cantidad = v
+                    # Para cada venta, buscar el stock histórico más cercano
+                    evidencias = []
+                    for v in ventas_evidencia:
+                        numero_factura, fecha_venta_ts, fecha_str, hora_str, cantidad = v
 
-                            # Buscar el snapshot más cercano (antes o igual) a la fecha de venta
-                            stock_query = """
-                                SELECT cantidad
-                                FROM inventario_historico
-                                WHERE producto_id = %s
-                                  AND ubicacion_id = %s
-                                  AND fecha_snapshot <= %s
-                            """
-                            stock_params = [producto_id, ubicacion_id, fecha_venta_ts]
-                            if almacen_codigo:
-                                stock_query += " AND almacen_codigo = %s"
-                                stock_params.append(almacen_codigo)
-                            stock_query += " ORDER BY fecha_snapshot DESC LIMIT 1"
-
-                            cursor.execute(stock_query, stock_params)
-                            stock_row = cursor.fetchone()
-
-                            if stock_row:
-                                stock_al_momento = float(stock_row[0])
-                            else:
-                                # Si no hay histórico antes de la venta, usar el stock actual
-                                # (el problema persiste desde antes del tracking)
-                                stock_al_momento = float(stock)
-
-                            evidencias.append(EvidenciaVenta(
-                                numero_factura=numero_factura,
-                                fecha_venta=fecha_str,
-                                hora=hora_str,
-                                cantidad_vendida=float(cantidad),
-                                stock_al_momento=stock_al_momento
-                            ))
-
-                        # Obtener histórico del día para este producto
-                        hist_query = """
-                            SELECT MAX(cantidad) as max_stock,
-                                   MIN(cantidad) as min_stock,
-                                   COUNT(*) as snapshots
+                        # Buscar el snapshot más cercano (antes o igual) a la fecha de venta
+                        stock_query = """
+                            SELECT cantidad
                             FROM inventario_historico
                             WHERE producto_id = %s
                               AND ubicacion_id = %s
-                              AND fecha_snapshot >= %s
+                              AND fecha_snapshot <= %s
                         """
-                        hist_params = [producto_id, ubicacion_id, hoy_inicio]
+                        stock_params = [producto_id, ubicacion_id, fecha_venta_ts]
                         if almacen_codigo:
-                            hist_query += " AND almacen_codigo = %s"
-                            hist_params.append(almacen_codigo)
+                            stock_query += " AND almacen_codigo = %s"
+                            stock_params.append(almacen_codigo)
+                        stock_query += " ORDER BY fecha_snapshot DESC LIMIT 1"
 
-                        cursor.execute(hist_query, hist_params)
-                        hist_row = cursor.fetchone()
-                        stock_max_hoy = float(hist_row[0]) if hist_row and hist_row[0] is not None else None
-                        stock_min_hoy = float(hist_row[1]) if hist_row and hist_row[1] is not None else None
-                        snapshots_hoy = hist_row[2] if hist_row else 0
+                        cursor.execute(stock_query, stock_params)
+                        stock_row = cursor.fetchone()
 
-                        items.append(AnomaliaStockItem(
-                            producto_id=producto_id,
-                            codigo_producto=codigo,
-                            descripcion_producto=descripcion,
-                            categoria=categoria,
-                            stock_actual=float(stock),
-                            tipo_anomalia="negativo",
-                            prioridad=1,
-                            total_ventas_evidencia=total_ventas_recientes,
-                            suma_cantidad_vendida=suma_cantidad_recientes,
-                            evidencias=evidencias,
-                            stock_max_hoy=stock_max_hoy,
-                            stock_min_hoy=stock_min_hoy,
-                            snapshots_hoy=snapshots_hoy
+                        if stock_row:
+                            stock_al_momento = float(stock_row[0])
+                        else:
+                            # Si no hay histórico antes de la venta, usar el stock actual
+                            stock_al_momento = float(stock)
+
+                        evidencias.append(EvidenciaVenta(
+                            numero_factura=numero_factura,
+                            fecha_venta=fecha_str,
+                            hora=hora_str,
+                            cantidad_vendida=float(cantidad),
+                            stock_al_momento=stock_al_momento
                         ))
 
-                # Query 2: Venta Zombie (Prioridad 2)
-                # Criterio: Productos que durante TODO el día de hoy tuvieron stock <= 0
-                #           (nunca hubo inventario disponible) Y tuvieron ventas hoy
-                if tipo_anomalia is None or tipo_anomalia == "venta_zombie":
-                    # Construir filtro de almacén
-                    almacen_filter_hist = ""
-                    almacen_filter_hist2 = ""
-                    almacen_filter_actual = ""
-                    if almacen_codigo:
-                        almacen_filter_hist = "AND ih.almacen_codigo = %s"
-                        almacen_filter_hist2 = "AND almacen_codigo = %s"  # Sin alias para subquery
-                        almacen_filter_actual = "AND ia.almacen_codigo = %s"
-
-                    query_zombies = f"""
-                        WITH productos_con_ventas_hoy AS (
-                            -- Productos que tuvieron ventas hoy
-                            SELECT DISTINCT v.producto_id
-                            FROM ventas v
-                            WHERE v.ubicacion_id = %s
-                              AND v.fecha_venta >= %s
-                        ),
-                        productos_sin_stock_todo_el_dia AS (
-                            -- Productos cuyo stock fue <= 0 en TODOS los snapshots de hoy
-                            -- (MAX <= 0 significa que nunca fue positivo)
-                            SELECT ih.producto_id
-                            FROM inventario_historico ih
-                            WHERE ih.ubicacion_id = %s
-                              AND ih.fecha_snapshot >= %s
-                              {almacen_filter_hist}
-                            GROUP BY ih.producto_id
-                            HAVING MAX(ih.cantidad) <= 0
-                        ),
-                        productos_con_historico_hoy AS (
-                            -- Productos que tienen al menos un snapshot hoy
-                            SELECT DISTINCT producto_id
-                            FROM inventario_historico
-                            WHERE ubicacion_id = %s
-                              AND fecha_snapshot >= %s
-                              {almacen_filter_hist2}
-                        )
-                        SELECT DISTINCT
-                            ia.producto_id,
-                            p.codigo as codigo_producto,
-                            COALESCE(NULLIF(p.descripcion, ''), p.nombre, 'Sin Descripción') as descripcion_producto,
-                            p.categoria,
-                            ia.cantidad as stock_actual
-                        FROM inventario_actual ia
-                        INNER JOIN productos p ON ia.producto_id = p.id
-                        INNER JOIN productos_con_ventas_hoy pv ON pv.producto_id = ia.producto_id
-                        WHERE ia.ubicacion_id = %s
-                          AND ia.cantidad = 0
-                          AND p.activo = true
-                          {almacen_filter_actual}
-                          -- El producto debe haber estado sin stock todo el día
-                          -- O no tener histórico hoy (lo cual significa que estuvo en 0 todo el día)
-                          AND (
-                              ia.producto_id IN (SELECT producto_id FROM productos_sin_stock_todo_el_dia)
-                              OR ia.producto_id NOT IN (SELECT producto_id FROM productos_con_historico_hoy)
-                          )
-                        ORDER BY p.codigo
+                    # Obtener histórico del día para este producto
+                    hist_query = """
+                        SELECT MAX(cantidad) as max_stock,
+                               MIN(cantidad) as min_stock,
+                               COUNT(*) as snapshots
+                        FROM inventario_historico
+                        WHERE producto_id = %s
+                          AND ubicacion_id = %s
+                          AND fecha_snapshot >= %s
                     """
-
-                    # Construir parámetros según si hay filtro de almacén
+                    hist_params = [producto_id, ubicacion_id, hoy_inicio]
                     if almacen_codigo:
-                        params_zombies = [
-                            ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
-                            ubicacion_id, hoy_inicio, almacen_codigo,  # productos_sin_stock_todo_el_dia
-                            ubicacion_id, hoy_inicio, almacen_codigo,  # productos_con_historico_hoy
-                            ubicacion_id, almacen_codigo,  # SELECT principal
-                        ]
-                    else:
-                        params_zombies = [
-                            ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
-                            ubicacion_id, hoy_inicio,  # productos_sin_stock_todo_el_dia
-                            ubicacion_id, hoy_inicio,  # productos_con_historico_hoy
-                            ubicacion_id,  # SELECT principal
-                        ]
+                        hist_query += " AND almacen_codigo = %s"
+                        hist_params.append(almacen_codigo)
 
-                    cursor.execute(query_zombies, params_zombies)
-                    zombies = cursor.fetchall()
-                    zombies_count = len(zombies)
+                    cursor.execute(hist_query, hist_params)
+                    hist_row = cursor.fetchone()
+                    stock_max_hoy = float(hist_row[0]) if hist_row and hist_row[0] is not None else None
+                    stock_min_hoy = float(hist_row[1]) if hist_row and hist_row[1] is not None else None
+                    snapshots_hoy = hist_row[2] if hist_row else 0
 
-                    # Para cada zombie, obtener las ventas de HOY como evidencia y el histórico del día
-                    for row in zombies:
-                        producto_id, codigo, descripcion, categoria, stock = row
-
-                        # Obtener ventas de HOY de este producto en esta tienda
-                        cursor.execute("""
-                            SELECT numero_factura, fecha_venta,
-                                   TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
-                                   TO_CHAR(fecha_venta, 'HH24:MI') as hora, cantidad_vendida
-                            FROM ventas
-                            WHERE producto_id = %s AND ubicacion_id = %s AND fecha_venta >= %s
-                            ORDER BY fecha_venta DESC
-                        """, [producto_id, ubicacion_id, hoy_inicio])
-                        ventas_evidencia = cursor.fetchall()
-
-                        # Para cada venta, buscar el stock histórico más cercano
-                        evidencias = []
-                        for v in ventas_evidencia:
-                            numero_factura, fecha_venta_ts, fecha_str, hora_str, cantidad = v
-
-                            # Buscar el snapshot más cercano (antes o igual) a la fecha de venta
-                            stock_query = """
-                                SELECT cantidad
-                                FROM inventario_historico
-                                WHERE producto_id = %s
-                                  AND ubicacion_id = %s
-                                  AND fecha_snapshot <= %s
-                            """
-                            stock_params = [producto_id, ubicacion_id, fecha_venta_ts]
-                            if almacen_codigo:
-                                stock_query += " AND almacen_codigo = %s"
-                                stock_params.append(almacen_codigo)
-                            stock_query += " ORDER BY fecha_snapshot DESC LIMIT 1"
-
-                            cursor.execute(stock_query, stock_params)
-                            stock_row = cursor.fetchone()
-                            if stock_row:
-                                stock_al_momento = float(stock_row[0])
-                            else:
-                                # Si no hay histórico antes de la venta, usar el stock actual
-                                # (el problema persiste desde antes del tracking)
-                                stock_al_momento = float(stock)
-
-                            evidencias.append(EvidenciaVenta(
-                                numero_factura=numero_factura,
-                                fecha_venta=fecha_str,
-                                hora=hora_str,
-                                cantidad_vendida=float(cantidad),
-                                stock_al_momento=stock_al_momento
-                            ))
-
-                        suma_cantidad = sum(e.cantidad_vendida for e in evidencias)
-
-                        # Obtener histórico del día para este producto
-                        hist_query = """
-                            SELECT MAX(cantidad) as max_stock,
-                                   MIN(cantidad) as min_stock,
-                                   COUNT(*) as snapshots
-                            FROM inventario_historico
-                            WHERE producto_id = %s
-                              AND ubicacion_id = %s
-                              AND fecha_snapshot >= %s
-                        """
-                        hist_params = [producto_id, ubicacion_id, hoy_inicio]
-                        if almacen_codigo:
-                            hist_query += " AND almacen_codigo = %s"
-                            hist_params.append(almacen_codigo)
-
-                        cursor.execute(hist_query, hist_params)
-                        hist_row = cursor.fetchone()
-                        stock_max_hoy = float(hist_row[0]) if hist_row and hist_row[0] is not None else None
-                        stock_min_hoy = float(hist_row[1]) if hist_row and hist_row[1] is not None else None
-                        snapshots_hoy = hist_row[2] if hist_row else 0
-
-                        items.append(AnomaliaStockItem(
-                            producto_id=producto_id,
-                            codigo_producto=codigo,
-                            descripcion_producto=descripcion,
-                            categoria=categoria,
-                            stock_actual=float(stock),
-                            tipo_anomalia="venta_zombie",
-                            prioridad=2,
-                            total_ventas_evidencia=len(evidencias),
-                            suma_cantidad_vendida=suma_cantidad,
-                            evidencias=evidencias,
-                            stock_max_hoy=stock_max_hoy,
-                            stock_min_hoy=stock_min_hoy,
-                            snapshots_hoy=snapshots_hoy
-                        ))
+                    items.append(AnomaliaStockItem(
+                        producto_id=producto_id,
+                        codigo_producto=codigo,
+                        descripcion_producto=descripcion,
+                        categoria=categoria,
+                        stock_actual=float(stock),
+                        tipo_anomalia="negativo",
+                        prioridad=1,
+                        total_ventas_evidencia=total_ventas_recientes,
+                        suma_cantidad_vendida=suma_cantidad_recientes,
+                        evidencias=evidencias,
+                        stock_max_hoy=stock_max_hoy,
+                        stock_min_hoy=stock_min_hoy,
+                        snapshots_hoy=snapshots_hoy
+                    ))
 
                 cursor.close()
 
@@ -2893,8 +2708,6 @@ async def get_anomalias_stock(
                     ubicacion_id=ubicacion_id,
                     ubicacion_nombre=ubicacion_nombre,
                     total_anomalias=len(items),
-                    anomalias_negativas=negativos_count,
-                    anomalias_venta_zombie=zombies_count,
                     items=items
                 )
         else:
@@ -2914,12 +2727,10 @@ async def get_anomalias_stock(
                         inv.codigo_producto,
                         inv.descripcion_producto,
                         inv.categoria,
-                        inv.cantidad_actual as stock_actual,
-                        CASE WHEN inv.cantidad_actual < 0 THEN 'negativo' ELSE 'venta_zombie' END as tipo_anomalia,
-                        CASE WHEN inv.cantidad_actual < 0 THEN 1 ELSE 2 END as prioridad
+                        inv.cantidad_actual as stock_actual
                     FROM inventario_raw inv
                     WHERE inv.ubicacion_id = ?
-                      AND inv.cantidad_actual <= 0
+                      AND inv.cantidad_actual < 0
                       AND inv.activo = true
                     ORDER BY inv.cantidad_actual ASC
                 """
@@ -2927,19 +2738,8 @@ async def get_anomalias_stock(
                 result = conn.execute(query, [ubicacion_id]).fetchall()
 
                 items = []
-                negativos_count = 0
-                zombies_count = 0
-
                 for row in result:
-                    producto_id, codigo, descripcion, categoria, stock, tipo, prioridad = row
-
-                    if tipo_anomalia and tipo != tipo_anomalia:
-                        continue
-
-                    if tipo == 'negativo':
-                        negativos_count += 1
-                    else:
-                        zombies_count += 1
+                    producto_id, codigo, descripcion, categoria, stock = row
 
                     items.append(AnomaliaStockItem(
                         producto_id=producto_id,
@@ -2947,8 +2747,8 @@ async def get_anomalias_stock(
                         descripcion_producto=descripcion,
                         categoria=categoria,
                         stock_actual=float(stock),
-                        tipo_anomalia=tipo,
-                        prioridad=prioridad,
+                        tipo_anomalia="negativo",
+                        prioridad=1,
                         total_ventas_evidencia=0,
                         suma_cantidad_vendida=0,
                         evidencias=[]
@@ -2958,8 +2758,6 @@ async def get_anomalias_stock(
                     ubicacion_id=ubicacion_id,
                     ubicacion_nombre=ubicacion_nombre,
                     total_anomalias=len(items),
-                    anomalias_negativas=negativos_count,
-                    anomalias_venta_zombie=zombies_count,
                     items=items
                 )
 

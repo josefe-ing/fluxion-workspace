@@ -20,7 +20,7 @@ interface AnomaliaStockItem {
   descripcion_producto: string;
   categoria: string | null;
   stock_actual: number;
-  tipo_anomalia: 'negativo' | 'venta_zombie';
+  tipo_anomalia: 'negativo';
   prioridad: number;
   total_ventas_evidencia: number;
   suma_cantidad_vendida: number;
@@ -35,8 +35,6 @@ interface AnomaliaStockResponse {
   ubicacion_id: string;
   ubicacion_nombre: string;
   total_anomalias: number;
-  anomalias_negativas: number;
-  anomalias_venta_zombie: number;
   items: AnomaliaStockItem[];
 }
 
@@ -58,8 +56,6 @@ interface Props {
   onAjustesAplicados?: () => void;
 }
 
-type FiltroTipo = 'todos' | 'negativo' | 'venta_zombie';
-
 // ============================================================================
 // COMPONENTE PRINCIPAL
 // ============================================================================
@@ -76,9 +72,6 @@ export default function CentroComandoCorreccionModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [anomalias, setAnomalias] = useState<AnomaliaStockResponse | null>(null);
-
-  // Filtro por tipo de anomalía
-  const [filtroTipo, setFiltroTipo] = useState<FiltroTipo>('todos');
 
   // Estado para los inputs de conteo físico
   const [ajustes, setAjustes] = useState<Record<string, number | ''>>({});
@@ -108,7 +101,6 @@ export default function CentroComandoCorreccionModal({
       setResultados(null);
       setShowResultados(false);
       setError(null);
-      setFiltroTipo('todos');
       setShowEvidenciaModal(false);
       setSelectedItemEvidencia(null);
     }
@@ -207,11 +199,8 @@ export default function CentroComandoCorreccionModal({
     setShowEvidenciaModal(true);
   };
 
-  // Filtrar items según el tipo seleccionado
-  const itemsFiltrados = anomalias?.items.filter(item => {
-    if (filtroTipo === 'todos') return true;
-    return item.tipo_anomalia === filtroTipo;
-  }) || [];
+  // Lista de items (ya no hay filtro, solo stock negativo)
+  const items = anomalias?.items || [];
 
   // ============================================================================
   // RENDER
@@ -332,63 +321,27 @@ export default function CentroComandoCorreccionModal({
                 <svg className="h-16 w-16 mx-auto text-green-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <h3 className="text-lg font-semibold text-gray-900">Sin Anomalías Detectadas</h3>
+                <h3 className="text-lg font-semibold text-gray-900">Sin Stock Negativo</h3>
                 <p className="text-gray-500 mt-2">
-                  No se encontraron productos con stock negativo o ventas zombie hoy en esta ubicación.
+                  No se encontraron productos con stock negativo en esta ubicación.
                 </p>
               </div>
             ) : anomalias ? (
               // Vista de anomalías para corregir
               <div>
-                {/* Resumen con filtros clickeables */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <button
-                    onClick={() => setFiltroTipo('todos')}
-                    className={`rounded-lg p-4 text-left transition-all ${
-                      filtroTipo === 'todos'
-                        ? 'bg-gray-900 text-white ring-2 ring-gray-900'
-                        : 'bg-gray-50 hover:bg-gray-100'
-                    }`}
-                  >
-                    <p className={`text-sm ${filtroTipo === 'todos' ? 'text-gray-300' : 'text-gray-600'}`}>
-                      Total Anomalías
-                    </p>
-                    <p className={`text-2xl font-bold ${filtroTipo === 'todos' ? 'text-white' : 'text-gray-900'}`}>
-                      {anomalias.total_anomalias}
-                    </p>
-                  </button>
-
-                  <button
-                    onClick={() => setFiltroTipo('negativo')}
-                    className={`rounded-lg p-4 text-left transition-all ${
-                      filtroTipo === 'negativo'
-                        ? 'bg-red-600 text-white ring-2 ring-red-600'
-                        : 'bg-red-50 hover:bg-red-100'
-                    }`}
-                  >
-                    <p className={`text-sm ${filtroTipo === 'negativo' ? 'text-red-100' : 'text-red-600'}`}>
-                      Stock Negativo
-                    </p>
-                    <p className={`text-2xl font-bold ${filtroTipo === 'negativo' ? 'text-white' : 'text-red-700'}`}>
-                      {anomalias.anomalias_negativas}
-                    </p>
-                  </button>
-
-                  <button
-                    onClick={() => setFiltroTipo('venta_zombie')}
-                    className={`rounded-lg p-4 text-left transition-all ${
-                      filtroTipo === 'venta_zombie'
-                        ? 'bg-yellow-500 text-white ring-2 ring-yellow-500'
-                        : 'bg-yellow-50 hover:bg-yellow-100'
-                    }`}
-                  >
-                    <p className={`text-sm ${filtroTipo === 'venta_zombie' ? 'text-yellow-100' : 'text-yellow-600'}`}>
-                      Ventas Zombie (Hoy)
-                    </p>
-                    <p className={`text-2xl font-bold ${filtroTipo === 'venta_zombie' ? 'text-white' : 'text-yellow-700'}`}>
-                      {anomalias.anomalias_venta_zombie}
-                    </p>
-                  </button>
+                {/* Resumen */}
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-red-600">Productos con Stock Negativo</p>
+                      <p className="text-3xl font-bold text-red-700">{anomalias.total_anomalias}</p>
+                    </div>
+                    <div className="h-12 w-12 bg-red-100 rounded-lg flex items-center justify-center">
+                      <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Instrucciones */}
@@ -425,86 +378,69 @@ export default function CentroComandoCorreccionModal({
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {itemsFiltrados.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
-                            No hay anomalías de tipo "{filtroTipo === 'negativo' ? 'Stock Negativo' : 'Ventas Zombie'}"
+                      {items.map((item) => (
+                        <tr key={item.producto_id} className="hover:bg-gray-50">
+                          {/* Producto */}
+                          <td className="px-4 py-4">
+                            <div className="flex items-start">
+                              <div className="flex-shrink-0 h-10 w-10 bg-gray-200 rounded-lg flex items-center justify-center">
+                                <svg className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                                </svg>
+                              </div>
+                              <div className="ml-3">
+                                <p className="text-sm font-medium text-gray-900">{item.codigo_producto}</p>
+                                <p className="text-sm text-gray-500 line-clamp-2">{item.descripcion_producto}</p>
+                                {item.categoria && (
+                                  <p className="text-xs text-gray-400 mt-1">{item.categoria}</p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Stock Actual */}
+                          <td className="px-4 py-4 text-center">
+                            <span className="text-2xl font-bold text-red-600">
+                              {formatInteger(item.stock_actual)}
+                            </span>
+                          </td>
+
+                          {/* Ventas (últimos 7 días) - Clickeable */}
+                          <td className="px-4 py-4 text-center">
+                            {item.total_ventas_evidencia > 0 ? (
+                              <button
+                                onClick={() => handleVerEvidencia(item)}
+                                className="group inline-flex flex-col items-center hover:bg-orange-50 rounded-lg px-4 py-2 transition-colors"
+                              >
+                                <span className="text-3xl font-bold text-orange-600 group-hover:text-orange-700">
+                                  {item.total_ventas_evidencia}
+                                </span>
+                                <span className="text-xs text-gray-500 group-hover:text-orange-600">
+                                  {item.total_ventas_evidencia === 1 ? 'venta' : 'ventas'}
+                                </span>
+                                <span className="text-xs text-gray-400 mt-1">
+                                  ({formatNumber(item.suma_cantidad_vendida, 2)} unid.)
+                                </span>
+                              </button>
+                            ) : (
+                              <span className="text-gray-400 text-sm">Sin ventas</span>
+                            )}
+                          </td>
+
+                          {/* Input Conteo Físico */}
+                          <td className="px-4 py-4 text-center">
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              placeholder="0"
+                              value={ajustes[item.producto_id] ?? ''}
+                              onChange={(e) => handleConteoChange(item.producto_id, e.target.value)}
+                              className="w-24 px-3 py-2 border border-gray-300 rounded-lg text-center text-lg font-semibold focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            />
                           </td>
                         </tr>
-                      ) : (
-                        itemsFiltrados.map((item) => (
-                          <tr key={item.producto_id} className="hover:bg-gray-50">
-                            {/* Producto */}
-                            <td className="px-4 py-4">
-                              <div className="flex items-start">
-                                <div className="flex-shrink-0 h-10 w-10 bg-gray-200 rounded-lg flex items-center justify-center">
-                                  <svg className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                                  </svg>
-                                </div>
-                                <div className="ml-3">
-                                  <p className="text-sm font-medium text-gray-900">{item.codigo_producto}</p>
-                                  <p className="text-sm text-gray-500 line-clamp-2">{item.descripcion_producto}</p>
-                                  {item.categoria && (
-                                    <p className="text-xs text-gray-400 mt-1">{item.categoria}</p>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-
-                            {/* Stock Actual */}
-                            <td className="px-4 py-4 text-center">
-                              <div className="inline-flex flex-col items-center">
-                                <span className={`text-2xl font-bold ${item.stock_actual < 0 ? 'text-red-600' : 'text-yellow-600'}`}>
-                                  {formatInteger(item.stock_actual)}
-                                </span>
-                                <span className={`text-xs mt-1 px-2 py-0.5 rounded-full ${
-                                  item.tipo_anomalia === 'negativo'
-                                    ? 'bg-red-100 text-red-700'
-                                    : 'bg-yellow-100 text-yellow-700'
-                                }`}>
-                                  {item.tipo_anomalia === 'negativo' ? 'Negativo' : 'Zombie'}
-                                </span>
-                              </div>
-                            </td>
-
-                            {/* Ventas del día - Clickeable */}
-                            <td className="px-4 py-4 text-center">
-                              {item.total_ventas_evidencia > 0 ? (
-                                <button
-                                  onClick={() => handleVerEvidencia(item)}
-                                  className="group inline-flex flex-col items-center hover:bg-orange-50 rounded-lg px-4 py-2 transition-colors"
-                                >
-                                  <span className="text-3xl font-bold text-orange-600 group-hover:text-orange-700">
-                                    {item.total_ventas_evidencia}
-                                  </span>
-                                  <span className="text-xs text-gray-500 group-hover:text-orange-600">
-                                    {item.total_ventas_evidencia === 1 ? 'venta' : 'ventas'}
-                                  </span>
-                                  <span className="text-xs text-gray-400 mt-1">
-                                    ({formatNumber(item.suma_cantidad_vendida, 2)} unid.)
-                                  </span>
-                                </button>
-                              ) : (
-                                <span className="text-gray-400 text-sm">Sin ventas</span>
-                              )}
-                            </td>
-
-                            {/* Input Conteo Físico */}
-                            <td className="px-4 py-4 text-center">
-                              <input
-                                type="number"
-                                min="0"
-                                step="1"
-                                placeholder="0"
-                                value={ajustes[item.producto_id] ?? ''}
-                                onChange={(e) => handleConteoChange(item.producto_id, e.target.value)}
-                                className="w-24 px-3 py-2 border border-gray-300 rounded-lg text-center text-lg font-semibold focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              />
-                            </td>
-                          </tr>
-                        ))
-                      )}
+                      ))}
                     </tbody>
                   </table>
                 </div>
