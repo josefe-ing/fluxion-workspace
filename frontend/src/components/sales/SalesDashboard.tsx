@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import http from '../../services/http';
 import ProductSalesModal from './ProductSalesModal';
 import SyncVentasModal from './SyncVentasModal';
+import CentroComandoVentasModal from './CentroComandoVentasModal';
 
 interface VentasDetail {
   codigo_producto: string;
@@ -67,6 +68,10 @@ export default function SalesDashboard() {
 
   // Modal de sincronización de ventas
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+
+  // Modal Centro de Comando de Ventas (Agotados Visuales)
+  const [showCentroComandoModal, setShowCentroComandoModal] = useState(false);
+  const [agotadosVisualesCount, setAgotadosVisualesCount] = useState<number>(0);
 
   // Métricas (ahora basadas en la página actual)
   const stats = {
@@ -210,6 +215,26 @@ export default function SalesDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubicacionId, selectedCategoria, fechaInicio, fechaFin, currentPage, debouncedSearchTerm]);
 
+  // Cargar conteo de agotados visuales cuando hay ubicación
+  useEffect(() => {
+    if (ubicacionId) {
+      loadAgotadosVisualesCount();
+    } else {
+      setAgotadosVisualesCount(0);
+    }
+  }, [ubicacionId]);
+
+  const loadAgotadosVisualesCount = async () => {
+    if (!ubicacionId) return;
+    try {
+      const response = await http.get(`/api/ventas/agotados-visuales/${ubicacionId}/count`);
+      setAgotadosVisualesCount(response.data.total_alertas || 0);
+    } catch (error) {
+      console.error('Error cargando conteo de agotados visuales:', error);
+      setAgotadosVisualesCount(0);
+    }
+  };
+
   // Ya no necesitamos filtrado client-side, se hace en el backend
   // Los datos de ventasData ya vienen filtrados y paginados del servidor
   const currentItems = ventasData;
@@ -249,15 +274,35 @@ export default function SalesDashboard() {
             Análisis de productos vendidos con promedios y comparaciones
           </p>
         </div>
-        <button
-          onClick={() => setIsSyncModalOpen(true)}
-          className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-        >
-          <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Sincronizar Ventas
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Botón Centro de Comando - Agotados Visuales */}
+          {ubicacionId && (
+            <button
+              onClick={() => setShowCentroComandoModal(true)}
+              className="relative flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
+            >
+              <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              Agotados Visuales
+              {agotadosVisualesCount > 0 && (
+                <span className="absolute -top-2 -right-2 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white bg-red-600 rounded-full min-w-[24px]">
+                  {agotadosVisualesCount > 99 ? '99+' : agotadosVisualesCount}
+                </span>
+              )}
+            </button>
+          )}
+          <button
+            onClick={() => setIsSyncModalOpen(true)}
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+          >
+            <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Sincronizar Ventas
+          </button>
+        </div>
       </div>
 
       {/* Métricas Cards */}
@@ -577,6 +622,16 @@ export default function SalesDashboard() {
         onClose={() => setIsSyncModalOpen(false)}
         ubicacionId={ubicacionId}
       />
+
+      {/* Modal Centro de Comando - Agotados Visuales */}
+      {ubicacionId && (
+        <CentroComandoVentasModal
+          isOpen={showCentroComandoModal}
+          onClose={() => setShowCentroComandoModal(false)}
+          ubicacionId={ubicacionId}
+          ubicacionNombre={ubicacionId}
+        />
+      )}
     </div>
   );
 }

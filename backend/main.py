@@ -434,6 +434,48 @@ class AjusteAuditoriaResponse(BaseModel):
     resultados: List[AjusteAuditoriaResultItem]
 
 
+# ============================================================================
+# Modelos para Detección de Agotados Visuales (Zero Sales Scan)
+# ============================================================================
+
+class UltimaVentaInfo(BaseModel):
+    """Información de la última venta de un producto"""
+    numero_factura: str
+    fecha_venta: str
+    hora: str
+    cantidad_vendida: float
+
+
+class AgotadoVisualItem(BaseModel):
+    """Producto detectado como posible agotado visual"""
+    producto_id: str
+    codigo_producto: str
+    descripcion_producto: str
+    categoria: Optional[str]
+    stock_actual: float
+    # Métricas de velocidad de venta
+    ventas_ultimas_2_semanas: int
+    promedio_horas_entre_ventas: float  # Velocidad histórica
+    horas_sin_vender: float  # Tiempo actual sin ventas
+    factor_alerta: float  # horas_sin_vender / promedio_horas_entre_ventas
+    # Última venta registrada
+    ultima_venta: Optional[UltimaVentaInfo]
+    # Prioridad (más alto = más urgente)
+    prioridad: int  # 1 = crítico (>4x), 2 = alto (>3x), 3 = medio (>2x)
+
+
+class AgotadoVisualResponse(BaseModel):
+    """Respuesta con lista de posibles agotados visuales"""
+    ubicacion_id: str
+    ubicacion_nombre: str
+    fecha_analisis: str
+    total_alertas: int
+    alertas_criticas: int  # >4x
+    alertas_altas: int  # >3x
+    alertas_medias: int  # >2x
+    items: List[AgotadoVisualItem]
+
+
 class AlmacenesUbicacionResponse(BaseModel):
     """Lista de almacenes para una ubicación KLK"""
     ubicacion_id: str
@@ -3186,6 +3228,310 @@ async def get_anomalias_count(
     except Exception as e:
         logger.error(f"Error obteniendo conteo de anomalías: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+# ============================================================================
+# ENDPOINTS: Detección de Agotados Visuales (Zero Sales Scan)
+# ============================================================================
+
+@app.get("/api/ventas/agotados-visuales/{ubicacion_id}", response_model=AgotadoVisualResponse, tags=["Centro Comando Ventas"])
+async def get_agotados_visuales(
+    ubicacion_id: str,
+    almacen_codigo: Optional[str] = None,
+    factor_minimo: float = 2.0,  # Umbral mínimo de alerta (default 2x)
+    min_ventas_historicas: int = 5,  # Mínimo de ventas en 2 semanas para considerar
+    max_horas_entre_ventas: int = 24  # Excluir productos que venden menos de 1/día
+):
+    """
+    Detecta productos con posible agotamiento visual (Zero Sales Scan).
+
+    Lógica:
+    1. Productos con stock > 0
+    2. Al menos N ventas en últimas 2 semanas (rotación media/alta)
+    3. Tiempo promedio entre ventas < 24 horas
+    4. Tiempo sin ventas >= factor_minimo * promedio histórico
+
+    Args:
+        ubicacion_id: ID de la tienda
+        almacen_codigo: Código del almacén (opcional)
+        factor_minimo: Umbral de alerta (default 2x el promedio)
+        min_ventas_historicas: Mínimo de ventas en 2 semanas
+        max_horas_entre_ventas: Máximo promedio de horas entre ventas (excluir baja rotación)
+
+    Returns:
+        Lista de productos con posible agotamiento visual
+    """
+    try:
+        if not is_postgres_mode():
+            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
+
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener nombre de la ubicación
+            cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", [ubicacion_id])
+            ubicacion_row = cursor.fetchone()
+            if not ubicacion_row:
+                raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+            ubicacion_nombre = ubicacion_row[0]
+
+            # Zona horaria de Venezuela
+            tz_vzla = ZoneInfo("America/Caracas")
+            ahora = datetime.now(tz_vzla)
+            hace_2_semanas = ahora - timedelta(days=14)
+
+            # Construir filtro de almacén
+            almacen_filter = ""
+            almacen_filter_ventas = ""
+            if almacen_codigo:
+                almacen_filter = "AND ia.almacen_codigo = %s"
+                almacen_filter_ventas = "AND v.almacen_codigo = %s"
+
+            # Query principal: detectar productos con velocidad de venta anómala
+            # 1. Calcular ventas en últimas 2 semanas por producto
+            # 2. Calcular tiempo promedio entre ventas
+            # 3. Calcular tiempo desde última venta
+            # 4. Comparar con umbral
+
+            query = f"""
+                WITH ventas_periodo AS (
+                    -- Ventas de cada producto en últimas 2 semanas
+                    SELECT
+                        v.producto_id,
+                        COUNT(*) as total_ventas,
+                        MIN(v.fecha_venta) as primera_venta,
+                        MAX(v.fecha_venta) as ultima_venta
+                    FROM ventas v
+                    WHERE v.ubicacion_id = %s
+                      AND v.fecha_venta >= %s
+                      {almacen_filter_ventas}
+                    GROUP BY v.producto_id
+                    HAVING COUNT(*) >= %s  -- Mínimo de ventas para considerar
+                ),
+                velocidad_venta AS (
+                    -- Calcular velocidad promedio (horas entre ventas)
+                    SELECT
+                        vp.producto_id,
+                        vp.total_ventas,
+                        vp.ultima_venta,
+                        -- Horas totales del período / número de ventas = promedio entre ventas
+                        EXTRACT(EPOCH FROM (%s::timestamp - vp.primera_venta)) / 3600.0 / NULLIF(vp.total_ventas - 1, 0) as promedio_horas_entre_ventas,
+                        -- Horas desde la última venta
+                        EXTRACT(EPOCH FROM (%s::timestamp - vp.ultima_venta)) / 3600.0 as horas_sin_vender
+                    FROM ventas_periodo vp
+                    WHERE vp.total_ventas > 1  -- Necesitamos al menos 2 ventas para calcular intervalo
+                )
+                SELECT
+                    ia.producto_id,
+                    p.codigo as codigo_producto,
+                    p.nombre as descripcion_producto,
+                    p.categoria,
+                    ia.cantidad as stock_actual,
+                    vv.total_ventas as ventas_ultimas_2_semanas,
+                    COALESCE(vv.promedio_horas_entre_ventas, 0) as promedio_horas_entre_ventas,
+                    COALESCE(vv.horas_sin_vender, 0) as horas_sin_vender,
+                    vv.ultima_venta
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                INNER JOIN velocidad_venta vv ON vv.producto_id = ia.producto_id
+                WHERE ia.ubicacion_id = %s
+                  AND ia.cantidad > 0  -- Solo productos con stock positivo
+                  AND p.activo = true
+                  AND vv.promedio_horas_entre_ventas > 0
+                  AND vv.promedio_horas_entre_ventas <= %s  -- Excluir baja rotación
+                  AND vv.horas_sin_vender >= (%s * vv.promedio_horas_entre_ventas)  -- Factor de alerta
+                  {almacen_filter}
+                ORDER BY (vv.horas_sin_vender / NULLIF(vv.promedio_horas_entre_ventas, 1)) DESC
+                LIMIT 100
+            """
+
+            # Construir parámetros
+            if almacen_codigo:
+                params = [
+                    ubicacion_id, hace_2_semanas, almacen_codigo,  # ventas_periodo
+                    min_ventas_historicas,  # HAVING
+                    ahora, ahora,  # velocidad_venta timestamps
+                    ubicacion_id, max_horas_entre_ventas, factor_minimo, almacen_codigo  # SELECT principal
+                ]
+            else:
+                params = [
+                    ubicacion_id, hace_2_semanas,  # ventas_periodo
+                    min_ventas_historicas,  # HAVING
+                    ahora, ahora,  # velocidad_venta timestamps
+                    ubicacion_id, max_horas_entre_ventas, factor_minimo  # SELECT principal
+                ]
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            items = []
+            alertas_criticas = 0
+            alertas_altas = 0
+            alertas_medias = 0
+
+            for row in rows:
+                producto_id, codigo, descripcion, categoria, stock, ventas_2sem, prom_horas, horas_sin, ultima_venta_ts = row
+
+                # Calcular factor de alerta
+                factor = horas_sin / prom_horas if prom_horas > 0 else 0
+
+                # Determinar prioridad
+                if factor >= 4:
+                    prioridad = 1  # Crítico
+                    alertas_criticas += 1
+                elif factor >= 3:
+                    prioridad = 2  # Alto
+                    alertas_altas += 1
+                else:
+                    prioridad = 3  # Medio
+                    alertas_medias += 1
+
+                # Obtener info de última venta
+                ultima_venta_info = None
+                if ultima_venta_ts:
+                    cursor.execute("""
+                        SELECT numero_factura, fecha_venta, cantidad_vendida
+                        FROM ventas
+                        WHERE producto_id = %s
+                          AND ubicacion_id = %s
+                          AND fecha_venta = %s
+                        LIMIT 1
+                    """, [producto_id, ubicacion_id, ultima_venta_ts])
+                    venta_row = cursor.fetchone()
+                    if venta_row:
+                        fecha_venta_local = venta_row[1].astimezone(tz_vzla) if venta_row[1].tzinfo else venta_row[1]
+                        ultima_venta_info = UltimaVentaInfo(
+                            numero_factura=venta_row[0],
+                            fecha_venta=fecha_venta_local.strftime('%Y-%m-%d'),
+                            hora=fecha_venta_local.strftime('%H:%M'),
+                            cantidad_vendida=float(venta_row[2])
+                        )
+
+                items.append(AgotadoVisualItem(
+                    producto_id=producto_id,
+                    codigo_producto=codigo,
+                    descripcion_producto=descripcion,
+                    categoria=categoria,
+                    stock_actual=float(stock),
+                    ventas_ultimas_2_semanas=ventas_2sem,
+                    promedio_horas_entre_ventas=round(prom_horas, 1),
+                    horas_sin_vender=round(horas_sin, 1),
+                    factor_alerta=round(factor, 1),
+                    ultima_venta=ultima_venta_info,
+                    prioridad=prioridad
+                ))
+
+            cursor.close()
+
+            return AgotadoVisualResponse(
+                ubicacion_id=ubicacion_id,
+                ubicacion_nombre=ubicacion_nombre,
+                fecha_analisis=ahora.strftime('%Y-%m-%d %H:%M'),
+                total_alertas=len(items),
+                alertas_criticas=alertas_criticas,
+                alertas_altas=alertas_altas,
+                alertas_medias=alertas_medias,
+                items=items
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error detectando agotados visuales: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/ventas/agotados-visuales/{ubicacion_id}/count", tags=["Centro Comando Ventas"])
+async def get_agotados_visuales_count(
+    ubicacion_id: str,
+    almacen_codigo: Optional[str] = None,
+    factor_minimo: float = 2.0,
+    min_ventas_historicas: int = 5,
+    max_horas_entre_ventas: int = 24
+):
+    """
+    Obtiene solo el conteo de agotados visuales (para mostrar badge sin cargar todos los datos).
+    """
+    try:
+        if not is_postgres_mode():
+            return {"ubicacion_id": ubicacion_id, "total_alertas": 0}
+
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            tz_vzla = ZoneInfo("America/Caracas")
+            ahora = datetime.now(tz_vzla)
+            hace_2_semanas = ahora - timedelta(days=14)
+
+            almacen_filter = ""
+            almacen_filter_ventas = ""
+            if almacen_codigo:
+                almacen_filter = "AND ia.almacen_codigo = %s"
+                almacen_filter_ventas = "AND v.almacen_codigo = %s"
+
+            query = f"""
+                WITH ventas_periodo AS (
+                    SELECT
+                        v.producto_id,
+                        COUNT(*) as total_ventas,
+                        MIN(v.fecha_venta) as primera_venta,
+                        MAX(v.fecha_venta) as ultima_venta
+                    FROM ventas v
+                    WHERE v.ubicacion_id = %s
+                      AND v.fecha_venta >= %s
+                      {almacen_filter_ventas}
+                    GROUP BY v.producto_id
+                    HAVING COUNT(*) >= %s
+                ),
+                velocidad_venta AS (
+                    SELECT
+                        vp.producto_id,
+                        vp.total_ventas,
+                        EXTRACT(EPOCH FROM (%s::timestamp - vp.primera_venta)) / 3600.0 / NULLIF(vp.total_ventas - 1, 0) as promedio_horas_entre_ventas,
+                        EXTRACT(EPOCH FROM (%s::timestamp - vp.ultima_venta)) / 3600.0 as horas_sin_vender
+                    FROM ventas_periodo vp
+                    WHERE vp.total_ventas > 1
+                )
+                SELECT COUNT(*)
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                INNER JOIN velocidad_venta vv ON vv.producto_id = ia.producto_id
+                WHERE ia.ubicacion_id = %s
+                  AND ia.cantidad > 0
+                  AND p.activo = true
+                  AND vv.promedio_horas_entre_ventas > 0
+                  AND vv.promedio_horas_entre_ventas <= %s
+                  AND vv.horas_sin_vender >= (%s * vv.promedio_horas_entre_ventas)
+                  {almacen_filter}
+            """
+
+            if almacen_codigo:
+                params = [
+                    ubicacion_id, hace_2_semanas, almacen_codigo,
+                    min_ventas_historicas,
+                    ahora, ahora,
+                    ubicacion_id, max_horas_entre_ventas, factor_minimo, almacen_codigo
+                ]
+            else:
+                params = [
+                    ubicacion_id, hace_2_semanas,
+                    min_ventas_historicas,
+                    ahora, ahora,
+                    ubicacion_id, max_horas_entre_ventas, factor_minimo
+                ]
+
+            cursor.execute(query, params)
+            total = cursor.fetchone()[0]
+            cursor.close()
+
+            return {
+                "ubicacion_id": ubicacion_id,
+                "total_alertas": total
+            }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo conteo de agotados visuales: {str(e)}")
+        return {"ubicacion_id": ubicacion_id, "total_alertas": 0}
 
 
 @app.get("/api/dashboard/metrics", response_model=DashboardMetrics, tags=["Dashboard"])
