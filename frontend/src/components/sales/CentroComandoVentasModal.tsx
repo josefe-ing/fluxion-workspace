@@ -36,6 +36,11 @@ interface AgotadoVisualResponse {
   alertas_altas: number;
   alertas_medias: number;
   items: AgotadoVisualItem[];
+  // Info de horarios de operación
+  hora_apertura?: string;
+  hora_cierre?: string;
+  tienda_abierta: boolean;
+  horas_operacion_diarias: number;
 }
 
 interface Props {
@@ -224,18 +229,45 @@ export default function CentroComandoVentasModal({
                 </div>
               </div>
 
-              {/* Info */}
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                <div className="flex items-start">
-                  <svg className="h-5 w-5 text-purple-600 mt-0.5 mr-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div>
-                    <p className="text-sm text-purple-800 font-medium">Detección de Agotados Visuales</p>
-                    <p className="text-xs text-purple-600 mt-1">
-                      Productos con stock positivo que dejaron de venderse más tiempo del esperado.
-                      Posibles causas: producto no está en anaquel, etiqueta incorrecta, o stock fantasma.
-                    </p>
+              {/* Info de horario y estado */}
+              <div className="flex gap-4">
+                {/* Estado de la tienda */}
+                <div className={`flex-shrink-0 px-4 py-3 rounded-lg border ${
+                  data.tienda_abierta
+                    ? 'bg-green-50 border-green-200'
+                    : 'bg-gray-100 border-gray-300'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-3 h-3 rounded-full ${
+                      data.tienda_abierta ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
+                    }`} />
+                    <span className={`text-sm font-medium ${
+                      data.tienda_abierta ? 'text-green-700' : 'text-gray-600'
+                    }`}>
+                      {data.tienda_abierta ? 'Tienda Abierta' : 'Tienda Cerrada'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Horario: {data.hora_apertura || '07:00'} - {data.hora_cierre || '21:00'}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {data.horas_operacion_diarias}h de operación/día
+                  </p>
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 bg-purple-50 border border-purple-200 rounded-lg p-4">
+                  <div className="flex items-start">
+                    <svg className="h-5 w-5 text-purple-600 mt-0.5 mr-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p className="text-sm text-purple-800 font-medium">Detección de Agotados Visuales</p>
+                      <p className="text-xs text-purple-600 mt-1">
+                        Productos con stock positivo que dejaron de venderse más tiempo del esperado.
+                        El análisis considera solo las horas de operación de la tienda.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -406,7 +438,7 @@ export default function CentroComandoVentasModal({
 
               {/* Footer info */}
               <div className="text-center text-xs text-gray-400">
-                Análisis: {data.fecha_analisis} • Productos de rotación media/alta (≥5 ventas en 2 semanas, promedio &lt;24h entre ventas)
+                Análisis: {data.fecha_analisis} • Solo horas de operación ({data.hora_apertura || '07:00'}-{data.hora_cierre || '21:00'}) • Rotación media/alta (≥5 ventas/2sem)
               </div>
             </div>
           ) : null}

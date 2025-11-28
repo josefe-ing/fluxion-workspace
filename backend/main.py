@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
 import duckdb
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time
 import logging
 import subprocess
 import asyncio
@@ -474,6 +474,11 @@ class AgotadoVisualResponse(BaseModel):
     alertas_altas: int  # >3x
     alertas_medias: int  # >2x
     items: List[AgotadoVisualItem]
+    # Info de horarios de operación
+    hora_apertura: Optional[str] = None
+    hora_cierre: Optional[str] = None
+    tienda_abierta: bool = True
+    horas_operacion_diarias: float = 14.0
 
 
 class AlmacenesUbicacionResponse(BaseModel):
@@ -3250,6 +3255,7 @@ async def get_agotados_visuales(
     2. Al menos N ventas en últimas 2 semanas (rotación media/alta)
     3. Tiempo promedio entre ventas < 24 horas
     4. Tiempo sin ventas >= factor_minimo * promedio histórico
+    5. Solo considera horas de operación de la tienda (ignora horas cerradas)
 
     Args:
         ubicacion_id: ID de la tienda
@@ -3268,17 +3274,44 @@ async def get_agotados_visuales(
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
-            # Obtener nombre de la ubicación
-            cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", [ubicacion_id])
+            # Obtener nombre y horarios de la ubicación
+            cursor.execute("""
+                SELECT nombre, hora_apertura, hora_cierre
+                FROM ubicaciones
+                WHERE id = %s
+            """, [ubicacion_id])
             ubicacion_row = cursor.fetchone()
             if not ubicacion_row:
                 raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
             ubicacion_nombre = ubicacion_row[0]
+            hora_apertura = ubicacion_row[1]  # TIME type
+            hora_cierre = ubicacion_row[2]    # TIME type
 
             # Zona horaria de Venezuela
             tz_vzla = ZoneInfo("America/Caracas")
             ahora = datetime.now(tz_vzla)
             hace_2_semanas = ahora - timedelta(days=14)
+
+            # Calcular horas de operación diarias
+            if hora_apertura and hora_cierre:
+                # Convertir TIME a minutos para calcular
+                apertura_mins = hora_apertura.hour * 60 + hora_apertura.minute
+                cierre_mins = hora_cierre.hour * 60 + hora_cierre.minute
+
+                # Si cierre es 00:00, significa medianoche (24:00)
+                if cierre_mins == 0:
+                    cierre_mins = 24 * 60
+
+                # Si cierre < apertura, la tienda cruza medianoche
+                if cierre_mins <= apertura_mins:
+                    horas_operacion_diarias = (24 * 60 - apertura_mins + cierre_mins) / 60.0
+                else:
+                    horas_operacion_diarias = (cierre_mins - apertura_mins) / 60.0
+            else:
+                # Default: 14 horas de operación (7am-9pm)
+                horas_operacion_diarias = 14.0
+                hora_apertura = time(7, 0)
+                hora_cierre = time(21, 0)
 
             # Construir filtro de almacén
             almacen_filter = ""
@@ -3287,11 +3320,25 @@ async def get_agotados_visuales(
                 almacen_filter = "AND ia.almacen_codigo = %s"
                 almacen_filter_ventas = "AND v.almacen_codigo = %s"
 
+            # Verificar si la tienda está abierta ahora
+            hora_actual = ahora.time()
+            apertura_mins = hora_apertura.hour * 60 + hora_apertura.minute if hora_apertura else 7 * 60
+            cierre_mins = hora_cierre.hour * 60 + hora_cierre.minute if hora_cierre else 21 * 60
+            if cierre_mins == 0:
+                cierre_mins = 24 * 60
+            actual_mins = hora_actual.hour * 60 + hora_actual.minute
+
+            # Determinar si está abierto (considerando tiendas que cruzan medianoche)
+            if cierre_mins <= apertura_mins:
+                # Tienda cruza medianoche (ej: 8am-12am)
+                tienda_abierta = actual_mins >= apertura_mins or actual_mins < cierre_mins
+            else:
+                tienda_abierta = apertura_mins <= actual_mins < cierre_mins
+
             # Query principal: detectar productos con velocidad de venta anómala
-            # 1. Calcular ventas en últimas 2 semanas por producto
-            # 2. Calcular tiempo promedio entre ventas
-            # 3. Calcular tiempo desde última venta
-            # 4. Comparar con umbral
+            # Usa horas de operación en vez de horas absolutas
+            # El promedio entre ventas se calcula sobre el período total
+            # pero las horas sin vender se calculan considerando horarios de operación
 
             query = f"""
                 WITH ventas_periodo AS (
@@ -3309,15 +3356,15 @@ async def get_agotados_visuales(
                     HAVING COUNT(*) >= %s  -- Mínimo de ventas para considerar
                 ),
                 velocidad_venta AS (
-                    -- Calcular velocidad promedio (horas entre ventas)
+                    -- Calcular velocidad promedio (horas de OPERACIÓN entre ventas)
                     SELECT
                         vp.producto_id,
                         vp.total_ventas,
                         vp.ultima_venta,
-                        -- Horas totales del período / número de ventas = promedio entre ventas
-                        EXTRACT(EPOCH FROM (%s::timestamp - vp.primera_venta)) / 3600.0 / NULLIF(vp.total_ventas - 1, 0) as promedio_horas_entre_ventas,
-                        -- Horas desde la última venta
-                        EXTRACT(EPOCH FROM (%s::timestamp - vp.ultima_venta)) / 3600.0 as horas_sin_vender
+                        -- Días entre primera venta y ahora * horas operación/día / (ventas-1) = promedio horas operación entre ventas
+                        (EXTRACT(EPOCH FROM (%s::timestamp - vp.primera_venta)) / 86400.0 * %s) / NULLIF(vp.total_ventas - 1, 0) as promedio_horas_entre_ventas,
+                        -- Días desde última venta * horas operación/día = horas operación sin vender
+                        EXTRACT(EPOCH FROM (%s::timestamp - vp.ultima_venta)) / 86400.0 * %s as horas_sin_vender
                     FROM ventas_periodo vp
                     WHERE vp.total_ventas > 1  -- Necesitamos al menos 2 ventas para calcular intervalo
                 )
@@ -3350,14 +3397,16 @@ async def get_agotados_visuales(
                 params = [
                     ubicacion_id, hace_2_semanas, almacen_codigo,  # ventas_periodo
                     min_ventas_historicas,  # HAVING
-                    ahora, ahora,  # velocidad_venta timestamps
+                    ahora, horas_operacion_diarias,  # velocidad_venta: promedio
+                    ahora, horas_operacion_diarias,  # velocidad_venta: sin vender
                     ubicacion_id, max_horas_entre_ventas, factor_minimo, almacen_codigo  # SELECT principal
                 ]
             else:
                 params = [
                     ubicacion_id, hace_2_semanas,  # ventas_periodo
                     min_ventas_historicas,  # HAVING
-                    ahora, ahora,  # velocidad_venta timestamps
+                    ahora, horas_operacion_diarias,  # velocidad_venta: promedio
+                    ahora, horas_operacion_diarias,  # velocidad_venta: sin vender
                     ubicacion_id, max_horas_entre_ventas, factor_minimo  # SELECT principal
                 ]
 
@@ -3431,7 +3480,11 @@ async def get_agotados_visuales(
                 alertas_criticas=alertas_criticas,
                 alertas_altas=alertas_altas,
                 alertas_medias=alertas_medias,
-                items=items
+                items=items,
+                hora_apertura=hora_apertura.strftime('%H:%M') if hora_apertura else '07:00',
+                hora_cierre=hora_cierre.strftime('%H:%M') if hora_cierre else '21:00',
+                tienda_abierta=tienda_abierta,
+                horas_operacion_diarias=round(horas_operacion_diarias, 1)
             )
 
     except HTTPException:
@@ -3451,17 +3504,45 @@ async def get_agotados_visuales_count(
 ):
     """
     Obtiene solo el conteo de agotados visuales (para mostrar badge sin cargar todos los datos).
+    Considera horarios de operación de la tienda.
     """
     try:
         if not is_postgres_mode():
-            return {"ubicacion_id": ubicacion_id, "total_alertas": 0}
+            return {"ubicacion_id": ubicacion_id, "total_alertas": 0, "tienda_abierta": True}
 
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
+            # Obtener horarios de la ubicación
+            cursor.execute("""
+                SELECT hora_apertura, hora_cierre
+                FROM ubicaciones
+                WHERE id = %s
+            """, [ubicacion_id])
+            ub_row = cursor.fetchone()
+            hora_apertura = ub_row[0] if ub_row and ub_row[0] else time(7, 0)
+            hora_cierre = ub_row[1] if ub_row and ub_row[1] else time(21, 0)
+
+            # Calcular horas de operación diarias
+            apertura_mins = hora_apertura.hour * 60 + hora_apertura.minute
+            cierre_mins = hora_cierre.hour * 60 + hora_cierre.minute
+            if cierre_mins == 0:
+                cierre_mins = 24 * 60
+            if cierre_mins <= apertura_mins:
+                horas_operacion_diarias = (24 * 60 - apertura_mins + cierre_mins) / 60.0
+            else:
+                horas_operacion_diarias = (cierre_mins - apertura_mins) / 60.0
+
             tz_vzla = ZoneInfo("America/Caracas")
             ahora = datetime.now(tz_vzla)
             hace_2_semanas = ahora - timedelta(days=14)
+
+            # Verificar si la tienda está abierta
+            actual_mins = ahora.hour * 60 + ahora.minute
+            if cierre_mins <= apertura_mins:
+                tienda_abierta = actual_mins >= apertura_mins or actual_mins < cierre_mins
+            else:
+                tienda_abierta = apertura_mins <= actual_mins < cierre_mins
 
             almacen_filter = ""
             almacen_filter_ventas = ""
@@ -3487,8 +3568,9 @@ async def get_agotados_visuales_count(
                     SELECT
                         vp.producto_id,
                         vp.total_ventas,
-                        EXTRACT(EPOCH FROM (%s::timestamp - vp.primera_venta)) / 3600.0 / NULLIF(vp.total_ventas - 1, 0) as promedio_horas_entre_ventas,
-                        EXTRACT(EPOCH FROM (%s::timestamp - vp.ultima_venta)) / 3600.0 as horas_sin_vender
+                        -- Usar horas de operación en vez de horas absolutas
+                        (EXTRACT(EPOCH FROM (%s::timestamp - vp.primera_venta)) / 86400.0 * %s) / NULLIF(vp.total_ventas - 1, 0) as promedio_horas_entre_ventas,
+                        EXTRACT(EPOCH FROM (%s::timestamp - vp.ultima_venta)) / 86400.0 * %s as horas_sin_vender
                     FROM ventas_periodo vp
                     WHERE vp.total_ventas > 1
                 )
@@ -3509,14 +3591,16 @@ async def get_agotados_visuales_count(
                 params = [
                     ubicacion_id, hace_2_semanas, almacen_codigo,
                     min_ventas_historicas,
-                    ahora, ahora,
+                    ahora, horas_operacion_diarias,
+                    ahora, horas_operacion_diarias,
                     ubicacion_id, max_horas_entre_ventas, factor_minimo, almacen_codigo
                 ]
             else:
                 params = [
                     ubicacion_id, hace_2_semanas,
                     min_ventas_historicas,
-                    ahora, ahora,
+                    ahora, horas_operacion_diarias,
+                    ahora, horas_operacion_diarias,
                     ubicacion_id, max_horas_entre_ventas, factor_minimo
                 ]
 
@@ -3526,12 +3610,13 @@ async def get_agotados_visuales_count(
 
             return {
                 "ubicacion_id": ubicacion_id,
-                "total_alertas": total
+                "total_alertas": total,
+                "tienda_abierta": tienda_abierta
             }
 
     except Exception as e:
         logger.error(f"Error obteniendo conteo de agotados visuales: {str(e)}")
-        return {"ubicacion_id": ubicacion_id, "total_alertas": 0}
+        return {"ubicacion_id": ubicacion_id, "total_alertas": 0, "tienda_abierta": True}
 
 
 @app.get("/api/dashboard/metrics", response_model=DashboardMetrics, tags=["Dashboard"])
