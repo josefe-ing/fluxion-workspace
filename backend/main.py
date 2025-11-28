@@ -2611,21 +2611,24 @@ async def get_anomalias_stock(
                     negativos_count = len(negativos)
 
                     # Para cada producto negativo, obtener las últimas 10 ventas como evidencia
+                    # Para stock negativo, buscar ventas de los últimos 7 días como evidencia
+                    hace_7_dias = hoy_inicio - timedelta(days=7)
+
                     for row in negativos:
                         producto_id, codigo, descripcion, categoria, stock = row
 
-                        # Contar total de ventas de HOY para este producto
+                        # Contar total de ventas RECIENTES (últimos 7 días) para este producto
                         cursor.execute("""
                             SELECT COUNT(*), COALESCE(SUM(cantidad_vendida), 0)
                             FROM ventas
                             WHERE producto_id = %s AND ubicacion_id = %s
                               AND fecha_venta >= %s
-                        """, [producto_id, ubicacion_id, hoy_inicio])
+                        """, [producto_id, ubicacion_id, hace_7_dias])
                         count_row = cursor.fetchone()
-                        total_ventas_hoy = count_row[0] if count_row else 0
-                        suma_cantidad_hoy = float(count_row[1]) if count_row else 0.0
+                        total_ventas_recientes = count_row[0] if count_row else 0
+                        suma_cantidad_recientes = float(count_row[1]) if count_row else 0.0
 
-                        # Obtener últimas 10 ventas de HOY como evidencia (para mostrar detalles)
+                        # Obtener últimas 10 ventas RECIENTES como evidencia (para mostrar detalles)
                         cursor.execute("""
                             SELECT numero_factura, fecha_venta,
                                    TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
@@ -2635,7 +2638,7 @@ async def get_anomalias_stock(
                               AND fecha_venta >= %s
                             ORDER BY fecha_venta DESC
                             LIMIT 10
-                        """, [producto_id, ubicacion_id, hoy_inicio])
+                        """, [producto_id, ubicacion_id, hace_7_dias])
                         ventas_evidencia = cursor.fetchall()
 
                         # Para cada venta, buscar el stock histórico más cercano
@@ -2704,8 +2707,8 @@ async def get_anomalias_stock(
                             stock_actual=float(stock),
                             tipo_anomalia="negativo",
                             prioridad=1,
-                            total_ventas_evidencia=total_ventas_hoy,
-                            suma_cantidad_vendida=suma_cantidad_hoy,
+                            total_ventas_evidencia=total_ventas_recientes,
+                            suma_cantidad_vendida=suma_cantidad_recientes,
                             evidencias=evidencias,
                             stock_max_hoy=stock_max_hoy,
                             stock_min_hoy=stock_min_hoy,
