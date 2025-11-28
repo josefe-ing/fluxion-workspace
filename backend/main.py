@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
 import duckdb
 from pathlib import Path
-from datetime import datetime, date, timedelta, time
+from datetime import datetime, date, timedelta, time as dt_time
 import logging
 import subprocess
 import asyncio
@@ -3274,18 +3274,35 @@ async def get_agotados_visuales(
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
-            # Obtener nombre y horarios de la ubicación
+            # Obtener nombre de la ubicación (y horarios si existen)
+            # Primero verificamos si las columnas de horario existen
             cursor.execute("""
-                SELECT nombre, hora_apertura, hora_cierre
-                FROM ubicaciones
-                WHERE id = %s
-            """, [ubicacion_id])
-            ubicacion_row = cursor.fetchone()
-            if not ubicacion_row:
-                raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
-            ubicacion_nombre = ubicacion_row[0]
-            hora_apertura = ubicacion_row[1]  # TIME type
-            hora_cierre = ubicacion_row[2]    # TIME type
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ubicaciones' AND column_name = 'hora_apertura'
+            """)
+            has_hours_columns = cursor.fetchone() is not None
+
+            if has_hours_columns:
+                cursor.execute("""
+                    SELECT nombre, hora_apertura, hora_cierre
+                    FROM ubicaciones
+                    WHERE id = %s
+                """, [ubicacion_id])
+                ubicacion_row = cursor.fetchone()
+                if not ubicacion_row:
+                    raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+                ubicacion_nombre = ubicacion_row[0]
+                hora_apertura = ubicacion_row[1]  # TIME type or None
+                hora_cierre = ubicacion_row[2]    # TIME type or None
+            else:
+                # Columnas no existen aún - usar solo nombre
+                cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", [ubicacion_id])
+                ubicacion_row = cursor.fetchone()
+                if not ubicacion_row:
+                    raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+                ubicacion_nombre = ubicacion_row[0]
+                hora_apertura = None
+                hora_cierre = None
 
             # Zona horaria de Venezuela
             tz_vzla = ZoneInfo("America/Caracas")
@@ -3310,8 +3327,8 @@ async def get_agotados_visuales(
             else:
                 # Default: 14 horas de operación (7am-9pm)
                 horas_operacion_diarias = 14.0
-                hora_apertura = time(7, 0)
-                hora_cierre = time(21, 0)
+                hora_apertura = dt_time(7, 0)
+                hora_cierre = dt_time(21, 0)
 
             # Construir filtro de almacén
             almacen_filter = ""
@@ -3513,15 +3530,26 @@ async def get_agotados_visuales_count(
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
-            # Obtener horarios de la ubicación
+            # Verificar si las columnas de horario existen
             cursor.execute("""
-                SELECT hora_apertura, hora_cierre
-                FROM ubicaciones
-                WHERE id = %s
-            """, [ubicacion_id])
-            ub_row = cursor.fetchone()
-            hora_apertura = ub_row[0] if ub_row and ub_row[0] else time(7, 0)
-            hora_cierre = ub_row[1] if ub_row and ub_row[1] else time(21, 0)
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ubicaciones' AND column_name = 'hora_apertura'
+            """)
+            has_hours_columns = cursor.fetchone() is not None
+
+            # Obtener horarios de la ubicación (si existen)
+            hora_apertura = dt_time(7, 0)
+            hora_cierre = dt_time(21, 0)
+            if has_hours_columns:
+                cursor.execute("""
+                    SELECT hora_apertura, hora_cierre
+                    FROM ubicaciones
+                    WHERE id = %s
+                """, [ubicacion_id])
+                ub_row = cursor.fetchone()
+                if ub_row:
+                    hora_apertura = ub_row[0] if ub_row[0] else dt_time(7, 0)
+                    hora_cierre = ub_row[1] if ub_row[1] else dt_time(21, 0)
 
             # Calcular horas de operación diarias
             apertura_mins = hora_apertura.hour * 60 + hora_apertura.minute
