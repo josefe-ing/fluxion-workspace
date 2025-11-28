@@ -2614,16 +2614,28 @@ async def get_anomalias_stock(
                     for row in negativos:
                         producto_id, codigo, descripcion, categoria, stock = row
 
-                        # Obtener últimas ventas de este producto en esta tienda
+                        # Contar total de ventas de HOY para este producto
+                        cursor.execute("""
+                            SELECT COUNT(*), COALESCE(SUM(cantidad_vendida), 0)
+                            FROM ventas
+                            WHERE producto_id = %s AND ubicacion_id = %s
+                              AND fecha_venta >= %s
+                        """, [producto_id, ubicacion_id, hoy_inicio])
+                        count_row = cursor.fetchone()
+                        total_ventas_hoy = count_row[0] if count_row else 0
+                        suma_cantidad_hoy = float(count_row[1]) if count_row else 0.0
+
+                        # Obtener últimas 10 ventas de HOY como evidencia (para mostrar detalles)
                         cursor.execute("""
                             SELECT numero_factura, fecha_venta,
                                    TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
                                    TO_CHAR(fecha_venta, 'HH24:MI') as hora, cantidad_vendida
                             FROM ventas
                             WHERE producto_id = %s AND ubicacion_id = %s
+                              AND fecha_venta >= %s
                             ORDER BY fecha_venta DESC
                             LIMIT 10
-                        """, [producto_id, ubicacion_id])
+                        """, [producto_id, ubicacion_id, hoy_inicio])
                         ventas_evidencia = cursor.fetchall()
 
                         # Para cada venta, buscar el stock histórico más cercano
@@ -2663,8 +2675,6 @@ async def get_anomalias_stock(
                                 stock_al_momento=stock_al_momento
                             ))
 
-                        suma_cantidad = sum(e.cantidad_vendida for e in evidencias)
-
                         # Obtener histórico del día para este producto
                         hist_query = """
                             SELECT MAX(cantidad) as max_stock,
@@ -2694,8 +2704,8 @@ async def get_anomalias_stock(
                             stock_actual=float(stock),
                             tipo_anomalia="negativo",
                             prioridad=1,
-                            total_ventas_evidencia=len(evidencias),
-                            suma_cantidad_vendida=suma_cantidad,
+                            total_ventas_evidencia=total_ventas_hoy,
+                            suma_cantidad_vendida=suma_cantidad_hoy,
                             evidencias=evidencias,
                             stock_max_hoy=stock_max_hoy,
                             stock_min_hoy=stock_min_hoy,
