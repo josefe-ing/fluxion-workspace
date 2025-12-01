@@ -437,6 +437,8 @@ def main():
                        help='Fecha/hora inicio (formato: YYYY-MM-DD HH:MM)')
     parser.add_argument('--fecha-hasta', type=str,
                        help='Fecha/hora fin (formato: YYYY-MM-DD HH:MM)')
+    parser.add_argument('--chunk-days', type=int, default=0,
+                       help='Dividir rango en chunks de N dias (ej: 5 para procesar de 5 en 5 dias)')
 
     args = parser.parse_args()
 
@@ -458,11 +460,65 @@ def main():
             print(f"Error: formato invalido para --fecha-hasta: {args.fecha_hasta}")
             sys.exit(1)
 
-    # Ejecutar ETL
-    etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos)
-    exitoso = etl.ejecutar(tienda_ids=args.tiendas, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
+    # Ejecutar ETL con chunking si se especifica
+    chunk_days = args.chunk_days
 
-    sys.exit(0 if exitoso else 1)
+    if chunk_days > 0 and fecha_desde and fecha_hasta:
+        # Modo chunking: dividir el rango en chunks de N días
+        from datetime import timedelta
+
+        print(f"\n{'='*70}")
+        print(f"MODO CHUNKING: Dividiendo rango en chunks de {chunk_days} días")
+        print(f"Rango total: {fecha_desde.strftime('%Y-%m-%d')} -> {fecha_hasta.strftime('%Y-%m-%d')}")
+        print(f"{'='*70}\n")
+
+        chunks = []
+        current_start = fecha_desde
+        while current_start < fecha_hasta:
+            current_end = min(current_start + timedelta(days=chunk_days) - timedelta(seconds=1), fecha_hasta)
+            # Ajustar hora final al final del día si no es el último chunk
+            if current_end < fecha_hasta:
+                current_end = current_end.replace(hour=23, minute=59, second=59)
+            chunks.append((current_start, current_end))
+            current_start = current_end + timedelta(seconds=1)
+            current_start = current_start.replace(hour=0, minute=0, second=0)
+
+        print(f"Chunks a procesar: {len(chunks)}")
+        for i, (start, end) in enumerate(chunks, 1):
+            print(f"  Chunk {i}: {start.strftime('%Y-%m-%d %H:%M')} -> {end.strftime('%Y-%m-%d %H:%M')}")
+        print()
+
+        # Ejecutar cada chunk secuencialmente
+        total_exitosos = 0
+        total_fallidos = 0
+
+        for i, (chunk_start, chunk_end) in enumerate(chunks, 1):
+            print(f"\n{'#'*70}")
+            print(f"# CHUNK {i}/{len(chunks)}: {chunk_start.strftime('%Y-%m-%d')} -> {chunk_end.strftime('%Y-%m-%d')}")
+            print(f"{'#'*70}\n")
+
+            etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos)
+            exitoso = etl.ejecutar(tienda_ids=args.tiendas, fecha_desde=chunk_start, fecha_hasta=chunk_end)
+
+            if exitoso:
+                total_exitosos += 1
+            else:
+                total_fallidos += 1
+
+        print(f"\n{'='*70}")
+        print(f"RESUMEN CHUNKING")
+        print(f"{'='*70}")
+        print(f"Total chunks: {len(chunks)}")
+        print(f"Exitosos: {total_exitosos}")
+        print(f"Fallidos: {total_fallidos}")
+        print(f"{'='*70}\n")
+
+        sys.exit(0 if total_fallidos == 0 else 1)
+    else:
+        # Modo normal: ejecutar una sola vez
+        etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos)
+        exitoso = etl.ejecutar(tienda_ids=args.tiendas, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
+        sys.exit(0 if exitoso else 1)
 
 
 if __name__ == "__main__":

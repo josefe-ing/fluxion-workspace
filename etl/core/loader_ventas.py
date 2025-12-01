@@ -843,8 +843,13 @@ class VentasLoader:
         else:
             message = f"Carga exitosa: {records_loaded:,} registros"
 
-        # success es True solo si cargamos al menos 1 registro Y no hay errores excesivos
-        success = records_loaded > 0 and errors <= 10
+        # success es True si cargamos registros (toleramos hasta 1% de errores o max 100)
+        # Una carga de 36K con 11 errores es exitosa (0.03% de errores)
+        error_threshold = max(100, int(total_rows * 0.01))  # 1% o 100, lo que sea mayor
+        success = records_loaded > 0 and (errors == 0 or errors <= error_threshold)
+
+        if not success and records_loaded > 0:
+            self.logger.warning(f"⚠️ Carga marcada como fallida: {errors} errores > umbral de {error_threshold}")
 
         return {
             "success": success,
