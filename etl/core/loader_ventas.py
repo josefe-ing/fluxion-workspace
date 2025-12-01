@@ -723,11 +723,12 @@ class VentasLoader:
                 # Sincronizar productos únicos (auto-registro)
                 productos_unicos = df_prep['producto_id'].unique()
                 for producto_id in productos_unicos:
+                    nombre_producto = f'Producto {producto_id}'
                     cursor.execute("""
-                        INSERT INTO productos (id, codigo, nombre, activo)
-                        VALUES (%s, %s, %s, TRUE)
+                        INSERT INTO productos (id, codigo, nombre, descripcion, activo)
+                        VALUES (%s, %s, %s, %s, TRUE)
                         ON CONFLICT (codigo) DO NOTHING
-                    """, (producto_id, producto_id, f'Producto {producto_id}'))
+                    """, (producto_id, producto_id, nombre_producto, nombre_producto))
 
                 pg_conn.commit()
                 self.logger.info(f"✅ Sincronizadas {len(ubicaciones_unicas)} ubicaciones y {len(productos_unicos)} productos")
