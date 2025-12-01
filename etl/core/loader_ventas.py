@@ -673,9 +673,13 @@ class VentasLoader:
         df_prep = df.copy()
         if 'codigo_producto' in df_prep.columns:
             df_prep['producto_id'] = df_prep['codigo_producto']
-        # Mapear 'fecha' a 'fecha_venta' (transformer usa 'fecha', DB espera 'fecha_venta')
-        if 'fecha' in df_prep.columns and 'fecha_venta' not in df_prep.columns:
-            df_prep['fecha_venta'] = df_prep['fecha']
+        # Mapear fecha a 'fecha_venta' - usar fecha_hora_completa si existe (tiene hora)
+        # FIX: 'fecha' solo tiene YYYY-MM-DD, 'fecha_hora_completa' tiene YYYY-MM-DD HH:MM:SS
+        if 'fecha_venta' not in df_prep.columns:
+            if 'fecha_hora_completa' in df_prep.columns:
+                df_prep['fecha_venta'] = df_prep['fecha_hora_completa']
+            elif 'fecha' in df_prep.columns:
+                df_prep['fecha_venta'] = df_prep['fecha']
 
         # Construir numero_factura_unico incluyendo linea
         # Formato: {ubicacion}_{factura}_L{linea} para evitar duplicados

@@ -793,7 +793,7 @@ PersistentKeepalive = 25`),
         hour: '*',
         weekDay: '*',
       }),
-      description: 'Sync inventory every 30 minutes for KLK stores (tienda_01, tienda_08, tienda_15, tienda_17, tienda_20, cedi_seco, cedi_caracas)',
+      description: 'Sync inventory every 30 minutes for KLK stores + CEDIs (tienda_01, tienda_03, tienda_08, tienda_15, tienda_17, tienda_20, cedi_seco, cedi_frio, cedi_verde, cedi_caracas)',
       ruleName: 'fluxion-inventario-sync-30min',
       enabled: true,
     });
@@ -811,7 +811,7 @@ PersistentKeepalive = 25`),
           containerName: 'etl',
           command: [
             'python', 'etl_inventario.py',
-            '--tiendas', 'tienda_01', 'tienda_03', 'tienda_08', 'tienda_15', 'tienda_17', 'tienda_20', 'cedi_seco', 'cedi_caracas'
+            '--tiendas', 'tienda_01', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_08', 'tienda_15', 'tienda_17', 'tienda_20', 'cedi_seco', 'cedi_frio', 'cedi_verde', 'cedi_caracas'
           ]
         }],
         // Prevent concurrent executions
@@ -1017,7 +1017,7 @@ PersistentKeepalive = 25`),
           containerName: 'etl',
           command: [
             'python', 'etl_ventas_postgres.py',
-            '--tiendas', 'tienda_01', 'tienda_03', 'tienda_08', 'tienda_17', 'tienda_20'
+            '--tiendas', 'tienda_01', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_08', 'tienda_15', 'tienda_17', 'tienda_20'
             // Script unificado detecta sistema_pos (klk/stellar) automáticamente
           ]
         }],
