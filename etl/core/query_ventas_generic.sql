@@ -1,6 +1,7 @@
 -- Query ETL para extraer ventas por tienda
 -- Compatible con todas las tiendas de La Granja Mercado
 -- Fecha: 2025-09-25 (Actualizado 2025-11-30 para filtro por hora)
+-- FIX 2025-11-30: Corregido bug en suma fecha+hora que restaba 2 días
 
 -- Parámetros dinámicos que serán reemplazados por Python:
 -- {fecha_inicio} - Fecha inicial del rango (YYYY-MM-DD)
@@ -14,7 +15,7 @@ SELECT TOP {limite_registros}
     t.c_Numero AS numero_factura,
     CAST(t.f_Fecha AS DATE) AS fecha,
     CAST(t.h_Hora AS TIME) AS hora,
-    CAST(t.f_Fecha AS DATETIME) + CAST(t.h_Hora AS TIME) AS fecha_hora_completa,
+    CAST(CAST(t.f_Fecha AS DATE) AS DATETIME) + CAST(CAST(t.h_Hora AS TIME) AS DATETIME) AS fecha_hora_completa,
     t.n_Linea AS linea,
 
     -- Información del producto
@@ -64,8 +65,9 @@ FROM VAD20.dbo.MA_TRANSACCION t
 
 WHERE
     -- Filtro por rango de fechas y horas (fecha_hora_completa >= desde AND <= hasta)
-    (CAST(t.f_Fecha AS DATETIME) + CAST(t.h_Hora AS DATETIME)) >= CONVERT(DATETIME, '{fecha_inicio} {hora_inicio}', 120)
-    AND (CAST(t.f_Fecha AS DATETIME) + CAST(t.h_Hora AS DATETIME)) <= CONVERT(DATETIME, '{fecha_fin} {hora_fin}', 120)
+    -- IMPORTANTE: Usar CAST(DATE) + CAST(TIME) para evitar bug de SQL Server que resta 2 días
+    (CAST(CAST(t.f_Fecha AS DATE) AS DATETIME) + CAST(CAST(t.h_Hora AS TIME) AS DATETIME)) >= CONVERT(DATETIME, '{fecha_inicio} {hora_inicio}', 120)
+    AND (CAST(CAST(t.f_Fecha AS DATE) AS DATETIME) + CAST(CAST(t.h_Hora AS TIME) AS DATETIME)) <= CONVERT(DATETIME, '{fecha_fin} {hora_fin}', 120)
 
     -- Solo transacciones válidas
     --AND t.Cantidad > 0
