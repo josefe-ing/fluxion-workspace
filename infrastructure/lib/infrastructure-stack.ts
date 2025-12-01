@@ -990,16 +990,16 @@ PersistentKeepalive = 25`),
     // ========================================
     // 11. Ventas ETL Scheduled Rule (Every 30 minutes at :10 and :40)
     // ========================================
-    // Runs ventas sync for KLK stores (tienda_01, tienda_08, tienda_17, tienda_18, tienda_20)
+    // Runs unified ventas sync for ALL stores (KLK + Stellar) - similar to inventario
+    // Script auto-detects sistema_pos for each tienda
     // Executes at XX:10 and XX:40 every hour (10 min offset from inventory)
-    // This ensures inventory finishes before ventas starts
     const ventasSyncRule = new events.Rule(this, 'FluxionVentasSync30Min', {
       schedule: events.Schedule.cron({
         minute: '10,40',  // Run at :10 and :40 of every hour (10 min after inventory)
         hour: '*',
         weekDay: '*',
       }),
-      description: 'Sync ventas every 30 minutes for KLK stores (PostgreSQL)',
+      description: 'Sync ventas every 30 minutes for all stores (KLK + Stellar) - PostgreSQL',
       ruleName: 'fluxion-ventas-sync-30min',
       enabled: true,
     });
@@ -1016,47 +1016,9 @@ PersistentKeepalive = 25`),
         containerOverrides: [{
           containerName: 'etl',
           command: [
-            'python', 'etl_ventas_klk_postgres.py'
-            // Sin args = últimos 30 minutos por defecto
-          ]
-        }],
-        // Prevent concurrent executions
-        maxEventAge: cdk.Duration.minutes(25),  // Discard if older than 25 min (avoid overlap)
-        retryAttempts: 1,  // Retry once if task launch fails
-      })
-    );
-
-    // ========================================
-    // 11b. Ventas Stellar ETL Scheduled Rule (Every 30 minutes at :15 and :45)
-    // ========================================
-    // Runs ventas sync for Stellar stores (tienda_03, etc.)
-    // Executes at XX:15 and XX:45 every hour (5 min after KLK ventas)
-    const ventasStellarSyncRule = new events.Rule(this, 'FluxionVentasStellarSync30Min', {
-      schedule: events.Schedule.cron({
-        minute: '15,45',  // Run at :15 and :45 of every hour (5 min after KLK ventas)
-        hour: '*',
-        weekDay: '*',
-      }),
-      description: 'Sync ventas every 30 minutes for Stellar stores (PostgreSQL)',
-      ruleName: 'fluxion-ventas-stellar-sync-30min',
-      enabled: true,
-    });
-
-    ventasStellarSyncRule.addTarget(
-      new targets.EcsTask({
-        cluster,
-        taskDefinition: etlTask,  // Use same ETL task (has all dependencies)
-        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        securityGroups: [etlSecurityGroup],
-        platformVersion: ecs.FargatePlatformVersion.LATEST,
-        taskCount: 1,
-        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
-        containerOverrides: [{
-          containerName: 'etl',
-          command: [
-            'python', 'etl_ventas_stellar_postgres.py',
-            '--tiendas', 'tienda_03'
-            // Sin fecha = últimos 30 minutos por defecto
+            'python', 'etl_ventas_postgres.py',
+            '--tiendas', 'tienda_01', 'tienda_03', 'tienda_08', 'tienda_17', 'tienda_20'
+            // Script unificado detecta sistema_pos (klk/stellar) automáticamente
           ]
         }],
         // Prevent concurrent executions
