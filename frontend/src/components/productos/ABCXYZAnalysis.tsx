@@ -500,9 +500,10 @@ const ABCXYZAnalysis: React.FC = () => {
                       <span className={`px-2 py-1 rounded text-xs font-medium ${
                         producto.clasificacion_abc === 'A' ? 'bg-red-100 text-red-800' :
                         producto.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-gray-100 text-gray-800'
+                        producto.clasificacion_abc === 'C' ? 'bg-gray-100 text-gray-800' :
+                        'bg-purple-100 text-purple-800'
                       }`}>
-                        {producto.clasificacion_abc} ({formatPercentageValue(producto.porcentaje_valor)})
+                        {producto.clasificacion_abc === 'SIN_VENTAS' ? 'Sin ventas' : producto.clasificacion_abc} {producto.clasificacion_abc !== 'SIN_VENTAS' && `(${formatPercentageValue(producto.porcentaje_valor)})`}
                       </span>
                     </td>
                     {isXYZEnabled() && (

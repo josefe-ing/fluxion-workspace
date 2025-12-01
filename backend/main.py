@@ -1335,22 +1335,17 @@ async def get_productos_por_matriz(
             SELECT
                 v.producto_id,
                 v.ubicacion_id,
-                p.nombre as descripcion,
-                p.categoria,
                 SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo
             FROM ventas v
-            JOIN productos p ON v.producto_id = p.id
             WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
                 {ubicacion_filter}
-            GROUP BY v.producto_id, v.ubicacion_id, p.nombre, p.categoria
+            GROUP BY v.producto_id, v.ubicacion_id
         ),
         abc_classification AS (
-            -- Clasificación ABC POR TIENDA
+            -- Clasificación ABC POR TIENDA (solo productos con ventas)
             SELECT
                 producto_id,
                 ubicacion_id,
-                descripcion,
-                categoria,
                 valor_consumo,
                 SUM(valor_consumo) OVER (
                     PARTITION BY ubicacion_id
@@ -1374,19 +1369,24 @@ async def get_productos_por_matriz(
             FROM ventas_6m
             WHERE valor_consumo > 0
         ),
-        producto_agregado AS (
-            -- Agregar datos por producto (todas las tiendas)
+        ventas_agregadas AS (
+            -- Agregar clasificación por producto (todas las tiendas)
             SELECT
                 producto_id,
-                MAX(descripcion) as descripcion,
-                MAX(categoria) as categoria,
                 SUM(valor_consumo) as valor_total,
-                COUNT(DISTINCT ubicacion_id) as total_tiendas,
-                COUNT(DISTINCT CASE WHEN clasificacion_abc = '{matriz}' THEN ubicacion_id END) as tiendas_con_clasificacion,
-                AVG(pct_acumulado) as pct_promedio,
-                MIN(ranking_en_tienda) as mejor_ranking
+                COUNT(DISTINCT ubicacion_id) as total_tiendas_con_venta,
+                -- Clasificación ABC global basada en el valor total
+                CASE
+                    WHEN SUM(SUM(valor_consumo)) OVER (ORDER BY SUM(valor_consumo) DESC)
+                         / NULLIF(SUM(SUM(valor_consumo)) OVER (), 0) * 100 <= 80 THEN 'A'
+                    WHEN SUM(SUM(valor_consumo)) OVER (ORDER BY SUM(valor_consumo) DESC)
+                         / NULLIF(SUM(SUM(valor_consumo)) OVER (), 0) * 100 <= 95 THEN 'B'
+                    ELSE 'C'
+                END as clasificacion_abc_global,
+                SUM(SUM(valor_consumo)) OVER (ORDER BY SUM(valor_consumo) DESC)
+                    / NULLIF(SUM(SUM(valor_consumo)) OVER (), 0) * 100 as pct_acumulado,
+                ROW_NUMBER() OVER (ORDER BY SUM(valor_consumo) DESC) as ranking_global
             FROM abc_classification
-            {f"WHERE clasificacion_abc = '{matriz}'" if matriz else ""}
             GROUP BY producto_id
         ),
         stock_productos AS (
@@ -1398,21 +1398,23 @@ async def get_productos_por_matriz(
             GROUP BY producto_id
         )
         SELECT
-            pa.producto_id as codigo_producto,
-            pa.descripcion,
-            pa.categoria,
-            '{matriz if matriz else 'ALL'}' as clasificacion_abc,
-            pa.valor_total as valor_consumo_total,
-            pa.pct_promedio as porcentaje_valor,
-            pa.mejor_ranking as ranking_valor,
-            {'pa.tiendas_con_clasificacion,' if not ubicacion_id else ''}
-            {'pa.total_tiendas,' if not ubicacion_id else ''}
-            {f'ROUND((pa.tiendas_con_clasificacion::float / NULLIF(pa.total_tiendas, 0)) * 100, 1) as porcentaje_tiendas,' if not ubicacion_id else ''}
+            p.id as codigo_producto,
+            p.nombre as descripcion,
+            p.categoria,
+            COALESCE(va.clasificacion_abc_global, 'SIN_VENTAS') as clasificacion_abc,
+            COALESCE(va.valor_total, 0) as valor_consumo_total,
+            COALESCE(va.pct_acumulado, 0) as porcentaje_valor,
+            COALESCE(va.ranking_global, 999999) as ranking_valor,
+            {'COALESCE(va.total_tiendas_con_venta, 0) as tiendas_con_clasificacion,' if not ubicacion_id else ''}
+            {'(SELECT COUNT(DISTINCT id) FROM ubicaciones) as total_tiendas,' if not ubicacion_id else ''}
+            {f'ROUND((COALESCE(va.total_tiendas_con_venta, 0)::float / NULLIF((SELECT COUNT(DISTINCT id) FROM ubicaciones), 0) * 100)::numeric, 1) as porcentaje_tiendas,' if not ubicacion_id else ''}
             COALESCE(sp.stock_actual, 0) as stock_actual
-        FROM producto_agregado pa
-        LEFT JOIN stock_productos sp ON pa.producto_id = sp.producto_id
-        {f"WHERE pa.tiendas_con_clasificacion > 0" if matriz else ""}
-        ORDER BY pa.valor_total DESC
+        FROM productos p
+        LEFT JOIN ventas_agregadas va ON p.id = va.producto_id
+        LEFT JOIN stock_productos sp ON p.id = sp.producto_id
+        {f"WHERE va.clasificacion_abc_global = '{matriz}'" if matriz and matriz != 'SIN_VENTAS' else ""}
+        {f"WHERE va.clasificacion_abc_global IS NULL" if matriz == 'SIN_VENTAS' else ""}
+        ORDER BY COALESCE(va.valor_total, 0) DESC, p.nombre ASC
         LIMIT %s OFFSET %s
         """
 
@@ -1428,6 +1430,423 @@ async def get_productos_por_matriz(
     except Exception as e:
         logger.error(f"Error obteniendo productos por matriz: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/productos/analisis-maestro", tags=["Productos"])
+async def get_productos_analisis_maestro(
+    estado: Optional[str] = None,
+    clasificacion_abc: Optional[str] = None,
+    categoria: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 500,
+    offset: int = 0
+):
+    """
+    Análisis maestro de productos para detectar productos fantasma y problemas.
+
+    Retorna todos los productos con métricas de stock, ventas y estado.
+
+    Args:
+        estado: Filtrar por estado (FANTASMA, CRITICO, ANOMALIA, DORMIDO, AGOTANDOSE, ACTIVO)
+        clasificacion_abc: Filtrar por clase ABC (A, B, C, SIN_VENTAS)
+        categoria: Filtrar por categoría
+        search: Buscar por código o descripción
+        limit: Máximo de resultados
+        offset: Offset para paginación
+    """
+    try:
+        search_filter = ""
+        categoria_filter = ""
+        params = []
+
+        if search:
+            search_filter = "AND (p.id ILIKE %s OR p.nombre ILIKE %s)"
+            params.extend([f'%{search}%', f'%{search}%'])
+
+        if categoria:
+            categoria_filter = "AND p.categoria = %s"
+            params.append(categoria)
+
+        query = f"""
+        WITH stock_por_ubicacion AS (
+            -- Stock por producto y ubicación
+            SELECT
+                ia.producto_id,
+                ia.ubicacion_id,
+                SUM(ia.cantidad) as stock
+            FROM inventario_actual ia
+            GROUP BY ia.producto_id, ia.ubicacion_id
+        ),
+        stock_agregado AS (
+            -- Agregar stock por tipo de ubicación
+            SELECT
+                s.producto_id,
+                SUM(CASE WHEN s.ubicacion_id = 'cedi_seco' THEN s.stock ELSE 0 END) as stock_cedi_seco,
+                SUM(CASE WHEN s.ubicacion_id = 'cedi_caracas' THEN s.stock ELSE 0 END) as stock_cedi_caracas,
+                SUM(CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 THEN s.stock ELSE 0 END) as stock_tiendas,
+                COUNT(DISTINCT CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 AND s.stock > 0 THEN s.ubicacion_id END) as num_tiendas_con_stock,
+                SUM(s.stock) as stock_total
+            FROM stock_por_ubicacion s
+            GROUP BY s.producto_id
+        ),
+        ventas_2m AS (
+            -- Ventas últimos 2 meses (para métricas operacionales)
+            SELECT
+                v.producto_id,
+                v.ubicacion_id,
+                SUM(v.cantidad_vendida) as unidades_vendidas,
+                SUM(v.venta_total) as valor_vendido,
+                MAX(v.fecha_venta) as ultima_venta
+            FROM ventas v
+            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
+            GROUP BY v.producto_id, v.ubicacion_id
+        ),
+        ventas_agregadas AS (
+            -- Agregar ventas 2M
+            SELECT
+                v.producto_id,
+                SUM(v.unidades_vendidas) as ventas_2m_unidades,
+                SUM(v.valor_vendido) as ventas_2m_valor,
+                COUNT(DISTINCT v.ubicacion_id) as num_tiendas_con_ventas,
+                MAX(v.ultima_venta) as ultima_venta
+            FROM ventas_2m v
+            GROUP BY v.producto_id
+        ),
+        ventas_6m AS (
+            -- Ventas últimos 6 meses (para clasificación ABC, consistente con ABC-XYZ)
+            SELECT
+                v.producto_id,
+                SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo,
+                COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) as semanas_con_venta
+            FROM ventas v
+            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
+            GROUP BY v.producto_id
+            HAVING COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) >= 4
+        ),
+        rankings AS (
+            -- Rankings por cantidad y valor (basado en 2M para operacional)
+            SELECT
+                producto_id,
+                ROW_NUMBER() OVER (ORDER BY ventas_2m_unidades DESC NULLS LAST) as rank_cantidad,
+                ROW_NUMBER() OVER (ORDER BY ventas_2m_valor DESC NULLS LAST) as rank_valor
+            FROM ventas_agregadas
+        ),
+        abc_ranked AS (
+            -- Rankear productos por valor de consumo (consistente con ABC-XYZ)
+            SELECT
+                producto_id,
+                valor_consumo,
+                ROW_NUMBER() OVER (ORDER BY valor_consumo DESC) as ranking,
+                COUNT(*) OVER () as total_productos_abc
+            FROM ventas_6m
+            WHERE valor_consumo > 0
+        ),
+        abc_classification AS (
+            -- Clasificar por percentiles de ranking (Top 20pct = A, siguiente 30pct = B, resto = C)
+            SELECT
+                producto_id,
+                CASE
+                    WHEN ranking <= (total_productos_abc * 0.20) THEN 'A'
+                    WHEN ranking <= (total_productos_abc * 0.50) THEN 'B'
+                    ELSE 'C'
+                END as clasificacion_abc
+            FROM abc_ranked
+        ),
+        producto_completo AS (
+            SELECT
+                p.id as codigo,
+                p.nombre as descripcion,
+                p.categoria,
+                COALESCE(abc.clasificacion_abc, 'SIN_VENTAS') as clasificacion_abc,
+                COALESCE(sa.stock_cedi_seco, 0) as stock_cedi_seco,
+                COALESCE(sa.stock_cedi_caracas, 0) as stock_cedi_caracas,
+                COALESCE(sa.stock_tiendas, 0) as stock_tiendas,
+                COALESCE(sa.num_tiendas_con_stock, 0) as num_tiendas_con_stock,
+                COALESCE(va.ventas_2m_unidades, 0) as ventas_2m,
+                COALESCE(va.num_tiendas_con_ventas, 0) as num_tiendas_con_ventas,
+                va.ultima_venta,
+                CASE
+                    WHEN va.ultima_venta IS NULL THEN NULL
+                    ELSE (CURRENT_DATE - va.ultima_venta::date)
+                END as dias_sin_venta,
+                COALESCE(r.rank_cantidad, 999999) as rank_cantidad,
+                COALESCE(r.rank_valor, 999999) as rank_valor,
+                COALESCE(sa.stock_total, 0) as stock_total,
+                -- Calcular estado
+                CASE
+                    -- FANTASMA: Sin stock total Y sin ventas
+                    WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'FANTASMA'
+                    -- ANOMALIA: Sin stock pero con ventas (error de datos)
+                    WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) > 0 THEN 'ANOMALIA'
+                    -- CRITICO: Stock solo en CEDI, 0 en tiendas, sin ventas
+                    WHEN COALESCE(sa.stock_tiendas, 0) = 0
+                         AND (COALESCE(sa.stock_cedi_seco, 0) > 0 OR COALESCE(sa.stock_cedi_caracas, 0) > 0)
+                         AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'CRITICO'
+                    -- DORMIDO: Con stock pero sin ventas
+                    WHEN COALESCE(sa.stock_total, 0) > 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'DORMIDO'
+                    -- AGOTANDOSE: Con ventas pero stock bajo en tiendas O sin respaldo en CEDI
+                    WHEN COALESCE(va.ventas_2m_unidades, 0) > 0 AND (
+                        COALESCE(sa.stock_tiendas, 0) < 10
+                        OR (COALESCE(sa.stock_cedi_seco, 0) = 0 AND COALESCE(sa.stock_cedi_caracas, 0) = 0)
+                    ) THEN 'AGOTANDOSE'
+                    -- ACTIVO: Con stock y ventas
+                    ELSE 'ACTIVO'
+                END as estado
+            FROM productos p
+            LEFT JOIN stock_agregado sa ON p.id = sa.producto_id
+            LEFT JOIN ventas_agregadas va ON p.id = va.producto_id
+            LEFT JOIN rankings r ON p.id = r.producto_id
+            LEFT JOIN abc_classification abc ON p.id = abc.producto_id
+            WHERE 1=1 {search_filter} {categoria_filter}
+        )
+        SELECT *
+        FROM producto_completo
+        WHERE 1=1
+        {"AND estado = %s" if estado else ""}
+        {"AND clasificacion_abc = %s" if clasificacion_abc and clasificacion_abc != 'SIN_VENTAS' else ""}
+        {"AND clasificacion_abc = 'SIN_VENTAS'" if clasificacion_abc == 'SIN_VENTAS' else ""}
+        ORDER BY
+            CASE estado
+                WHEN 'FANTASMA' THEN 1
+                WHEN 'CRITICO' THEN 2
+                WHEN 'ANOMALIA' THEN 3
+                WHEN 'DORMIDO' THEN 4
+                WHEN 'AGOTANDOSE' THEN 5
+                WHEN 'ACTIVO' THEN 6
+            END,
+            rank_valor ASC
+        LIMIT %s OFFSET %s
+        """
+
+        if estado:
+            params.append(estado)
+        if clasificacion_abc and clasificacion_abc != 'SIN_VENTAS':
+            params.append(clasificacion_abc)
+        params.extend([limit, offset])
+
+        results = execute_query_dict(query, tuple(params) if params else None)
+
+        # Convertir fechas a string para JSON
+        for r in results:
+            if r.get('ultima_venta'):
+                r['ultima_venta'] = r['ultima_venta'].strftime('%Y-%m-%d')
+
+        return results
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Error en análisis maestro: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/productos/analisis-maestro/resumen", tags=["Productos"])
+async def get_productos_analisis_resumen(
+    clasificacion_abc: Optional[str] = None
+):
+    """
+    Resumen de conteos por estado y ABC para el análisis maestro.
+
+    Args:
+        clasificacion_abc: Filtrar por clase ABC (A, B, C, SIN_VENTAS)
+
+    Returns:
+        Objeto con conteos por estado, por ABC, y totales
+    """
+    try:
+        abc_filter = ""
+        if clasificacion_abc:
+            if clasificacion_abc == "SIN_VENTAS":
+                abc_filter = "WHERE clasificacion_abc IS NULL"
+            else:
+                abc_filter = f"WHERE clasificacion_abc = '{clasificacion_abc}'"
+
+        query = f"""
+        WITH stock_por_ubicacion AS (
+            SELECT
+                ia.producto_id,
+                ia.ubicacion_id,
+                SUM(ia.cantidad) as stock
+            FROM inventario_actual ia
+            GROUP BY ia.producto_id, ia.ubicacion_id
+        ),
+        stock_agregado AS (
+            SELECT
+                s.producto_id,
+                SUM(CASE WHEN s.ubicacion_id = 'cedi_seco' THEN s.stock ELSE 0 END) as stock_cedi_seco,
+                SUM(CASE WHEN s.ubicacion_id = 'cedi_caracas' THEN s.stock ELSE 0 END) as stock_cedi_caracas,
+                SUM(CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 THEN s.stock ELSE 0 END) as stock_tiendas,
+                SUM(s.stock) as stock_total
+            FROM stock_por_ubicacion s
+            GROUP BY s.producto_id
+        ),
+        ventas_2m AS (
+            -- Ventas 2 meses para estados operacionales
+            SELECT
+                v.producto_id,
+                SUM(v.cantidad_vendida) as ventas_2m_unidades
+            FROM ventas v
+            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
+            GROUP BY v.producto_id
+        ),
+        ventas_6m AS (
+            -- Ventas 6 meses para clasificación ABC (consistente con ABC-XYZ)
+            SELECT
+                v.producto_id,
+                SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo,
+                COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) as semanas_con_venta
+            FROM ventas v
+            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
+            GROUP BY v.producto_id
+            HAVING COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) >= 4
+        ),
+        abc_ranked AS (
+            -- Rankear productos por valor de consumo (consistente con ABC-XYZ)
+            SELECT
+                producto_id,
+                valor_consumo,
+                ROW_NUMBER() OVER (ORDER BY valor_consumo DESC) as ranking,
+                COUNT(*) OVER () as total_productos_abc
+            FROM ventas_6m
+            WHERE valor_consumo > 0
+        ),
+        abc_classification AS (
+            -- Clasificar por percentiles de ranking (Top 20pct = A, siguiente 30pct = B, resto = C)
+            SELECT
+                producto_id,
+                CASE
+                    WHEN ranking <= (total_productos_abc * 0.20) THEN 'A'
+                    WHEN ranking <= (total_productos_abc * 0.50) THEN 'B'
+                    ELSE 'C'
+                END as clasificacion_abc
+            FROM abc_ranked
+        ),
+        producto_completo AS (
+            SELECT
+                p.id,
+                abc.clasificacion_abc,
+                CASE
+                    WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'FANTASMA'
+                    WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) > 0 THEN 'ANOMALIA'
+                    WHEN COALESCE(sa.stock_tiendas, 0) = 0
+                         AND (COALESCE(sa.stock_cedi_seco, 0) > 0 OR COALESCE(sa.stock_cedi_caracas, 0) > 0)
+                         AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'CRITICO'
+                    WHEN COALESCE(sa.stock_total, 0) > 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'DORMIDO'
+                    WHEN COALESCE(va.ventas_2m_unidades, 0) > 0 AND (
+                        COALESCE(sa.stock_tiendas, 0) < 10
+                        OR (COALESCE(sa.stock_cedi_seco, 0) = 0 AND COALESCE(sa.stock_cedi_caracas, 0) = 0)
+                    ) THEN 'AGOTANDOSE'
+                    ELSE 'ACTIVO'
+                END as estado
+            FROM productos p
+            LEFT JOIN stock_agregado sa ON p.id = sa.producto_id
+            LEFT JOIN ventas_2m va ON p.id = va.producto_id
+            LEFT JOIN abc_classification abc ON p.id = abc.producto_id
+        )
+        SELECT
+            COALESCE(clasificacion_abc, 'SIN_VENTAS') as clasificacion_abc,
+            estado,
+            COUNT(*) as cantidad
+        FROM producto_completo
+        {abc_filter}
+        GROUP BY clasificacion_abc, estado
+        """
+
+        results = execute_query_dict(query)
+
+        # Construir respuesta estructurada
+        por_estado = {}
+        por_abc = {}
+
+        for r in results:
+            abc = r['clasificacion_abc']
+            estado = r['estado']
+            cantidad = r['cantidad']
+
+            # Acumular por estado
+            por_estado[estado] = por_estado.get(estado, 0) + cantidad
+
+            # Acumular por ABC
+            por_abc[abc] = por_abc.get(abc, 0) + cantidad
+
+        total = sum(por_estado.values())
+
+        return {
+            "por_estado": por_estado,
+            "por_abc": por_abc,
+            "total": total,
+            "filtro_abc": clasificacion_abc
+        }
+
+    except Exception as e:
+        logger.error(f"Error en resumen análisis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/productos/{codigo}/detalle-tiendas", tags=["Productos"])
+async def get_producto_detalle_tiendas(codigo: str):
+    """
+    Detalle de stock y ventas por tienda para un producto específico.
+    """
+    try:
+        query = """
+        WITH stock_por_tienda AS (
+            SELECT
+                ia.ubicacion_id,
+                SUM(ia.cantidad) as stock
+            FROM inventario_actual ia
+            WHERE ia.producto_id = %s
+            GROUP BY ia.ubicacion_id
+        ),
+        ventas_por_tienda AS (
+            SELECT
+                v.ubicacion_id,
+                SUM(v.cantidad_vendida) as ventas_2m,
+                SUM(v.venta_total) as valor_2m,
+                MAX(v.fecha_venta) as ultima_venta
+            FROM ventas v
+            WHERE v.producto_id = %s
+              AND v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
+            GROUP BY v.ubicacion_id
+        )
+        SELECT
+            u.id as ubicacion_id,
+            u.nombre as ubicacion_nombre,
+            CASE WHEN POSITION('cedi' IN u.id) = 1 THEN 'CEDI' ELSE 'TIENDA' END as tipo,
+            COALESCE(s.stock, 0) as stock,
+            COALESCE(v.ventas_2m, 0) as ventas_2m,
+            COALESCE(v.valor_2m, 0) as valor_2m,
+            v.ultima_venta
+        FROM ubicaciones u
+        LEFT JOIN stock_por_tienda s ON u.id = s.ubicacion_id
+        LEFT JOIN ventas_por_tienda v ON u.id = v.ubicacion_id
+        ORDER BY
+            CASE WHEN POSITION('cedi' IN u.id) = 1 THEN 1 ELSE 0 END,
+            u.nombre
+        """
+
+        results = execute_query_dict(query, (codigo, codigo))
+
+        # Convertir fechas
+        for r in results:
+            if r.get('ultima_venta'):
+                r['ultima_venta'] = r['ultima_venta'].strftime('%Y-%m-%d')
+
+        # Info del producto
+        producto_query = """
+            SELECT id as codigo, nombre as descripcion, categoria
+            FROM productos WHERE id = %s
+        """
+        producto = execute_query_dict(producto_query, (codigo,))
+
+        return {
+            "producto": producto[0] if producto else None,
+            "tiendas": results
+        }
+
+    except Exception as e:
+        logger.error(f"Error en detalle tiendas: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 
 @app.get("/api/productos/{codigo}/detalle-completo", tags=["Productos"])
 async def get_producto_detalle_completo(codigo: str):

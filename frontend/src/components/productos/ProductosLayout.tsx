@@ -5,6 +5,7 @@ const ProductosLayout: React.FC = () => {
   const location = useLocation();
 
   const tabs = [
+    { path: '/productos/analisis-maestro', label: 'Análisis Maestro', icon: '👻' },
     { path: '/productos/abc-xyz', label: 'ABC-XYZ', icon: '📊' },
   ];
 

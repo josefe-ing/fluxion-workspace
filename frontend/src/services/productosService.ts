@@ -36,6 +36,59 @@ export interface ProductoEnriquecido {
   porcentaje_tiendas?: number;
 }
 
+// ============================================================================
+// ANÁLISIS MAESTRO - Detector de Productos Fantasma
+// ============================================================================
+
+export type EstadoProducto = 'FANTASMA' | 'CRITICO' | 'ANOMALIA' | 'DORMIDO' | 'AGOTANDOSE' | 'ACTIVO';
+
+export interface ProductoAnalisisMaestro {
+  codigo: string;
+  descripcion: string;
+  categoria: string;
+  clasificacion_abc: string;
+  stock_cedi_seco: number;
+  stock_cedi_caracas: number;
+  stock_tiendas: number;
+  num_tiendas_con_stock: number;
+  ventas_2m: number;
+  num_tiendas_con_ventas: number;
+  ultima_venta: string | null;
+  dias_sin_venta: number | null;
+  rank_cantidad: number;
+  rank_valor: number;
+  stock_total: number;
+  estado: EstadoProducto;
+}
+
+export type ClasificacionABC = 'A' | 'B' | 'C' | 'SIN_VENTAS';
+
+export interface ResumenAnalisisMaestro {
+  por_estado: Record<EstadoProducto, number>;
+  por_abc: Record<ClasificacionABC, number>;
+  total: number;
+  filtro_abc: ClasificacionABC | null;
+}
+
+export interface DetalleTienda {
+  ubicacion_id: string;
+  ubicacion_nombre: string;
+  tipo: 'CEDI' | 'TIENDA';
+  stock: number;
+  ventas_2m: number;
+  valor_2m: number;
+  ultima_venta: string | null;
+}
+
+export interface ProductoDetalleTiendas {
+  producto: {
+    codigo: string;
+    descripcion: string;
+    categoria: string;
+  } | null;
+  tiendas: DetalleTienda[];
+}
+
 export interface ClasificacionPorTienda {
   ubicacion_id: string;
   ubicacion_nombre: string;
@@ -134,6 +187,43 @@ export interface VentasPorTiendaResponse {
     total_transacciones: number;
     tiendas_con_ventas: number;
   };
+}
+
+// ============================================================================
+// API FUNCTIONS - ANÁLISIS MAESTRO
+// ============================================================================
+
+export async function getAnalisisMaestro(
+  estado?: EstadoProducto,
+  clasificacionAbc?: ClasificacionABC,
+  categoria?: string,
+  search?: string,
+  limit: number = 500,
+  offset: number = 0
+): Promise<ProductoAnalisisMaestro[]> {
+  const params: Record<string, string | number> = { limit, offset };
+  if (estado) params.estado = estado;
+  if (clasificacionAbc) params.clasificacion_abc = clasificacionAbc;
+  if (categoria) params.categoria = categoria;
+  if (search) params.search = search;
+
+  const response = await http.get('/api/productos/analisis-maestro', { params });
+  return response.data;
+}
+
+export async function getAnalisisMaestroResumen(
+  clasificacionAbc?: ClasificacionABC
+): Promise<ResumenAnalisisMaestro> {
+  const params: Record<string, string> = {};
+  if (clasificacionAbc) params.clasificacion_abc = clasificacionAbc;
+
+  const response = await http.get('/api/productos/analisis-maestro/resumen', { params });
+  return response.data;
+}
+
+export async function getProductoDetalleTiendas(codigo: string): Promise<ProductoDetalleTiendas> {
+  const response = await http.get(`/api/productos/${codigo}/detalle-tiendas`);
+  return response.data;
 }
 
 // ============================================================================
