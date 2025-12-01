@@ -342,14 +342,15 @@ class PostgreSQLInventarioLoader:
             ubicacion_tipo = 'cedi' if 'cedi' in ubicacion_id.lower() else 'tienda'
 
             # PASO 1: Crear/actualizar ubicación
-            # Nota: el schema tiene id (PK), codigo (UNIQUE NOT NULL), tipo (NOT NULL)
+            # Schema: id (PK), nombre, codigo_klk, tipo, activo
             # NO sobrescribir nombre existente para preservar cambios manuales
             cursor.execute("""
-                INSERT INTO ubicaciones (id, codigo, nombre, tipo, activo)
+                INSERT INTO ubicaciones (id, nombre, codigo_klk, tipo, activo)
                 VALUES (%s, %s, %s, %s, TRUE)
                 ON CONFLICT (id) DO UPDATE SET
+                    codigo_klk = COALESCE(EXCLUDED.codigo_klk, ubicaciones.codigo_klk),
                     tipo = EXCLUDED.tipo
-            """, (ubicacion_id, ubicacion_id, ubicacion_nombre, ubicacion_tipo))
+            """, (ubicacion_id, ubicacion_nombre, ubicacion_id, ubicacion_tipo))
             self.logger.info(f"   ✅ Ubicación sincronizada: {ubicacion_id} (tipo: {ubicacion_tipo})")
 
             # PASO 2: Crear almacén si no existe

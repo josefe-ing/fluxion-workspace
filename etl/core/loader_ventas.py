@@ -673,6 +673,27 @@ class VentasLoader:
         df_prep = df.copy()
         if 'codigo_producto' in df_prep.columns:
             df_prep['producto_id'] = df_prep['codigo_producto']
+        # Mapear 'fecha' a 'fecha_venta' (transformer usa 'fecha', DB espera 'fecha_venta')
+        if 'fecha' in df_prep.columns and 'fecha_venta' not in df_prep.columns:
+            df_prep['fecha_venta'] = df_prep['fecha']
+
+        # Construir numero_factura_unico incluyendo linea
+        # Formato: {ubicacion}_{factura}_L{linea} para evitar duplicados
+        # KLK ya incluye el almacen en el numero (C1-01-...), Stellar no
+        if 'linea' in df_prep.columns:
+            df_prep['numero_factura'] = df_prep.apply(
+                lambda row: f"{row['ubicacion_id']}_{row['numero_factura']}_L{int(row.get('linea', 0))}",
+                axis=1
+            )
+            self.logger.info(f"   📝 Generado numero_factura único con linea")
+        else:
+            # Si no hay linea, usar hash de la fila como fallback
+            import hashlib
+            df_prep['numero_factura'] = df_prep.apply(
+                lambda row: f"{row['ubicacion_id']}_{row['numero_factura']}_L{row.name}",
+                axis=1
+            )
+            self.logger.info(f"   📝 Generado numero_factura único con índice (sin campo linea)")
 
         # 2. AGREGAR CAMPOS FALTANTES con defaults
         if 'peso_calculado' not in df_prep.columns:
@@ -727,8 +748,11 @@ class VentasLoader:
             with get_postgres_connection() as pg_conn:
                 cursor = pg_conn.cursor()
 
+                duplicates_skipped = 0
                 for idx, row in df_prep.iterrows():
                     try:
+                        # UPSERT: ON CONFLICT DO NOTHING para evitar duplicados
+                        # Esto permite ejecutar cada 30 min los últimos 30 min sin crear duplicados
                         cursor.execute("""
                             INSERT INTO ventas (
                                 numero_factura,
@@ -750,6 +774,7 @@ class VentasLoader:
                                 utilidad_bruta,
                                 margen_bruto_pct
                             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (numero_factura) DO NOTHING
                         """, (
                             row.get('numero_factura'),
                             row.get('fecha_venta'),
