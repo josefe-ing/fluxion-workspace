@@ -166,18 +166,22 @@ class VentasExtractor:
 
     def extract_ventas_data(self,
                           config,
-                          fecha_inicio: date,
-                          fecha_fin: date,
+                          fecha_inicio,
+                          fecha_fin,
+                          hora_inicio: str = None,
+                          hora_fin: str = None,
                           limite_registros: int = None,
                           query_file: str = "query_ventas_generic.sql") -> Optional[pd.DataFrame]:
         """
-        Extrae datos de ventas para un rango de fechas específico
+        Extrae datos de ventas para un rango de fechas/horas específico
         Usa múltiples conexiones cortas (una por chunk) para evitar timeouts TCP
 
         Args:
             config: Configuración de la base de datos
-            fecha_inicio: Fecha inicial del rango
-            fecha_fin: Fecha final del rango
+            fecha_inicio: Fecha inicial del rango (date o datetime)
+            fecha_fin: Fecha final del rango (date o datetime)
+            hora_inicio: Hora inicial HH:MM (opcional, default 00:00)
+            hora_fin: Hora final HH:MM (opcional, default 23:59)
             limite_registros: Límite máximo de registros (None = sin límite, extrae todo)
             query_file: Archivo con el query SQL
 
@@ -196,15 +200,39 @@ class VentasExtractor:
         with open(query_path, 'r', encoding='utf-8') as f:
             query_template = f.read()
 
-        # Reemplazar parámetros dinámicos (sin TOP, usaremos OFFSET/FETCH)
+        # Determinar fecha y hora para el query
+        # fecha_inicio puede ser date o datetime
+        if hasattr(fecha_inicio, 'strftime'):
+            fecha_inicio_str = fecha_inicio.strftime('%Y-%m-%d')
+        else:
+            fecha_inicio_str = str(fecha_inicio)
+
+        if hasattr(fecha_fin, 'strftime'):
+            fecha_fin_str = fecha_fin.strftime('%Y-%m-%d')
+        else:
+            fecha_fin_str = str(fecha_fin)
+
+        # Usar hora de datetime si está disponible, sino usar parámetros
+        if hasattr(fecha_inicio, 'hour') and hora_inicio is None:
+            hora_inicio = fecha_inicio.strftime('%H:%M')
+        if hasattr(fecha_fin, 'hour') and hora_fin is None:
+            hora_fin = fecha_fin.strftime('%H:%M')
+
+        # Defaults para hora
+        hora_inicio = hora_inicio or '00:00'
+        hora_fin = hora_fin or '23:59'
+
+        # Reemplazar parámetros dinámicos
         query_base = query_template.format(
-            fecha_inicio=fecha_inicio.strftime('%Y-%m-%d'),
-            fecha_fin=fecha_fin.strftime('%Y-%m-%d'),
+            fecha_inicio=fecha_inicio_str,
+            fecha_fin=fecha_fin_str,
+            hora_inicio=hora_inicio,
+            hora_fin=hora_fin,
             limite_registros=limite_registros if limite_registros else 999999999
         )
 
         self.logger.info(f"📄 Query preparado: {len(query_base)} caracteres")
-        self.logger.info(f"📅 Rango: {fecha_inicio} a {fecha_fin}")
+        self.logger.info(f"📅 Rango: {fecha_inicio_str} {hora_inicio} a {fecha_fin_str} {hora_fin}")
         if limite_registros:
             self.logger.info(f"🔢 Límite total: {limite_registros:,} registros")
         else:

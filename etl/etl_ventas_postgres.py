@@ -229,11 +229,11 @@ class VentasETLPostgres:
                 port=config.port
             )
 
-            # Extraer
+            # Extraer - pasamos datetime completo para filtrar por hora
             raw_data = self.stellar_extractor.extract_ventas_data(
                 config=db_config,
-                fecha_inicio=fecha_desde.date(),
-                fecha_fin=fecha_hasta.date(),
+                fecha_inicio=fecha_desde,
+                fecha_fin=fecha_hasta,
                 limite_registros=None
             )
 

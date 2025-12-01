@@ -1,10 +1,12 @@
 -- Query ETL para extraer ventas por tienda
 -- Compatible con todas las tiendas de La Granja Mercado
--- Fecha: 2025-09-25
+-- Fecha: 2025-09-25 (Actualizado 2025-11-30 para filtro por hora)
 
 -- Parámetros dinámicos que serán reemplazados por Python:
--- {fecha_inicio} - Fecha inicial del rango
--- {fecha_fin} - Fecha final del rango
+-- {fecha_inicio} - Fecha inicial del rango (YYYY-MM-DD)
+-- {fecha_fin} - Fecha final del rango (YYYY-MM-DD)
+-- {hora_inicio} - Hora inicial (HH:MM) - opcional, default 00:00
+-- {hora_fin} - Hora final (HH:MM) - opcional, default 23:59
 -- {limite_registros} - Límite de registros para evitar sobrecargar
 
 SELECT TOP {limite_registros}
@@ -61,9 +63,9 @@ FROM VAD20.dbo.MA_TRANSACCION t
     LEFT JOIN VAD10.dbo.MA_SUBGRUPOS sg ON p.c_Subgrupo = sg.c_codigo
 
 WHERE
-    -- Filtro por rango de fechas
-    t.f_Fecha >= '{fecha_inicio}'
-    AND t.f_Fecha <= '{fecha_fin}'
+    -- Filtro por rango de fechas y horas (fecha_hora_completa >= desde AND <= hasta)
+    (CAST(t.f_Fecha AS DATETIME) + CAST(t.h_Hora AS DATETIME)) >= CONVERT(DATETIME, '{fecha_inicio} {hora_inicio}', 120)
+    AND (CAST(t.f_Fecha AS DATETIME) + CAST(t.h_Hora AS DATETIME)) <= CONVERT(DATETIME, '{fecha_fin} {hora_fin}', 120)
 
     -- Solo transacciones válidas
     --AND t.Cantidad > 0
