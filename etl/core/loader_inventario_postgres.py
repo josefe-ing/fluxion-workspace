@@ -397,7 +397,8 @@ class PostgreSQLInventarioLoader:
                     continue
 
                 # 5a: Upsert producto
-                nombre_producto = row.get('descripcion_producto', f'Producto {codigo_producto}')
+                # Usar descripcion_producto, o fallback a 'Producto {codigo}'
+                nombre_producto = row.get('descripcion_producto') or f'Producto {codigo_producto}'
                 cursor.execute("""
                     INSERT INTO productos (id, codigo, nombre, descripcion, categoria, marca, activo)
                     VALUES (%s, %s, %s, %s, %s, %s, TRUE)
