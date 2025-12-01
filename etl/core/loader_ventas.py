@@ -701,6 +701,11 @@ class VentasLoader:
         if 'total_cantidad_por_unidad_medida' not in df_prep.columns:
             df_prep['total_cantidad_por_unidad_medida'] = None
 
+        # Log estado del DataFrame antes de inserción
+        self.logger.info(f"   📊 DataFrame preparado: {len(df_prep):,} filas, columnas: {list(df_prep.columns)}")
+        if len(df_prep) > 0:
+            self.logger.info(f"   📊 Muestra primer registro: numero_factura={df_prep.iloc[0].get('numero_factura')}, fecha_venta={df_prep.iloc[0].get('fecha_venta')}")
+
         # 3. SINCRONIZAR UBICACIONES Y PRODUCTOS
         try:
             with get_postgres_connection() as pg_conn:
@@ -744,10 +749,13 @@ class VentasLoader:
         # 4. INSERTAR VENTAS
         records_loaded = 0
         errors = 0
+        total_rows = len(df_prep)
+        self.logger.info(f"📝 Iniciando inserción de {total_rows:,} registros a PostgreSQL...")
 
         try:
             with get_postgres_connection() as pg_conn:
                 cursor = pg_conn.cursor()
+                self.logger.info(f"   ✅ Conexión PostgreSQL establecida")
 
                 duplicates_skipped = 0
                 for idx, row in df_prep.iterrows():
@@ -805,9 +813,12 @@ class VentasLoader:
 
                     except Exception as e:
                         self.logger.error(f"❌ Error en registro {idx}: {str(e)}")
+                        # Log detalles del registro que falló para debugging
+                        if errors < 3:  # Solo mostrar detalles de los primeros 3 errores
+                            self.logger.error(f"   Datos del registro: numero_factura={row.get('numero_factura')}, fecha_venta={row.get('fecha_venta')}, producto_id={row.get('producto_id')}")
                         errors += 1
                         if errors > 10:  # Stop after 10 errors
-                            self.logger.error(f"⚠️  Demasiados errores, deteniendo carga")
+                            self.logger.error(f"⚠️  Demasiados errores ({errors}), deteniendo carga. Últimos {records_loaded:,} registros procesados.")
                             break
 
                 # Commit final
@@ -822,9 +833,22 @@ class VentasLoader:
                 "records_loaded": records_loaded
             }
 
+        # Determinar el mensaje según el resultado
+        if records_loaded == 0 and errors > 0:
+            message = f"Carga fallida: {errors} errores, 0 registros cargados"
+        elif records_loaded == 0:
+            message = "Carga completada pero 0 registros insertados (posibles duplicados)"
+        elif errors > 0:
+            message = f"Carga parcial: {records_loaded:,} registros, {errors} errores"
+        else:
+            message = f"Carga exitosa: {records_loaded:,} registros"
+
+        # success es True solo si cargamos al menos 1 registro Y no hay errores excesivos
+        success = records_loaded > 0 and errors <= 10
+
         return {
-            "success": errors == 0,
-            "message": f"Ventas cargadas (DB_MODE=postgresql)",
+            "success": success,
+            "message": message,
             "records_loaded": records_loaded,
             "errors": errors
         }
