@@ -479,6 +479,202 @@ class AgotadoVisualResponse(BaseModel):
     horas_operacion_diarias: float = 14.0
 
 
+# ============================================================================
+# Modelos para Análisis de Ventas Perdidas por Agotados
+# ============================================================================
+
+class VentaPerdidaItemV2(BaseModel):
+    """Producto con venta perdida - Criterio V2: Comparación por slot día/hora"""
+    producto_id: str
+    codigo_producto: str
+    descripcion_producto: str
+    categoria: Optional[str]
+    # Contexto temporal
+    slot_actual: str  # Ej: "10am-12pm"
+    dia_semana: str  # Ej: "Lunes"
+    # Comparación con histórico
+    ventas_slot_actual: float  # Unidades vendidas en este slot
+    promedio_historico: float  # Promedio mismo día/slot últimas 8 semanas
+    semanas_con_datos: int  # Cuántas semanas de histórico tenemos
+    # Cálculo de pérdida
+    porcentaje_vendido: float  # ventas_slot_actual / promedio_historico * 100
+    unidades_perdidas: float  # promedio_historico - ventas_slot_actual
+    precio_unitario_promedio: float
+    venta_perdida_usd: float
+    # Nivel de alerta
+    nivel_alerta: str  # "critico", "alto", "medio"
+    # Info adicional
+    stock_actual: float
+
+
+class VentaPerdidaPorCategoria(BaseModel):
+    """Resumen de ventas perdidas por categoría"""
+    categoria: str
+    total_venta_perdida_usd: float
+    total_incidentes: int
+    porcentaje_del_total: float
+
+
+class VentasPerdidasResponseV2(BaseModel):
+    """Respuesta del análisis de ventas perdidas - V2 con slots"""
+    ubicacion_id: str
+    ubicacion_nombre: str
+    # Contexto temporal
+    slot_analizado: str  # Ej: "10am-12pm"
+    dia_semana: str  # Ej: "Lunes"
+    fecha_analisis: str
+    semanas_historico: int  # Semanas usadas para comparación
+    # KPIs principales
+    total_venta_perdida_usd: float
+    total_incidentes: int
+    incidentes_criticos: int
+    incidentes_altos: int
+    incidentes_medios: int
+    producto_mayor_perdida: Optional[str]
+    producto_mayor_perdida_valor: float
+    # Lista de items detallados
+    items: List[VentaPerdidaItemV2]
+    # Agregaciones para gráficos
+    por_categoria: List[VentaPerdidaPorCategoria]
+    top_productos: List[VentaPerdidaItemV2]  # Top 10
+
+
+# ============================================================================
+# MODELOS PARA HISTORIAL VENTAS + INVENTARIO (ProductoDetalleModal)
+# ============================================================================
+
+class HistorialDataPoint(BaseModel):
+    """Punto de dato en el historial combinado ventas+inventario"""
+    fecha: str  # ISO format: YYYY-MM-DD o YYYY-MM-DDTHH:mm:ss
+    timestamp: int  # Unix timestamp para ordenamiento
+    ventas: float  # Unidades vendidas en este período
+    inventario: Optional[float]  # Stock al momento (puede ser null si no hay snapshot)
+    es_estimado: bool = False  # True si el inventario fue interpolado
+
+
+class DiagnosticoVentaPerdida(BaseModel):
+    """Diagnóstico automático de por qué se perdieron ventas"""
+    tipo: str  # "ruptura_stock", "falta_exhibicion", "baja_demanda", "sin_diagnostico"
+    confianza: float  # 0-100%
+    descripcion: str
+    evidencia: List[str]  # Lista de evidencias que soportan el diagnóstico
+
+
+class HistorialProductoResponse(BaseModel):
+    """Respuesta del historial combinado ventas+inventario de un producto"""
+    producto_id: str
+    codigo_producto: str
+    descripcion_producto: str
+    categoria: Optional[str]
+    ubicacion_id: str
+    ubicacion_nombre: str
+    # Rango de datos
+    fecha_inicio: str
+    fecha_fin: str
+    granularidad: str  # "diario" o "horario"
+    # Serie temporal combinada
+    datos: List[HistorialDataPoint]
+    # Estadísticas resumen
+    total_ventas_periodo: float
+    promedio_diario_ventas: float
+    stock_promedio: float
+    stock_actual: float
+    dias_con_stock_cero: int
+    # Diagnóstico (si aplica)
+    diagnostico: Optional[DiagnosticoVentaPerdida] = None
+
+
+# ============================================================================
+# MODELOS V3: Ventas Perdidas con Rango de Fechas Configurable
+# ============================================================================
+
+class VentaPerdidaItemV3(BaseModel):
+    """Producto con venta perdida - V3: Análisis por rango de fechas"""
+    producto_id: str
+    codigo_producto: str
+    descripcion_producto: str
+    categoria: Optional[str]
+    # Ventas en el período analizado
+    ventas_periodo: float  # Unidades vendidas en el período seleccionado
+    dias_con_ventas: int  # Días que tuvo al menos 1 venta
+    dias_analizados: int  # Total de días en el período
+    promedio_diario_periodo: float  # ventas_periodo / dias_analizados
+    # Comparación con histórico
+    promedio_diario_historico: float  # Promedio diario de los últimos N días previos
+    dias_historico: int  # Días usados para calcular el histórico
+    # Cálculo de pérdida
+    porcentaje_vs_historico: float  # (promedio_diario_periodo / promedio_diario_historico) * 100
+    unidades_perdidas_diarias: float  # promedio_diario_historico - promedio_diario_periodo
+    unidades_perdidas_total: float  # unidades_perdidas_diarias * dias_analizados
+    precio_unitario_promedio: float
+    venta_perdida_usd: float
+    # Nivel de alerta
+    nivel_alerta: str  # "critico", "alto", "medio"
+    # Info adicional
+    stock_actual: float
+    dias_stock_cero: int  # Días con stock en 0 durante el período
+
+
+class VentasPerdidasResponseV3(BaseModel):
+    """Respuesta del análisis de ventas perdidas - V3 con rango de fechas"""
+    ubicacion_id: str
+    ubicacion_nombre: str
+    # Período analizado
+    fecha_inicio: str
+    fecha_fin: str
+    dias_analizados: int
+    # Período de referencia (histórico)
+    dias_historico: int
+    # KPIs principales
+    total_venta_perdida_usd: float
+    total_incidentes: int
+    incidentes_criticos: int
+    incidentes_altos: int
+    incidentes_medios: int
+    producto_mayor_perdida: Optional[str]
+    producto_mayor_perdida_valor: float
+    # Lista de items detallados
+    items: List[VentaPerdidaItemV3]
+    # Agregaciones para gráficos
+    por_categoria: List[VentaPerdidaPorCategoria]
+    top_productos: List[VentaPerdidaItemV3]  # Top 10
+
+
+# Mantener modelos antiguos para compatibilidad
+class VentaPerdidaItem(BaseModel):
+    """Producto con venta perdida estimada por agotado (V1 - deprecado)"""
+    producto_id: str
+    codigo_producto: str
+    descripcion_producto: str
+    categoria: Optional[str]
+    horas_sin_vender: float
+    promedio_horas_entre_ventas: float
+    factor_alerta: float
+    prioridad: int
+    unidades_perdidas_estimadas: float
+    precio_unitario_promedio: float
+    venta_perdida_usd: float
+    ultima_venta_fecha: Optional[str]
+    ultima_venta_hora: Optional[str]
+    stock_actual: float
+
+
+class VentasPerdidasResponse(BaseModel):
+    """Respuesta del análisis de ventas perdidas (V1 - deprecado)"""
+    ubicacion_id: str
+    ubicacion_nombre: str
+    fecha_inicio: str
+    fecha_fin: str
+    fecha_analisis: str
+    total_venta_perdida_usd: float
+    total_incidentes: int
+    producto_mayor_perdida: Optional[str]
+    producto_mayor_perdida_valor: float
+    items: List[VentaPerdidaItem]
+    por_categoria: List[VentaPerdidaPorCategoria]
+    top_productos: List[VentaPerdidaItem]
+
+
 class AlmacenesUbicacionResponse(BaseModel):
     """Lista de almacenes para una ubicación KLK"""
     ubicacion_id: str
@@ -3875,6 +4071,888 @@ async def get_agotados_visuales_count(
     except Exception as e:
         logger.error(f"Error obteniendo conteo de agotados visuales: {str(e)}")
         return {"ubicacion_id": ubicacion_id, "total_alertas": 0, "tienda_abierta": True}
+
+
+@app.get("/api/ventas/ventas-perdidas/{ubicacion_id}", response_model=VentasPerdidasResponse, tags=["Centro Comando Ventas"])
+async def get_ventas_perdidas(
+    ubicacion_id: str,
+    almacen_codigo: Optional[str] = None,
+    factor_minimo: float = 2.0,
+    min_ventas_historicas: int = 5,
+    max_horas_entre_ventas: int = 24
+):
+    """
+    Calcula las ventas perdidas estimadas por agotados visuales.
+
+    Lógica:
+    1. Detecta productos con stock pero sin ventas anormalmente largo tiempo
+    2. Calcula unidades que se debieron vender: (horas_sin_vender - promedio) / promedio
+    3. Multiplica por precio unitario promedio de últimas 2 semanas
+    4. Agrega por categoría para visualizaciones
+
+    Args:
+        ubicacion_id: ID de la tienda
+        almacen_codigo: Código del almacén (opcional)
+        factor_minimo: Umbral de alerta (default 2x)
+        min_ventas_historicas: Mínimo de ventas en 2 semanas
+        max_horas_entre_ventas: Máximo promedio de horas entre ventas
+
+    Returns:
+        Análisis de ventas perdidas con KPIs, detalle y agregaciones
+    """
+    try:
+        if not is_postgres_mode():
+            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
+
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener nombre de la ubicación y horarios
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ubicaciones' AND column_name = 'hora_apertura'
+            """)
+            has_hours_columns = cursor.fetchone() is not None
+
+            if has_hours_columns:
+                cursor.execute("""
+                    SELECT nombre, hora_apertura, hora_cierre
+                    FROM ubicaciones
+                    WHERE id = %s
+                """, [ubicacion_id])
+                ubicacion_row = cursor.fetchone()
+                if not ubicacion_row:
+                    raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+                ubicacion_nombre = ubicacion_row[0]
+                hora_apertura = ubicacion_row[1]
+                hora_cierre = ubicacion_row[2]
+            else:
+                cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", [ubicacion_id])
+                ubicacion_row = cursor.fetchone()
+                if not ubicacion_row:
+                    raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+                ubicacion_nombre = ubicacion_row[0]
+                hora_apertura = None
+                hora_cierre = None
+
+            # Zona horaria de Venezuela
+            tz_vzla = ZoneInfo("America/Caracas")
+            ahora = datetime.now(tz_vzla)
+            hace_2_semanas = ahora - timedelta(days=14)
+
+            # Calcular horas de operación diarias
+            if hora_apertura and hora_cierre:
+                apertura_mins = hora_apertura.hour * 60 + hora_apertura.minute
+                cierre_mins = hora_cierre.hour * 60 + hora_cierre.minute
+                if cierre_mins == 0:
+                    cierre_mins = 24 * 60
+                if cierre_mins <= apertura_mins:
+                    horas_operacion_diarias = (24 * 60 - apertura_mins + cierre_mins) / 60.0
+                else:
+                    horas_operacion_diarias = (cierre_mins - apertura_mins) / 60.0
+            else:
+                horas_operacion_diarias = 14.0
+                hora_apertura = dt_time(7, 0)
+                hora_cierre = dt_time(21, 0)
+
+            # Construir filtro de almacén
+            almacen_filter = ""
+            almacen_filter_ventas = ""
+            if almacen_codigo:
+                almacen_filter = "AND ia.almacen_codigo = %s"
+                almacen_filter_ventas = "AND v.almacen_codigo = %s"
+
+            # Query principal con precio promedio
+            query = f"""
+                WITH ventas_periodo AS (
+                    SELECT
+                        v.producto_id,
+                        COUNT(*) as total_ventas,
+                        MIN(v.fecha_venta) as primera_venta,
+                        MAX(v.fecha_venta) as ultima_venta,
+                        AVG(v.precio_unitario) as precio_promedio
+                    FROM ventas v
+                    WHERE v.ubicacion_id = %s
+                      AND v.fecha_venta >= %s
+                      AND v.precio_unitario > 0
+                      {almacen_filter_ventas}
+                    GROUP BY v.producto_id
+                    HAVING COUNT(*) >= %s
+                ),
+                velocidad_venta AS (
+                    SELECT
+                        vp.producto_id,
+                        vp.total_ventas,
+                        vp.ultima_venta,
+                        vp.precio_promedio,
+                        (EXTRACT(EPOCH FROM (%s::timestamp - vp.primera_venta)) / 86400.0 * %s) / NULLIF(vp.total_ventas - 1, 0) as promedio_horas_entre_ventas,
+                        EXTRACT(EPOCH FROM (%s::timestamp - vp.ultima_venta)) / 86400.0 * %s as horas_sin_vender
+                    FROM ventas_periodo vp
+                    WHERE vp.total_ventas > 1
+                )
+                SELECT
+                    ia.producto_id,
+                    p.codigo as codigo_producto,
+                    p.nombre as descripcion_producto,
+                    p.categoria,
+                    ia.cantidad as stock_actual,
+                    vv.total_ventas as ventas_ultimas_2_semanas,
+                    COALESCE(vv.promedio_horas_entre_ventas, 0) as promedio_horas_entre_ventas,
+                    COALESCE(vv.horas_sin_vender, 0) as horas_sin_vender,
+                    COALESCE(vv.precio_promedio, 0) as precio_promedio,
+                    vv.ultima_venta
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                INNER JOIN velocidad_venta vv ON vv.producto_id = ia.producto_id
+                WHERE ia.ubicacion_id = %s
+                  AND ia.cantidad > 0
+                  AND p.activo = true
+                  AND vv.promedio_horas_entre_ventas > 0
+                  AND vv.promedio_horas_entre_ventas <= %s
+                  AND vv.horas_sin_vender >= (%s * vv.promedio_horas_entre_ventas)
+                  {almacen_filter}
+                ORDER BY (vv.horas_sin_vender / NULLIF(vv.promedio_horas_entre_ventas, 1)) DESC
+                LIMIT 200
+            """
+
+            # Construir parámetros
+            if almacen_codigo:
+                params = [
+                    ubicacion_id, hace_2_semanas, almacen_codigo,
+                    min_ventas_historicas,
+                    ahora, horas_operacion_diarias,
+                    ahora, horas_operacion_diarias,
+                    ubicacion_id, max_horas_entre_ventas, factor_minimo, almacen_codigo
+                ]
+            else:
+                params = [
+                    ubicacion_id, hace_2_semanas,
+                    min_ventas_historicas,
+                    ahora, horas_operacion_diarias,
+                    ahora, horas_operacion_diarias,
+                    ubicacion_id, max_horas_entre_ventas, factor_minimo
+                ]
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            items = []
+            total_venta_perdida = 0.0
+            categoria_totales: dict = {}
+
+            for row in rows:
+                (producto_id, codigo, descripcion, categoria, stock,
+                 ventas_2sem, prom_horas, horas_sin, precio_promedio, ultima_venta_ts) = row
+
+                # Convertir Decimal a float para operaciones
+                prom_horas = float(prom_horas) if prom_horas else 0.0
+                horas_sin = float(horas_sin) if horas_sin else 0.0
+                precio_promedio = float(precio_promedio) if precio_promedio else 0.0
+
+                # Calcular factor de alerta
+                factor = horas_sin / prom_horas if prom_horas > 0 else 0
+
+                # Calcular unidades perdidas estimadas
+                # Fórmula: Unidades_Perdidas = Tiempo_Sin_Vender / Velocidad_Normal
+                # Ejemplo: Si vende 1 cada 6 min y lleva 19h (1140 min) sin vender → 1140/6 = 190 unidades
+                unidades_perdidas = horas_sin / prom_horas if prom_horas > 0 else 0
+
+                # Calcular valor perdido
+                venta_perdida = unidades_perdidas * precio_promedio
+                total_venta_perdida += venta_perdida
+
+                # Determinar prioridad
+                if factor >= 4:
+                    prioridad = 1
+                elif factor >= 3:
+                    prioridad = 2
+                else:
+                    prioridad = 3
+
+                # Agregar por categoría
+                cat_key = categoria or "Sin Categoría"
+                if cat_key not in categoria_totales:
+                    categoria_totales[cat_key] = {"total": 0.0, "count": 0}
+                categoria_totales[cat_key]["total"] += venta_perdida
+                categoria_totales[cat_key]["count"] += 1
+
+                # Formatear última venta
+                ultima_venta_fecha = None
+                ultima_venta_hora = None
+                if ultima_venta_ts:
+                    if hasattr(ultima_venta_ts, 'astimezone'):
+                        fecha_local = ultima_venta_ts.astimezone(tz_vzla)
+                    else:
+                        fecha_local = ultima_venta_ts
+                    ultima_venta_fecha = fecha_local.strftime('%Y-%m-%d') if hasattr(fecha_local, 'strftime') else str(fecha_local)[:10]
+                    ultima_venta_hora = fecha_local.strftime('%H:%M') if hasattr(fecha_local, 'strftime') else ""
+
+                items.append(VentaPerdidaItem(
+                    producto_id=producto_id,
+                    codigo_producto=codigo,
+                    descripcion_producto=descripcion,
+                    categoria=categoria,
+                    horas_sin_vender=round(horas_sin, 1),
+                    promedio_horas_entre_ventas=round(prom_horas, 1),
+                    factor_alerta=round(factor, 1),
+                    prioridad=prioridad,
+                    unidades_perdidas_estimadas=round(unidades_perdidas, 1),
+                    precio_unitario_promedio=round(float(precio_promedio), 2),
+                    venta_perdida_usd=round(venta_perdida, 2),
+                    ultima_venta_fecha=ultima_venta_fecha,
+                    ultima_venta_hora=ultima_venta_hora,
+                    stock_actual=float(stock)
+                ))
+
+            cursor.close()
+
+            # Construir agregación por categoría
+            por_categoria = []
+            for cat, data in sorted(categoria_totales.items(), key=lambda x: -x[1]["total"]):
+                porcentaje = (data["total"] / total_venta_perdida * 100) if total_venta_perdida > 0 else 0
+                por_categoria.append(VentaPerdidaPorCategoria(
+                    categoria=cat,
+                    total_venta_perdida_usd=round(data["total"], 2),
+                    total_incidentes=data["count"],
+                    porcentaje_del_total=round(porcentaje, 1)
+                ))
+
+            # Producto con mayor pérdida
+            producto_mayor = None
+            producto_mayor_valor = 0.0
+            if items:
+                item_mayor = max(items, key=lambda x: x.venta_perdida_usd)
+                producto_mayor = f"{item_mayor.codigo_producto} - {item_mayor.descripcion_producto[:30]}"
+                producto_mayor_valor = item_mayor.venta_perdida_usd
+
+            return VentasPerdidasResponse(
+                ubicacion_id=ubicacion_id,
+                ubicacion_nombre=ubicacion_nombre,
+                fecha_inicio=hace_2_semanas.strftime('%Y-%m-%d'),
+                fecha_fin=ahora.strftime('%Y-%m-%d'),
+                fecha_analisis=ahora.strftime('%Y-%m-%d %H:%M'),
+                total_venta_perdida_usd=round(total_venta_perdida, 2),
+                total_incidentes=len(items),
+                producto_mayor_perdida=producto_mayor,
+                producto_mayor_perdida_valor=round(producto_mayor_valor, 2),
+                items=items,
+                por_categoria=por_categoria,
+                top_productos=items[:10]
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculando ventas perdidas: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+# Mapeo de slots a nombres legibles
+SLOTS_HORARIOS = {
+    0: ("6am-8am", 6, 8),
+    1: ("8am-10am", 8, 10),
+    2: ("10am-12pm", 10, 12),
+    3: ("12pm-2pm", 12, 14),
+    4: ("2pm-4pm", 14, 16),
+    5: ("4pm-6pm", 16, 18),
+    6: ("6pm-8pm", 18, 20),
+    7: ("8pm-10pm", 20, 22),
+}
+
+DIAS_SEMANA = {
+    0: "Domingo",
+    1: "Lunes",
+    2: "Martes",
+    3: "Miércoles",
+    4: "Jueves",
+    5: "Viernes",
+    6: "Sábado",
+}
+
+
+@app.get("/api/ventas/ventas-perdidas-v2/{ubicacion_id}", response_model=VentasPerdidasResponseV2, tags=["Centro Comando Ventas"])
+async def get_ventas_perdidas_v2(
+    ubicacion_id: str,
+    almacen_codigo: Optional[str] = None,
+    semanas_historico: int = 8,
+    umbral_critico: float = 3.0,  # Promedio histórico mínimo para alerta crítica cuando ventas=0
+    umbral_alto: float = 50.0,    # % del promedio para alerta alta
+    umbral_medio: float = 75.0    # % del promedio para alerta media
+):
+    """
+    Calcula ventas perdidas usando comparación por slot de 2 horas y día de semana.
+
+    Nuevo criterio V2:
+    - Compara el slot actual (2 horas) con el promedio del mismo día/hora en semanas anteriores
+    - Ejemplo: Lunes 10am-12pm actual vs promedio de Lunes 10am-12pm de las últimas 8 semanas
+
+    Niveles de alerta:
+    - Crítico: Vendió 0 cuando promedio histórico >= umbral_critico
+    - Alto: Vendió < umbral_alto% del promedio histórico
+    - Medio: Vendió < umbral_medio% del promedio histórico
+
+    Args:
+        ubicacion_id: ID de la tienda
+        almacen_codigo: Código del almacén (opcional)
+        semanas_historico: Semanas a comparar (default 8)
+        umbral_critico: Unidades promedio mínimas para alerta crítica cuando ventas=0
+        umbral_alto: Porcentaje del promedio para alerta alta (default 50%)
+        umbral_medio: Porcentaje del promedio para alerta media (default 75%)
+    """
+    try:
+        if not is_postgres_mode():
+            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
+
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener nombre de la ubicación
+            cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", [ubicacion_id])
+            ubicacion_row = cursor.fetchone()
+            if not ubicacion_row:
+                raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+            ubicacion_nombre = ubicacion_row[0]
+
+            # Zona horaria de Venezuela
+            tz_vzla = ZoneInfo("America/Caracas")
+            ahora = datetime.now(tz_vzla)
+
+            # Determinar slot actual (0-7) y día de semana (0-6)
+            hora_actual = ahora.hour
+            slot_actual = max(0, min(7, (hora_actual - 6) // 2))  # 6am = slot 0, 8am = slot 1, etc.
+            dia_semana = ahora.weekday()  # 0 = Lunes, 6 = Domingo
+            # Convertir a formato PostgreSQL (0 = Domingo)
+            dia_semana_pg = (dia_semana + 1) % 7
+
+            slot_info = SLOTS_HORARIOS.get(slot_actual, ("6am-8am", 6, 8))
+            slot_nombre, hora_inicio, hora_fin = slot_info[0], slot_info[1], slot_info[2]
+            dia_nombre = DIAS_SEMANA.get(dia_semana_pg, "Lunes")
+
+            logger.info(f"V2 Debug: hora={hora_actual}, slot={slot_actual}, slot_nombre={slot_nombre}, dia_pg={dia_semana_pg}, dia_nombre={dia_nombre}")
+
+            # Calcular inicio del slot actual
+            inicio_slot_actual = ahora.replace(hour=hora_inicio, minute=0, second=0, microsecond=0)
+            fin_slot_actual = ahora.replace(hour=hora_fin, minute=0, second=0, microsecond=0)
+
+            # Filtro de almacén
+            almacen_filter = ""
+            almacen_filter_inv = ""
+            if almacen_codigo:
+                almacen_filter = "AND v.almacen_codigo = %s"
+                almacen_filter_inv = "AND ia.almacen_codigo = %s"
+
+            # Query principal: comparar slot actual con histórico mismo día/hora
+            query = f"""
+                WITH ventas_slot_actual AS (
+                    -- Ventas del slot actual (últimas 2 horas de hoy)
+                    SELECT
+                        v.producto_id,
+                        COALESCE(SUM(v.cantidad_vendida), 0) as cantidad_actual,
+                        AVG(v.precio_unitario) as precio_promedio
+                    FROM ventas v
+                    WHERE v.ubicacion_id = %s
+                      AND v.fecha_venta >= %s
+                      AND v.fecha_venta < %s
+                      AND v.precio_unitario > 0
+                      {almacen_filter}
+                    GROUP BY v.producto_id
+                ),
+                historico_mismo_slot AS (
+                    -- Histórico del mismo día de semana y slot horario
+                    SELECT
+                        v.producto_id,
+                        DATE(v.fecha_venta) as fecha,
+                        SUM(v.cantidad_vendida) as cantidad_dia,
+                        AVG(v.precio_unitario) as precio_dia
+                    FROM ventas v
+                    WHERE v.ubicacion_id = %s
+                      AND EXTRACT(DOW FROM v.fecha_venta) = %s  -- Mismo día de semana
+                      AND EXTRACT(HOUR FROM v.fecha_venta) >= %s  -- Hora inicio del slot
+                      AND EXTRACT(HOUR FROM v.fecha_venta) < %s   -- Hora fin del slot
+                      AND v.fecha_venta >= %s  -- Desde hace N semanas
+                      AND v.fecha_venta < %s   -- Hasta inicio del slot actual (excluir hoy)
+                      AND v.precio_unitario > 0
+                      {almacen_filter}
+                    GROUP BY v.producto_id, DATE(v.fecha_venta)
+                ),
+                promedio_historico AS (
+                    -- Calcular promedio por producto
+                    SELECT
+                        producto_id,
+                        AVG(cantidad_dia) as promedio_cantidad,
+                        AVG(precio_dia) as promedio_precio,
+                        COUNT(DISTINCT fecha) as semanas_datos
+                    FROM historico_mismo_slot
+                    GROUP BY producto_id
+                ),
+                productos_con_stock AS (
+                    -- Solo productos con stock positivo
+                    SELECT
+                        ia.producto_id,
+                        ia.cantidad as stock_actual
+                    FROM inventario_actual ia
+                    WHERE ia.ubicacion_id = %s
+                      AND ia.cantidad > 0
+                      {almacen_filter_inv}
+                )
+                SELECT
+                    pcs.producto_id,
+                    p.codigo as codigo_producto,
+                    p.nombre as descripcion_producto,
+                    p.categoria,
+                    pcs.stock_actual,
+                    COALESCE(vsa.cantidad_actual, 0) as ventas_actuales,
+                    COALESCE(ph.promedio_cantidad, 0) as promedio_historico,
+                    COALESCE(ph.semanas_datos, 0) as semanas_datos,
+                    COALESCE(vsa.precio_promedio, ph.promedio_precio, 0) as precio_promedio
+                FROM productos_con_stock pcs
+                INNER JOIN productos p ON pcs.producto_id = p.id
+                LEFT JOIN ventas_slot_actual vsa ON vsa.producto_id = pcs.producto_id
+                LEFT JOIN promedio_historico ph ON ph.producto_id = pcs.producto_id
+                WHERE p.activo = true
+                  AND COALESCE(ph.promedio_cantidad, 0) >= 1  -- Solo productos que normalmente venden en este slot
+                  AND (
+                      -- Caso 1: Vendió 0 cuando debería vender al menos umbral_critico
+                      (COALESCE(vsa.cantidad_actual, 0) = 0 AND COALESCE(ph.promedio_cantidad, 0) >= %s)
+                      OR
+                      -- Caso 2: Vendió menos del umbral_medio porciento del promedio
+                      (COALESCE(vsa.cantidad_actual, 0) < COALESCE(ph.promedio_cantidad, 0) * %s / 100.0)
+                  )
+                ORDER BY
+                    (COALESCE(ph.promedio_cantidad, 0) - COALESCE(vsa.cantidad_actual, 0))
+                    * COALESCE(vsa.precio_promedio, ph.promedio_precio, 0) DESC
+                LIMIT 200
+            """
+
+            # Calcular fechas para el histórico
+            inicio_historico = ahora - timedelta(weeks=semanas_historico)
+
+            # Construir parámetros
+            if almacen_codigo:
+                params = [
+                    # ventas_slot_actual
+                    ubicacion_id, inicio_slot_actual, fin_slot_actual, almacen_codigo,
+                    # historico_mismo_slot
+                    ubicacion_id, dia_semana_pg, hora_inicio, hora_fin,
+                    inicio_historico, inicio_slot_actual, almacen_codigo,
+                    # productos_con_stock
+                    ubicacion_id, almacen_codigo,
+                    # filtros finales
+                    umbral_critico, umbral_medio
+                ]
+            else:
+                params = [
+                    # ventas_slot_actual (3 params)
+                    ubicacion_id, inicio_slot_actual, fin_slot_actual,
+                    # historico_mismo_slot (6 params)
+                    ubicacion_id, dia_semana_pg, hora_inicio, hora_fin,
+                    inicio_historico, inicio_slot_actual,
+                    # productos_con_stock (1 param)
+                    ubicacion_id,
+                    # filtros finales (2 params)
+                    umbral_critico, umbral_medio
+                ]
+
+            logger.info(f"V2 Debug: Query params count = {len(params)}")
+            logger.info(f"V2 Debug: Query placeholders count = {query.count('%s')}")
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            items = []
+            total_venta_perdida = 0.0
+            categoria_totales: dict = {}
+            incidentes_criticos = 0
+            incidentes_altos = 0
+            incidentes_medios = 0
+
+            for row in rows:
+                (producto_id, codigo, descripcion, categoria, stock,
+                 ventas_actuales, promedio_hist, semanas_datos, precio_prom) = row
+
+                # Convertir a float
+                ventas_actuales = float(ventas_actuales) if ventas_actuales else 0.0
+                promedio_hist = float(promedio_hist) if promedio_hist else 0.0
+                precio_prom = float(precio_prom) if precio_prom else 0.0
+                stock = float(stock) if stock else 0.0
+
+                # Calcular porcentaje vendido
+                porcentaje_vendido = (ventas_actuales / promedio_hist * 100) if promedio_hist > 0 else 0
+
+                # Calcular unidades perdidas
+                unidades_perdidas = max(0, promedio_hist - ventas_actuales)
+
+                # Calcular venta perdida
+                venta_perdida = unidades_perdidas * precio_prom
+                total_venta_perdida += venta_perdida
+
+                # Determinar nivel de alerta
+                if ventas_actuales == 0 and promedio_hist >= umbral_critico:
+                    nivel_alerta = "critico"
+                    incidentes_criticos += 1
+                elif porcentaje_vendido < umbral_alto:
+                    nivel_alerta = "alto"
+                    incidentes_altos += 1
+                else:
+                    nivel_alerta = "medio"
+                    incidentes_medios += 1
+
+                # Agregar por categoría
+                cat_key = categoria or "Sin Categoría"
+                if cat_key not in categoria_totales:
+                    categoria_totales[cat_key] = {"total": 0.0, "count": 0}
+                categoria_totales[cat_key]["total"] += venta_perdida
+                categoria_totales[cat_key]["count"] += 1
+
+                items.append(VentaPerdidaItemV2(
+                    producto_id=producto_id,
+                    codigo_producto=codigo,
+                    descripcion_producto=descripcion,
+                    categoria=categoria,
+                    slot_actual=slot_nombre,
+                    dia_semana=dia_nombre,
+                    ventas_slot_actual=round(ventas_actuales, 1),
+                    promedio_historico=round(promedio_hist, 1),
+                    semanas_con_datos=int(semanas_datos),
+                    porcentaje_vendido=round(porcentaje_vendido, 1),
+                    unidades_perdidas=round(unidades_perdidas, 1),
+                    precio_unitario_promedio=round(precio_prom, 2),
+                    venta_perdida_usd=round(venta_perdida, 2),
+                    nivel_alerta=nivel_alerta,
+                    stock_actual=round(stock, 1)
+                ))
+
+            cursor.close()
+
+            # Construir agregación por categoría
+            por_categoria = []
+            for cat, data in sorted(categoria_totales.items(), key=lambda x: -x[1]["total"]):
+                porcentaje = (data["total"] / total_venta_perdida * 100) if total_venta_perdida > 0 else 0
+                por_categoria.append(VentaPerdidaPorCategoria(
+                    categoria=cat,
+                    total_venta_perdida_usd=round(data["total"], 2),
+                    total_incidentes=data["count"],
+                    porcentaje_del_total=round(porcentaje, 1)
+                ))
+
+            # Producto con mayor pérdida
+            producto_mayor = None
+            producto_mayor_valor = 0.0
+            if items:
+                item_mayor = max(items, key=lambda x: x.venta_perdida_usd)
+                producto_mayor = f"{item_mayor.codigo_producto} - {item_mayor.descripcion_producto[:30]}"
+                producto_mayor_valor = item_mayor.venta_perdida_usd
+
+            return VentasPerdidasResponseV2(
+                ubicacion_id=ubicacion_id,
+                ubicacion_nombre=ubicacion_nombre,
+                slot_analizado=slot_nombre,
+                dia_semana=dia_nombre,
+                fecha_analisis=ahora.strftime('%Y-%m-%d %H:%M'),
+                semanas_historico=semanas_historico,
+                total_venta_perdida_usd=round(total_venta_perdida, 2),
+                total_incidentes=len(items),
+                incidentes_criticos=incidentes_criticos,
+                incidentes_altos=incidentes_altos,
+                incidentes_medios=incidentes_medios,
+                producto_mayor_perdida=producto_mayor,
+                producto_mayor_perdida_valor=round(producto_mayor_valor, 2),
+                items=items,
+                por_categoria=por_categoria,
+                top_productos=items[:10]
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error calculando ventas perdidas V2: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/ventas/ventas-perdidas-v3/{ubicacion_id}", response_model=VentasPerdidasResponseV3, tags=["Centro Comando Ventas"])
+async def get_ventas_perdidas_v3(
+    ubicacion_id: str,
+    fecha_inicio: str,  # YYYY-MM-DD
+    fecha_fin: str,     # YYYY-MM-DD
+    dias_historico: int = 30,  # Días previos para calcular el promedio histórico
+    umbral_critico: float = 30.0,   # % del histórico para alerta crítica
+    umbral_alto: float = 50.0,      # % del histórico para alerta alta
+    umbral_medio: float = 75.0      # % del histórico para alerta media
+):
+    """
+    Analiza ventas perdidas en un rango de fechas específico.
+
+    Compara las ventas de cada producto en el período seleccionado contra
+    su promedio histórico de los N días anteriores al período.
+
+    Ejemplo: Si analizas del 1-7 de Nov, compara contra el promedio del 2-31 Oct.
+
+    Args:
+        ubicacion_id: ID de la tienda
+        fecha_inicio: Inicio del período a analizar (YYYY-MM-DD)
+        fecha_fin: Fin del período a analizar (YYYY-MM-DD)
+        dias_historico: Días previos para calcular promedio histórico (default 30)
+        umbral_critico: % del histórico para alerta crítica (default 30%)
+        umbral_alto: % del histórico para alerta alta (default 50%)
+        umbral_medio: % del histórico para alerta media (default 75%)
+
+    Returns:
+        Análisis de ventas perdidas con comparación histórica
+    """
+    try:
+        if not is_postgres_mode():
+            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
+
+        # Parsear fechas
+        try:
+            fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
+            fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d')
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+        if fecha_fin_dt < fecha_inicio_dt:
+            raise HTTPException(status_code=400, detail="fecha_fin debe ser >= fecha_inicio")
+
+        dias_analizados = (fecha_fin_dt - fecha_inicio_dt).days + 1
+
+        # Calcular período histórico (días previos al período analizado)
+        fecha_hist_fin = fecha_inicio_dt - timedelta(days=1)
+        fecha_hist_inicio = fecha_hist_fin - timedelta(days=dias_historico - 1)
+
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener nombre de la ubicación
+            cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", [ubicacion_id])
+            ubicacion_row = cursor.fetchone()
+            if not ubicacion_row:
+                raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+            ubicacion_nombre = ubicacion_row[0]
+
+            # Query principal: comparar período seleccionado vs histórico
+            query = """
+                WITH ventas_periodo AS (
+                    -- Ventas en el período seleccionado
+                    SELECT
+                        v.producto_id,
+                        SUM(v.cantidad_vendida) as total_vendido,
+                        COUNT(DISTINCT v.fecha_venta::date) as dias_con_ventas,
+                        AVG(v.precio_unitario) as precio_promedio
+                    FROM ventas v
+                    WHERE v.ubicacion_id = %s
+                      AND v.fecha_venta::date BETWEEN %s AND %s
+                      AND v.precio_unitario > 0
+                    GROUP BY v.producto_id
+                ),
+                ventas_historico AS (
+                    -- Ventas en el período histórico (para comparación)
+                    SELECT
+                        v.producto_id,
+                        SUM(v.cantidad_vendida) as total_vendido,
+                        COUNT(DISTINCT v.fecha_venta::date) as dias_con_ventas
+                    FROM ventas v
+                    WHERE v.ubicacion_id = %s
+                      AND v.fecha_venta::date BETWEEN %s AND %s
+                      AND v.precio_unitario > 0
+                    GROUP BY v.producto_id
+                ),
+                stock_cero_periodo AS (
+                    -- Días con stock 0 durante el período analizado
+                    SELECT
+                        ih.producto_id,
+                        COUNT(DISTINCT ih.fecha_snapshot::date) as dias_stock_cero
+                    FROM inventario_historico ih
+                    WHERE ih.ubicacion_id = %s
+                      AND ih.fecha_snapshot::date BETWEEN %s AND %s
+                      AND ih.cantidad = 0
+                    GROUP BY ih.producto_id
+                ),
+                productos_con_stock AS (
+                    -- Stock actual de cada producto
+                    SELECT
+                        ia.producto_id,
+                        SUM(ia.cantidad) as stock_actual
+                    FROM inventario_actual ia
+                    WHERE ia.ubicacion_id = %s
+                    GROUP BY ia.producto_id
+                )
+                SELECT
+                    p.id as producto_id,
+                    p.codigo as codigo_producto,
+                    p.nombre as descripcion_producto,
+                    p.categoria,
+                    COALESCE(vp.total_vendido, 0) as ventas_periodo,
+                    COALESCE(vp.dias_con_ventas, 0) as dias_con_ventas_periodo,
+                    COALESCE(vp.precio_promedio, 0) as precio_promedio,
+                    COALESCE(vh.total_vendido, 0) as ventas_historico,
+                    COALESCE(vh.dias_con_ventas, 0) as dias_con_ventas_historico,
+                    COALESCE(pcs.stock_actual, 0) as stock_actual,
+                    COALESCE(scz.dias_stock_cero, 0) as dias_stock_cero
+                FROM productos p
+                LEFT JOIN ventas_periodo vp ON vp.producto_id = p.codigo
+                LEFT JOIN ventas_historico vh ON vh.producto_id = p.codigo
+                LEFT JOIN productos_con_stock pcs ON pcs.producto_id = p.id
+                LEFT JOIN stock_cero_periodo scz ON scz.producto_id = p.id
+                WHERE p.activo = true
+                  AND (
+                      -- Tiene histórico significativo
+                      COALESCE(vh.total_vendido, 0) >= %s  -- Al menos N unidades en histórico
+                  )
+                  AND (
+                      -- Vendió menos del umbral_medio porciento del esperado
+                      COALESCE(vp.total_vendido, 0) < (COALESCE(vh.total_vendido, 0) / %s * %s * %s / 100.0)
+                  )
+                ORDER BY
+                    ((COALESCE(vh.total_vendido, 0) / %s * %s) - COALESCE(vp.total_vendido, 0))
+                    * COALESCE(vp.precio_promedio, 1) DESC
+                LIMIT 200
+            """
+
+            # Parámetros
+            min_unidades_historico = dias_historico * 0.5  # Al menos 0.5 unidades/día en promedio histórico
+            params = [
+                # ventas_periodo
+                ubicacion_id, fecha_inicio, fecha_fin,
+                # ventas_historico
+                ubicacion_id, fecha_hist_inicio.strftime('%Y-%m-%d'), fecha_hist_fin.strftime('%Y-%m-%d'),
+                # stock_cero_periodo
+                ubicacion_id, fecha_inicio, fecha_fin,
+                # productos_con_stock
+                ubicacion_id,
+                # filtros
+                min_unidades_historico,
+                dias_historico, dias_analizados, umbral_medio,
+                # order by
+                dias_historico, dias_analizados
+            ]
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            items = []
+            total_venta_perdida = 0.0
+            categoria_totales: dict = {}
+            incidentes_criticos = 0
+            incidentes_altos = 0
+            incidentes_medios = 0
+
+            for row in rows:
+                (producto_id, codigo, descripcion, categoria, ventas_periodo,
+                 dias_con_ventas, precio_prom, ventas_hist, dias_ventas_hist,
+                 stock_actual, dias_stock_cero) = row
+
+                # Convertir a float
+                ventas_periodo = float(ventas_periodo) if ventas_periodo else 0.0
+                ventas_hist = float(ventas_hist) if ventas_hist else 0.0
+                precio_prom = float(precio_prom) if precio_prom else 0.0
+                stock_actual = float(stock_actual) if stock_actual else 0.0
+
+                # Calcular promedios diarios
+                promedio_diario_periodo = ventas_periodo / dias_analizados if dias_analizados > 0 else 0
+                promedio_diario_historico = ventas_hist / dias_historico if dias_historico > 0 else 0
+
+                # Calcular porcentaje vs histórico
+                if promedio_diario_historico > 0:
+                    porcentaje_vs_hist = (promedio_diario_periodo / promedio_diario_historico) * 100
+                else:
+                    porcentaje_vs_hist = 100 if promedio_diario_periodo > 0 else 0
+
+                # Calcular unidades perdidas
+                unidades_perdidas_diarias = max(0, promedio_diario_historico - promedio_diario_periodo)
+                unidades_perdidas_total = unidades_perdidas_diarias * dias_analizados
+
+                # Calcular venta perdida
+                venta_perdida = unidades_perdidas_total * precio_prom
+                total_venta_perdida += venta_perdida
+
+                # Determinar nivel de alerta
+                if porcentaje_vs_hist <= umbral_critico:
+                    nivel_alerta = "critico"
+                    incidentes_criticos += 1
+                elif porcentaje_vs_hist <= umbral_alto:
+                    nivel_alerta = "alto"
+                    incidentes_altos += 1
+                else:
+                    nivel_alerta = "medio"
+                    incidentes_medios += 1
+
+                # Agregar por categoría
+                cat_key = categoria or "Sin Categoría"
+                if cat_key not in categoria_totales:
+                    categoria_totales[cat_key] = {"total": 0.0, "count": 0}
+                categoria_totales[cat_key]["total"] += venta_perdida
+                categoria_totales[cat_key]["count"] += 1
+
+                items.append(VentaPerdidaItemV3(
+                    producto_id=producto_id,
+                    codigo_producto=codigo,
+                    descripcion_producto=descripcion,
+                    categoria=categoria,
+                    ventas_periodo=round(ventas_periodo, 1),
+                    dias_con_ventas=int(dias_con_ventas),
+                    dias_analizados=dias_analizados,
+                    promedio_diario_periodo=round(promedio_diario_periodo, 2),
+                    promedio_diario_historico=round(promedio_diario_historico, 2),
+                    dias_historico=dias_historico,
+                    porcentaje_vs_historico=round(porcentaje_vs_hist, 1),
+                    unidades_perdidas_diarias=round(unidades_perdidas_diarias, 2),
+                    unidades_perdidas_total=round(unidades_perdidas_total, 1),
+                    precio_unitario_promedio=round(precio_prom, 2),
+                    venta_perdida_usd=round(venta_perdida, 2),
+                    nivel_alerta=nivel_alerta,
+                    stock_actual=round(stock_actual, 1),
+                    dias_stock_cero=int(dias_stock_cero)
+                ))
+
+            cursor.close()
+
+            # Construir agregación por categoría
+            por_categoria = []
+            for cat, cat_data in sorted(categoria_totales.items(), key=lambda x: -x[1]["total"]):
+                porcentaje = (cat_data["total"] / total_venta_perdida * 100) if total_venta_perdida > 0 else 0
+                por_categoria.append(VentaPerdidaPorCategoria(
+                    categoria=cat,
+                    total_venta_perdida_usd=round(cat_data["total"], 2),
+                    total_incidentes=cat_data["count"],
+                    porcentaje_del_total=round(porcentaje, 1)
+                ))
+
+            # Producto con mayor pérdida
+            producto_mayor = None
+            producto_mayor_valor = 0.0
+            if items:
+                item_mayor = max(items, key=lambda x: x.venta_perdida_usd)
+                producto_mayor = f"{item_mayor.codigo_producto} - {item_mayor.descripcion_producto[:30]}"
+                producto_mayor_valor = item_mayor.venta_perdida_usd
+
+            return VentasPerdidasResponseV3(
+                ubicacion_id=ubicacion_id,
+                ubicacion_nombre=ubicacion_nombre,
+                fecha_inicio=fecha_inicio,
+                fecha_fin=fecha_fin,
+                dias_analizados=dias_analizados,
+                dias_historico=dias_historico,
+                total_venta_perdida_usd=round(total_venta_perdida, 2),
+                total_incidentes=len(items),
+                incidentes_criticos=incidentes_criticos,
+                incidentes_altos=incidentes_altos,
+                incidentes_medios=incidentes_medios,
+                producto_mayor_perdida=producto_mayor,
+                producto_mayor_perdida_valor=round(producto_mayor_valor, 2),
+                items=items,
+                por_categoria=por_categoria,
+                top_productos=items[:10]
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error calculando ventas perdidas V3: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
 @app.get("/api/dashboard/metrics", response_model=DashboardMetrics, tags=["Dashboard"])
@@ -7604,6 +8682,304 @@ async def calcular_niveles_tienda_DISABLED(
     except Exception as e:
         logger.error(f"Error al calcular niveles para tienda: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ENDPOINT: HISTORIAL VENTAS + INVENTARIO POR PRODUCTO
+# Para modal de detalle de producto en Ventas Perdidas
+# ============================================================================
+
+@app.get("/api/productos/{codigo_producto}/historial-ventas-inventario",
+         response_model=HistorialProductoResponse,
+         tags=["Centro Comando Ventas"])
+async def get_historial_ventas_inventario(
+    codigo_producto: str,
+    ubicacion_id: str,
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None,
+    granularidad: str = "diario",  # "diario" o "horario"
+    incluir_diagnostico: bool = True
+):
+    """
+    Obtiene historial combinado de ventas e inventario para un producto.
+
+    Diseñado para el modal de detalle de producto en Ventas Perdidas,
+    permite visualizar correlación entre stock y ventas para diagnosticar
+    causas de ventas perdidas.
+
+    Args:
+        codigo_producto: Código SKU del producto
+        ubicacion_id: ID de la tienda
+        fecha_inicio: Fecha inicio (default: 30 días atrás)
+        fecha_fin: Fecha fin (default: hoy)
+        granularidad: "diario" para vista general, "horario" para zoom detallado
+        incluir_diagnostico: Si calcular diagnóstico automático de causa
+
+    Returns:
+        Serie temporal combinada con ventas e inventario para gráficos dual Y-axis
+    """
+    try:
+        if not is_postgres_mode():
+            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
+
+        # Calcular fechas por defecto
+        tz_vzla = ZoneInfo("America/Caracas")
+        ahora = datetime.now(tz_vzla)
+
+        if not fecha_fin:
+            fecha_fin = ahora.strftime('%Y-%m-%d')
+        if not fecha_inicio:
+            # Default: 30 días para diario, 7 días para horario
+            dias_atras = 7 if granularidad == "horario" else 30
+            fecha_inicio = (ahora - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
+
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
+
+            # 1. Obtener información del producto
+            cursor.execute("""
+                SELECT id, codigo, nombre, categoria
+                FROM productos
+                WHERE codigo = %s
+            """, [codigo_producto])
+            prod_row = cursor.fetchone()
+
+            if not prod_row:
+                raise HTTPException(status_code=404, detail=f"Producto {codigo_producto} no encontrado")
+
+            producto_id, codigo, nombre_producto, categoria = prod_row
+
+            # 2. Obtener nombre de ubicación
+            cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", [ubicacion_id])
+            ubic_row = cursor.fetchone()
+            if not ubic_row:
+                raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+            ubicacion_nombre = ubic_row[0]
+
+            # 3. Obtener ventas según granularidad
+            if granularidad == "horario":
+                # Ventas por hora
+                ventas_query = """
+                    SELECT
+                        DATE_TRUNC('hour', fecha_venta) as periodo,
+                        SUM(cantidad_vendida) as total_vendido
+                    FROM ventas
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_venta::date BETWEEN %s AND %s
+                    GROUP BY DATE_TRUNC('hour', fecha_venta)
+                    ORDER BY periodo
+                """
+            else:
+                # Ventas por día
+                ventas_query = """
+                    SELECT
+                        fecha_venta::date as periodo,
+                        SUM(cantidad_vendida) as total_vendido
+                    FROM ventas
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_venta::date BETWEEN %s AND %s
+                    GROUP BY fecha_venta::date
+                    ORDER BY periodo
+                """
+
+            cursor.execute(ventas_query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin])
+            ventas_rows = cursor.fetchall()
+
+            # Crear diccionario de ventas por período
+            ventas_dict = {}
+            for row in ventas_rows:
+                periodo = row[0]
+                if granularidad == "horario":
+                    key = periodo.strftime('%Y-%m-%dT%H:00:00') if periodo else None
+                else:
+                    key = periodo.strftime('%Y-%m-%d') if periodo else None
+                if key:
+                    ventas_dict[key] = float(row[1]) if row[1] else 0.0
+
+            # 4. Obtener snapshots de inventario
+            if granularidad == "horario":
+                # Inventario por hora (agrupado por hora)
+                inv_query = """
+                    SELECT
+                        DATE_TRUNC('hour', fecha_snapshot) as periodo,
+                        AVG(cantidad) as stock_promedio
+                    FROM inventario_historico
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_snapshot::date BETWEEN %s AND %s
+                    GROUP BY DATE_TRUNC('hour', fecha_snapshot)
+                    ORDER BY periodo
+                """
+            else:
+                # Inventario por día (último snapshot del día)
+                inv_query = """
+                    SELECT DISTINCT ON (fecha_snapshot::date)
+                        fecha_snapshot::date as periodo,
+                        cantidad as stock
+                    FROM inventario_historico
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_snapshot::date BETWEEN %s AND %s
+                    ORDER BY fecha_snapshot::date, fecha_snapshot DESC
+                """
+
+            cursor.execute(inv_query, [producto_id, ubicacion_id, fecha_inicio, fecha_fin])
+            inv_rows = cursor.fetchall()
+
+            # Crear diccionario de inventario por período
+            inventario_dict = {}
+            for row in inv_rows:
+                periodo = row[0]
+                if granularidad == "horario":
+                    key = periodo.strftime('%Y-%m-%dT%H:00:00') if periodo else None
+                else:
+                    key = periodo.strftime('%Y-%m-%d') if periodo else None
+                if key:
+                    inventario_dict[key] = float(row[1]) if row[1] else 0.0
+
+            # 5. Obtener stock actual
+            cursor.execute("""
+                SELECT COALESCE(SUM(cantidad), 0)
+                FROM inventario_actual
+                WHERE producto_id = %s AND ubicacion_id = %s
+            """, [producto_id, ubicacion_id])
+            stock_actual_row = cursor.fetchone()
+            stock_actual = float(stock_actual_row[0]) if stock_actual_row and stock_actual_row[0] else 0.0
+
+            cursor.close()
+
+            # 6. Generar serie temporal completa
+            datos = []
+            fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
+            fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d')
+
+            if granularidad == "horario":
+                # Generar puntos por hora (6am a 10pm)
+                current = fecha_inicio_dt.replace(hour=6, minute=0, second=0)
+                end = fecha_fin_dt.replace(hour=22, minute=0, second=0)
+                delta = timedelta(hours=1)
+
+                while current <= end:
+                    # Solo horas de operación (6am-10pm)
+                    if 6 <= current.hour <= 22:
+                        key = current.strftime('%Y-%m-%dT%H:00:00')
+                        ventas = ventas_dict.get(key, 0.0)
+                        inventario = inventario_dict.get(key)
+
+                        datos.append(HistorialDataPoint(
+                            fecha=key,
+                            timestamp=int(current.timestamp()),
+                            ventas=ventas,
+                            inventario=inventario,
+                            es_estimado=False
+                        ))
+                    current += delta
+            else:
+                # Generar puntos por día
+                current = fecha_inicio_dt
+                delta = timedelta(days=1)
+
+                while current <= fecha_fin_dt:
+                    key = current.strftime('%Y-%m-%d')
+                    ventas = ventas_dict.get(key, 0.0)
+                    inventario = inventario_dict.get(key)
+
+                    datos.append(HistorialDataPoint(
+                        fecha=key,
+                        timestamp=int(current.timestamp()),
+                        ventas=ventas,
+                        inventario=inventario,
+                        es_estimado=False
+                    ))
+                    current += delta
+
+            # 7. Calcular estadísticas
+            total_ventas = sum(d.ventas for d in datos)
+            dias_totales = max(1, (fecha_fin_dt - fecha_inicio_dt).days + 1)
+            promedio_diario = total_ventas / dias_totales
+
+            inventarios_validos = [d.inventario for d in datos if d.inventario is not None]
+            stock_promedio = sum(inventarios_validos) / len(inventarios_validos) if inventarios_validos else 0.0
+
+            # Contar días con stock cero
+            dias_stock_cero = sum(1 for d in datos if d.inventario is not None and d.inventario == 0)
+
+            # 8. Calcular diagnóstico si se solicita
+            diagnostico = None
+            if incluir_diagnostico and dias_stock_cero > 0:
+                # Analizar correlación entre stock cero y ventas bajas
+                periodos_sin_stock = [d for d in datos if d.inventario is not None and d.inventario == 0]
+                periodos_con_stock = [d for d in datos if d.inventario is not None and d.inventario > 0]
+
+                ventas_sin_stock = sum(d.ventas for d in periodos_sin_stock) / max(1, len(periodos_sin_stock))
+                ventas_con_stock = sum(d.ventas for d in periodos_con_stock) / max(1, len(periodos_con_stock))
+
+                evidencias = []
+
+                if ventas_sin_stock < ventas_con_stock * 0.3:
+                    # Ventas cayeron más del 70% cuando no hay stock
+                    tipo = "ruptura_stock"
+                    confianza = min(95, 70 + (dias_stock_cero / dias_totales) * 25)
+                    descripcion = f"Ruptura de stock: Las ventas cayeron {((1 - ventas_sin_stock/max(0.01, ventas_con_stock)) * 100):.0f}% cuando el inventario llegó a cero"
+                    evidencias.append(f"{dias_stock_cero} días con stock en cero")
+                    evidencias.append(f"Promedio ventas con stock: {ventas_con_stock:.1f} unidades")
+                    evidencias.append(f"Promedio ventas sin stock: {ventas_sin_stock:.1f} unidades")
+                elif stock_actual > promedio_diario * 3 and promedio_diario < 1:
+                    # Hay stock pero no se vende
+                    tipo = "falta_exhibicion"
+                    confianza = 60
+                    descripcion = "Posible falta de exhibición: Hay stock disponible pero las ventas son muy bajas"
+                    evidencias.append(f"Stock actual: {stock_actual:.0f} unidades")
+                    evidencias.append(f"Ventas promedio diarias: {promedio_diario:.1f} unidades")
+                    evidencias.append("El producto podría no estar visible en tienda")
+                elif total_ventas == 0:
+                    tipo = "baja_demanda"
+                    confianza = 50
+                    descripcion = "Sin ventas en el período analizado"
+                    evidencias.append(f"0 ventas en {dias_totales} días")
+                    if stock_actual > 0:
+                        evidencias.append(f"Stock disponible: {stock_actual:.0f} unidades")
+                else:
+                    tipo = "sin_diagnostico"
+                    confianza = 30
+                    descripcion = "No se pudo determinar una causa clara"
+                    evidencias.append("Se requiere análisis manual")
+
+                diagnostico = DiagnosticoVentaPerdida(
+                    tipo=tipo,
+                    confianza=round(confianza, 1),
+                    descripcion=descripcion,
+                    evidencia=evidencias
+                )
+
+            return HistorialProductoResponse(
+                producto_id=producto_id,
+                codigo_producto=codigo,
+                descripcion_producto=nombre_producto,
+                categoria=categoria,
+                ubicacion_id=ubicacion_id,
+                ubicacion_nombre=ubicacion_nombre,
+                fecha_inicio=fecha_inicio,
+                fecha_fin=fecha_fin,
+                granularidad=granularidad,
+                datos=datos,
+                total_ventas_periodo=round(total_ventas, 1),
+                promedio_diario_ventas=round(promedio_diario, 2),
+                stock_promedio=round(stock_promedio, 1),
+                stock_actual=round(stock_actual, 1),
+                dias_con_stock_cero=dias_stock_cero,
+                diagnostico=diagnostico
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error obteniendo historial ventas+inventario: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
 if __name__ == "__main__":
