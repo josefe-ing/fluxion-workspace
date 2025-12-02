@@ -78,11 +78,59 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# ============================================================================
+# CACHE REFRESH SCHEDULER
+# ============================================================================
+# Configuración del scheduler para refrescar productos_analisis_cache
+CACHE_REFRESH_INTERVAL_MINUTES = 5  # Cada 5 minutos
+_cache_refresh_task: Optional[asyncio.Task] = None
+
+
+async def _refresh_productos_cache():
+    """Ejecuta el refresh de la tabla productos_analisis_cache."""
+    try:
+        logger.info("🔄 [Cache Scheduler] Refrescando productos_analisis_cache...")
+        start_time = time.time()
+
+        with get_db_connection_write() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT refresh_productos_analisis_cache()")
+            conn.commit()
+            cursor.close()
+
+        elapsed = time.time() - start_time
+        logger.info(f"✅ [Cache Scheduler] Cache refrescada en {elapsed:.2f}s")
+
+    except Exception as e:
+        error_msg = str(e)
+        if "does not exist" in error_msg or "no existe" in error_msg:
+            logger.warning("⚠️  [Cache Scheduler] Tabla productos_analisis_cache no existe. Ejecute la migración 001_performance_optimization.sql")
+        else:
+            logger.error(f"❌ [Cache Scheduler] Error refrescando cache: {e}")
+
+
+async def _cache_refresh_scheduler():
+    """Background task que ejecuta refresh de cache periódicamente."""
+    logger.info(f"🕐 [Cache Scheduler] Iniciado - Refresh cada {CACHE_REFRESH_INTERVAL_MINUTES} minutos")
+
+    # Esperar 60 segundos antes del primer refresh (dar tiempo a que el sistema se estabilice)
+    await asyncio.sleep(60)
+
+    while True:
+        try:
+            await _refresh_productos_cache()
+        except Exception as e:
+            logger.error(f"❌ [Cache Scheduler] Error en ciclo: {e}")
+
+        # Esperar hasta el próximo ciclo
+        await asyncio.sleep(CACHE_REFRESH_INTERVAL_MINUTES * 60)
+
+
 # Auto-bootstrap admin user on startup
 @app.on_event("startup")
 async def startup_event():
     """Execute startup tasks"""
-    global ventas_scheduler
+    global ventas_scheduler, _cache_refresh_task
 
     logger.info("🚀 Starting Fluxion AI Backend...")
 
@@ -95,31 +143,29 @@ async def startup_event():
     except Exception as e:
         logger.error(f"⚠️  Auto-bootstrap failed: {e}")
 
-    # TEMPORARILY DISABLED: VentasETLScheduler causes OOM during startup
-    # This scheduler opens a second DuckDB connection during FastAPI startup
-    # Combined with auto_bootstrap_admin(), it exceeds 4GB RAM
-    # TODO: Re-enable after implementing lazy initialization or increasing memory to 8GB
-    #
-    # # Inicializar scheduler de ventas automáticas
-    # try:
-    #     db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
-    #     ventas_scheduler = VentasETLScheduler(
-    #         db_path=str(db_path),
-    #         execution_hour=5,  # 5:00 AM
-    #         execution_minute=0
-    #     )
-    #
-    #     # Registrar callback para ejecutar ETL
-    #     ventas_scheduler.set_etl_callback(run_etl_ventas_for_scheduler)
-    #
-    #     # Iniciar scheduler
-    #     ventas_scheduler.start()
-    #
-    #     logger.info("✅ Ventas ETL Scheduler iniciado - Ejecución diaria: 5:00 AM")
-    # except Exception as e:
-    #     logger.error(f"⚠️  Error iniciando scheduler de ventas: {e}")
+    # Iniciar scheduler de cache refresh
+    try:
+        _cache_refresh_task = asyncio.create_task(_cache_refresh_scheduler())
+        logger.info(f"✅ Cache Refresh Scheduler iniciado - Cada {CACHE_REFRESH_INTERVAL_MINUTES} min")
+    except Exception as e:
+        logger.error(f"⚠️  Error iniciando cache refresh scheduler: {e}")
 
     logger.info("⚠️  VentasETLScheduler DISABLED - Use manual ETL sync endpoints or increase RAM to 8GB")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    global _cache_refresh_task
+
+    if _cache_refresh_task:
+        logger.info("🛑 Deteniendo Cache Refresh Scheduler...")
+        _cache_refresh_task.cancel()
+        try:
+            await _cache_refresh_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("✅ Cache Refresh Scheduler detenido")
 
 # Configurar CORS para el frontend
 app.add_middleware(
@@ -1640,7 +1686,8 @@ async def get_productos_analisis_maestro(
     """
     Análisis maestro de productos para detectar productos fantasma y problemas.
 
-    Retorna todos los productos con métricas de stock, ventas y estado.
+    OPTIMIZADO: Usa tabla cache productos_analisis_cache para respuestas < 1 segundo.
+    La cache se actualiza cada 5 minutos automáticamente.
 
     Args:
         estado: Filtrar por estado (FANTASMA, CRITICO, ANOMALIA, DORMIDO, AGOTANDOSE, ACTIVO)
@@ -1651,156 +1698,39 @@ async def get_productos_analisis_maestro(
         offset: Offset para paginación
     """
     try:
-        search_filter = ""
-        categoria_filter = ""
+        # Construir filtros dinámicos
+        filters = []
         params = []
 
         if search:
-            search_filter = "AND (p.id ILIKE %s OR p.nombre ILIKE %s)"
+            filters.append("(codigo ILIKE %s OR descripcion ILIKE %s)")
             params.extend([f'%{search}%', f'%{search}%'])
 
         if categoria:
-            categoria_filter = "AND p.categoria = %s"
+            filters.append("categoria = %s")
             params.append(categoria)
 
+        if estado:
+            filters.append("estado = %s")
+            params.append(estado)
+
+        if clasificacion_abc:
+            if clasificacion_abc == 'SIN_VENTAS':
+                filters.append("clasificacion_abc = 'SIN_VENTAS'")
+            else:
+                filters.append("clasificacion_abc = %s")
+                params.append(clasificacion_abc)
+
+        where_clause = " AND ".join(filters) if filters else "1=1"
+
         query = f"""
-        WITH stock_por_ubicacion AS (
-            -- Stock por producto y ubicación
-            SELECT
-                ia.producto_id,
-                ia.ubicacion_id,
-                SUM(ia.cantidad) as stock
-            FROM inventario_actual ia
-            GROUP BY ia.producto_id, ia.ubicacion_id
-        ),
-        stock_agregado AS (
-            -- Agregar stock por tipo de ubicación
-            SELECT
-                s.producto_id,
-                SUM(CASE WHEN s.ubicacion_id = 'cedi_seco' THEN s.stock ELSE 0 END) as stock_cedi_seco,
-                SUM(CASE WHEN s.ubicacion_id = 'cedi_caracas' THEN s.stock ELSE 0 END) as stock_cedi_caracas,
-                SUM(CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 THEN s.stock ELSE 0 END) as stock_tiendas,
-                COUNT(DISTINCT CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 AND s.stock > 0 THEN s.ubicacion_id END) as num_tiendas_con_stock,
-                SUM(s.stock) as stock_total
-            FROM stock_por_ubicacion s
-            GROUP BY s.producto_id
-        ),
-        ventas_2m AS (
-            -- Ventas últimos 2 meses (para métricas operacionales)
-            SELECT
-                v.producto_id,
-                v.ubicacion_id,
-                SUM(v.cantidad_vendida) as unidades_vendidas,
-                SUM(v.venta_total) as valor_vendido,
-                MAX(v.fecha_venta) as ultima_venta
-            FROM ventas v
-            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
-            GROUP BY v.producto_id, v.ubicacion_id
-        ),
-        ventas_agregadas AS (
-            -- Agregar ventas 2M
-            SELECT
-                v.producto_id,
-                SUM(v.unidades_vendidas) as ventas_2m_unidades,
-                SUM(v.valor_vendido) as ventas_2m_valor,
-                COUNT(DISTINCT v.ubicacion_id) as num_tiendas_con_ventas,
-                MAX(v.ultima_venta) as ultima_venta
-            FROM ventas_2m v
-            GROUP BY v.producto_id
-        ),
-        ventas_6m AS (
-            -- Ventas últimos 6 meses (para clasificación ABC, consistente con ABC-XYZ)
-            SELECT
-                v.producto_id,
-                SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo,
-                COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) as semanas_con_venta
-            FROM ventas v
-            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
-            GROUP BY v.producto_id
-            HAVING COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) >= 4
-        ),
-        rankings AS (
-            -- Rankings por cantidad y valor (basado en 2M para operacional)
-            SELECT
-                producto_id,
-                ROW_NUMBER() OVER (ORDER BY ventas_2m_unidades DESC NULLS LAST) as rank_cantidad,
-                ROW_NUMBER() OVER (ORDER BY ventas_2m_valor DESC NULLS LAST) as rank_valor
-            FROM ventas_agregadas
-        ),
-        abc_ranked AS (
-            -- Rankear productos por valor de consumo (consistente con ABC-XYZ)
-            SELECT
-                producto_id,
-                valor_consumo,
-                ROW_NUMBER() OVER (ORDER BY valor_consumo DESC) as ranking,
-                COUNT(*) OVER () as total_productos_abc
-            FROM ventas_6m
-            WHERE valor_consumo > 0
-        ),
-        abc_classification AS (
-            -- Clasificar por percentiles de ranking (Top 20pct = A, siguiente 30pct = B, resto = C)
-            SELECT
-                producto_id,
-                CASE
-                    WHEN ranking <= (total_productos_abc * 0.20) THEN 'A'
-                    WHEN ranking <= (total_productos_abc * 0.50) THEN 'B'
-                    ELSE 'C'
-                END as clasificacion_abc
-            FROM abc_ranked
-        ),
-        producto_completo AS (
-            SELECT
-                p.id as codigo,
-                p.nombre as descripcion,
-                p.categoria,
-                COALESCE(abc.clasificacion_abc, 'SIN_VENTAS') as clasificacion_abc,
-                COALESCE(sa.stock_cedi_seco, 0) as stock_cedi_seco,
-                COALESCE(sa.stock_cedi_caracas, 0) as stock_cedi_caracas,
-                COALESCE(sa.stock_tiendas, 0) as stock_tiendas,
-                COALESCE(sa.num_tiendas_con_stock, 0) as num_tiendas_con_stock,
-                COALESCE(va.ventas_2m_unidades, 0) as ventas_2m,
-                COALESCE(va.num_tiendas_con_ventas, 0) as num_tiendas_con_ventas,
-                va.ultima_venta,
-                CASE
-                    WHEN va.ultima_venta IS NULL THEN NULL
-                    ELSE (CURRENT_DATE - va.ultima_venta::date)
-                END as dias_sin_venta,
-                COALESCE(r.rank_cantidad, 999999) as rank_cantidad,
-                COALESCE(r.rank_valor, 999999) as rank_valor,
-                COALESCE(sa.stock_total, 0) as stock_total,
-                -- Calcular estado
-                CASE
-                    -- FANTASMA: Sin stock total Y sin ventas
-                    WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'FANTASMA'
-                    -- ANOMALIA: Sin stock pero con ventas (error de datos)
-                    WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) > 0 THEN 'ANOMALIA'
-                    -- CRITICO: Stock solo en CEDI, 0 en tiendas, sin ventas
-                    WHEN COALESCE(sa.stock_tiendas, 0) = 0
-                         AND (COALESCE(sa.stock_cedi_seco, 0) > 0 OR COALESCE(sa.stock_cedi_caracas, 0) > 0)
-                         AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'CRITICO'
-                    -- DORMIDO: Con stock pero sin ventas
-                    WHEN COALESCE(sa.stock_total, 0) > 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'DORMIDO'
-                    -- AGOTANDOSE: Con ventas pero stock bajo en tiendas O sin respaldo en CEDI
-                    WHEN COALESCE(va.ventas_2m_unidades, 0) > 0 AND (
-                        COALESCE(sa.stock_tiendas, 0) < 10
-                        OR (COALESCE(sa.stock_cedi_seco, 0) = 0 AND COALESCE(sa.stock_cedi_caracas, 0) = 0)
-                    ) THEN 'AGOTANDOSE'
-                    -- ACTIVO: Con stock y ventas
-                    ELSE 'ACTIVO'
-                END as estado
-            FROM productos p
-            LEFT JOIN stock_agregado sa ON p.id = sa.producto_id
-            LEFT JOIN ventas_agregadas va ON p.id = va.producto_id
-            LEFT JOIN rankings r ON p.id = r.producto_id
-            LEFT JOIN abc_classification abc ON p.id = abc.producto_id
-            WHERE 1=1 {search_filter} {categoria_filter}
-        )
-        SELECT *
-        FROM producto_completo
-        WHERE 1=1
-        {"AND estado = %s" if estado else ""}
-        {"AND clasificacion_abc = %s" if clasificacion_abc and clasificacion_abc != 'SIN_VENTAS' else ""}
-        {"AND clasificacion_abc = 'SIN_VENTAS'" if clasificacion_abc == 'SIN_VENTAS' else ""}
+        SELECT
+            codigo, descripcion, categoria, clasificacion_abc,
+            stock_cedi_seco, stock_cedi_caracas, stock_tiendas, num_tiendas_con_stock,
+            ventas_2m, num_tiendas_con_ventas, ultima_venta, dias_sin_venta,
+            rank_cantidad, rank_valor, stock_total, estado
+        FROM productos_analisis_cache
+        WHERE {where_clause}
         ORDER BY
             CASE estado
                 WHEN 'FANTASMA' THEN 1
@@ -1814,25 +1744,166 @@ async def get_productos_analisis_maestro(
         LIMIT %s OFFSET %s
         """
 
-        if estado:
-            params.append(estado)
-        if clasificacion_abc and clasificacion_abc != 'SIN_VENTAS':
-            params.append(clasificacion_abc)
         params.extend([limit, offset])
 
-        results = execute_query_dict(query, tuple(params) if params else None)
+        results = execute_query_dict(query, tuple(params))
 
         # Convertir fechas a string para JSON
         for r in results:
             if r.get('ultima_venta'):
-                r['ultima_venta'] = r['ultima_venta'].strftime('%Y-%m-%d')
+                r['ultima_venta'] = r['ultima_venta'].strftime('%Y-%m-%d') if hasattr(r['ultima_venta'], 'strftime') else str(r['ultima_venta'])
 
         return results
 
     except Exception as e:
         import traceback
-        logger.error(f"Error en análisis maestro: {str(e)}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+        error_msg = str(e)
+
+        # Si la tabla cache no existe, usar query original (fallback)
+        if "productos_analisis_cache" in error_msg and ("does not exist" in error_msg or "no existe" in error_msg):
+            logger.warning("Cache table not found, using slow query fallback. Run migration to create cache table.")
+            return await _get_productos_analisis_maestro_slow(estado, clasificacion_abc, categoria, search, limit, offset)
+
+        logger.error(f"Error en análisis maestro: {error_msg}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {error_msg}")
+
+
+async def _get_productos_analisis_maestro_slow(
+    estado: Optional[str] = None,
+    clasificacion_abc: Optional[str] = None,
+    categoria: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 500,
+    offset: int = 0
+):
+    """Fallback lento si la tabla cache no existe."""
+    search_filter = ""
+    categoria_filter = ""
+    params = []
+
+    if search:
+        search_filter = "AND (p.id ILIKE %s OR p.nombre ILIKE %s)"
+        params.extend([f'%{search}%', f'%{search}%'])
+
+    if categoria:
+        categoria_filter = "AND p.categoria = %s"
+        params.append(categoria)
+
+    query = f"""
+    WITH stock_por_ubicacion AS (
+        SELECT ia.producto_id, ia.ubicacion_id, SUM(ia.cantidad) as stock
+        FROM inventario_actual ia
+        GROUP BY ia.producto_id, ia.ubicacion_id
+    ),
+    stock_agregado AS (
+        SELECT s.producto_id,
+            SUM(CASE WHEN s.ubicacion_id = 'cedi_seco' THEN s.stock ELSE 0 END) as stock_cedi_seco,
+            SUM(CASE WHEN s.ubicacion_id = 'cedi_caracas' THEN s.stock ELSE 0 END) as stock_cedi_caracas,
+            SUM(CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 THEN s.stock ELSE 0 END) as stock_tiendas,
+            COUNT(DISTINCT CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 AND s.stock > 0 THEN s.ubicacion_id END) as num_tiendas_con_stock,
+            SUM(s.stock) as stock_total
+        FROM stock_por_ubicacion s
+        GROUP BY s.producto_id
+    ),
+    ventas_2m AS (
+        SELECT v.producto_id, v.ubicacion_id,
+            SUM(v.cantidad_vendida) as unidades_vendidas,
+            SUM(v.venta_total) as valor_vendido,
+            MAX(v.fecha_venta) as ultima_venta
+        FROM ventas v
+        WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
+        GROUP BY v.producto_id, v.ubicacion_id
+    ),
+    ventas_agregadas AS (
+        SELECT v.producto_id,
+            SUM(v.unidades_vendidas) as ventas_2m_unidades,
+            SUM(v.valor_vendido) as ventas_2m_valor,
+            COUNT(DISTINCT v.ubicacion_id) as num_tiendas_con_ventas,
+            MAX(v.ultima_venta) as ultima_venta
+        FROM ventas_2m v
+        GROUP BY v.producto_id
+    ),
+    ventas_6m AS (
+        SELECT v.producto_id,
+            SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo,
+            COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) as semanas_con_venta
+        FROM ventas v
+        WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
+        GROUP BY v.producto_id
+        HAVING COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) >= 4
+    ),
+    rankings AS (
+        SELECT producto_id,
+            ROW_NUMBER() OVER (ORDER BY ventas_2m_unidades DESC NULLS LAST) as rank_cantidad,
+            ROW_NUMBER() OVER (ORDER BY ventas_2m_valor DESC NULLS LAST) as rank_valor
+        FROM ventas_agregadas
+    ),
+    abc_ranked AS (
+        SELECT producto_id, valor_consumo,
+            ROW_NUMBER() OVER (ORDER BY valor_consumo DESC) as ranking,
+            COUNT(*) OVER () as total_productos_abc
+        FROM ventas_6m WHERE valor_consumo > 0
+    ),
+    abc_classification AS (
+        SELECT producto_id,
+            CASE
+                WHEN ranking <= (total_productos_abc * 0.20) THEN 'A'
+                WHEN ranking <= (total_productos_abc * 0.50) THEN 'B'
+                ELSE 'C'
+            END as clasificacion_abc
+        FROM abc_ranked
+    ),
+    producto_completo AS (
+        SELECT p.id as codigo, p.nombre as descripcion, p.categoria,
+            COALESCE(abc.clasificacion_abc, 'SIN_VENTAS') as clasificacion_abc,
+            COALESCE(sa.stock_cedi_seco, 0) as stock_cedi_seco,
+            COALESCE(sa.stock_cedi_caracas, 0) as stock_cedi_caracas,
+            COALESCE(sa.stock_tiendas, 0) as stock_tiendas,
+            COALESCE(sa.num_tiendas_con_stock, 0) as num_tiendas_con_stock,
+            COALESCE(va.ventas_2m_unidades, 0) as ventas_2m,
+            COALESCE(va.num_tiendas_con_ventas, 0) as num_tiendas_con_ventas,
+            va.ultima_venta,
+            CASE WHEN va.ultima_venta IS NULL THEN NULL ELSE (CURRENT_DATE - va.ultima_venta::date) END as dias_sin_venta,
+            COALESCE(r.rank_cantidad, 999999) as rank_cantidad,
+            COALESCE(r.rank_valor, 999999) as rank_valor,
+            COALESCE(sa.stock_total, 0) as stock_total,
+            CASE
+                WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'FANTASMA'
+                WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) > 0 THEN 'ANOMALIA'
+                WHEN COALESCE(sa.stock_tiendas, 0) = 0 AND (COALESCE(sa.stock_cedi_seco, 0) > 0 OR COALESCE(sa.stock_cedi_caracas, 0) > 0) AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'CRITICO'
+                WHEN COALESCE(sa.stock_total, 0) > 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'DORMIDO'
+                WHEN COALESCE(va.ventas_2m_unidades, 0) > 0 AND (COALESCE(sa.stock_tiendas, 0) < 10 OR (COALESCE(sa.stock_cedi_seco, 0) = 0 AND COALESCE(sa.stock_cedi_caracas, 0) = 0)) THEN 'AGOTANDOSE'
+                ELSE 'ACTIVO'
+            END as estado
+        FROM productos p
+        LEFT JOIN stock_agregado sa ON p.id = sa.producto_id
+        LEFT JOIN ventas_agregadas va ON p.id = va.producto_id
+        LEFT JOIN rankings r ON p.id = r.producto_id
+        LEFT JOIN abc_classification abc ON p.id = abc.producto_id
+        WHERE 1=1 {search_filter} {categoria_filter}
+    )
+    SELECT * FROM producto_completo
+    WHERE 1=1
+    {"AND estado = %s" if estado else ""}
+    {"AND clasificacion_abc = %s" if clasificacion_abc and clasificacion_abc != 'SIN_VENTAS' else ""}
+    {"AND clasificacion_abc = 'SIN_VENTAS'" if clasificacion_abc == 'SIN_VENTAS' else ""}
+    ORDER BY CASE estado WHEN 'FANTASMA' THEN 1 WHEN 'CRITICO' THEN 2 WHEN 'ANOMALIA' THEN 3 WHEN 'DORMIDO' THEN 4 WHEN 'AGOTANDOSE' THEN 5 WHEN 'ACTIVO' THEN 6 END, rank_valor ASC
+    LIMIT %s OFFSET %s
+    """
+
+    if estado:
+        params.append(estado)
+    if clasificacion_abc and clasificacion_abc != 'SIN_VENTAS':
+        params.append(clasificacion_abc)
+    params.extend([limit, offset])
+
+    results = execute_query_dict(query, tuple(params) if params else None)
+
+    for r in results:
+        if r.get('ultima_venta'):
+            r['ultima_venta'] = r['ultima_venta'].strftime('%Y-%m-%d')
+
+    return results
 
 
 @app.get("/api/productos/analisis-maestro/resumen", tags=["Productos"])
@@ -1842,6 +1913,8 @@ async def get_productos_analisis_resumen(
     """
     Resumen de conteos por estado y ABC para el análisis maestro.
 
+    OPTIMIZADO: Usa tabla cache productos_analisis_cache para respuestas < 100ms.
+
     Args:
         clasificacion_abc: Filtrar por clase ABC (A, B, C, SIN_VENTAS)
 
@@ -1850,104 +1923,25 @@ async def get_productos_analisis_resumen(
     """
     try:
         abc_filter = ""
+        params = []
         if clasificacion_abc:
             if clasificacion_abc == "SIN_VENTAS":
-                abc_filter = "WHERE clasificacion_abc IS NULL"
+                abc_filter = "WHERE clasificacion_abc = 'SIN_VENTAS'"
             else:
-                abc_filter = f"WHERE clasificacion_abc = '{clasificacion_abc}'"
+                abc_filter = "WHERE clasificacion_abc = %s"
+                params.append(clasificacion_abc)
 
         query = f"""
-        WITH stock_por_ubicacion AS (
-            SELECT
-                ia.producto_id,
-                ia.ubicacion_id,
-                SUM(ia.cantidad) as stock
-            FROM inventario_actual ia
-            GROUP BY ia.producto_id, ia.ubicacion_id
-        ),
-        stock_agregado AS (
-            SELECT
-                s.producto_id,
-                SUM(CASE WHEN s.ubicacion_id = 'cedi_seco' THEN s.stock ELSE 0 END) as stock_cedi_seco,
-                SUM(CASE WHEN s.ubicacion_id = 'cedi_caracas' THEN s.stock ELSE 0 END) as stock_cedi_caracas,
-                SUM(CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 THEN s.stock ELSE 0 END) as stock_tiendas,
-                SUM(s.stock) as stock_total
-            FROM stock_por_ubicacion s
-            GROUP BY s.producto_id
-        ),
-        ventas_2m AS (
-            -- Ventas 2 meses para estados operacionales
-            SELECT
-                v.producto_id,
-                SUM(v.cantidad_vendida) as ventas_2m_unidades
-            FROM ventas v
-            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
-            GROUP BY v.producto_id
-        ),
-        ventas_6m AS (
-            -- Ventas 6 meses para clasificación ABC (consistente con ABC-XYZ)
-            SELECT
-                v.producto_id,
-                SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo,
-                COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) as semanas_con_venta
-            FROM ventas v
-            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
-            GROUP BY v.producto_id
-            HAVING COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) >= 4
-        ),
-        abc_ranked AS (
-            -- Rankear productos por valor de consumo (consistente con ABC-XYZ)
-            SELECT
-                producto_id,
-                valor_consumo,
-                ROW_NUMBER() OVER (ORDER BY valor_consumo DESC) as ranking,
-                COUNT(*) OVER () as total_productos_abc
-            FROM ventas_6m
-            WHERE valor_consumo > 0
-        ),
-        abc_classification AS (
-            -- Clasificar por percentiles de ranking (Top 20pct = A, siguiente 30pct = B, resto = C)
-            SELECT
-                producto_id,
-                CASE
-                    WHEN ranking <= (total_productos_abc * 0.20) THEN 'A'
-                    WHEN ranking <= (total_productos_abc * 0.50) THEN 'B'
-                    ELSE 'C'
-                END as clasificacion_abc
-            FROM abc_ranked
-        ),
-        producto_completo AS (
-            SELECT
-                p.id,
-                abc.clasificacion_abc,
-                CASE
-                    WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'FANTASMA'
-                    WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) > 0 THEN 'ANOMALIA'
-                    WHEN COALESCE(sa.stock_tiendas, 0) = 0
-                         AND (COALESCE(sa.stock_cedi_seco, 0) > 0 OR COALESCE(sa.stock_cedi_caracas, 0) > 0)
-                         AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'CRITICO'
-                    WHEN COALESCE(sa.stock_total, 0) > 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'DORMIDO'
-                    WHEN COALESCE(va.ventas_2m_unidades, 0) > 0 AND (
-                        COALESCE(sa.stock_tiendas, 0) < 10
-                        OR (COALESCE(sa.stock_cedi_seco, 0) = 0 AND COALESCE(sa.stock_cedi_caracas, 0) = 0)
-                    ) THEN 'AGOTANDOSE'
-                    ELSE 'ACTIVO'
-                END as estado
-            FROM productos p
-            LEFT JOIN stock_agregado sa ON p.id = sa.producto_id
-            LEFT JOIN ventas_2m va ON p.id = va.producto_id
-            LEFT JOIN abc_classification abc ON p.id = abc.producto_id
-        )
         SELECT
-            COALESCE(clasificacion_abc, 'SIN_VENTAS') as clasificacion_abc,
+            clasificacion_abc,
             estado,
             COUNT(*) as cantidad
-        FROM producto_completo
+        FROM productos_analisis_cache
         {abc_filter}
         GROUP BY clasificacion_abc, estado
         """
 
-        results = execute_query_dict(query)
+        results = execute_query_dict(query, tuple(params) if params else None)
 
         # Construir respuesta estructurada
         por_estado = {}
@@ -1966,16 +1960,105 @@ async def get_productos_analisis_resumen(
 
         total = sum(por_estado.values())
 
+        # Obtener timestamp de última actualización
+        try:
+            ts_result = execute_query_dict("SELECT MAX(updated_at) as last_update FROM productos_analisis_cache")
+            last_update = ts_result[0]['last_update'] if ts_result else None
+        except Exception:
+            last_update = None
+
         return {
             "por_estado": por_estado,
             "por_abc": por_abc,
             "total": total,
-            "filtro_abc": clasificacion_abc
+            "filtro_abc": clasificacion_abc,
+            "cache_updated_at": str(last_update) if last_update else None
         }
 
     except Exception as e:
-        logger.error(f"Error en resumen análisis: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+        error_msg = str(e)
+        # Fallback si la tabla cache no existe
+        if "productos_analisis_cache" in error_msg and ("does not exist" in error_msg or "no existe" in error_msg):
+            logger.warning("Cache table not found for resumen, using slow query fallback.")
+            return await _get_productos_analisis_resumen_slow(clasificacion_abc)
+
+        logger.error(f"Error en resumen análisis: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {error_msg}")
+
+
+async def _get_productos_analisis_resumen_slow(clasificacion_abc: Optional[str] = None):
+    """Fallback lento para resumen si la tabla cache no existe."""
+    abc_filter = ""
+    if clasificacion_abc:
+        if clasificacion_abc == "SIN_VENTAS":
+            abc_filter = "WHERE clasificacion_abc IS NULL"
+        else:
+            abc_filter = f"WHERE clasificacion_abc = '{clasificacion_abc}'"
+
+    query = f"""
+    WITH stock_por_ubicacion AS (
+        SELECT ia.producto_id, ia.ubicacion_id, SUM(ia.cantidad) as stock
+        FROM inventario_actual ia GROUP BY ia.producto_id, ia.ubicacion_id
+    ),
+    stock_agregado AS (
+        SELECT s.producto_id,
+            SUM(CASE WHEN s.ubicacion_id = 'cedi_seco' THEN s.stock ELSE 0 END) as stock_cedi_seco,
+            SUM(CASE WHEN s.ubicacion_id = 'cedi_caracas' THEN s.stock ELSE 0 END) as stock_cedi_caracas,
+            SUM(CASE WHEN POSITION('cedi' IN s.ubicacion_id) != 1 THEN s.stock ELSE 0 END) as stock_tiendas,
+            SUM(s.stock) as stock_total
+        FROM stock_por_ubicacion s GROUP BY s.producto_id
+    ),
+    ventas_2m AS (
+        SELECT v.producto_id, SUM(v.cantidad_vendida) as ventas_2m_unidades
+        FROM ventas v WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
+        GROUP BY v.producto_id
+    ),
+    ventas_6m AS (
+        SELECT v.producto_id, SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo
+        FROM ventas v WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
+        GROUP BY v.producto_id
+        HAVING COUNT(DISTINCT DATE_TRUNC('week', v.fecha_venta)) >= 4
+    ),
+    abc_ranked AS (
+        SELECT producto_id, ROW_NUMBER() OVER (ORDER BY valor_consumo DESC) as ranking, COUNT(*) OVER () as total
+        FROM ventas_6m WHERE valor_consumo > 0
+    ),
+    abc_classification AS (
+        SELECT producto_id,
+            CASE WHEN ranking <= (total * 0.20) THEN 'A' WHEN ranking <= (total * 0.50) THEN 'B' ELSE 'C' END as clasificacion_abc
+        FROM abc_ranked
+    ),
+    producto_completo AS (
+        SELECT p.id, abc.clasificacion_abc,
+            CASE
+                WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'FANTASMA'
+                WHEN COALESCE(sa.stock_total, 0) = 0 AND COALESCE(va.ventas_2m_unidades, 0) > 0 THEN 'ANOMALIA'
+                WHEN COALESCE(sa.stock_tiendas, 0) = 0 AND (COALESCE(sa.stock_cedi_seco, 0) > 0 OR COALESCE(sa.stock_cedi_caracas, 0) > 0) AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'CRITICO'
+                WHEN COALESCE(sa.stock_total, 0) > 0 AND COALESCE(va.ventas_2m_unidades, 0) = 0 THEN 'DORMIDO'
+                WHEN COALESCE(va.ventas_2m_unidades, 0) > 0 AND (COALESCE(sa.stock_tiendas, 0) < 10 OR (COALESCE(sa.stock_cedi_seco, 0) = 0 AND COALESCE(sa.stock_cedi_caracas, 0) = 0)) THEN 'AGOTANDOSE'
+                ELSE 'ACTIVO'
+            END as estado
+        FROM productos p
+        LEFT JOIN stock_agregado sa ON p.id = sa.producto_id
+        LEFT JOIN ventas_2m va ON p.id = va.producto_id
+        LEFT JOIN abc_classification abc ON p.id = abc.producto_id
+    )
+    SELECT COALESCE(clasificacion_abc, 'SIN_VENTAS') as clasificacion_abc, estado, COUNT(*) as cantidad
+    FROM producto_completo {abc_filter} GROUP BY clasificacion_abc, estado
+    """
+
+    results = execute_query_dict(query)
+    por_estado = {}
+    por_abc = {}
+
+    for r in results:
+        abc = r['clasificacion_abc']
+        estado = r['estado']
+        cantidad = r['cantidad']
+        por_estado[estado] = por_estado.get(estado, 0) + cantidad
+        por_abc[abc] = por_abc.get(abc, 0) + cantidad
+
+    return {"por_estado": por_estado, "por_abc": por_abc, "total": sum(por_estado.values()), "filtro_abc": clasificacion_abc}
 
 
 @app.get("/api/productos/{codigo}/detalle-tiendas", tags=["Productos"])
@@ -8176,6 +8259,92 @@ async def calcular_abc_xyz(
         "message": "Cálculo ABC-XYZ iniciado en background. Revisa los logs del servidor para ver el progreso.",
         "usuario": current_user.email
     }
+
+
+@app.post("/api/admin/refresh-analisis-cache", tags=["Admin"])
+async def refresh_analisis_cache(
+    background_tasks: BackgroundTasks
+):
+    """
+    Refresca la tabla cache productos_analisis_cache.
+    Ejecuta la función SQL refresh_productos_analisis_cache() que recalcula
+    todos los estados y métricas de productos.
+
+    No requiere autenticación para permitir llamadas desde cron/scheduler.
+    Tiempo estimado: 20-40 segundos.
+    """
+    def run_refresh():
+        try:
+            logger.info("🔄 Iniciando refresh de productos_analisis_cache...")
+            start_time = time.time()
+
+            with get_db_connection_write() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT refresh_productos_analisis_cache()")
+                conn.commit()
+                cursor.close()
+
+            elapsed = time.time() - start_time
+            logger.info(f"✅ Cache refrescada exitosamente en {elapsed:.2f}s")
+
+        except Exception as e:
+            logger.error(f"❌ Error refrescando cache: {e}")
+
+    background_tasks.add_task(run_refresh)
+
+    return {
+        "success": True,
+        "message": "Refresh de cache iniciado en background. La cache estará actualizada en ~30 segundos."
+    }
+
+
+@app.get("/api/admin/analisis-cache-status", tags=["Admin"])
+async def get_analisis_cache_status():
+    """
+    Obtiene el estado actual de la tabla cache productos_analisis_cache.
+    Incluye: total de registros, última actualización, y conteos por estado.
+    """
+    try:
+        query = """
+        SELECT
+            COUNT(*) as total_productos,
+            MAX(updated_at) as ultima_actualizacion,
+            COUNT(CASE WHEN estado = 'FANTASMA' THEN 1 END) as fantasma,
+            COUNT(CASE WHEN estado = 'CRITICO' THEN 1 END) as critico,
+            COUNT(CASE WHEN estado = 'ANOMALIA' THEN 1 END) as anomalia,
+            COUNT(CASE WHEN estado = 'DORMIDO' THEN 1 END) as dormido,
+            COUNT(CASE WHEN estado = 'AGOTANDOSE' THEN 1 END) as agotandose,
+            COUNT(CASE WHEN estado = 'ACTIVO' THEN 1 END) as activo
+        FROM productos_analisis_cache
+        """
+        result = execute_query_dict(query)
+
+        if result and len(result) > 0:
+            data = result[0]
+            return {
+                "cache_exists": True,
+                "total_productos": data['total_productos'],
+                "ultima_actualizacion": str(data['ultima_actualizacion']) if data['ultima_actualizacion'] else None,
+                "por_estado": {
+                    "FANTASMA": data['fantasma'],
+                    "CRITICO": data['critico'],
+                    "ANOMALIA": data['anomalia'],
+                    "DORMIDO": data['dormido'],
+                    "AGOTANDOSE": data['agotandose'],
+                    "ACTIVO": data['activo']
+                }
+            }
+        else:
+            return {"cache_exists": False, "message": "Cache vacía o no existe"}
+
+    except Exception as e:
+        error_msg = str(e)
+        if "does not exist" in error_msg or "no existe" in error_msg:
+            return {
+                "cache_exists": False,
+                "message": "La tabla productos_analisis_cache no existe. Ejecute la migración 001_performance_optimization.sql"
+            }
+        raise HTTPException(status_code=500, detail=f"Error: {error_msg}")
 
 
 # ======================================================================================
