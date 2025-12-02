@@ -1000,8 +1000,9 @@ async def get_ubicaciones(
     """
     try:
         # PostgreSQL v2.0: Simplified flat table with minimal schema
-        # Available columns: id, nombre, codigo_klk, ciudad, estado, direccion, activo, fecha_creacion
-        query = "SELECT id, nombre, codigo_klk, ciudad, estado, activo FROM ubicaciones WHERE activo = true"
+        # Available columns: id, nombre, codigo_klk, ciudad, direccion, activo, fecha_creacion
+        # Note: 'estado' column may not exist in all deployments
+        query = "SELECT id, nombre, codigo_klk, ciudad, activo FROM ubicaciones WHERE activo = true"
 
         # tipo filter not supported in PostgreSQL v2.0 (all are tiendas by default)
         # visible_pedidos filter not supported (no config column)
@@ -2081,7 +2082,9 @@ async def get_producto_detalle_tiendas(codigo: str):
                 v.ubicacion_id,
                 SUM(v.cantidad_vendida) as ventas_2m,
                 SUM(v.venta_total) as valor_2m,
-                MAX(v.fecha_venta) as ultima_venta
+                MAX(v.fecha_venta) as ultima_venta,
+                SUM(CASE WHEN v.cantidad_vendida > 0 THEN 1 ELSE 0 END) as num_ventas,
+                SUM(CASE WHEN v.cantidad_vendida < 0 THEN 1 ELSE 0 END) as num_devoluciones
             FROM ventas v
             WHERE v.producto_id = %s
               AND v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
@@ -2094,7 +2097,9 @@ async def get_producto_detalle_tiendas(codigo: str):
             COALESCE(s.stock, 0) as stock,
             COALESCE(v.ventas_2m, 0) as ventas_2m,
             COALESCE(v.valor_2m, 0) as valor_2m,
-            v.ultima_venta
+            v.ultima_venta,
+            COALESCE(v.num_ventas, 0) as num_ventas,
+            COALESCE(v.num_devoluciones, 0) as num_devoluciones
         FROM ubicaciones u
         LEFT JOIN stock_por_tienda s ON u.id = s.ubicacion_id
         LEFT JOIN ventas_por_tienda v ON u.id = v.ubicacion_id
