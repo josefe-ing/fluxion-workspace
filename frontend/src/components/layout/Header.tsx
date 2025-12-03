@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 
 export default function Header() {
   const location = useLocation();
-  const { username, nombreCompleto, logout } = useAuth();
+  const { logout } = useAuth();
 
   const navItems = [
     // { path: '/pedidos-sugeridos', label: 'Pedidos' },  // DESHABILITADO: No migrado a PostgreSQL v2.0
@@ -60,9 +60,6 @@ export default function Header() {
 
           {/* User menu */}
           <div className="flex items-center space-x-4">
-            <div className="text-sm text-gray-700">
-              <span className="font-medium">{nombreCompleto || username}</span>
-            </div>
             <Link
               to="/administrador"
               className="text-sm text-gray-500 hover:text-gray-700 font-medium transition-colors"
