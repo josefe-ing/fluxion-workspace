@@ -4,9 +4,7 @@ import {
   getVentasPorTienda,
   ProductoDetalleCompleto,
   VentasPorTiendaResponse,
-  formatNumber,
-  getIconoMatriz,
-  getDescripcionMatriz
+  formatNumber
 } from '../../services/productosService';
 
 interface ProductoDetalleModalProps {
@@ -182,92 +180,42 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
               </div>
             </div>
 
-            {/* Enriched Table with Demand Metrics */}
+            {/* Stock por Tienda */}
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-200">
                 <h3 className="text-lg font-semibold text-gray-900">
-                  Análisis por Tienda
+                  Stock por Tienda
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Clasificación ABC-XYZ, inventario y métricas de demanda por ubicación
-                </p>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tienda</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Matriz</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ranking</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CV</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {detalle?.inventarios.map((inv) => {
-                      const clasif = detalle.clasificaciones.find((c) => c.ubicacion_id === inv.ubicacion_id);
-                      const matriz = clasif?.matriz || (clasif ? `${clasif.clasificacion_abc}${clasif.clasificacion_xyz}` : '');
-
-                      return (
-                        <tr key={inv.ubicacion_id} className="hover:bg-gray-50">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {inv.ubicacion_nombre}
-                            <span className="ml-2 text-xs text-gray-500">
-                              ({inv.tipo_ubicacion})
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm">
-                            {clasif && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-lg">{getIconoMatriz(matriz)}</span>
-                                <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                  clasif.clasificacion_abc === 'A' ? 'bg-red-100 text-red-800' :
-                                  clasif.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-gray-100 text-gray-800'
-                                }`}>
-                                  {clasif.clasificacion_abc}
-                                </span>
-                                <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                  clasif.clasificacion_xyz === 'X' ? 'bg-green-100 text-green-800' :
-                                  clasif.clasificacion_xyz === 'Y' ? 'bg-blue-100 text-blue-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {clasif.clasificacion_xyz}
-                                </span>
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm">
-                            <span className={`font-medium ${
-                              inv.cantidad_actual === 0 ? 'text-red-600' :
-                              inv.cantidad_actual < 10 ? 'text-yellow-600' :
-                              'text-gray-900'
-                            }`}>
-                              {inv.cantidad_actual.toFixed(0)}
-                            </span>
-                            {inv.cantidad_actual === 0 && ' 🚨'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {clasif ? `#${clasif.ranking_valor}` : '-'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm">
-                            {clasif?.coeficiente_variacion !== null && clasif?.coeficiente_variacion !== undefined ? (
-                              <span className={`font-medium ${
-                                clasif.coeficiente_variacion < 0.5 ? 'text-green-600' :
-                                clasif.coeficiente_variacion < 1.0 ? 'text-blue-600' :
-                                'text-red-600'
-                              }`}>
-                                {clasif.coeficiente_variacion.toFixed(2)}
-                              </span>
-                            ) : '-'}
-                          </td>
-                          <td className="px-6 py-4 text-xs text-gray-500 max-w-xs">
-                            {matriz && getDescripcionMatriz(matriz)}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {detalle?.inventarios.map((inv) => (
+                      <tr key={inv.ubicacion_id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {inv.ubicacion_nombre}
+                          <span className="ml-2 text-xs text-gray-500">
+                            ({inv.tipo_ubicacion})
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                          <span className={`font-medium ${
+                            inv.cantidad_actual === 0 ? 'text-red-600' :
+                            inv.cantidad_actual < 10 ? 'text-yellow-600' :
+                            'text-gray-900'
+                          }`}>
+                            {inv.cantidad_actual.toFixed(0)}
+                          </span>
+                          {inv.cantidad_actual === 0 && ' 🚨'}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

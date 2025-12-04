@@ -1680,8 +1680,8 @@ async def get_productos_analisis_maestro(
     """
     Análisis maestro de productos para detectar productos fantasma y problemas.
 
-    OPTIMIZADO: Usa tabla cache productos_analisis_cache para respuestas < 1 segundo.
-    La cache se actualiza cada 5 minutos automáticamente.
+    OPTIMIZADO: Usa productos_abc_cache para clasificación ABC (Pareto 80/15/5)
+    y productos_analisis_cache para estados y stock.
 
     Args:
         estado: Filtrar por estado (FANTASMA, CRITICO, ANOMALIA, DORMIDO, AGOTANDOSE, ACTIVO)
@@ -1697,36 +1697,40 @@ async def get_productos_analisis_maestro(
         params = []
 
         if search:
-            filters.append("(codigo ILIKE %s OR descripcion ILIKE %s)")
+            filters.append("(pac.codigo ILIKE %s OR pac.descripcion ILIKE %s)")
             params.extend([f'%{search}%', f'%{search}%'])
 
         if categoria:
-            filters.append("categoria = %s")
+            filters.append("pac.categoria = %s")
             params.append(categoria)
 
         if estado:
-            filters.append("estado = %s")
+            filters.append("pac.estado = %s")
             params.append(estado)
 
         if clasificacion_abc:
             if clasificacion_abc == 'SIN_VENTAS':
-                filters.append("clasificacion_abc = 'SIN_VENTAS'")
+                filters.append("abc.clase_abc IS NULL")
             else:
-                filters.append("clasificacion_abc = %s")
+                filters.append("abc.clase_abc = %s")
                 params.append(clasificacion_abc)
 
         where_clause = " AND ".join(filters) if filters else "1=1"
 
+        # Usar productos_abc_cache para clasificación ABC (Pareto correcto)
         query = f"""
         SELECT
-            codigo, descripcion, categoria, clasificacion_abc,
-            stock_cedi_seco, stock_cedi_caracas, stock_tiendas, num_tiendas_con_stock,
-            ventas_2m, num_tiendas_con_ventas, ultima_venta, dias_sin_venta,
-            rank_cantidad, rank_valor, stock_total, estado
-        FROM productos_analisis_cache
+            pac.codigo, pac.descripcion, pac.categoria,
+            COALESCE(abc.clase_abc, 'SIN_VENTAS') as clasificacion_abc,
+            pac.stock_cedi_seco, pac.stock_cedi_caracas, pac.stock_tiendas, pac.num_tiendas_con_stock,
+            pac.ventas_2m, pac.num_tiendas_con_ventas, pac.ultima_venta, pac.dias_sin_venta,
+            pac.rank_cantidad, COALESCE(abc.rank_venta, pac.rank_valor) as rank_valor,
+            pac.stock_total, pac.estado
+        FROM productos_analisis_cache pac
+        LEFT JOIN productos_abc_cache abc ON abc.producto_id = pac.producto_id
         WHERE {where_clause}
         ORDER BY
-            CASE estado
+            CASE pac.estado
                 WHEN 'FANTASMA' THEN 1
                 WHEN 'CRITICO' THEN 2
                 WHEN 'ANOMALIA' THEN 3
@@ -1734,7 +1738,7 @@ async def get_productos_analisis_maestro(
                 WHEN 'AGOTANDOSE' THEN 5
                 WHEN 'ACTIVO' THEN 6
             END,
-            rank_valor ASC
+            COALESCE(abc.rank_venta, pac.rank_valor) ASC
         LIMIT %s OFFSET %s
         """
 
@@ -1803,7 +1807,8 @@ async def _get_productos_analisis_maestro_slow(
         SELECT v.producto_id, v.ubicacion_id,
             SUM(v.cantidad_vendida) as unidades_vendidas,
             SUM(v.venta_total) as valor_vendido,
-            MAX(v.fecha_venta) as ultima_venta
+            -- Excluir devoluciones (cantidad < 0) del cálculo de última venta
+            MAX(CASE WHEN v.cantidad_vendida > 0 THEN v.fecha_venta END) as ultima_venta
         FROM ventas v
         WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
         GROUP BY v.producto_id, v.ubicacion_id
@@ -1907,7 +1912,8 @@ async def get_productos_analisis_resumen(
     """
     Resumen de conteos por estado y ABC para el análisis maestro.
 
-    OPTIMIZADO: Usa tabla cache productos_analisis_cache para respuestas < 100ms.
+    OPTIMIZADO: Usa productos_abc_cache para clasificación ABC (Pareto 80/15/5)
+    y productos_analisis_cache para estados.
 
     Args:
         clasificacion_abc: Filtrar por clase ABC (A, B, C, SIN_VENTAS)
@@ -1920,19 +1926,22 @@ async def get_productos_analisis_resumen(
         params = []
         if clasificacion_abc:
             if clasificacion_abc == "SIN_VENTAS":
-                abc_filter = "WHERE clasificacion_abc = 'SIN_VENTAS'"
+                abc_filter = "WHERE abc.clase_abc IS NULL"
             else:
-                abc_filter = "WHERE clasificacion_abc = %s"
+                abc_filter = "WHERE abc.clase_abc = %s"
                 params.append(clasificacion_abc)
 
+        # Usar productos_abc_cache para clasificación ABC (Pareto correcto)
+        # y productos_analisis_cache para estados
         query = f"""
         SELECT
-            clasificacion_abc,
-            estado,
+            COALESCE(abc.clase_abc, 'SIN_VENTAS') as clasificacion_abc,
+            pac.estado,
             COUNT(*) as cantidad
-        FROM productos_analisis_cache
+        FROM productos_analisis_cache pac
+        LEFT JOIN productos_abc_cache abc ON abc.producto_id = pac.producto_id
         {abc_filter}
-        GROUP BY clasificacion_abc, estado
+        GROUP BY COALESCE(abc.clase_abc, 'SIN_VENTAS'), pac.estado
         """
 
         results = execute_query_dict(query, tuple(params) if params else None)
@@ -1954,9 +1963,9 @@ async def get_productos_analisis_resumen(
 
         total = sum(por_estado.values())
 
-        # Obtener timestamp de última actualización
+        # Obtener timestamp de última actualización de ABC cache
         try:
-            ts_result = execute_query_dict("SELECT MAX(updated_at) as last_update FROM productos_analisis_cache")
+            ts_result = execute_query_dict("SELECT MAX(fecha_calculo) as last_update FROM productos_abc_cache")
             last_update = ts_result[0]['last_update'] if ts_result else None
         except Exception:
             last_update = None
