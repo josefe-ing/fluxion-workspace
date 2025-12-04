@@ -125,7 +125,17 @@ const DetalleTiendasModal: React.FC<Props> = ({ isOpen, onClose, codigo }) => {
                             </td>
                             <td className="px-4 py-2 text-sm text-center">
                               {tienda.ultima_venta ? (
-                                <span className="text-gray-600">{tienda.ultima_venta}</span>
+                                <div className="flex flex-col items-center">
+                                  <span className="text-gray-600">{tienda.ultima_venta}</span>
+                                  {tienda.ventas_2m === 0 && tienda.num_ventas > 0 && (
+                                    <span
+                                      className="text-xs text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded mt-0.5"
+                                      title={`${tienda.num_ventas} venta(s) anulada(s) con ${tienda.num_devoluciones} devolución(es)`}
+                                    >
+                                      Anulada
+                                    </span>
+                                  )}
+                                </div>
                               ) : (
                                 <span className="text-gray-400">-</span>
                               )}
@@ -189,6 +199,9 @@ const DetalleTiendasModal: React.FC<Props> = ({ isOpen, onClose, codigo }) => {
                     )}
                     {tiendas.filter(t => t.ventas_2m > 0).length === 1 && (
                       <li>📍 Ventas concentradas en una sola tienda</li>
+                    )}
+                    {tiendas.some(t => t.ventas_2m === 0 && t.num_ventas > 0) && (
+                      <li>🔄 Tiene transacciones anuladas - ventas que fueron devueltas el mismo día</li>
                     )}
                   </ul>
                 </div>

@@ -6,7 +6,7 @@ export default function Header() {
   const { logout } = useAuth();
 
   const navItems = [
-    // { path: '/pedidos-sugeridos', label: 'Pedidos' },  // DESHABILITADO: No migrado a PostgreSQL v2.0
+    { path: '/pedidos-sugeridos', label: 'Pedidos' },
     { path: '/inventarios', label: 'Inventarios' },
     { path: '/ventas', label: 'Ventas' },
     { path: '/productos', label: 'Productos' },

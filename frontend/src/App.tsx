@@ -9,10 +9,10 @@ import InventorySummary from './components/dashboard/InventorySummary';
 import InventoryDashboard from './components/dashboard/InventoryDashboard';
 import SalesSummary from './components/sales/SalesSummary';
 import SalesDashboard from './components/sales/SalesDashboard';
-// Pedidos deshabilitados - No migrados a PostgreSQL v2.0
-// import SuggestedOrder from './components/orders/SuggestedOrder';
-// import OrderWizard from './components/orders/OrderWizard';
-// import PedidoApprovalView from './components/orders/PedidoApprovalView';
+// Pedidos Sugeridos
+import SuggestedOrder from './components/orders/SuggestedOrder';
+import OrderWizard from './components/orders/OrderWizard';
+import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
 import ETLControlCenter from './components/settings/ETLControlCenter';
 import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
@@ -42,10 +42,10 @@ function ProtectedRoutes() {
         <Route path="dashboard/:ubicacionId" element={<InventoryDashboard />} />
         <Route path="ventas" element={<SalesSummary />} />
         <Route path="ventas/:ubicacionId" element={<SalesDashboard />} />
-        {/* Pedidos routes deshabilitados - No migrados a PostgreSQL v2.0 */}
-        {/* <Route path="pedidos-sugeridos" element={<SuggestedOrder />} /> */}
-        {/* <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} /> */}
-        {/* <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} /> */}
+        {/* Pedidos Sugeridos */}
+        <Route path="pedidos-sugeridos" element={<SuggestedOrder />} />
+        <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} />
+        <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
         <Route path="administrador" element={<ETLControlCenter />} />
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="administrador/config-inventario" element={<ConfiguracionInventario />} />

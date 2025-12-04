@@ -228,16 +228,17 @@ class CSVToPostgresLoader:
             conn = psycopg2.connect(self.postgres_dsn)
             cursor = conn.cursor()
 
-            # Preparar registros
+            # Preparar registros con producto_id para tracking
             records = []
             for _, row in df.iterrows():
+                producto_id = str(row.get('codigo_producto', ''))
                 records.append((
                     row.get('numero_factura_unico', ''),
                     row.get('fecha_venta'),
                     row.get('ubicacion_id', ''),
                     None,  # almacen_codigo
                     None,  # almacen_nombre
-                    str(row.get('codigo_producto', '')),
+                    producto_id,
                     float(row.get('cantidad_vendida', 0)),
                     float(row.get('peso_unitario', 0)),
                     float(row.get('peso_unitario', 0)) * float(row.get('cantidad_vendida', 0)),
@@ -275,18 +276,59 @@ class CSVToPostgresLoader:
                     fecha_creacion = EXCLUDED.fecha_creacion
             """
 
+            # Query para insert individual (fallback)
+            single_insert_query = """
+                INSERT INTO ventas (
+                    numero_factura, fecha_venta, ubicacion_id, almacen_codigo, almacen_nombre,
+                    producto_id, cantidad_vendida, peso_unitario, peso_calculado,
+                    total_cantidad_por_unidad_medida, unidad_medida_venta, factor_unidad_medida,
+                    precio_unitario, costo_unitario, venta_total, costo_total,
+                    utilidad_bruta, margen_bruto_pct, fecha_creacion
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (numero_factura) DO UPDATE SET
+                    fecha_venta = EXCLUDED.fecha_venta,
+                    cantidad_vendida = EXCLUDED.cantidad_vendida,
+                    precio_unitario = EXCLUDED.precio_unitario,
+                    costo_unitario = EXCLUDED.costo_unitario,
+                    venta_total = EXCLUDED.venta_total,
+                    costo_total = EXCLUDED.costo_total,
+                    utilidad_bruta = EXCLUDED.utilidad_bruta,
+                    margen_bruto_pct = EXCLUDED.margen_bruto_pct,
+                    fecha_creacion = EXCLUDED.fecha_creacion
+            """
+
             # Cargar en batches
             start_time = time.time()
             total_loaded = 0
+            fk_violations = 0
+            missing_productos = set()
 
             for i in range(0, len(records), batch_size):
                 batch = records[i:i + batch_size]
-                execute_values(cursor, upsert_query, batch, page_size=1000)
-                conn.commit()
-                total_loaded += len(batch)
+                try:
+                    execute_values(cursor, upsert_query, batch, page_size=1000)
+                    conn.commit()
+                    total_loaded += len(batch)
+                except psycopg2.errors.ForeignKeyViolation:
+                    # Batch falló por FK, intentar uno por uno
+                    conn.rollback()
+                    for record in batch:
+                        try:
+                            cursor.execute(single_insert_query, record)
+                            conn.commit()
+                            total_loaded += 1
+                        except psycopg2.errors.ForeignKeyViolation:
+                            conn.rollback()
+                            fk_violations += 1
+                            producto_id = record[5]  # producto_id está en posición 5
+                            missing_productos.add(producto_id)
+                        except Exception as e:
+                            conn.rollback()
+                            logger.warning(f"     Error insertando registro: {e}")
 
-                if total_loaded % 50000 == 0:
-                    logger.info(f"     ... {total_loaded:,} registros cargados")
+                if (total_loaded + fk_violations) % 50000 == 0:
+                    logger.info(f"     ... {total_loaded:,} cargados, {fk_violations:,} omitidos (FK)")
 
             elapsed = time.time() - start_time
 
@@ -294,11 +336,22 @@ class CSVToPostgresLoader:
             conn.close()
 
             logger.info(f"  ✅ Cargados {total_loaded:,} registros en {elapsed:.1f}s")
-            logger.info(f"     ({total_loaded/elapsed:.0f} registros/segundo)")
+            if fk_violations > 0:
+                logger.warning(f"  ⚠️ Omitidos {fk_violations:,} registros por productos inexistentes")
+                logger.warning(f"     Productos faltantes: {len(missing_productos)} únicos")
+                if len(missing_productos) <= 20:
+                    logger.warning(f"     IDs: {sorted(missing_productos)}")
+                else:
+                    logger.warning(f"     Primeros 20 IDs: {sorted(missing_productos)[:20]}")
+
+            if elapsed > 0:
+                logger.info(f"     ({total_loaded/elapsed:.0f} registros/segundo)")
 
             return {
                 "success": True,
                 "records": total_loaded,
+                "fk_violations": fk_violations,
+                "missing_productos": len(missing_productos),
                 "elapsed_seconds": elapsed,
                 "records_per_second": total_loaded/elapsed if elapsed > 0 else 0
             }
@@ -392,6 +445,7 @@ Formato esperado del CSV (columnas del query Stellar):
     parser.add_argument('--tienda', type=str, help='ID de tienda (ej: tienda_02)')
     parser.add_argument('--preview', action='store_true', help='Solo mostrar preview')
     parser.add_argument('--batch-size', type=int, default=5000, help='Tamano del batch (default: 5000)')
+    parser.add_argument('--disable-fk', action='store_true', help='Deshabilitar FK constraint temporalmente durante la carga')
 
     args = parser.parse_args()
 
@@ -400,23 +454,58 @@ Formato esperado del CSV (columnas del query Stellar):
 
     loader = CSVToPostgresLoader()
 
-    if args.file:
-        if not args.tienda:
-            # Intentar extraer del nombre
-            tienda = loader._extract_tienda_from_filename(args.file)
-            if not tienda:
-                parser.error("Debe especificar --tienda o usar un nombre de archivo con formato tienda_XX")
-            args.tienda = tienda
+    # Deshabilitar FK si se solicita
+    if args.disable_fk:
+        logger.info("  🔓 Deshabilitando FK constraint ventas_producto_id_fkey...")
+        try:
+            conn = psycopg2.connect(loader.postgres_dsn)
+            cursor = conn.cursor()
+            cursor.execute("ALTER TABLE ventas DROP CONSTRAINT IF EXISTS ventas_producto_id_fkey")
+            conn.commit()
+            cursor.close()
+            conn.close()
+            logger.info("  ✅ FK constraint deshabilitado")
+        except Exception as e:
+            logger.warning(f"  ⚠️ No se pudo deshabilitar FK: {e}")
 
-        result = loader.load_csv(args.file, args.tienda, args.preview, args.batch_size)
-        print(f"\nResultado: {result}")
+    try:
+        if args.file:
+            if not args.tienda:
+                # Intentar extraer del nombre
+                tienda = loader._extract_tienda_from_filename(args.file)
+                if not tienda:
+                    parser.error("Debe especificar --tienda o usar un nombre de archivo con formato tienda_XX")
+                args.tienda = tienda
 
-    elif args.dir:
-        results = loader.load_directory(args.dir)
-        print(f"\nResultados: {len(results)} archivos procesados")
-        for r in results:
-            status = "✅" if r.get("success") else "❌"
-            print(f"  {status} {r.get('file', 'unknown')}: {r.get('records', 0):,} registros")
+            result = loader.load_csv(args.file, args.tienda, args.preview, args.batch_size)
+            print(f"\nResultado: {result}")
+
+        elif args.dir:
+            results = loader.load_directory(args.dir)
+            print(f"\nResultados: {len(results)} archivos procesados")
+            for r in results:
+                status = "✅" if r.get("success") else "❌"
+                print(f"  {status} {r.get('file', 'unknown')}: {r.get('records', 0):,} registros")
+
+    finally:
+        # Re-habilitar FK si se deshabilitó
+        if args.disable_fk:
+            logger.info("  🔒 Re-habilitando FK constraint (NOT VALID para no validar datos existentes)...")
+            try:
+                conn = psycopg2.connect(loader.postgres_dsn)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    ALTER TABLE ventas
+                    ADD CONSTRAINT ventas_producto_id_fkey
+                    FOREIGN KEY (producto_id) REFERENCES productos(producto_id)
+                    NOT VALID
+                """)
+                conn.commit()
+                cursor.close()
+                conn.close()
+                logger.info("  ✅ FK constraint re-habilitado (NOT VALID)")
+            except Exception as e:
+                logger.warning(f"  ⚠️ No se pudo re-habilitar FK: {e}")
 
 
 if __name__ == "__main__":

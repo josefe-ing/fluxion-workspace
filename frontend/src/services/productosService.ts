@@ -78,6 +78,8 @@ export interface DetalleTienda {
   ventas_2m: number;
   valor_2m: number;
   ultima_venta: string | null;
+  num_ventas: number;
+  num_devoluciones: number;
 }
 
 export interface ProductoDetalleTiendas {
