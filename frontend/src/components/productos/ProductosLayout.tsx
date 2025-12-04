@@ -5,8 +5,8 @@ const ProductosLayout: React.FC = () => {
   const location = useLocation();
 
   const tabs = [
-    { path: '/productos/analisis-maestro', label: 'Análisis Maestro', icon: '👻' },
-    { path: '/productos/abc-xyz', label: 'ABC-XYZ', icon: '📊' },
+    { path: '/productos/analisis-maestro', label: 'Analisis Maestro', icon: '👻' },
+    { path: '/productos/abc-xyz', label: 'ABC', icon: '📊' },
   ];
 
   return (
@@ -17,7 +17,7 @@ const ProductosLayout: React.FC = () => {
           <div className="py-6">
             <h1 className="text-3xl font-bold text-gray-900">Productos</h1>
             <p className="mt-1 text-sm text-gray-500">
-              Análisis integral de productos con clasificación ABC-XYZ
+              Analisis integral de productos con clasificacion ABC
             </p>
           </div>
 
