@@ -65,6 +65,7 @@ from routers.config_inventario_router import router as config_inventario_router
 from routers.abc_v2_router import router as abc_v2_router
 from routers.nivel_objetivo_router import router as nivel_objetivo_router
 from routers.etl_tracking_router import router as etl_tracking_router
+from routers.generadores_trafico_router import router as generadores_trafico_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
 # Configurar logging
@@ -199,6 +200,7 @@ app.include_router(config_inventario_router)
 app.include_router(abc_v2_router)
 app.include_router(nivel_objetivo_router)
 app.include_router(etl_tracking_router)
+app.include_router(generadores_trafico_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
 # ============================================================================

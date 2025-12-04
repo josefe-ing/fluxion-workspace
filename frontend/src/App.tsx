@@ -18,6 +18,7 @@ import ETLControlCenter from './components/settings/ETLControlCenter';
 import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
 import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
 import AlertasReclasificacion from './components/admin/AlertasReclasificacion';
+import GeneradoresTrafico from './components/admin/GeneradoresTrafico';
 import { getTenantId } from './utils/tenant';
 // import { checkMaintenanceStatus } from './services/maintenanceService';  // Descomentar el lunes
 import ABCXYZAnalysis from './components/productos/ABCXYZAnalysis';
@@ -51,6 +52,7 @@ function ProtectedRoutes() {
         <Route path="administrador/config-inventario" element={<ConfiguracionInventario />} />
         <Route path="administrador/conjuntos" element={<ConjuntosAdmin />} />
         <Route path="administrador/alertas" element={<AlertasReclasificacion />} />
+        <Route path="administrador/generadores-trafico" element={<GeneradoresTrafico />} />
         <Route path="productos" element={<ProductosLayout />}>
           <Route index element={<Navigate to="/productos/analisis-maestro" replace />} />
           <Route path="analisis-maestro" element={<AnalisisMaestro />} />
