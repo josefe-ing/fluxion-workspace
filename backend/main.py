@@ -1727,7 +1727,7 @@ async def get_productos_analisis_maestro(
             pac.rank_cantidad, COALESCE(abc.rank_venta, pac.rank_valor) as rank_valor,
             pac.stock_total, pac.estado
         FROM productos_analisis_cache pac
-        LEFT JOIN productos_abc_cache abc ON abc.producto_id = pac.producto_id
+        LEFT JOIN productos_abc_cache abc ON abc.producto_id = pac.codigo
         WHERE {where_clause}
         ORDER BY
             CASE pac.estado
@@ -1939,7 +1939,7 @@ async def get_productos_analisis_resumen(
             pac.estado,
             COUNT(*) as cantidad
         FROM productos_analisis_cache pac
-        LEFT JOIN productos_abc_cache abc ON abc.producto_id = pac.producto_id
+        LEFT JOIN productos_abc_cache abc ON abc.producto_id = pac.codigo
         {abc_filter}
         GROUP BY COALESCE(abc.clase_abc, 'SIN_VENTAS'), pac.estado
         """
