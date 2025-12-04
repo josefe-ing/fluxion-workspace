@@ -2196,17 +2196,16 @@ async def get_producto_detalle_completo(codigo: str):
                 "coeficiente_variacion": None
             }]
 
-            # 3. Inventarios por ubicación
+            # 3. Inventarios por ubicación (TODAS las ubicaciones, no solo las que tienen stock)
             cursor.execute("""
                 SELECT
-                    i.ubicacion_id,
+                    u.id as ubicacion_id,
                     u.nombre as ubicacion_nombre,
                     u.tipo as tipo_ubicacion,
-                    i.cantidad,
+                    COALESCE(i.cantidad, 0) as cantidad,
                     i.fecha_actualizacion
-                FROM inventario_actual i
-                JOIN ubicaciones u ON u.id = i.ubicacion_id
-                WHERE i.producto_id = %s
+                FROM ubicaciones u
+                LEFT JOIN inventario_actual i ON i.ubicacion_id = u.id AND i.producto_id = %s
                 ORDER BY u.tipo, u.nombre
             """, (codigo,))
 
@@ -2231,12 +2230,6 @@ async def get_producto_detalle_completo(codigo: str):
                     "cantidad_actual": cantidad,
                     "ultima_actualizacion": row[4].isoformat() if row[4] else None
                 })
-
-            # Si no hay inventario en inventario_actual, contar ubicaciones totales
-            if not inventarios:
-                cursor.execute("SELECT COUNT(*) FROM ubicaciones WHERE tipo = 'tienda'")
-                total_tiendas = cursor.fetchone()[0]
-                ubicaciones_sin_stock = total_tiendas
 
             cursor.close()
 
