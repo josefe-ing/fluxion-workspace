@@ -110,6 +110,16 @@ export interface InventarioPorUbicacion {
   ultima_actualizacion: string | null;
 }
 
+export interface ClasificacionGlobal {
+  clasificacion_abc: string;
+  clasificacion_xyz: string | null;
+  matriz: string | null;
+  venta_30d: number;
+  ranking_valor: number | null;
+  penetracion_pct: number | null;
+  gap: number | null;
+}
+
 export interface ProductoDetalleCompleto {
   producto: {
     codigo: string;
@@ -117,6 +127,7 @@ export interface ProductoDetalleCompleto {
     categoria: string;
     marca: string;
   };
+  clasificacion_global: ClasificacionGlobal;
   clasificaciones: ClasificacionPorTienda[];
   inventarios: InventarioPorUbicacion[];
   metricas_globales: {

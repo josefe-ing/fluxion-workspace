@@ -1,21 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import {
   getProductoDetalleCompleto,
-  getVentasSemanales,
-  getHistoricoClasificacion,
   getVentasPorTienda,
   ProductoDetalleCompleto,
-  VentasSemanalesResponse,
-  HistoricoClasificacionResponse,
   VentasPorTiendaResponse,
-  formatCurrency,
   formatNumber,
   getIconoMatriz,
-  getDescripcionMatriz,
-  getEstrategiaMatriz
+  getDescripcionMatriz
 } from '../../services/productosService';
-import ClasificacionHistoricoChart from './charts/ClasificacionHistoricoChart';
 
 interface ProductoDetalleModalProps {
   isOpen: boolean;
@@ -26,11 +18,7 @@ interface ProductoDetalleModalProps {
 const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onClose, codigo }) => {
   const [loading, setLoading] = useState(true);
   const [detalle, setDetalle] = useState<ProductoDetalleCompleto | null>(null);
-  const [ventasSemanales, setVentasSemanales] = useState<VentasSemanalesResponse | null>(null);
-  const [historico, setHistorico] = useState<HistoricoClasificacionResponse | null>(null);
   const [ventasPorTienda, setVentasPorTienda] = useState<VentasPorTiendaResponse | null>(null);
-  const [loadingVentas, setLoadingVentas] = useState(true);
-  const [loadingHistorico, setLoadingHistorico] = useState(true);
   const [loadingVentasPorTienda, setLoadingVentasPorTienda] = useState(true);
   const [periodoSeleccionado, setPeriodoSeleccionado] = useState("2m");
 
@@ -48,24 +36,13 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
 
   const loadData = async () => {
     setLoading(true);
-    setLoadingVentas(true);
-    setLoadingHistorico(true);
     try {
-      // Load product details, sales data, and historico in parallel
-      const [detalleData, ventasData, historicoData] = await Promise.all([
-        getProductoDetalleCompleto(codigo),
-        getVentasSemanales(codigo),
-        getHistoricoClasificacion(codigo)
-      ]);
+      const detalleData = await getProductoDetalleCompleto(codigo);
       setDetalle(detalleData);
-      setVentasSemanales(ventasData);
-      setHistorico(historicoData);
     } catch (error) {
       console.error('Error loading producto detalle:', error);
     } finally {
       setLoading(false);
-      setLoadingVentas(false);
-      setLoadingHistorico(false);
     }
   };
 
@@ -81,105 +58,11 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
     }
   };
 
-  // Calculate insights based on classifications
-  const getInsights = () => {
-    if (!detalle || !ventasSemanales) return [];
-
-    const insights: { type: 'info' | 'warning' | 'success' | 'error'; text: string }[] = [];
-
-    // Get most common classification
-    const clasificacionCounts: Record<string, number> = {};
-    detalle.clasificaciones.forEach(c => {
-      const matriz = c.matriz || `${c.clasificacion_abc}${c.clasificacion_xyz}`;
-      clasificacionCounts[matriz] = (clasificacionCounts[matriz] || 0) + 1;
-    });
-
-    const mostCommonMatriz = Object.entries(clasificacionCounts)
-      .sort((a, b) => b[1] - a[1])[0]?.[0];
-
-    if (mostCommonMatriz) {
-      const abc = mostCommonMatriz[0];
-      const xyz = mostCommonMatriz[1];
-
-      // ABC insights
-      if (abc === 'A') {
-        insights.push({
-          type: 'success',
-          text: `Clasificación A: Este producto es de alta rotación y representa un alto porcentaje del valor de ventas. Mantener stock óptimo es crítico.`
-        });
-      } else if (abc === 'B') {
-        insights.push({
-          type: 'info',
-          text: `Clasificación B: Este producto tiene rotación media. Revisar periódicamente para optimizar costos.`
-        });
-      } else if (abc === 'C') {
-        insights.push({
-          type: 'warning',
-          text: `Clasificación C: Este producto tiene baja rotación. Considerar si es necesario mantener en inventario.`
-        });
-      }
-
-      // XYZ insights with CV
-      const cv = ventasSemanales.metricas.coeficiente_variacion;
-      if (xyz === 'X' && cv !== null) {
-        insights.push({
-          type: 'success',
-          text: `Clasificación X (CV: ${cv.toFixed(2)}): Demanda estable y predecible. Ideal para planificación de inventario.`
-        });
-      } else if (xyz === 'Y' && cv !== null) {
-        insights.push({
-          type: 'info',
-          text: `Clasificación Y (CV: ${cv.toFixed(2)}): Demanda variable. Incrementar frecuencia de revisión y ajustar según temporalidad.`
-        });
-      } else if (xyz === 'Z' && cv !== null) {
-        insights.push({
-          type: 'warning',
-          text: `Clasificación Z (CV: ${cv.toFixed(2)}): Demanda errática e impredecible. Considerar stock de seguridad alto o proveedores alternativos.`
-        });
-      }
-
-      // Strategy recommendation
-      const estrategia = getEstrategiaMatriz(mostCommonMatriz);
-      insights.push({
-        type: 'info',
-        text: `Estrategia recomendada: ${estrategia}`
-      });
-    }
-
-    // Stock insights
-    const sinStock = detalle.metricas_globales.ubicaciones_sin_stock;
-    const totalUbicaciones = detalle.metricas_globales.total_ubicaciones;
-    if (sinStock > totalUbicaciones * 0.5) {
-      insights.push({
-        type: 'error',
-        text: `Alerta: ${sinStock} de ${totalUbicaciones} ubicaciones están sin stock. Revisar urgentemente.`
-      });
-    } else if (sinStock > 0) {
-      insights.push({
-        type: 'warning',
-        text: `${sinStock} ubicaciones sin stock. Considerar redistribución o reabastecimiento.`
-      });
-    }
-
-    return insights;
-  };
-
-  // Calculate trend based on recent weeks
-  const getTrend = (semanas: VentasSemanalesResponse['semanas']) => {
-    if (semanas.length < 8) return '→';
-
-    const recent4 = semanas.slice(-4).reduce((sum, s) => sum + s.unidades, 0) / 4;
-    const previous4 = semanas.slice(-8, -4).reduce((sum, s) => sum + s.unidades, 0) / 4;
-
-    if (recent4 > previous4 * 1.1) return '↑';
-    if (recent4 < previous4 * 0.9) return '↓';
-    return '→';
-  };
-
   if (!isOpen) return null;
 
-  const insights = getInsights();
-  const trend = ventasSemanales ? getTrend(ventasSemanales.semanas) : '→';
+  // Obtener clasificación global del producto
+  const clasificacionGlobal = detalle?.clasificacion_global;
+  const claseABC = clasificacionGlobal?.clasificacion_abc || 'SIN_VENTAS';
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -208,161 +91,94 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
           </div>
         ) : (
           <div className="p-6 space-y-6">
-            {/* Métricas Globales */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-blue-50 rounded-lg p-4">
-                <div className="text-sm text-blue-600 font-medium">Total Stock</div>
-                <div className="text-2xl font-bold text-blue-900 mt-1">
-                  {detalle?.metricas_globales.total_inventario.toFixed(0)}
-                </div>
-              </div>
-              <div className="bg-green-50 rounded-lg p-4">
-                <div className="text-sm text-green-600 font-medium">Con Stock</div>
-                <div className="text-2xl font-bold text-green-900 mt-1">
-                  {detalle?.metricas_globales.ubicaciones_con_stock}/{detalle?.metricas_globales.total_ubicaciones}
-                </div>
-              </div>
-              <div className="bg-red-50 rounded-lg p-4">
-                <div className="text-sm text-red-600 font-medium">Sin Stock</div>
-                <div className="text-2xl font-bold text-red-900 mt-1">
-                  {detalle?.metricas_globales.ubicaciones_sin_stock}/{detalle?.metricas_globales.total_ubicaciones}
-                </div>
-              </div>
-              <div className="bg-purple-50 rounded-lg p-4">
-                <div className="text-sm text-purple-600 font-medium">Tendencia</div>
-                <div className="text-4xl font-bold text-purple-900 mt-1 text-center">
-                  {trend}
-                </div>
-              </div>
-            </div>
+            {/* Clasificación ABC Explícita */}
+            {clasificacionGlobal && (
+              <div className={`rounded-lg p-6 border-2 ${
+                claseABC === 'A' ? 'bg-red-50 border-red-300' :
+                claseABC === 'B' ? 'bg-yellow-50 border-yellow-300' :
+                claseABC === 'C' ? 'bg-gray-50 border-gray-300' :
+                'bg-blue-50 border-blue-300'
+              }`}>
+                <div className="flex items-start gap-6">
+                  {/* Badge Grande */}
+                  <div className={`flex-shrink-0 w-24 h-24 rounded-xl flex items-center justify-center text-5xl font-black ${
+                    claseABC === 'A' ? 'bg-red-600 text-white' :
+                    claseABC === 'B' ? 'bg-yellow-500 text-white' :
+                    claseABC === 'C' ? 'bg-gray-500 text-white' :
+                    'bg-blue-500 text-white'
+                  }`}>
+                    {claseABC}
+                  </div>
 
-            {/* Insights Panel */}
-            {insights.length > 0 && (
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  💡 Insights y Recomendaciones
-                </h3>
-                <div className="space-y-3">
-                  {insights.map((insight, idx) => (
-                    <div
-                      key={idx}
-                      className={`flex items-start gap-3 p-3 rounded-lg ${
-                        insight.type === 'success' ? 'bg-green-50 border border-green-200' :
-                        insight.type === 'warning' ? 'bg-yellow-50 border border-yellow-200' :
-                        insight.type === 'error' ? 'bg-red-50 border border-red-200' :
-                        'bg-blue-50 border border-blue-200'
-                      }`}
-                    >
-                      <span className="text-lg">
-                        {insight.type === 'success' ? '✅' :
-                         insight.type === 'warning' ? '⚠️' :
-                         insight.type === 'error' ? '🚨' :
-                         'ℹ️'}
-                      </span>
-                      <p className={`text-sm flex-1 ${
-                        insight.type === 'success' ? 'text-green-800' :
-                        insight.type === 'warning' ? 'text-yellow-800' :
-                        insight.type === 'error' ? 'text-red-800' :
-                        'text-blue-800'
-                      }`}>
-                        {insight.text}
-                      </p>
+                  {/* Explicación */}
+                  <div className="flex-1">
+                    <h3 className={`text-xl font-bold mb-2 ${
+                      claseABC === 'A' ? 'text-red-800' :
+                      claseABC === 'B' ? 'text-yellow-800' :
+                      claseABC === 'C' ? 'text-gray-800' :
+                      'text-blue-800'
+                    }`}>
+                      {claseABC === 'A' && 'Producto Clase A - Alto Valor'}
+                      {claseABC === 'B' && 'Producto Clase B - Valor Medio'}
+                      {claseABC === 'C' && 'Producto Clase C - Bajo Valor'}
+                      {claseABC === 'SIN_VENTAS' && 'Sin Ventas Recientes'}
+                    </h3>
+
+                    <p className="text-gray-700 mb-4">
+                      {claseABC === 'A' && 'Este producto forma parte del 80% del valor total de ventas. Son los productos que generan la mayor parte de los ingresos y requieren atención prioritaria en inventario.'}
+                      {claseABC === 'B' && 'Este producto forma parte del siguiente 15% del valor de ventas (entre 80% y 95% acumulado). Tienen importancia moderada y requieren revisión periódica.'}
+                      {claseABC === 'C' && 'Este producto representa solo el 5% restante del valor de ventas. Son productos de baja rotación económica.'}
+                      {claseABC === 'SIN_VENTAS' && 'Este producto no ha registrado ventas en los últimos 30 días.'}
+                    </p>
+
+                    {/* Métricas Clave */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-white rounded-lg p-3 border">
+                        <div className="text-xs text-gray-500 uppercase">Ranking por Venta</div>
+                        <div className="text-xl font-bold text-gray-900">
+                          #{clasificacionGlobal.ranking_valor || '-'}
+                        </div>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 border">
+                        <div className="text-xs text-gray-500 uppercase">Venta 30 días</div>
+                        <div className="text-xl font-bold text-gray-900">
+                          ${formatNumber(clasificacionGlobal.venta_30d || 0)}
+                        </div>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 border">
+                        <div className="text-xs text-gray-500 uppercase">Penetración</div>
+                        <div className="text-xl font-bold text-gray-900">
+                          {clasificacionGlobal.penetracion_pct?.toFixed(1) || 0}%
+                        </div>
+                        <div className="text-xs text-gray-400">de los tickets</div>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 border">
+                        <div className="text-xs text-gray-500 uppercase">Stock Total</div>
+                        <div className="text-xl font-bold text-gray-900">
+                          {detalle?.metricas_globales.total_inventario.toFixed(0)}
+                        </div>
+                      </div>
                     </div>
-                  ))}
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Sales Chart */}
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900">
-                  Ventas Semanales - Últimas 52 Semanas
-                </h3>
-                {ventasSemanales && (
-                  <p className="text-sm text-gray-500 mt-1">
-                    Promedio semanal: {ventasSemanales.metricas.promedio_semanal.toFixed(0)} unidades
-                    {ventasSemanales.metricas.coeficiente_variacion !== null && (
-                      <> • CV: {ventasSemanales.metricas.coeficiente_variacion.toFixed(2)}</>
-                    )}
-                  </p>
-                )}
+            {/* Resumen de Ubicaciones */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                <div className="text-sm text-green-600 font-medium">Tiendas con Stock</div>
+                <div className="text-3xl font-bold text-green-900 mt-1">
+                  {detalle?.metricas_globales.ubicaciones_con_stock}
+                  <span className="text-lg font-normal text-green-600">/{detalle?.metricas_globales.total_ubicaciones}</span>
+                </div>
               </div>
-              <div className="p-6">
-                {loadingVentas ? (
-                  <div className="flex items-center justify-center h-64">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                  </div>
-                ) : ventasSemanales && ventasSemanales.semanas.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={ventasSemanales.semanas}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis
-                        dataKey="semana"
-                        tick={{ fontSize: 11 }}
-                        interval="preserveStartEnd"
-                      />
-                      <YAxis
-                        label={{ value: 'Unidades', angle: -90, position: 'insideLeft' }}
-                      />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (active && payload && payload.length) {
-                            const data = payload[0].payload;
-                            return (
-                              <div className="bg-white p-3 border border-gray-200 rounded shadow-lg">
-                                <p className="font-semibold text-gray-900">{data.semana}</p>
-                                <p className="text-sm text-blue-600">Unidades: {data.unidades.toFixed(0)}</p>
-                                <p className="text-sm text-green-600">Valor: {formatCurrency(data.valor)}</p>
-                                <p className="text-sm text-gray-500">Promedio diario: {data.promedio_diario.toFixed(1)}</p>
-                              </div>
-                            );
-                          }
-                          return null;
-                        }}
-                      />
-                      <Legend />
-                      <Line
-                        type="monotone"
-                        dataKey="unidades"
-                        stroke="#3b82f6"
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                        activeDot={{ r: 5 }}
-                        name="Unidades vendidas"
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="text-center text-gray-500 py-12">
-                    No hay datos de ventas disponibles para este producto
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Histórico de Clasificación */}
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900">
-                  Histórico de Clasificación ABC-XYZ
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Evolución de la clasificación del producto en los últimos meses
-                </p>
-              </div>
-              <div className="p-6">
-                {loadingHistorico ? (
-                  <div className="flex items-center justify-center h-64">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                  </div>
-                ) : historico ? (
-                  <ClasificacionHistoricoChart historico={historico} />
-                ) : (
-                  <div className="text-center text-gray-500 py-12">
-                    No hay datos históricos disponibles para este producto
-                  </div>
-                )}
+              <div className="bg-red-50 rounded-lg p-4 border border-red-200">
+                <div className="text-sm text-red-600 font-medium">Tiendas sin Stock</div>
+                <div className="text-3xl font-bold text-red-900 mt-1">
+                  {detalle?.metricas_globales.ubicaciones_sin_stock}
+                  <span className="text-lg font-normal text-red-600">/{detalle?.metricas_globales.total_ubicaciones}</span>
+                </div>
               </div>
             </div>
 
