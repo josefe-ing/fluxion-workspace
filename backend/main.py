@@ -1508,18 +1508,15 @@ def calculate_ventas_semanales_metricas(semanas: List[Dict]) -> Dict[str, Any]:
 @app.get("/api/productos/matriz-abc-xyz", tags=["Productos"])
 async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
     """
-    Calcula y retorna clasificación ABC on-demand (PostgreSQL v2.0)
+    Retorna clasificación ABC desde tabla cache pre-calculada (productos_abc_cache)
 
-    ABC: Clasificación por valor de consumo (Principio de Pareto)
+    ABC: Clasificación por valor de venta (Principio de Pareto 80/15/5)
         - A: Productos que acumulan 80% del valor (top performers)
         - B: Productos que acumulan 80-95% del valor (middle performers)
         - C: Productos que acumulan 95-100% del valor (low performers)
 
-    IMPORTANTE: Calcula ABC POR TIENDA, luego cuenta productos 100% consistentes.
-    Un producto aparece como "A" solo si es A en TODAS las tiendas donde se vende.
-
-    Args:
-        ubicacion_id: Filtro por tienda (opcional, None = todas las tiendas)
+    NOTA: Por ahora ignora ubicacion_id, la cache es global.
+    TODO: Implementar cache por ubicación si se necesita.
 
     Returns:
         {
@@ -1529,17 +1526,75 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
                 "A": { "count": 15, "porcentaje_productos": 10.0, "porcentaje_valor": 80.0 },
                 "B": { "count": 45, "porcentaje_productos": 30.0, "porcentaje_valor": 15.0 },
                 "C": { "count": 90, "porcentaje_productos": 60.0, "porcentaje_valor": 5.0 }
-            }
+            },
+            "resumen_xyz": {}  // TODO: Implementar XYZ
         }
     """
     try:
-        logger.info(f"📊 Calculando clasificación ABC on-demand (ubicacion_id={ubicacion_id})")
-        resultado = calcular_abc_xyz_on_demand(ubicacion_id)
-        logger.info(f"✅ Clasificación ABC calculada: {resultado['total_productos']} productos")
-        return resultado
+        logger.info(f"📊 Obteniendo clasificación ABC desde cache (ubicacion_id={ubicacion_id})")
+
+        # Query a la tabla cache
+        query = """
+            SELECT
+                clase_abc,
+                COUNT(*) as count,
+                SUM(venta_30d) as total_valor,
+                SUM(porcentaje_venta) as porcentaje_valor_acum
+            FROM productos_abc_cache
+            WHERE clase_abc IS NOT NULL
+            GROUP BY clase_abc
+            ORDER BY clase_abc
+        """
+
+        results = execute_query_dict(query)
+
+        # Calcular totales
+        total_productos = sum(int(r['count']) for r in results) if results else 0
+        total_valor = sum(float(r['total_valor'] or 0) for r in results) if results else 0
+
+        # Construir resumen ABC
+        resumen_abc = {
+            'A': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0},
+            'B': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0},
+            'C': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0}
+        }
+
+        for row in results:
+            abc = row['clase_abc']
+            if abc in resumen_abc:
+                count = int(row['count'])
+                valor = float(row['total_valor']) if row['total_valor'] else 0.0
+
+                resumen_abc[abc]['count'] = count
+                resumen_abc[abc]['porcentaje_productos'] = round(
+                    float(count) * 100.0 / float(total_productos), 2
+                ) if total_productos > 0 else 0
+                resumen_abc[abc]['porcentaje_valor'] = round(
+                    valor * 100.0 / float(total_valor), 2
+                ) if total_valor > 0 else 0
+
+        # Resumen XYZ vacío por ahora (TODO: implementar)
+        resumen_xyz = {
+            'X': {'count': 0, 'porcentaje_productos': 0},
+            'Y': {'count': 0, 'porcentaje_productos': 0},
+            'Z': {'count': 0, 'porcentaje_productos': 0}
+        }
+
+        # Matriz vacía por ahora (TODO: implementar cuando tengamos XYZ)
+        matriz = {}
+
+        logger.info(f"✅ Clasificación ABC obtenida desde cache: {total_productos} productos")
+
+        return {
+            'total_productos': int(total_productos),
+            'total_valor': round(float(total_valor), 2),
+            'resumen_abc': resumen_abc,
+            'resumen_xyz': resumen_xyz,
+            'matriz': matriz
+        }
 
     except Exception as e:
-        logger.error(f"Error calculando clasificación ABC: {str(e)}")
+        logger.error(f"Error obteniendo clasificación ABC desde cache: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @app.get("/api/productos/lista-por-matriz", tags=["Productos"])
@@ -1550,122 +1605,58 @@ async def get_productos_por_matriz(
     offset: int = 0
 ):
     """
-    Retorna lista de productos filtrada por clasificación ABC-XYZ (PostgreSQL v2.0)
-
-    Calcula ABC-XYZ on-demand y filtra resultados.
+    Retorna lista de productos desde tabla cache pre-calculada (productos_abc_cache)
 
     Args:
-        matriz: "AX", "AY", "AZ", "BX", "BY", "BZ", "CX", "CY", "CZ" (opcional, None = todos)
-        ubicacion_id: Filtro por tienda (opcional)
+        matriz: Filtro por clase ABC: "A", "B", "C" (opcional, None = todos)
+                Por ahora ignora XYZ ya que no está implementado en la cache
+        ubicacion_id: Filtro por tienda (opcional, ignorado por ahora - cache es global)
         limit: Cantidad máxima de productos a retornar
         offset: Offset para paginación
 
     Returns:
-        Lista de productos con clasificación ABC-XYZ, stock e insights
+        Lista de productos con clasificación ABC, stock e insights
     """
     try:
-        ubicacion_filter = ""
+        # Construir filtro por clase ABC
+        # Si matriz es algo como "AX", extraemos solo la primera letra (clase ABC)
+        clase_abc = None
+        if matriz:
+            clase_abc = matriz[0] if matriz in ['A', 'B', 'C', 'AX', 'AY', 'AZ', 'BX', 'BY', 'BZ', 'CX', 'CY', 'CZ'] else matriz
+
+        # Query simplificada usando tabla cache
+        where_clauses = []
         params = []
 
-        if ubicacion_id:
-            ubicacion_filter = "AND v.ubicacion_id = %s"
-            params.append(ubicacion_id)
+        if clase_abc and clase_abc in ['A', 'B', 'C']:
+            where_clauses.append("c.clase_abc = %s")
+            params.append(clase_abc)
 
-        # SIEMPRE calculamos ABC por producto-tienda
-        # Cuando NO hay filtro, agregamos columnas de "tiendas_con_clasificacion"
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
         query = f"""
-        WITH ventas_6m AS (
-            -- Ventas últimos 6 meses por producto-tienda
             SELECT
-                v.producto_id,
-                v.ubicacion_id,
-                SUM(v.cantidad_vendida * COALESCE(v.costo_unitario, 0)) as valor_consumo
-            FROM ventas v
-            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '6 months'
-                {ubicacion_filter}
-            GROUP BY v.producto_id, v.ubicacion_id
-        ),
-        abc_classification AS (
-            -- Clasificación ABC POR TIENDA (solo productos con ventas)
-            SELECT
-                producto_id,
-                ubicacion_id,
-                valor_consumo,
-                SUM(valor_consumo) OVER (
-                    PARTITION BY ubicacion_id
-                    ORDER BY valor_consumo DESC
-                ) / NULLIF(SUM(valor_consumo) OVER (PARTITION BY ubicacion_id), 0) * 100 as pct_acumulado,
-                CASE
-                    WHEN SUM(valor_consumo) OVER (
-                        PARTITION BY ubicacion_id
-                        ORDER BY valor_consumo DESC
-                    ) / NULLIF(SUM(valor_consumo) OVER (PARTITION BY ubicacion_id), 0) * 100 <= 80 THEN 'A'
-                    WHEN SUM(valor_consumo) OVER (
-                        PARTITION BY ubicacion_id
-                        ORDER BY valor_consumo DESC
-                    ) / NULLIF(SUM(valor_consumo) OVER (PARTITION BY ubicacion_id), 0) * 100 <= 95 THEN 'B'
-                    ELSE 'C'
-                END as clasificacion_abc,
-                ROW_NUMBER() OVER (
-                    PARTITION BY ubicacion_id
-                    ORDER BY valor_consumo DESC
-                ) as ranking_en_tienda
-            FROM ventas_6m
-            WHERE valor_consumo > 0
-        ),
-        ventas_agregadas AS (
-            -- Agregar clasificación por producto (todas las tiendas)
-            SELECT
-                producto_id,
-                SUM(valor_consumo) as valor_total,
-                COUNT(DISTINCT ubicacion_id) as total_tiendas_con_venta,
-                -- Clasificación ABC global basada en el valor total
-                CASE
-                    WHEN SUM(SUM(valor_consumo)) OVER (ORDER BY SUM(valor_consumo) DESC)
-                         / NULLIF(SUM(SUM(valor_consumo)) OVER (), 0) * 100 <= 80 THEN 'A'
-                    WHEN SUM(SUM(valor_consumo)) OVER (ORDER BY SUM(valor_consumo) DESC)
-                         / NULLIF(SUM(SUM(valor_consumo)) OVER (), 0) * 100 <= 95 THEN 'B'
-                    ELSE 'C'
-                END as clasificacion_abc_global,
-                SUM(SUM(valor_consumo)) OVER (ORDER BY SUM(valor_consumo) DESC)
-                    / NULLIF(SUM(SUM(valor_consumo)) OVER (), 0) * 100 as pct_acumulado,
-                ROW_NUMBER() OVER (ORDER BY SUM(valor_consumo) DESC) as ranking_global
-            FROM abc_classification
-            GROUP BY producto_id
-        ),
-        stock_productos AS (
-            SELECT
-                producto_id,
-                SUM(cantidad) as stock_actual
-            FROM inventario_actual
-            {f"WHERE ubicacion_id = %s" if ubicacion_id else ""}
-            GROUP BY producto_id
-        )
-        SELECT
-            p.id as codigo_producto,
-            p.nombre as descripcion,
-            p.categoria,
-            COALESCE(va.clasificacion_abc_global, 'SIN_VENTAS') as clasificacion_abc,
-            COALESCE(va.valor_total, 0) as valor_consumo_total,
-            COALESCE(va.pct_acumulado, 0) as porcentaje_valor,
-            COALESCE(va.ranking_global, 999999) as ranking_valor,
-            {'COALESCE(va.total_tiendas_con_venta, 0) as tiendas_con_clasificacion,' if not ubicacion_id else ''}
-            {'(SELECT COUNT(DISTINCT id) FROM ubicaciones) as total_tiendas,' if not ubicacion_id else ''}
-            {f'ROUND((COALESCE(va.total_tiendas_con_venta, 0)::float / NULLIF((SELECT COUNT(DISTINCT id) FROM ubicaciones), 0) * 100)::numeric, 1) as porcentaje_tiendas,' if not ubicacion_id else ''}
-            COALESCE(sp.stock_actual, 0) as stock_actual
-        FROM productos p
-        LEFT JOIN ventas_agregadas va ON p.id = va.producto_id
-        LEFT JOIN stock_productos sp ON p.id = sp.producto_id
-        {f"WHERE va.clasificacion_abc_global = '{matriz}'" if matriz and matriz != 'SIN_VENTAS' else ""}
-        {f"WHERE va.clasificacion_abc_global IS NULL" if matriz == 'SIN_VENTAS' else ""}
-        ORDER BY COALESCE(va.valor_total, 0) DESC, p.nombre ASC
-        LIMIT %s OFFSET %s
+                p.id as codigo_producto,
+                p.nombre as descripcion,
+                p.categoria,
+                COALESCE(c.clase_abc, 'SIN_VENTAS') as clasificacion_abc,
+                NULL as clasificacion_xyz,  -- TODO: Implementar XYZ
+                COALESCE(c.venta_30d, 0) as valor_consumo_total,
+                COALESCE(c.porcentaje_venta, 0) as porcentaje_valor,
+                COALESCE(c.rank_venta, 999999) as ranking_valor,
+                COALESCE(i.stock_total, 0) as stock_actual,
+                NULL as coeficiente_variacion  -- TODO: Implementar XYZ
+            FROM productos p
+            LEFT JOIN productos_abc_cache c ON c.producto_id = p.id
+            LEFT JOIN (
+                SELECT producto_id, SUM(cantidad) as stock_total
+                FROM inventario_actual
+                GROUP BY producto_id
+            ) i ON i.producto_id = p.id
+            WHERE {where_sql}
+            ORDER BY COALESCE(c.venta_30d, 0) DESC, p.nombre ASC
+            LIMIT %s OFFSET %s
         """
-
-        # Agregar ubicacion_id a params para stock_productos si aplica
-        if ubicacion_id:
-            params.append(ubicacion_id)
 
         params.extend([limit, offset])
         results = execute_query_dict(query, tuple(params))
@@ -2137,107 +2128,89 @@ async def get_producto_detalle_tiendas(codigo: str):
 @app.get("/api/productos/{codigo}/detalle-completo", tags=["Productos"])
 async def get_producto_detalle_completo(codigo: str):
     """
-    Vista 360° de un producto: info básica, clasificaciones por tienda,
-    inventarios, velocidades de venta
+    Vista 360° de un producto: info básica, clasificación ABC global,
+    inventarios por tienda.
 
     Args:
-        codigo: Código del producto
+        codigo: Código del producto (ej: "003289")
 
     Returns:
         Objeto completo con toda la información del producto
     """
     try:
         with get_db_connection() as conn:
-            # 1. Información básica del producto
-            # Primero buscar en inventario, si no está, buscar en ventas históricas
-            producto_query_inv = """
-                SELECT DISTINCT
-                    codigo_producto as codigo,
-                    descripcion_producto as descripcion,
-                    categoria,
-                    marca
-                FROM inventario_raw
-                WHERE codigo_producto = ?
+            cursor = conn.cursor()
+
+            # 1. Información básica del producto desde tabla productos
+            cursor.execute("""
+                SELECT
+                    p.id,
+                    p.codigo,
+                    p.nombre as descripcion,
+                    p.categoria,
+                    p.marca,
+                    c.clase_abc,
+                    c.venta_30d,
+                    c.rank_venta,
+                    c.penetracion_pct,
+                    c.gap
+                FROM productos p
+                LEFT JOIN productos_abc_cache c ON c.producto_id = p.id
+                WHERE p.id = %s OR p.codigo = %s
                 LIMIT 1
-            """
+            """, (codigo, codigo))
 
-            producto_row = conn.execute(producto_query_inv, [codigo]).fetchone()
-
-            # Si no está en inventario, buscar en ventas históricas
-            if not producto_row:
-                producto_query_ventas = """
-                    SELECT
-                        codigo_producto,
-                        descripcion_producto,
-                        categoria_producto,
-                        marca_producto
-                    FROM ventas_raw
-                    WHERE codigo_producto = ?
-                    GROUP BY codigo_producto, descripcion_producto, categoria_producto, marca_producto
-                    ORDER BY COUNT(*) DESC
-                    LIMIT 1
-                """
-                producto_row = conn.execute(producto_query_ventas, [codigo]).fetchone()
+            producto_row = cursor.fetchone()
 
             if not producto_row:
                 raise HTTPException(status_code=404, detail=f"Producto {codigo} no encontrado")
 
             producto_info = {
-                "codigo": producto_row[0],
-                "descripcion": producto_row[1],
-                "categoria": producto_row[2],
-                "marca": producto_row[3] if len(producto_row) > 3 else None
+                "codigo": producto_row[1] or producto_row[0],
+                "descripcion": producto_row[2],
+                "categoria": producto_row[3],
+                "marca": producto_row[4]
             }
 
-            # 2. Clasificaciones ABC-XYZ por ubicación
-            clasificaciones_query = """
-                SELECT
-                    abc.ubicacion_id,
-                    COALESCE(
-                        (SELECT DISTINCT ubicacion_nombre FROM inventario_raw WHERE ubicacion_id = abc.ubicacion_id LIMIT 1),
-                        (SELECT DISTINCT ubicacion_nombre FROM ventas_raw WHERE ubicacion_id = abc.ubicacion_id LIMIT 1),
-                        abc.ubicacion_id
-                    ) as ubicacion_nombre,
-                    abc.clasificacion_abc_valor,
-                    abc.clasificacion_xyz,
-                    abc.matriz_abc_xyz,
-                    abc.ranking_valor,
-                    abc.valor_consumo_total,
-                    abc.coeficiente_variacion
-                FROM productos_abc_v2 abc
-                WHERE abc.codigo_producto = ?
-                ORDER BY abc.ranking_valor ASC
-            """
+            # Clasificación ABC global (desde cache)
+            clasificacion_global = {
+                "clasificacion_abc": producto_row[5] or "SIN_VENTAS",
+                "clasificacion_xyz": None,  # TODO: Implementar XYZ
+                "matriz": producto_row[5] if producto_row[5] else None,
+                "venta_30d": float(producto_row[6]) if producto_row[6] else 0,
+                "ranking_valor": producto_row[7],
+                "penetracion_pct": float(producto_row[8]) if producto_row[8] else 0,
+                "gap": producto_row[9]
+            }
 
-            clasif_result = conn.execute(clasificaciones_query, [codigo]).fetchall()
-            clasificaciones = []
-            for row in clasif_result:
-                clasificaciones.append({
-                    "ubicacion_id": row[0],
-                    "ubicacion_nombre": row[1],
-                    "clasificacion_abc": row[2],
-                    "clasificacion_xyz": row[3],
-                    "matriz": row[4],
-                    "ranking_valor": row[5],
-                    "valor_consumo": float(row[6]) if row[6] else 0,
-                    "coeficiente_variacion": float(row[7]) if row[7] else None
-                })
+            # 2. Clasificaciones por ubicación (vacío por ahora - ABC es global)
+            # En el futuro se puede implementar ABC por tienda
+            clasificaciones = [{
+                "ubicacion_id": "GLOBAL",
+                "ubicacion_nombre": "Todas las tiendas",
+                "clasificacion_abc": clasificacion_global["clasificacion_abc"],
+                "clasificacion_xyz": None,
+                "matriz": clasificacion_global["matriz"],
+                "ranking_valor": clasificacion_global["ranking_valor"],
+                "valor_consumo": clasificacion_global["venta_30d"],
+                "coeficiente_variacion": None
+            }]
 
             # 3. Inventarios por ubicación
-            inventarios_query = """
+            cursor.execute("""
                 SELECT
-                    ubicacion_id,
-                    ubicacion_nombre,
-                    tipo_ubicacion,
-                    cantidad_actual,
-                    fecha_extraccion as ultima_actualizacion
-                FROM inventario_raw
-                WHERE codigo_producto = ?
-                    AND activo = true
-                ORDER BY tipo_ubicacion, ubicacion_nombre
-            """
+                    i.ubicacion_id,
+                    u.nombre as ubicacion_nombre,
+                    u.tipo as tipo_ubicacion,
+                    i.cantidad,
+                    i.fecha_actualizacion
+                FROM inventario_actual i
+                JOIN ubicaciones u ON u.id = i.ubicacion_id
+                WHERE i.producto_id = %s
+                ORDER BY u.tipo, u.nombre
+            """, (codigo,))
 
-            inv_result = conn.execute(inventarios_query, [codigo]).fetchall()
+            inv_result = cursor.fetchall()
             inventarios = []
             total_inventario = 0
             ubicaciones_con_stock = 0
@@ -2256,19 +2229,28 @@ async def get_producto_detalle_completo(codigo: str):
                     "ubicacion_nombre": row[1],
                     "tipo_ubicacion": row[2],
                     "cantidad_actual": cantidad,
-                    "ultima_actualizacion": str(row[4]) if row[4] else None
+                    "ultima_actualizacion": row[4].isoformat() if row[4] else None
                 })
+
+            # Si no hay inventario en inventario_actual, contar ubicaciones totales
+            if not inventarios:
+                cursor.execute("SELECT COUNT(*) FROM ubicaciones WHERE tipo = 'tienda'")
+                total_tiendas = cursor.fetchone()[0]
+                ubicaciones_sin_stock = total_tiendas
+
+            cursor.close()
 
             # 4. Métricas globales
             metricas_globales = {
                 "total_inventario": total_inventario,
                 "ubicaciones_con_stock": ubicaciones_con_stock,
                 "ubicaciones_sin_stock": ubicaciones_sin_stock,
-                "total_ubicaciones": ubicaciones_con_stock + ubicaciones_sin_stock
+                "total_ubicaciones": ubicaciones_con_stock + ubicaciones_sin_stock if inventarios else ubicaciones_sin_stock
             }
 
             return {
                 "producto": producto_info,
+                "clasificacion_global": clasificacion_global,
                 "clasificaciones": clasificaciones,
                 "inventarios": inventarios,
                 "metricas_globales": metricas_globales
@@ -2297,59 +2279,42 @@ async def get_ventas_semanales(codigo: str, ubicacion_id: Optional[str] = None):
     """
     try:
         with get_db_connection() as conn:
-            # Query para ventas semanales
+            cursor = conn.cursor()
+
+            # Query PostgreSQL para ventas semanales
             if ubicacion_id:
-                query = """
-                    WITH ventas_semanales AS (
-                        SELECT
-                            STRFTIME(TRY_CAST(fecha AS DATE), '%Y-W%W') as semana,
-                            TRY_CAST(fecha AS DATE) as fecha,
-                            SUM(TRY_CAST(cantidad_vendida AS DOUBLE)) as unidades,
-                            SUM(TRY_CAST(venta_total AS DOUBLE)) as valor
-                        FROM ventas_raw
-                        WHERE codigo_producto = ?
-                            AND ubicacion_id = ?
-                            AND TRY_CAST(fecha AS DATE) >= CURRENT_DATE - INTERVAL '52 weeks'
-                        GROUP BY STRFTIME(TRY_CAST(fecha AS DATE), '%Y-W%W'), TRY_CAST(fecha AS DATE)
-                    )
+                cursor.execute("""
                     SELECT
-                        semana,
-                        SUM(unidades) as unidades,
-                        SUM(valor) as valor,
-                        SUM(unidades) / 7.0 as promedio_diario,
-                        MIN(fecha) as fecha_inicio_semana
-                    FROM ventas_semanales
-                    GROUP BY semana
+                        TO_CHAR(fecha_venta, 'IYYY-"W"IW') as semana,
+                        SUM(cantidad_vendida) as unidades,
+                        SUM(venta_total) as valor,
+                        SUM(cantidad_vendida) / 7.0 as promedio_diario,
+                        MIN(fecha_venta) as fecha_inicio_semana
+                    FROM ventas
+                    WHERE producto_id = %s
+                        AND ubicacion_id = %s
+                        AND fecha_venta >= CURRENT_DATE - INTERVAL '52 weeks'
+                    GROUP BY TO_CHAR(fecha_venta, 'IYYY-"W"IW')
                     ORDER BY semana ASC
-                """
-                params = [codigo, ubicacion_id]
+                """, (codigo, ubicacion_id))
             else:
                 # Agregar todas las ubicaciones
-                query = """
-                    WITH ventas_semanales AS (
-                        SELECT
-                            STRFTIME(TRY_CAST(fecha AS DATE), '%Y-W%W') as semana,
-                            TRY_CAST(fecha AS DATE) as fecha,
-                            SUM(TRY_CAST(cantidad_vendida AS DOUBLE)) as unidades,
-                            SUM(TRY_CAST(venta_total AS DOUBLE)) as valor
-                        FROM ventas_raw
-                        WHERE codigo_producto = ?
-                            AND TRY_CAST(fecha AS DATE) >= CURRENT_DATE - INTERVAL '52 weeks'
-                        GROUP BY STRFTIME(TRY_CAST(fecha AS DATE), '%Y-W%W'), TRY_CAST(fecha AS DATE)
-                    )
+                cursor.execute("""
                     SELECT
-                        semana,
-                        SUM(unidades) as unidades,
-                        SUM(valor) as valor,
-                        SUM(unidades) / 7.0 as promedio_diario,
-                        MIN(fecha) as fecha_inicio_semana
-                    FROM ventas_semanales
-                    GROUP BY semana
+                        TO_CHAR(fecha_venta, 'IYYY-"W"IW') as semana,
+                        SUM(cantidad_vendida) as unidades,
+                        SUM(venta_total) as valor,
+                        SUM(cantidad_vendida) / 7.0 as promedio_diario,
+                        MIN(fecha_venta) as fecha_inicio_semana
+                    FROM ventas
+                    WHERE producto_id = %s
+                        AND fecha_venta >= CURRENT_DATE - INTERVAL '52 weeks'
+                    GROUP BY TO_CHAR(fecha_venta, 'IYYY-"W"IW')
                     ORDER BY semana ASC
-                """
-                params = [codigo]
+                """, (codigo,))
 
-            rows = conn.execute(query, params).fetchall()
+            rows = cursor.fetchall()
+            cursor.close()
 
             if not rows:
                 return {
@@ -2448,23 +2413,26 @@ async def get_ventas_por_tienda(codigo: str, periodo: str = "1w"):
         dias = periodo_dias.get(periodo, 7)
 
         with get_db_connection() as conn:
-            query = f"""
+            cursor = conn.cursor()
+
+            cursor.execute(f"""
                 SELECT
                     u.id as ubicacion_id,
                     u.nombre as ubicacion_nombre,
-                    COALESCE(SUM(TRY_CAST(v.cantidad_vendida AS DOUBLE)), 0) as total_unidades,
+                    COALESCE(SUM(v.cantidad_vendida), 0) as total_unidades,
                     COUNT(DISTINCT v.numero_factura) as total_transacciones,
-                    MAX(TRY_CAST(v.fecha AS DATE)) as ultima_venta
+                    MAX(v.fecha_venta) as ultima_venta
                 FROM ubicaciones u
-                LEFT JOIN ventas_raw v ON u.id = v.ubicacion_id
-                    AND v.codigo_producto = ?
-                    AND TRY_CAST(v.fecha AS DATE) >= CURRENT_DATE - INTERVAL {dias} DAY
+                LEFT JOIN ventas v ON u.id = v.ubicacion_id
+                    AND v.producto_id = %s
+                    AND v.fecha_venta >= CURRENT_DATE - INTERVAL '{dias} days'
                 WHERE u.tipo = 'tienda'
                 GROUP BY u.id, u.nombre
                 ORDER BY total_unidades DESC
-            """
+            """, (codigo,))
 
-            rows = conn.execute(query, [codigo]).fetchall()
+            rows = cursor.fetchall()
+            cursor.close()
 
             ventas_por_tienda = []
             total_general_unidades = 0
