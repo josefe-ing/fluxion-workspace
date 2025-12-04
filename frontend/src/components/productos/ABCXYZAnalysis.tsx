@@ -6,7 +6,7 @@ import {
   ProductoEnriquecido,
   formatPercentageValue,
 } from '../../services/productosService';
-import { getTiendas, Ubicacion } from '../../services/ubicacionesService';
+// Nota: ubicaciones ya no se usan porque la cache ABC es global
 import MatrizABCXYZ from './MatrizABCXYZ';
 import ProductoDetalleModal from './ProductoDetalleModal';
 import ABCDistributionChart from './charts/ABCDistributionChart';
@@ -15,8 +15,7 @@ import { isXYZEnabled } from '../../config/featureFlags';
 
 const ABCXYZAnalysis: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  const [ubicacionId, setUbicacionId] = useState<string>('');
-  const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
+  // La cache ABC es global, no se filtra por ubicacion
   const [matrizData, setMatrizData] = useState<MatrizData | null>(null);
   const [selectedMatriz, setSelectedMatriz] = useState<string>('');
   const [selectedABC, setSelectedABC] = useState<string>(''); // Filtro por clase ABC (A, B, C)
@@ -32,39 +31,27 @@ const ABCXYZAnalysis: React.FC = () => {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const matriz = await getMatrizABCXYZ(ubicacionId || undefined);
+      // Cache es global, no se pasa ubicacion
+      const matriz = await getMatrizABCXYZ();
       setMatrizData(matriz);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
       setLoading(false);
     }
-  }, [ubicacionId]);
+  }, []);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  // Cargar ubicaciones al montar el componente
-  useEffect(() => {
-    const loadUbicaciones = async () => {
-      try {
-        const data = await getTiendas();
-        setUbicaciones(data);
-      } catch (error) {
-        console.error('Error loading ubicaciones:', error);
-      }
-    };
-    loadUbicaciones();
-  }, []);
 
   // Cargar TODOS los productos al montar el componente
   useEffect(() => {
     const loadAllProducts = async () => {
       setLoadingProductos(true);
       try {
-        // Sin matriz = todos los productos
-        const data = await getProductosPorMatriz(undefined, ubicacionId || undefined, 10000, 0);
+        // Sin matriz = todos los productos (cache global)
+        const data = await getProductosPorMatriz(undefined, undefined, 10000, 0);
         setProductos(data);
         setHasMoreProducts(data.length >= 10000);
       } catch (error) {
@@ -74,14 +61,14 @@ const ABCXYZAnalysis: React.FC = () => {
       }
     };
     loadAllProducts();
-  }, [ubicacionId]);
+  }, []);
 
   const handleMatrizClick = async (matriz: string) => {
     setSelectedMatriz(matriz);
     setLoadingProductos(true);
     try {
-      // Load with high limit to get all products
-      const data = await getProductosPorMatriz(matriz, ubicacionId || undefined, 10000, 0);
+      // Load with high limit to get all products (cache global)
+      const data = await getProductosPorMatriz(matriz, undefined, 10000, 0);
       setProductos(data);
       setHasMoreProducts(data.length >= 10000);
       // Reset sort to default when loading new data
@@ -101,7 +88,7 @@ const ABCXYZAnalysis: React.FC = () => {
     try {
       const data = await getProductosPorMatriz(
         selectedMatriz,
-        ubicacionId || undefined,
+        undefined, // cache global
         10000,
         productos.length
       );
@@ -193,27 +180,19 @@ const ABCXYZAnalysis: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Filtro Tienda */}
+      {/* Header con info de periodo - Cache global */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <div className="flex items-center gap-4">
-          <label className="text-sm font-medium text-gray-700">
-            Filtrar por tienda:
-          </label>
-          <select
-            value={ubicacionId}
-            onChange={(e) => setUbicacionId(e.target.value)}
-            className="rounded-md border-gray-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"
-          >
-            <option value="">Todas las tiendas</option>
-            {ubicaciones.map((ub) => (
-              <option key={ub.id} value={ub.id}>
-                {ub.nombre}
-              </option>
-            ))}
-          </select>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📊</span>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Clasificación ABC Global</h2>
+              <p className="text-sm text-gray-500">Últimos 30 días - Todas las tiendas consolidado</p>
+            </div>
+          </div>
           <button
             onClick={loadData}
-            className="ml-auto text-sm text-blue-600 hover:text-blue-800 flex items-center gap-2"
+            className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-2"
           >
             🔄 Refrescar
           </button>
@@ -444,11 +423,10 @@ const ABCXYZAnalysis: React.FC = () => {
                       </div>
                     </th>
                   )}
-                  {!ubicacionId && (
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                      Tiendas
-                    </th>
-                  )}
+                  {/* Siempre mostrar - cache global */}
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Tiendas
+                  </th>
                   <th
                     className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('ranking')}
@@ -517,7 +495,8 @@ const ABCXYZAnalysis: React.FC = () => {
                         </span>
                       </td>
                     )}
-                    {!ubicacionId && producto.porcentaje_tiendas !== undefined && (
+                    {/* Siempre mostrar - cache global */}
+                    {producto.porcentaje_tiendas !== undefined && (
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <div className="flex flex-col">
                           <span className={`font-medium ${
