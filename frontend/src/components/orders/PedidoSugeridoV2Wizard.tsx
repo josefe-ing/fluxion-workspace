@@ -123,8 +123,8 @@ export default function PedidoSugeridoV2Wizard({
             <div className="flex items-center gap-2">
               <div className="text-2xl font-bold">📦</div>
               <div>
-                <h2 className="text-xl font-bold">Crear Pedido Sugerido v2.0</h2>
-                <p className="text-sm text-indigo-100">Sistema de Nivel Objetivo con ABC-XYZ</p>
+                <h2 className="text-xl font-bold">Crear Pedido Sugerido</h2>
+                <p className="text-sm text-indigo-100">Región Caracas</p>
               </div>
             </div>
           </div>
@@ -232,8 +232,8 @@ export default function PedidoSugeridoV2Wizard({
         {/* Footer Info */}
         <div className="bg-indigo-50 px-6 py-3 text-xs text-indigo-700 border-t border-indigo-200">
           <p>
-            ℹ️ <strong>Sistema v2.0:</strong> Este pedido utiliza el método de Nivel Objetivo basado en
-            clasificación ABC-XYZ (9 cuadrantes) con análisis de 8 semanas de demanda histórica.
+            ℹ️ Este pedido utiliza el método de Nivel Objetivo basado en
+            clasificación ABC-XYZ con análisis de 8 semanas de demanda histórica.
           </p>
         </div>
       </div>

@@ -739,6 +739,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             codigo_producto: selectedProductoDias.codigo_producto,
             descripcion_producto: selectedProductoDias.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoDias.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoDias.prom_p75_unid || 0,
             cantidad_bultos: selectedProductoDias.cantidad_bultos,
             stock_tienda: selectedProductoDias.stock_tienda,
             stock_en_transito: selectedProductoDias.stock_en_transito,

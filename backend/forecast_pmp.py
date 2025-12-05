@@ -20,6 +20,14 @@ import uuid
 import os
 from pathlib import Path
 
+# PostgreSQL connection for unidades_por_bulto lookup
+try:
+    from db_config import POSTGRES_DSN
+    import psycopg2
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
+
 
 class ForecastPMP:
     """Modelo de Forecast basado en Promedio Móvil Ponderado"""
@@ -53,6 +61,46 @@ class ForecastPMP:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.conn:
             self.conn.close()
+
+    def _get_unidades_por_bulto(self, codigo_producto: str, ubicacion_id: str = None) -> float:
+        """Obtiene unidades por bulto - preferir PostgreSQL (tiene datos correctos)"""
+        unid_bulto = 1.0
+
+        # Intentar PostgreSQL primero
+        if POSTGRES_AVAILABLE:
+            try:
+                pg_conn = psycopg2.connect(POSTGRES_DSN)
+                pg_cur = pg_conn.cursor()
+                pg_cur.execute(
+                    "SELECT COALESCE(unidades_por_bulto, 1) FROM productos WHERE codigo = %s",
+                    [codigo_producto]
+                )
+                pg_result = pg_cur.fetchone()
+                if pg_result and pg_result[0] and pg_result[0] > 0:
+                    unid_bulto = float(pg_result[0])
+                pg_cur.close()
+                pg_conn.close()
+            except Exception:
+                pass  # Fall back to DuckDB
+
+        # Fallback: DuckDB ventas_raw
+        if unid_bulto == 1.0 and ubicacion_id:
+            try:
+                query_bulto = """
+                SELECT AVG(CAST(cantidad_bultos AS DECIMAL)) as unid_bulto
+                FROM ventas_raw
+                WHERE ubicacion_id = ?
+                  AND codigo_producto = ?
+                  AND CAST(cantidad_bultos AS DECIMAL) > 0
+                LIMIT 1
+                """
+                bulto_result = self.conn.execute(query_bulto, [ubicacion_id, codigo_producto]).fetchone()
+                if bulto_result and bulto_result[0] and bulto_result[0] > 1:
+                    unid_bulto = float(bulto_result[0])
+            except Exception:
+                pass
+
+        return unid_bulto
 
     def get_forecast_params(self, ubicacion_id: str) -> Dict:
         """Obtiene parámetros de forecast para una ubicación"""
@@ -99,7 +147,7 @@ class ForecastPMP:
         dias_adelante: int = 7,
     ) -> List[Dict]:
         """
-        Calcula forecast día por día
+        Calcula forecast día por día usando PostgreSQL
 
         Args:
             ubicacion_id: ID de la ubicación
@@ -111,76 +159,93 @@ class ForecastPMP:
         """
         params = self.get_forecast_params(ubicacion_id)
 
-        # Query para obtener ventas DIARIAS de las últimas 8 semanas
-        # Excluye outliers bajos (posiblemente por falta de stock)
-        query = """
-        WITH ventas_diarias AS (
-            SELECT
-                CAST(fecha AS DATE) as fecha,
-                DAYOFWEEK(CAST(fecha AS DATE)) as dia_semana,
-                SUM(CAST(cantidad_vendida AS DECIMAL)) as cantidad_dia
-            FROM ventas_raw
-            WHERE ubicacion_id = ?
-              AND codigo_producto = ?
-              AND CAST(fecha AS DATE) >= CURRENT_DATE - INTERVAL '56 days'
-              AND CAST(fecha AS DATE) < CURRENT_DATE
-            GROUP BY CAST(fecha AS DATE), DAYOFWEEK(CAST(fecha AS DATE))
-        ),
-        estadisticas_por_dia_semana AS (
-            SELECT
-                dia_semana,
-                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY cantidad_dia) as q1,
-                PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY cantidad_dia) as mediana,
-                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as q3
-            FROM ventas_diarias
-            GROUP BY dia_semana
-        ),
-        ventas_filtradas AS (
-            SELECT
-                v.dia_semana,
-                v.cantidad_dia,
-                e.q1,
-                e.q3,
-                e.mediana,
-                (e.q3 - e.q1) as iqr
-            FROM ventas_diarias v
-            JOIN estadisticas_por_dia_semana e ON v.dia_semana = e.dia_semana
-            WHERE
-                -- Filtro 1: Usar IQR más estricto (1.0x en lugar de 1.5x)
-                v.cantidad_dia >= GREATEST(0, e.q1 - 1.0 * (e.q3 - e.q1))
-                -- Filtro 2: Excluir valores menores a 30% de la mediana (caídas dramáticas)
-                AND v.cantidad_dia >= e.mediana * 0.30
-                -- Filtro 3: Excluir valores menores a 20% del Q3
-                AND v.cantidad_dia >= e.q3 * 0.20
-        ),
-        promedios_por_dia_semana AS (
-            SELECT
-                dia_semana,
-                AVG(cantidad_dia) as promedio_dia,
-                COUNT(*) as dias_usados
-            FROM ventas_filtradas
-            GROUP BY dia_semana
-        )
-        SELECT
-            dia_semana,
-            promedio_dia,
-            dias_usados
-        FROM promedios_por_dia_semana
-        ORDER BY dia_semana
-        """
+        # Usar PostgreSQL para datos de ventas
+        if not POSTGRES_AVAILABLE:
+            return {"forecasts": [], "dias_excluidos": 0, "metodo": "PostgreSQL no disponible"}
 
-        result = self.conn.execute(query, [ubicacion_id, codigo_producto]).fetchall()
+        try:
+            pg_conn = psycopg2.connect(POSTGRES_DSN)
+            pg_cur = pg_conn.cursor()
+
+            # Query para obtener ventas DIARIAS de las últimas 8 semanas desde PostgreSQL
+            # PostgreSQL EXTRACT(DOW) devuelve 0=Domingo, 1=Lunes, ..., 6=Sábado
+            # Lo convertimos a ISO: 1=Lunes, ..., 7=Domingo
+            # Filtros aplicados:
+            #   - IQR estricto (1.0x en lugar de 1.5x)
+            #   - Excluir valores < 30% de mediana (caídas dramáticas)
+            #   - Excluir valores < 20% del Q3
+            query = """
+            WITH ventas_diarias AS (
+                SELECT
+                    fecha_venta::date as fecha,
+                    CASE WHEN EXTRACT(DOW FROM fecha_venta) = 0 THEN 7
+                         ELSE EXTRACT(DOW FROM fecha_venta)::int END as dia_semana,
+                    SUM(cantidad_vendida) as cantidad_dia
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND producto_id = %s
+                  AND fecha_venta >= CURRENT_DATE - INTERVAL '56 days'
+                  AND fecha_venta < CURRENT_DATE
+                GROUP BY fecha_venta::date, EXTRACT(DOW FROM fecha_venta)
+            ),
+            estadisticas_por_dia_semana AS (
+                SELECT
+                    dia_semana,
+                    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY cantidad_dia) as q1,
+                    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY cantidad_dia) as mediana,
+                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as q3
+                FROM ventas_diarias
+                GROUP BY dia_semana
+            ),
+            ventas_filtradas AS (
+                SELECT
+                    v.dia_semana,
+                    v.cantidad_dia,
+                    e.q1,
+                    e.q3,
+                    e.mediana,
+                    (e.q3 - e.q1) as iqr
+                FROM ventas_diarias v
+                JOIN estadisticas_por_dia_semana e ON v.dia_semana = e.dia_semana
+                WHERE v.cantidad_dia >= GREATEST(0, e.q1 - 1.0 * (e.q3 - e.q1))
+                    AND v.cantidad_dia >= e.mediana * 0.30
+                    AND v.cantidad_dia >= e.q3 * 0.20
+            ),
+            promedios_por_dia_semana AS (
+                SELECT
+                    dia_semana,
+                    AVG(cantidad_dia) as promedio_dia,
+                    COUNT(*) as dias_usados
+                FROM ventas_filtradas
+                GROUP BY dia_semana
+            )
+            SELECT
+                dia_semana,
+                promedio_dia,
+                dias_usados
+            FROM promedios_por_dia_semana
+            ORDER BY dia_semana
+            """
+
+            pg_cur.execute(query, [ubicacion_id, codigo_producto])
+            result = pg_cur.fetchall()
+
+            pg_cur.close()
+            pg_conn.close()
+
+        except Exception as e:
+            return {"forecasts": [], "dias_excluidos": 0, "metodo": f"Error PostgreSQL: {str(e)}"}
 
         if not result:
-            return []
+            return {"forecasts": [], "dias_excluidos": 0, "metodo": "Sin datos históricos"}
 
-        # Crear mapa de promedios por día de la semana (1=Lunes, 7=Domingo)
+        # Crear mapa de promedios por día de la semana (1=Lunes, 7=Domingo ISO)
         promedios_dia_semana = {}
         total_dias_excluidos = 0
         total_dias_evaluados = 0
 
         for dia_semana, promedio_dia, dias_usados in result:
-            promedios_dia_semana[dia_semana] = float(promedio_dia)
+            promedios_dia_semana[int(dia_semana)] = float(promedio_dia)
             total_dias_evaluados += 8  # 8 semanas de datos
 
         # Calcular días excluidos (aproximación: 8 semanas = ~8 ocurrencias por día de semana)
@@ -190,17 +255,8 @@ class ForecastPMP:
         forecasts_diarios = []
         hoy = datetime.now().date()
 
-        # Obtener unidades por bulto
-        query_bulto = """
-        SELECT AVG(CAST(cantidad_bultos AS DECIMAL)) as unid_bulto
-        FROM ventas_raw
-        WHERE ubicacion_id = ?
-          AND codigo_producto = ?
-          AND CAST(cantidad_bultos AS DECIMAL) > 0
-        LIMIT 1
-        """
-        bulto_result = self.conn.execute(query_bulto, [ubicacion_id, codigo_producto]).fetchone()
-        unid_bulto = bulto_result[0] if bulto_result and bulto_result[0] else 1.0
+        # Obtener unidades por bulto (usar función helper que consulta PostgreSQL)
+        unid_bulto = self._get_unidades_por_bulto(codigo_producto, ubicacion_id)
 
         dias_semana_nombre = {
             1: 'Lunes',
@@ -217,7 +273,7 @@ class ForecastPMP:
 
         for i in range(1, dias_adelante + 1):
             fecha_futura = hoy + timedelta(days=i)
-            # DuckDB usa 1=Lunes, 7=Domingo (ISO)
+            # Python isoweekday(): 1=Lunes, 7=Domingo (igual que nuestra conversión SQL)
             dia_semana = fecha_futura.isoweekday()
 
             # Obtener promedio para ese día de la semana
@@ -261,7 +317,7 @@ class ForecastPMP:
         return {
             "forecasts": forecasts_diarios,
             "dias_excluidos": total_dias_excluidos,
-            "metodo": "PMP con filtro de outliers bajos (posible falta de stock)"
+            "metodo": "PMP PostgreSQL con filtro de outliers bajos"
         }
 
     def calcular_forecast_producto(
@@ -344,17 +400,8 @@ class ForecastPMP:
         forecast_min = forecast_unidades * 0.80
         forecast_max = forecast_unidades * 1.20
 
-        # Obtener unidades por bulto
-        query_bulto = """
-        SELECT AVG(CAST(cantidad_bultos AS DECIMAL)) as unid_bulto
-        FROM ventas_raw
-        WHERE ubicacion_id = ?
-          AND codigo_producto = ?
-          AND CAST(cantidad_bultos AS DECIMAL) > 0
-        LIMIT 1
-        """
-        bulto_result = self.conn.execute(query_bulto, [ubicacion_id, codigo_producto]).fetchone()
-        unid_bulto = bulto_result[0] if bulto_result and bulto_result[0] else 1.0
+        # Obtener unidades por bulto (usar función helper que consulta PostgreSQL)
+        unid_bulto = self._get_unidades_por_bulto(codigo_producto, ubicacion_id)
 
         forecast_bultos = forecast_unidades / unid_bulto if unid_bulto > 0 else 0.0
         forecast_diario_bultos = forecast_diario / unid_bulto if unid_bulto > 0 else 0.0

@@ -1,4 +1,4 @@
-import { X, AlertTriangle, Flame, TrendingUp } from 'lucide-react';
+import { X, AlertTriangle, Flame, TrendingUp, Info } from 'lucide-react';
 
 interface CriticidadModalProps {
   isOpen: boolean;
@@ -7,6 +7,7 @@ interface CriticidadModalProps {
     codigo_producto: string;
     descripcion_producto: string;
     prom_ventas_20dias_unid: number;
+    prom_p75_unid?: number; // Percentil 75 de ventas diarias
     cantidad_bultos: number;
     stock_tienda: number;
     stock_en_transito: number;
@@ -38,9 +39,15 @@ export default function CriticidadModal({
 }: CriticidadModalProps) {
   if (!isOpen) return null;
 
+  // Usar P75 para cálculos de días (más conservador, prepara para picos de demanda)
+  // Fallback a promedio 20D si P75 no está disponible
+  const velocidadP75Unid = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+  const velocidadP75Bultos = velocidadP75Unid / producto.cantidad_bultos;
+
+  // Promedio 20D se usa para clasificación ABC (velocidad/rotación)
   const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
 
-  // Calcular clasificación ABC
+  // Calcular clasificación ABC (basada en promedio 20D)
   const getClasificacionABC = (): string => {
     if (ventaDiariaBultos >= 20) return 'A';
     if (ventaDiariaBultos >= 5) return 'AB';
@@ -52,41 +59,47 @@ export default function CriticidadModal({
 
   const clasificacion = getClasificacionABC();
 
-  // Calcular stock mínimo
+  // Calcular stock mínimo (usando P75 para el cálculo)
   const calcularStockMinimo = (): number => {
     let multiplicador = 0;
+    // Clasificación basada en promedio 20D
     if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_min_mult_a;
     else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_min_mult_ab;
     else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_min_mult_b;
     else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_min_mult_bc;
     else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_min_mult_c;
-    return ventaDiariaBultos * multiplicador;
+    // Cálculo usando P75
+    return velocidadP75Bultos * multiplicador;
   };
 
   const calcularStockSeguridad = (): number => {
     let multiplicador = 0;
+    // Clasificación basada en promedio 20D
     if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_seg_mult_a;
     else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_seg_mult_ab;
     else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_seg_mult_b;
     else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_seg_mult_bc;
     else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_seg_mult_c;
-    return ventaDiariaBultos * multiplicador;
+    // Cálculo usando P75
+    return velocidadP75Bultos * multiplicador;
   };
 
   const calcularPuntoReorden = (): number => {
     const stockMin = calcularStockMinimo();
     const stockSeg = calcularStockSeguridad();
-    return stockMin + stockSeg + (1.25 * ventaDiariaBultos);
+    return stockMin + stockSeg + (1.25 * velocidadP75Bultos);
   };
 
   const calcularStockMaximo = (): number => {
     let multiplicador = 0;
+    // Clasificación basada en promedio 20D
     if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_max_mult_a;
     else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_max_mult_ab;
     else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_max_mult_b;
     else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_max_mult_bc;
     else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_max_mult_c;
-    return ventaDiariaBultos * multiplicador;
+    // Cálculo usando P75
+    return velocidadP75Bultos * multiplicador;
   };
 
   const stockMinimoBultos = calcularStockMinimo();
@@ -94,13 +107,14 @@ export default function CriticidadModal({
   const stockMaximoBultos = calcularStockMaximo();
 
   const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-  const diasStockActual = producto.prom_ventas_20dias_unid > 0
-    ? stockTotalUnidades / producto.prom_ventas_20dias_unid
+  // Días de stock usando P75 (más conservador)
+  const diasStockActual = velocidadP75Unid > 0
+    ? stockTotalUnidades / velocidadP75Unid
     : Infinity;
 
-  const diasMinimo = ventaDiariaBultos > 0 ? stockMinimoBultos / ventaDiariaBultos : 0;
-  const diasReorden = ventaDiariaBultos > 0 ? puntoReordenBultos / ventaDiariaBultos : 0;
-  const diasMaximo = ventaDiariaBultos > 0 ? stockMaximoBultos / ventaDiariaBultos : 0;
+  const diasMinimo = velocidadP75Bultos > 0 ? stockMinimoBultos / velocidadP75Bultos : 0;
+  const diasReorden = velocidadP75Bultos > 0 ? puntoReordenBultos / velocidadP75Bultos : 0;
+  const diasMaximo = velocidadP75Bultos > 0 ? stockMaximoBultos / velocidadP75Bultos : 0;
 
   const puntoMedio = diasMinimo + ((diasReorden - diasMinimo) * 0.5);
 
@@ -193,6 +207,23 @@ export default function CriticidadModal({
             </div>
           </div>
 
+          {/* Nota sobre P75 */}
+          <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+            <div className="flex items-start gap-2">
+              <Info className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+              <div className="text-xs text-blue-800">
+                <strong>Nota:</strong> Los días de stock se calculan usando <strong>P75</strong> (Percentil 75 de ventas diarias),
+                no el promedio simple. Esto es más conservador y prepara el inventario para días de alta demanda.
+                {producto.prom_p75_unid && producto.prom_p75_unid !== producto.prom_ventas_20dias_unid && (
+                  <span className="block mt-1">
+                    P75: <strong>{(producto.prom_p75_unid / producto.cantidad_bultos).toFixed(2)}</strong> bultos/día vs
+                    Prom 20D: <strong>{ventaDiariaBultos.toFixed(2)}</strong> bultos/día
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* ¿Qué es la Criticidad? */}
           <div className="mb-6 p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200">
             <h3 className="text-sm font-semibold text-red-900 mb-3 flex items-center gap-2">
@@ -206,7 +237,7 @@ export default function CriticidadModal({
             <ul className="mt-3 space-y-2 text-sm text-gray-700">
               <li className="flex items-start gap-2">
                 <span className="text-red-600 font-bold">1.</span>
-                <span><strong>Urgencia de stock:</strong> Qué tan crítico está el nivel de inventario actual</span>
+                <span><strong>Urgencia de stock:</strong> Qué tan crítico está el nivel de inventario actual (basado en P75)</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-orange-600 font-bold">2.</span>

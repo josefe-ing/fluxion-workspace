@@ -141,16 +141,13 @@ async def get_resumen(conn: Any = Depends(get_db)):
         """)
         row = cursor.fetchone()
 
-        # Contar productos clase C (para contexto)
+        # Contar productos con GAP > 200 (candidatos potenciales)
         cursor.execute("""
-            SELECT COUNT(DISTINCT p.id)
-            FROM productos p
-            JOIN ventas v ON v.producto_id = p.id
-            WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-              AND p.id != '003760'
+            SELECT COUNT(*)
+            FROM productos_abc_cache
+            WHERE gap > 200
         """)
-        # Nota: Este es un conteo aproximado, el real viene del cálculo ABC
-        total_clase_c = cursor.fetchone()[0] or 0
+        total_candidatos_gap = cursor.fetchone()[0] or 0
 
         cursor.close()
 
@@ -168,7 +165,7 @@ async def get_resumen(conn: Any = Depends(get_db)):
             total_activos=row[0] or 0,
             total_sugeridos=row[1] or 0,
             total_ignorados=row[2] or 0,
-            productos_clase_c=total_clase_c,
+            productos_clase_c=total_candidatos_gap,  # Ahora es "productos con GAP alto"
             gap_promedio_activos=float(row[3]) if row[3] else 0.0,
             gap_minimo_config=gap_minimo_config,
             ultima_actualizacion=row[4]
@@ -239,7 +236,8 @@ async def listar_productos(
         elif filtro_activo == 'ignorados':
             base_query += " AND COALESCE(p.generador_trafico_ignorado, FALSE) = TRUE"
         elif filtro_activo == 'todos_c' or filtro_activo == 'todos':
-            base_query += " AND (c.clase_abc = 'C' AND c.gap > 200)"
+            # Solo filtramos por GAP, no por Clase ABC
+            base_query += " AND c.gap > 200"
         else:
             # Default: sugeridos si no se especifica ningún filtro válido
             base_query += """ AND p.generador_trafico_sugerido = TRUE
@@ -424,10 +422,11 @@ async def calcular_sugerencias(
         gap_minimo = int(config.get('gap_minimo', 400))
 
         # Usar tabla cache para obtener candidatos (mucho más rápido)
+        # El GAP es el único criterio - no restringimos por Clase ABC
         cursor.execute("""
             SELECT producto_id, gap, clase_abc, venta_30d, tickets_30d
             FROM productos_abc_cache
-            WHERE clase_abc = 'C' AND gap >= %s
+            WHERE gap >= %s
         """, (gap_minimo,))
 
         candidatos = cursor.fetchall()
@@ -461,6 +460,7 @@ async def calcular_sugerencias(
                 """, (producto_id, gap, float(venta_30d) if venta_30d else 0, tickets_30d, clase_abc))
 
         # Remover sugerencias de productos que ya no califican (usando cache)
+        # Solo verificamos GAP, no Clase ABC
         cursor.execute("""
             UPDATE productos
             SET generador_trafico_sugerido = FALSE
@@ -468,7 +468,7 @@ async def calcular_sugerencias(
               AND id NOT IN (
                   SELECT producto_id
                   FROM productos_abc_cache
-                  WHERE clase_abc = 'C' AND gap >= %s
+                  WHERE gap >= %s
               )
             RETURNING id
         """, (gap_minimo,))

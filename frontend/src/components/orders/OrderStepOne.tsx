@@ -1,13 +1,17 @@
-import { useState, useEffect } from 'react';
-import http from '../../services/http';
+import { useState } from 'react';
 import type { OrderData } from './OrderWizard';
 
-interface Ubicacion {
-  id: string;
-  codigo: string;
-  nombre: string;
-  tipo: string;
-}
+// Configuración hardcodeada para Región Caracas
+const REGION_CARACAS = {
+  cedi: {
+    id: 'cedi_caracas',
+    nombre: 'CEDI Caracas'
+  },
+  tiendas: [
+    { id: 'tienda_17', nombre: 'ARTIGAS', estado: 'Abierta hace 1 semana' },
+    { id: 'tienda_18', nombre: 'PARAISO', estado: 'Abre próximo sábado' }
+  ]
+};
 
 interface Props {
   orderData: OrderData;
@@ -17,50 +21,31 @@ interface Props {
 }
 
 export default function OrderStepOne({ orderData, updateOrderData, onNext, onCancel }: Props) {
-  const [cedis, setCedis] = useState<Ubicacion[]>([]);
-  const [tiendas, setTiendas] = useState<Ubicacion[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tiendaSeleccionada, setTiendaSeleccionada] = useState(orderData.tienda_destino || '');
 
-  useEffect(() => {
-    loadUbicaciones();
-  }, []);
-
-  const loadUbicaciones = async () => {
-    try {
-      setLoading(true);
-      const response = await http.get('/api/ubicaciones');
-      const ubicaciones = response.data;
-
-      // Separar CEDIs y Tiendas
-      const cedisList = ubicaciones.filter((u: Ubicacion) => u.tipo === 'cedi');
-      const tiendasList = ubicaciones.filter((u: Ubicacion) => u.tipo === 'tienda');
-
-      setCedis(cedisList);
-      setTiendas(tiendasList);
-    } catch (error) {
-      console.error('Error cargando ubicaciones:', error);
-    } finally {
-      setLoading(false);
+  // Auto-seleccionar CEDI Caracas al montar
+  useState(() => {
+    if (!orderData.cedi_origen) {
+      updateOrderData({
+        cedi_origen: REGION_CARACAS.cedi.id,
+        cedi_origen_nombre: REGION_CARACAS.cedi.nombre,
+      });
     }
-  };
-
-  const handleCediChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const cedi = cedis.find(c => c.id === e.target.value);
-    updateOrderData({
-      cedi_origen: e.target.value,
-      cedi_origen_nombre: cedi?.nombre || '',
-    });
-  };
+  });
 
   const handleTiendaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const tienda = tiendas.find(t => t.id === e.target.value);
+    const tienda = REGION_CARACAS.tiendas.find(t => t.id === e.target.value);
+    setTiendaSeleccionada(e.target.value);
     updateOrderData({
+      cedi_origen: REGION_CARACAS.cedi.id,
+      cedi_origen_nombre: REGION_CARACAS.cedi.nombre,
       tienda_destino: e.target.value,
       tienda_destino_nombre: tienda?.nombre || '',
     });
   };
 
-  const canProceed = orderData.cedi_origen && orderData.tienda_destino;
+  const canProceed = tiendaSeleccionada;
+  const tiendaInfo = REGION_CARACAS.tiendas.find(t => t.id === tiendaSeleccionada);
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -70,73 +55,52 @@ export default function OrderStepOne({ orderData, updateOrderData, onNext, onCan
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Seleccionar Origen y Destino</h2>
             <p className="mt-2 text-sm text-gray-500">
-              Selecciona el CEDI de origen y la tienda de destino para el pedido sugerido.
+              Pedido desde CEDI Caracas hacia tiendas de la región.
             </p>
           </div>
 
-          {loading ? (
-            <div className="py-12 text-center">
-              <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-gray-900 border-r-transparent"></div>
-              <p className="mt-4 text-sm text-gray-500">Cargando ubicaciones...</p>
+          {/* CEDI Origen - Fijo */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              CEDI Origen
+            </label>
+            <div className="w-full px-4 py-3 bg-gray-100 border border-gray-200 rounded-md text-gray-700">
+              {REGION_CARACAS.cedi.nombre}
             </div>
-          ) : (
-            <>
-              {/* CEDI Origen */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  CEDI Origen <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={orderData.cedi_origen}
-                  onChange={handleCediChange}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                >
-                  <option value="">Seleccionar CEDI...</option>
-                  {cedis.map((cedi) => (
-                    <option key={cedi.id} value={cedi.id}>
-                      {cedi.nombre}
-                    </option>
-                  ))}
-                </select>
-                {cedis.length === 0 && (
-                  <p className="mt-2 text-sm text-red-600">No se encontraron CEDIs disponibles</p>
-                )}
-              </div>
+          </div>
 
-              {/* Tienda Destino */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Tienda Destino <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={orderData.tienda_destino}
-                  onChange={handleTiendaChange}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                >
-                  <option value="">Seleccionar Tienda...</option>
-                  {tiendas.map((tienda) => (
-                    <option key={tienda.id} value={tienda.id}>
-                      {tienda.nombre}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          {/* Tienda Destino */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Tienda Destino <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={tiendaSeleccionada}
+              onChange={handleTiendaChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+            >
+              <option value="">Seleccionar Tienda...</option>
+              {REGION_CARACAS.tiendas.map((tienda) => (
+                <option key={tienda.id} value={tienda.id}>
+                  {tienda.nombre} - {tienda.estado}
+                </option>
+              ))}
+            </select>
+          </div>
 
-              {/* Información de selección */}
-              {orderData.cedi_origen && orderData.tienda_destino && (
-                <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-2">Resumen de Selección</h3>
-                  <div className="space-y-1 text-sm text-gray-600">
-                    <p>
-                      <span className="font-medium">Origen:</span> {orderData.cedi_origen_nombre}
-                    </p>
-                    <p>
-                      <span className="font-medium">Destino:</span> {orderData.tienda_destino_nombre}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </>
+          {/* Información de selección */}
+          {tiendaSeleccionada && (
+            <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
+              <h3 className="text-sm font-semibold text-gray-900 mb-2">Resumen de Selección</h3>
+              <div className="space-y-1 text-sm text-gray-600">
+                <p>
+                  <span className="font-medium">Origen:</span> {REGION_CARACAS.cedi.nombre}
+                </p>
+                <p>
+                  <span className="font-medium">Destino:</span> {tiendaInfo?.nombre}
+                </p>
+              </div>
+            </div>
           )}
         </div>
 

@@ -1,4 +1,4 @@
-import { X, AlertTriangle, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, AlertTriangle, CheckCircle, AlertCircle, BarChart3 } from 'lucide-react';
 
 interface StockDiasModalProps {
   isOpen: boolean;
@@ -7,6 +7,7 @@ interface StockDiasModalProps {
     codigo_producto: string;
     descripcion_producto: string;
     prom_ventas_20dias_unid: number;
+    prom_p75_unid: number;
     cantidad_bultos: number;
     stock_tienda: number;
     stock_en_transito: number;
@@ -41,8 +42,11 @@ const ABC_THRESHOLDS = {
 export default function StockDiasModal({ isOpen, onClose, producto, stockParams }: StockDiasModalProps) {
   if (!isOpen) return null;
 
-  // Calcular venta diaria en bultos (usando promedio 20 días)
-  const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+  // Calcular venta diaria en bultos usando P75 (Percentil 75)
+  // P75 es más robusto estadísticamente: considera toda la distribución y es resistente a outliers
+  const ventaDiariaP75 = producto.prom_p75_unid / producto.cantidad_bultos;
+  const ventaDiaria20D = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+  const ventaDiariaBultos = ventaDiariaP75 > 0 ? ventaDiariaP75 : ventaDiaria20D;
 
   // Determinar clasificación ABC
   let clasificacion = '-';
@@ -77,10 +81,11 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
     multMax = stockParams.stock_max_mult_c;
   }
 
-  // Calcular stock actual en días
+  // Calcular stock actual en días (usando P75)
   const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-  const diasStockActual = producto.prom_ventas_20dias_unid > 0
-    ? stockTotalUnidades / producto.prom_ventas_20dias_unid
+  const ventaDiariaBase = producto.prom_p75_unid > 0 ? producto.prom_p75_unid : producto.prom_ventas_20dias_unid;
+  const diasStockActual = ventaDiariaBase > 0
+    ? stockTotalUnidades / ventaDiariaBase
     : Infinity;
 
   // Calcular puntos de control en días
@@ -285,11 +290,14 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-600 text-white text-xs font-bold mr-2">
                   2
                 </span>
-                Venta Diaria Promedio (20 días)
+                Venta Diaria Base (P75 - Percentil 75)
               </p>
               <div className="ml-8 text-sm text-gray-600 bg-white rounded p-3 border border-gray-200">
-                <p className="font-mono text-green-700 font-semibold">
-                  Venta Diaria = {producto.prom_ventas_20dias_unid.toFixed(2)} unidades/día
+                <p className="font-mono text-purple-700 font-semibold">
+                  Venta Diaria P75 = {producto.prom_p75_unid.toFixed(2)} unidades/día
+                </p>
+                <p className="font-mono text-gray-500 text-xs mt-1">
+                  (Promedio simple 20D: {producto.prom_ventas_20dias_unid.toFixed(2)} unidades/día)
                 </p>
               </div>
             </div>
@@ -300,12 +308,12 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-600 text-white text-xs font-bold mr-2">
                   3
                 </span>
-                Días de Stock = Stock Total ÷ Venta Diaria
+                Días de Stock = Stock Total ÷ Venta Diaria P75
               </p>
               <div className="ml-8 text-sm text-gray-600 bg-white rounded p-3 border border-gray-200">
-                {producto.prom_ventas_20dias_unid > 0 ? (
+                {ventaDiariaBase > 0 ? (
                   <p className="font-mono text-green-700 font-semibold">
-                    Días de Stock = {stockTotalUnidades} ÷ {producto.prom_ventas_20dias_unid.toFixed(2)} = {diasStockActual.toFixed(2)} días
+                    Días de Stock = {stockTotalUnidades} ÷ {ventaDiariaBase.toFixed(2)} = {diasStockActual.toFixed(2)} días
                   </p>
                 ) : (
                   <p className="font-mono text-green-700 font-semibold">
@@ -385,10 +393,32 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
             </div>
           </div>
 
+          {/* Explicación P75 */}
+          <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg p-4 border border-purple-200">
+            <h3 className="font-semibold text-purple-800 mb-3 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5" />
+              ¿Por qué usamos P75 (Percentil 75)?
+            </h3>
+            <div className="space-y-2 text-sm text-gray-700">
+              <div className="flex gap-2">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-purple-200 text-purple-800 flex items-center justify-center text-xs font-bold">1</span>
+                <div><strong>Más conservador:</strong> Al usar P75 como base, estamos diciendo que el 75% de los días tendremos stock suficiente para cubrir la demanda.</div>
+              </div>
+              <div className="flex gap-2">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-purple-200 text-purple-800 flex items-center justify-center text-xs font-bold">2</span>
+                <div><strong>Resistente a outliers:</strong> Días con ventas anormalmente altas o bajas no distorsionan el cálculo como ocurre con el promedio simple.</div>
+              </div>
+              <div className="flex gap-2">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-purple-200 text-purple-800 flex items-center justify-center text-xs font-bold">3</span>
+                <div><strong>Menos días = más urgente:</strong> Al dividir por un valor más alto (P75 &gt; promedio), los días de cobertura son menores, activando alertas de reposición antes.</div>
+              </div>
+            </div>
+          </div>
+
           {/* Nota Informativa */}
           <div className="bg-green-50 border-l-4 border-green-600 p-4 rounded">
             <p className="text-sm text-gray-700">
-              <span className="font-semibold text-green-800">Nota:</span> Los días de stock se calculan usando el promedio de ventas de los últimos <strong>20 días</strong>.
+              <span className="font-semibold text-green-800">Nota:</span> Los días de stock se calculan usando el <strong>Percentil 75 (P75)</strong> de las ventas de los últimos 20 días.
               Este indicador te ayuda a decidir si es necesario realizar un pedido comparando tu stock actual con los puntos de control (Mínimo, Reorden, Máximo).
             </p>
           </div>

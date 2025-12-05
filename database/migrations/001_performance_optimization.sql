@@ -94,7 +94,8 @@ BEGIN
             v.ubicacion_id,
             SUM(v.cantidad_vendida) as unidades_vendidas,
             SUM(v.venta_total) as valor_vendido,
-            MAX(v.fecha_venta) as ultima_venta
+            -- Excluir devoluciones (cantidad < 0) del cálculo de última venta
+            MAX(CASE WHEN v.cantidad_vendida > 0 THEN v.fecha_venta END) as ultima_venta
         FROM ventas v
         WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '2 months'
         GROUP BY v.producto_id, v.ubicacion_id

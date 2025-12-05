@@ -794,6 +794,340 @@ class CrearPedidoV2Request(BaseModel):
     productos: List[ProductoPedidoV2]
 
 
+# =====================================================================================
+# CALCULAR PRODUCTOS SUGERIDOS (PostgreSQL)
+# =====================================================================================
+
+class CalcularProductosRequest(BaseModel):
+    """Request para calcular productos sugeridos"""
+    cedi_origen: str
+    tienda_destino: str
+    dias_cobertura: int = 3
+
+
+class ProductoCalculado(BaseModel):
+    """Producto calculado para pedido sugerido"""
+    codigo_producto: str
+    codigo_barras: Optional[str] = None
+    descripcion_producto: str
+    categoria: Optional[str] = None
+    grupo: Optional[str] = None
+    subgrupo: Optional[str] = None
+    marca: Optional[str] = None
+    presentacion: Optional[str] = None
+    cantidad_bultos: float = 1.0
+    peso_unidad: float = 1000.0
+    cuadrante_producto: Optional[str] = None
+    # Ventas
+    prom_ventas_5dias_unid: float = 0.0
+    prom_ventas_20dias_unid: float = 0.0
+    prom_top3_unid: float = 0.0  # Promedio TOP 3 días
+    prom_p75_unid: float = 0.0   # Percentil 75
+    prom_mismo_dia_unid: float = 0.0
+    prom_ventas_8sem_unid: float = 0.0
+    prom_ventas_8sem_bultos: float = 0.0
+    prom_ventas_3dias_unid: float = 0.0
+    prom_ventas_3dias_bultos: float = 0.0
+    prom_mismo_dia_bultos: float = 0.0
+    # Inventario
+    stock_tienda: float = 0.0
+    stock_en_transito: float = 0.0
+    stock_total: float = 0.0
+    stock_total_bultos: float = 0.0
+    stock_dias_cobertura: float = 0.0
+    stock_cedi_seco: float = 0.0
+    stock_cedi_frio: float = 0.0
+    stock_cedi_verde: float = 0.0
+    stock_cedi_origen: float = 0.0
+    # Configuración
+    clasificacion_abc: Optional[str] = None
+    stock_minimo: float = 0.0
+    stock_maximo: float = 0.0
+    stock_seguridad: float = 0.0
+    punto_reorden: float = 0.0
+    cantidad_sugerida_unid: float = 0.0
+    cantidad_sugerida_bultos: float = 0.0
+    cantidad_ajustada_bultos: float = 0.0
+    razon_pedido: str = ""
+
+
+@router.post("/calcular", response_model=List[ProductoCalculado])
+async def calcular_productos_sugeridos(
+    request: CalcularProductosRequest,
+    conn: Any = Depends(get_db)
+):
+    """
+    Calcula productos sugeridos para un pedido basado en:
+    - Maestro de productos (PostgreSQL)
+    - Ventas históricas de la tienda destino
+    - Inventario actual en tienda y CEDI origen
+
+    Retorna lista de productos con cantidades sugeridas.
+    """
+    try:
+        logger.info(f"📦 Calculando productos sugeridos: {request.cedi_origen} → {request.tienda_destino}")
+        cursor = conn.cursor()
+
+        # Query principal para calcular productos sugeridos desde PostgreSQL
+        query = """
+            WITH ventas_diarias_20d AS (
+                SELECT
+                    producto_id,
+                    fecha_venta::date as fecha,
+                    SUM(cantidad_vendida) as total_dia
+                FROM ventas
+                WHERE ubicacion_id = %s
+                    AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
+                GROUP BY producto_id, fecha_venta::date
+            ),
+            ventas_20dias AS (
+                SELECT
+                    producto_id,
+                    COUNT(DISTINCT fecha) as dias_con_venta,
+                    SUM(total_dia) as total_vendido,
+                    AVG(total_dia) as prom_diario
+                FROM ventas_diarias_20d
+                GROUP BY producto_id
+            ),
+            ventas_diarias_5d AS (
+                SELECT
+                    producto_id,
+                    fecha_venta::date as fecha,
+                    SUM(cantidad_vendida) as total_dia
+                FROM ventas
+                WHERE ubicacion_id = %s
+                    AND fecha_venta >= CURRENT_DATE - INTERVAL '5 days'
+                GROUP BY producto_id, fecha_venta::date
+            ),
+            ventas_5dias AS (
+                SELECT
+                    producto_id,
+                    AVG(total_dia) as prom_diario_5d
+                FROM ventas_diarias_5d
+                GROUP BY producto_id
+            ),
+            -- TOP3: promedio de los 3 días con más ventas
+            ranked_days AS (
+                SELECT
+                    producto_id,
+                    total_dia,
+                    ROW_NUMBER() OVER (PARTITION BY producto_id ORDER BY total_dia DESC) as rn
+                FROM ventas_diarias_20d
+            ),
+            top3_ventas AS (
+                SELECT
+                    producto_id,
+                    AVG(total_dia) as prom_top3
+                FROM ranked_days
+                WHERE rn <= 3
+                GROUP BY producto_id
+            ),
+            -- P75: Percentil 75
+            percentil_75 AS (
+                SELECT
+                    producto_id,
+                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75
+                FROM ventas_diarias_20d
+                GROUP BY producto_id
+            ),
+            -- ABC por valor (Pareto 80/15/5) - Calculado para la tienda específica (30 días)
+            ventas_30d_tienda AS (
+                SELECT
+                    producto_id,
+                    SUM(venta_total) as venta_total
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                  AND producto_id != '003760'
+                GROUP BY producto_id
+            ),
+            abc_con_acumulado AS (
+                SELECT
+                    producto_id,
+                    venta_total,
+                    SUM(venta_total) OVER (ORDER BY venta_total DESC) as venta_acum,
+                    SUM(venta_total) OVER () as venta_total_periodo
+                FROM ventas_30d_tienda
+            ),
+            abc_clasificado AS (
+                SELECT
+                    producto_id,
+                    venta_total,
+                    CASE
+                        WHEN venta_acum <= venta_total_periodo * 0.80 THEN 'A'
+                        WHEN venta_acum <= venta_total_periodo * 0.95 THEN 'B'
+                        ELSE 'C'
+                    END as clase_abc_valor
+                FROM abc_con_acumulado
+            ),
+            inv_tienda AS (
+                SELECT
+                    producto_id,
+                    SUM(cantidad) as stock_tienda
+                FROM inventario_actual
+                WHERE ubicacion_id = %s
+                GROUP BY producto_id
+            ),
+            inv_cedi AS (
+                SELECT
+                    producto_id,
+                    SUM(cantidad) as stock_cedi
+                FROM inventario_actual
+                WHERE ubicacion_id = %s
+                GROUP BY producto_id
+            )
+            SELECT
+                p.codigo as codigo_producto,
+                p.codigo_barras,
+                COALESCE(p.nombre, p.descripcion) as descripcion_producto,
+                p.categoria,
+                p.grupo,
+                p.subgrupo,
+                p.marca,
+                p.presentacion,
+                COALESCE(p.unidades_por_bulto, 1) as cantidad_bultos,
+                COALESCE(p.peso_unitario, 1.0) as peso_unidad,
+                -- Ventas
+                COALESCE(v5.prom_diario_5d, 0) as prom_ventas_5dias_unid,
+                COALESCE(v20.prom_diario, 0) as prom_ventas_20dias_unid,
+                COALESCE(v20.dias_con_venta, 0) as dias_con_venta,
+                COALESCE(v20.total_vendido, 0) as total_vendido_20d,
+                -- Inventario
+                COALESCE(it.stock_tienda, 0) as stock_tienda,
+                COALESCE(ic.stock_cedi, 0) as stock_cedi_origen,
+                -- TOP3 y P75
+                COALESCE(t3.prom_top3, 0) as prom_top3,
+                COALESCE(p75.p75, 0) as prom_p75,
+                -- ABC por valor (Pareto)
+                abc.clase_abc_valor
+            FROM productos p
+            LEFT JOIN ventas_20dias v20 ON p.codigo = v20.producto_id
+            LEFT JOIN ventas_5dias v5 ON p.codigo = v5.producto_id
+            LEFT JOIN top3_ventas t3 ON p.codigo = t3.producto_id
+            LEFT JOIN percentil_75 p75 ON p.codigo = p75.producto_id
+            LEFT JOIN abc_clasificado abc ON p.codigo = abc.producto_id
+            LEFT JOIN inv_tienda it ON p.codigo = it.producto_id
+            LEFT JOIN inv_cedi ic ON p.codigo = ic.producto_id
+            WHERE p.activo = true
+                AND (v20.total_vendido > 0 OR it.stock_tienda > 0 OR ic.stock_cedi > 0)
+            ORDER BY COALESCE(v20.total_vendido, 0) DESC
+        """
+
+        cursor.execute(query, [
+            request.tienda_destino,  # ventas_diarias_20d
+            request.tienda_destino,  # ventas_diarias_5d
+            request.tienda_destino,  # ventas_30d_tienda (ABC por valor)
+            request.tienda_destino,  # inv_tienda
+            request.cedi_origen      # inv_cedi
+        ])
+
+        rows = cursor.fetchall()
+        cursor.close()
+
+        logger.info(f"📊 Encontrados {len(rows)} productos con datos")
+
+        productos = []
+        for row in rows:
+            codigo = row[0]
+            cantidad_bultos = float(row[8]) if row[8] and row[8] > 0 else 1.0
+            prom_20d = float(row[11]) if row[11] else 0.0
+            stock_tienda = float(row[14]) if row[14] else 0.0
+            stock_cedi = float(row[15]) if row[15] else 0.0
+            prom_top3 = float(row[16]) if row[16] else 0.0
+            prom_p75 = float(row[17]) if row[17] else 0.0
+            clase_abc_valor = row[18]  # ABC por valor (Pareto) de SQL
+
+            # Calcular velocidad de venta en bultos/día usando P75 para cálculos de stock
+            # P75 es más robusto para planificación de stock porque considera días de alta demanda
+            venta_p75_bultos = prom_p75 / cantidad_bultos if cantidad_bultos > 0 and prom_p75 > 0 else 0
+            venta_diaria_bultos = prom_20d / cantidad_bultos if cantidad_bultos > 0 else 0
+
+            # Clasificación ABC: usar ABC por valor (Pareto) del SQL si está disponible
+            # ABC por valor (Pareto 80/15/5): A = 80% valor, B = 15% valor, C = 5% valor
+            if clase_abc_valor:
+                clasificacion = clase_abc_valor
+            elif venta_diaria_bultos > 0:
+                clasificacion = 'C'  # Default para productos sin clasificación ABC pero con ventas
+            else:
+                clasificacion = '-'
+
+            # Multiplicadores de stock según clasificación ABC por valor
+            # A: productos de alto valor - stock conservador
+            # B: productos de valor medio - stock moderado
+            # C: productos de bajo valor - stock más alto para evitar stockouts frecuentes
+            if clasificacion == 'A':
+                mult_min, mult_seg, mult_max = 2.0, 1.0, 5.0
+            elif clasificacion == 'B':
+                mult_min, mult_seg, mult_max = 3.0, 2.0, 12.0
+            elif clasificacion == 'C':
+                mult_min, mult_seg, mult_max = 5.0, 3.0, 15.0
+            else:
+                mult_min, mult_seg, mult_max = 0, 0, 0
+
+            # Calcular niveles de stock usando P75 (venta en días de alta demanda)
+            velocidad_stock = venta_p75_bultos if venta_p75_bultos > 0 else venta_diaria_bultos
+            stock_minimo = velocidad_stock * mult_min
+            stock_seguridad = velocidad_stock * mult_seg
+            stock_maximo = velocidad_stock * mult_max
+            punto_reorden = stock_minimo + stock_seguridad + (1.25 * velocidad_stock)
+
+            # Stock en días (usar P75 para cálculo más conservador)
+            stock_total_bultos = stock_tienda / cantidad_bultos if cantidad_bultos > 0 else 0
+            stock_dias = stock_total_bultos / velocidad_stock if velocidad_stock > 0 else 999
+
+            # Calcular pedido sugerido usando velocidad de stock (P75)
+            if velocidad_stock > 0 and stock_dias <= (punto_reorden / velocidad_stock if velocidad_stock > 0 else 999):
+                cantidad_sugerida = max(0, stock_maximo - stock_total_bultos)
+                # Limitar al stock disponible en CEDI
+                stock_cedi_bultos = stock_cedi / cantidad_bultos if cantidad_bultos > 0 else 0
+                cantidad_sugerida = min(cantidad_sugerida, stock_cedi_bultos)
+                razon = "Stock bajo punto de reorden"
+            else:
+                cantidad_sugerida = 0
+                razon = "Stock suficiente"
+
+            productos.append(ProductoCalculado(
+                codigo_producto=codigo,
+                codigo_barras=row[1],
+                descripcion_producto=row[2] or codigo,
+                categoria=row[3],
+                grupo=row[4],
+                subgrupo=row[5],
+                marca=row[6],
+                presentacion=row[7],
+                cantidad_bultos=cantidad_bultos,
+                peso_unidad=float(row[9]) if row[9] else 1000.0,
+                prom_ventas_5dias_unid=float(row[10]) if row[10] else 0.0,
+                prom_ventas_20dias_unid=prom_20d,
+                prom_top3_unid=prom_top3,
+                prom_p75_unid=prom_p75,
+                prom_ventas_8sem_unid=prom_20d,  # Aproximación
+                prom_ventas_8sem_bultos=venta_diaria_bultos,
+                stock_tienda=stock_tienda,
+                stock_en_transito=0.0,
+                stock_total=stock_tienda,
+                stock_total_bultos=stock_total_bultos,
+                stock_dias_cobertura=stock_dias,
+                stock_cedi_origen=stock_cedi,
+                clasificacion_abc=clasificacion,
+                stock_minimo=stock_minimo * cantidad_bultos,  # En unidades
+                stock_maximo=stock_maximo * cantidad_bultos,
+                stock_seguridad=stock_seguridad * cantidad_bultos,
+                punto_reorden=punto_reorden * cantidad_bultos,
+                cantidad_sugerida_unid=cantidad_sugerida * cantidad_bultos,
+                cantidad_sugerida_bultos=cantidad_sugerida,
+                cantidad_ajustada_bultos=round(cantidad_sugerida),
+                razon_pedido=razon
+            ))
+
+        logger.info(f"✅ Calculados {len(productos)} productos sugeridos")
+        return productos
+
+    except Exception as e:
+        logger.error(f"❌ Error calculando productos sugeridos: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error calculando productos: {str(e)}")
+
+
 @router.post("/crear-v2", response_model=PedidoGuardadoResponse)
 async def crear_pedido_v2(
     request: CrearPedidoV2Request,

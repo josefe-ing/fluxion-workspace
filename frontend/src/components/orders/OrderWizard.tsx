@@ -26,6 +26,8 @@ export interface ProductoPedido {
   peso_unidad: number; // Peso por unidad en gramos
   prom_ventas_5dias_unid: number;
   prom_ventas_20dias_unid: number;
+  prom_top3_unid: number;  // Promedio TOP 3 días con más ventas
+  prom_p75_unid: number;   // Percentil 75 de ventas diarias
   prom_mismo_dia_unid: number;
   prom_ventas_8sem_unid: number;
   prom_ventas_8sem_bultos: number;
@@ -118,8 +120,8 @@ export default function OrderWizard() {
                     </svg>
                   </div>
                 ) : currentStep === step.number ? (
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-gray-900 bg-white">
-                    <span className="text-gray-900 font-semibold text-xs">{step.number}</span>
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-900">
+                    <span className="text-white font-semibold text-xs">{step.number}</span>
                   </div>
                 ) : (
                   <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-gray-300 bg-white">

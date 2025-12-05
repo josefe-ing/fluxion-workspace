@@ -3,26 +3,18 @@ import http from '../../services/http';
 import type { OrderData, ProductoPedido } from './OrderWizard';
 import ProductSalesModal from '../sales/ProductSalesModal';
 import ABCComparisonModal from './ABCComparisonModal';
-import XYZModal from './XYZModal';
 import StockMinimoModal from './StockMinimoModal';
-import {
-  getClasificacionesPorCodigos,
-  ClasificacionABCv2,
-  getIconoDiscrepancia,
-  getDescripcionXYZ
-} from '../../services/abcV2Service';
 import StockSeguridadModal from './StockSeguridadModal';
 import PuntoReordenModal from './PuntoReordenModal';
 import StockMaximoModal from './StockMaximoModal';
 import StockDiasModal from './StockDiasModal';
 import PedidoSugeridoModal from './PedidoSugeridoModal';
-import ProyeccionModal from './ProyeccionModal';
+import MetodosPromedioModal from './MetodosPromedioModal';
 import CriticidadModal from './CriticidadModal';
-import ModoConsultorToggle from './ModoConsultorToggle';
-import ResumenComparativo from './ResumenComparativo';
 import ModalAnalisisComparativo from './ModalAnalisisComparativo';
+import ProductHistoryModal from '../dashboard/ProductHistoryModal';
 import { formatNumber } from '../../utils/formatNumber';
-import { generarAnalisisXYZDummy, generarResumenComparativo, type AnalisisXYZ } from '../../utils/analisisXYZDummy';
+import { generarAnalisisXYZDummy, type AnalisisXYZ } from '../../utils/analisisXYZDummy';
 import { obtenerAnalisisXYZBatch } from '../../services/analisisXYZ';
 
 interface Props {
@@ -32,7 +24,7 @@ interface Props {
   onBack: () => void;
 }
 
-type SortField = 'prom_5d' | 'prom_20d' | 'prom_mismo_dia' | 'stock' | 'sugerido' | 'pedir' | 'abc' | 'abc_v2' | 'criticidad';
+type SortField = 'prom_20d' | 'stock' | 'sugerido' | 'pedir' | 'abc' | 'criticidad' | 'top3' | 'p75';
 type SortDirection = 'asc' | 'desc';
 
 interface StockParams {
@@ -60,14 +52,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [sortField, setSortField] = useState<SortField | null>('criticidad');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [stockParams, setStockParams] = useState<StockParams | null>(null);
-  const [forecastData, setForecastData] = useState<Record<string, number>>({});
-  const [cuadranteActivo, setCuadranteActivo] = useState<string>('CUADRANTE I');
+  // forecastData eliminado - reemplazado por TOP3 y P75 del backend
+  const [cuadranteActivo, setCuadranteActivo] = useState<string>('Todos');
+  const [categoriaActiva, setCategoriaActiva] = useState<string>('Todas');
   const [salesModalOpen, setSalesModalOpen] = useState(false);
   const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
   const [abcModalOpen, setAbcModalOpen] = useState(false);
   const [selectedProductoABC, setSelectedProductoABC] = useState<ProductoPedido | null>(null);
-  const [xyzModalOpen, setXyzModalOpen] = useState(false);
-  const [selectedProductoXYZ, setSelectedProductoXYZ] = useState<ProductoPedido | null>(null);
   const [stockMinimoModalOpen, setStockMinimoModalOpen] = useState(false);
   const [selectedProductoStockMin, setSelectedProductoStockMin] = useState<ProductoPedido | null>(null);
   const [stockSeguridadModalOpen, setStockSeguridadModalOpen] = useState(false);
@@ -80,21 +71,25 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [selectedProductoDias, setSelectedProductoDias] = useState<ProductoPedido | null>(null);
   const [pedidoSugeridoModalOpen, setPedidoSugeridoModalOpen] = useState(false);
   const [selectedProductoPedido, setSelectedProductoPedido] = useState<ProductoPedido | null>(null);
-  const [proyeccionModalOpen, setProyeccionModalOpen] = useState(false);
-  const [selectedProductoProyeccion, setSelectedProductoProyeccion] = useState<ProductoPedido | null>(null);
+  // Estados para modal de métodos de promedio (TOP3 vs P75)
+  const [metodosPromedioModalOpen, setMetodosPromedioModalOpen] = useState(false);
+  const [selectedProductoMetodos, setSelectedProductoMetodos] = useState<ProductoPedido | null>(null);
   const [criticidadModalOpen, setCriticidadModalOpen] = useState(false);
   const [selectedProductoCriticidad, setSelectedProductoCriticidad] = useState<ProductoPedido | null>(null);
+  // Estado para modal de histórico de inventario (tienda)
+  const [historicoInventarioModalOpen, setHistoricoInventarioModalOpen] = useState(false);
+  const [selectedProductoHistorico, setSelectedProductoHistorico] = useState<ProductoPedido | null>(null);
+  // Estado para modal de histórico de inventario (CEDI)
+  const [historicoCediModalOpen, setHistoricoCediModalOpen] = useState(false);
+  const [selectedProductoCedi, setSelectedProductoCedi] = useState<ProductoPedido | null>(null);
 
-  // Estados para Modo Consultor IA
-  const [modoConsultorActivo, setModoConsultorActivo] = useState(false);
+  // Estados para Modo Consultor IA (deshabilitado por ahora)
+  const [modoConsultorActivo] = useState(false);
   const [analisisComparativoModalOpen, setAnalisisComparativoModalOpen] = useState(false);
   const [selectedProductoComparativo, setSelectedProductoComparativo] = useState<ProductoPedido | null>(null);
   const [analisisXYZCargando, setAnalisisXYZCargando] = useState(false);
   const [analisisXYZReal, setAnalisisXYZReal] = useState<Record<string, AnalisisXYZ>>({});
   const [usarDatosReales, setUsarDatosReales] = useState(true); // true = API real, false = dummy
-
-  // Estado para ABC v2 (valor económico)
-  const [clasificacionesV2, setClasificacionesV2] = useState<Map<string, ClasificacionABCv2>>(new Map());
 
   useEffect(() => {
     cargarStockParams();
@@ -106,13 +101,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cargar forecast cuando cambia el cuadrante activo
-  useEffect(() => {
-    if (productos.length > 0) {
-      cargarForecast();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cuadranteActivo, productos.length]);
+  // useEffect de forecast eliminado - reemplazado por TOP3 y P75 del backend
 
   // Ajustar cuadrante activo si no existe en los productos cargados
   useEffect(() => {
@@ -151,45 +140,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stockParams, productos.length]);
 
-  const cargarForecast = async () => {
-    try {
-      // Esperar a que productos esté cargado
-      if (productos.length === 0) return;
-
-      // Filtrar productos por cuadrante activo (igual que en la vista)
-      const productosFiltrados = cuadranteActivo === 'Todos'
-        ? productos
-        : productos.filter(p => p.cuadrante_producto === cuadranteActivo);
-
-      // Si no hay productos en este cuadrante, limpiar forecast
-      if (productosFiltrados.length === 0) {
-        setForecastData({});
-        return;
-      }
-
-      // Obtener códigos de productos del cuadrante activo
-      const codigosProductos = productosFiltrados.map(p => p.codigo_producto).join(',');
-
-      console.log(`🔮 Cargando forecast para ${productosFiltrados.length} productos del ${cuadranteActivo}`);
-
-      const response = await http.get(
-        `/api/forecast/productos?ubicacion_id=${orderData.tienda_destino}&productos=${codigosProductos}&dias_adelante=7`
-      );
-
-      if (response.data.success && response.data.forecasts) {
-        const forecastMap: Record<string, number> = {};
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        response.data.forecasts.forEach((f: any) => {
-          // Usar forecast_diario_bultos en vez de forecast_unidades (total 7 días)
-          forecastMap[f.codigo_producto] = f.forecast_diario_bultos || 0;
-        });
-        setForecastData(forecastMap);
-        console.log(`✅ Forecast cargado: ${response.data.forecasts.length} productos`);
-      }
-    } catch (error) {
-      console.error('Error cargando forecast:', error);
-    }
-  };
+  // cargarForecast eliminado - reemplazado por TOP3 y P75 del backend
 
   const handleVentasClick = (producto: ProductoPedido) => {
     setSelectedProductoSales(producto);
@@ -199,11 +150,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const handleABCClick = (producto: ProductoPedido) => {
     setSelectedProductoABC(producto);
     setAbcModalOpen(true);
-  };
-
-  const handleXYZClick = (producto: ProductoPedido) => {
-    setSelectedProductoXYZ(producto);
-    setXyzModalOpen(true);
   };
 
   const handleStockMinimoClick = (producto: ProductoPedido) => {
@@ -236,14 +182,24 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     setPedidoSugeridoModalOpen(true);
   };
 
-  const handleProyeccionClick = (producto: ProductoPedido) => {
-    setSelectedProductoProyeccion(producto);
-    setProyeccionModalOpen(true);
+  const handleMetodosPromedioClick = (producto: ProductoPedido) => {
+    setSelectedProductoMetodos(producto);
+    setMetodosPromedioModalOpen(true);
   };
 
   const handleCriticidadClick = (producto: ProductoPedido) => {
     setSelectedProductoCriticidad(producto);
     setCriticidadModalOpen(true);
+  };
+
+  const handleHistoricoInventarioClick = (producto: ProductoPedido) => {
+    setSelectedProductoHistorico(producto);
+    setHistoricoInventarioModalOpen(true);
+  };
+
+  const handleHistoricoCediClick = (producto: ProductoPedido) => {
+    setSelectedProductoCedi(producto);
+    setHistoricoCediModalOpen(true);
   };
 
   const cargarStockParams = async () => {
@@ -273,21 +229,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     }
   };
 
-  const cargarClasificacionesABCv2 = async (codigosProductos: string[]) => {
-    try {
-      // Usar tienda_destino como ubicacion_id para obtener clasificaciones locales
-      const clasificaciones = await getClasificacionesPorCodigos(
-        codigosProductos,
-        orderData.tienda_destino
-      );
-      setClasificacionesV2(clasificaciones);
-      console.log(`✅ ABC v2 + XYZ cargado para ${clasificaciones.size} productos en ${orderData.tienda_destino}`);
-    } catch (error) {
-      console.warn('ABC v2 no disponible:', error);
-      // No es crítico, continuar sin ABC v2
-    }
-  };
-
   const cargarProductosSugeridos = async () => {
     try {
       setLoading(true);
@@ -307,11 +248,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       setProductos(productosConDefaults);
       updateOrderData({ productos: productosConDefaults });
 
-      // Cargar clasificaciones ABC v2 después de tener los productos
-      if (productosConDefaults.length > 0) {
-        const codigos = productosConDefaults.map((p: ProductoPedido) => p.codigo_producto);
-        cargarClasificacionesABCv2(codigos);
-      }
     } catch (error) {
       console.error('Error cargando productos sugeridos:', error);
     } finally {
@@ -358,14 +294,45 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     }
   };
 
-  // Obtener cuadrantes únicos de los productos
-  const cuadrantesDisponibles = ['Todos', ...Array.from(new Set(productos.map(p => p.cuadrante_producto).filter((c): c is string => c !== null)))].sort();
+  // Obtener categorías únicas de los productos
+  const categoriasDisponibles = ['Todas', ...Array.from(new Set(productos.map(p => p.categoria).filter((c): c is string => c !== null && c !== '')))].sort();
 
-  // Filtrar productos por búsqueda y cuadrante
+  // Cuadrantes ABC-XYZ (9 cuadrantes + Todos)
+  const cuadrantesABCXYZ = ['Todos', 'AX', 'AY', 'AZ', 'BX', 'BY', 'BZ', 'CX', 'CY', 'CZ'];
+
+  // Función para obtener clasificación XYZ basada en coeficiente de variación
+  const getClasificacionXYZ = (producto: ProductoPedido): string => {
+    // Si no hay ventas, es Z (impredecible)
+    if (producto.prom_ventas_20dias_unid <= 0) return 'Z';
+
+    // Calcular coeficiente de variación aproximado usando la diferencia entre 5d y 20d
+    const prom5d = producto.prom_ventas_5dias_unid;
+    const prom20d = producto.prom_ventas_20dias_unid;
+
+    if (prom20d === 0) return 'Z';
+
+    // CV aproximado: diferencia relativa entre promedios
+    const variacion = Math.abs(prom5d - prom20d) / prom20d;
+
+    if (variacion <= 0.2) return 'X';  // Muy estable
+    if (variacion <= 0.5) return 'Y';  // Moderadamente variable
+    return 'Z';  // Alta variabilidad
+  };
+
+  // Filtrar productos por búsqueda, categoría y cuadrante ABC-XYZ
   const productosFiltrados = productos.filter(p => {
-    // Filtro por cuadrante
-    if (cuadranteActivo !== 'Todos' && p.cuadrante_producto !== cuadranteActivo) {
+    // Filtro por categoría
+    if (categoriaActiva !== 'Todas' && p.categoria !== categoriaActiva) {
       return false;
+    }
+
+    // Filtro por cuadrante ABC-XYZ
+    if (cuadranteActivo !== 'Todos') {
+      const abc = getClasificacionABC(p);
+      const xyz = getClasificacionXYZ(p);
+      if (`${abc}${xyz}` !== cuadranteActivo) {
+        return false;
+      }
     }
 
     // Filtro por búsqueda
@@ -388,36 +355,56 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     return '-';
   };
 
+  // Obtener velocidad de venta P75 en bultos/día (para cálculos de stock)
+  const getVelocidadP75Bultos = (producto: ProductoPedido): number => {
+    return (producto.prom_p75_unid || 0) / producto.cantidad_bultos;
+  };
+
+  // Obtener velocidad de venta promedio en bultos/día (para clasificación ABC)
+  const getVelocidadPromBultos = (producto: ProductoPedido): number => {
+    return producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+  };
+
   const calcularStockMinimo = (producto: ProductoPedido): number => {
     if (!stockParams) return 0;
 
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+    // Usar promedio 20D para determinar clasificación ABC
+    const ventaDiariaABC = getVelocidadPromBultos(producto);
+    // Usar P75 para el cálculo del stock
+    const velocidadP75 = getVelocidadP75Bultos(producto);
     let multiplicador = 0;
 
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_min_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_min_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_min_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_min_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_min_mult_c;
+    // Clasificación ABC basada en promedio 20D
+    if (ventaDiariaABC >= 20) multiplicador = stockParams.stock_min_mult_a;
+    else if (ventaDiariaABC >= 5) multiplicador = stockParams.stock_min_mult_ab;
+    else if (ventaDiariaABC >= 0.45) multiplicador = stockParams.stock_min_mult_b;
+    else if (ventaDiariaABC >= 0.20) multiplicador = stockParams.stock_min_mult_bc;
+    else if (ventaDiariaABC >= 0.001) multiplicador = stockParams.stock_min_mult_c;
     else return 0;
 
-    return ventaDiariaBultos * multiplicador;
+    // Cálculo final usando P75
+    return velocidadP75 * multiplicador;
   };
 
   const calcularStockSeguridad = (producto: ProductoPedido): number => {
     if (!stockParams) return 0;
 
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+    // Usar promedio 20D para determinar clasificación ABC
+    const ventaDiariaABC = getVelocidadPromBultos(producto);
+    // Usar P75 para el cálculo del stock
+    const velocidadP75 = getVelocidadP75Bultos(producto);
     let multiplicador = 0;
 
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_seg_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_seg_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_seg_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_seg_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_seg_mult_c;
+    // Clasificación ABC basada en promedio 20D
+    if (ventaDiariaABC >= 20) multiplicador = stockParams.stock_seg_mult_a;
+    else if (ventaDiariaABC >= 5) multiplicador = stockParams.stock_seg_mult_ab;
+    else if (ventaDiariaABC >= 0.45) multiplicador = stockParams.stock_seg_mult_b;
+    else if (ventaDiariaABC >= 0.20) multiplicador = stockParams.stock_seg_mult_bc;
+    else if (ventaDiariaABC >= 0.001) multiplicador = stockParams.stock_seg_mult_c;
     else return 0;
 
-    return ventaDiariaBultos * multiplicador;
+    // Cálculo final usando P75
+    return velocidadP75 * multiplicador;
   };
 
   const calcularPuntoReorden = (producto: ProductoPedido): number => {
@@ -487,25 +474,30 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   };
 
   // Función para calcular criticidad (0 = más crítico, mayor número = menos crítico)
+  // NOTA: Usa P75 para cálculo de días de stock (más conservador, prepara para picos de demanda)
   const calcularCriticidad = (producto: ProductoPedido): number => {
-    if (!stockParams || producto.prom_ventas_20dias_unid <= 0) return 999;
+    try {
+      if (!stockParams || !producto || producto.prom_ventas_20dias_unid <= 0) return 999;
 
     const clasificacion = getClasificacionABC(producto);
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
 
-    // Calcular stock actual en días
+    // Usar P75 para cálculo de días (consistente con stock mínimo, seguridad, etc.)
+    const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+    const velocidadP75Bultos = velocidadP75 / producto.cantidad_bultos;
+
+    // Calcular stock actual en días usando P75
     const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-    const diasStockActual = stockTotalUnidades / producto.prom_ventas_20dias_unid;
+    const diasStockActual = velocidadP75 > 0 ? stockTotalUnidades / velocidadP75 : 999;
 
-    // Calcular puntos de control en días
+    // Calcular puntos de control en días (usando P75 para consistencia)
     const stockMinimoBultos = calcularStockMinimo(producto);
-    const diasMinimo = ventaDiariaBultos > 0 ? stockMinimoBultos / ventaDiariaBultos : 0;
+    const diasMinimo = velocidadP75Bultos > 0 ? stockMinimoBultos / velocidadP75Bultos : 0;
 
     const puntoReordenBultos = calcularPuntoReorden(producto);
-    const diasReorden = ventaDiariaBultos > 0 ? puntoReordenBultos / ventaDiariaBultos : 0;
+    const diasReorden = velocidadP75Bultos > 0 ? puntoReordenBultos / velocidadP75Bultos : 0;
 
     const stockMaximoBultos = calcularStockMaximo(producto);
-    const diasMaximo = ventaDiariaBultos > 0 ? stockMaximoBultos / ventaDiariaBultos : 0;
+    const diasMaximo = velocidadP75Bultos > 0 ? stockMaximoBultos / velocidadP75Bultos : 0;
 
     // Pesos por clasificación ABC (A es más importante)
     const pesoABC = {
@@ -547,6 +539,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     // - A preventivo: (4 * 10) + 1 = 41 ✓
     // - C con exceso: (5 * 10) + 5 = 55 (MENOS CRÍTICO) ⚠️
     return (urgenciaStock * 10) + pesoABC;
+    } catch {
+      return 999;
+    }
   };
 
   // Cargar análisis XYZ desde API cuando se activa Modo Consultor
@@ -615,13 +610,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     return analisisMap;
   }, [modoConsultorActivo, stockParams, productosFiltrados, usarDatosReales, analisisXYZCargando, analisisXYZReal]);
 
-  // Generar resumen comparativo
-  const resumenComparativo = useMemo(() => {
-    if (!modoConsultorActivo || Object.keys(analisisXYZData).length === 0) {
-      return null;
-    }
-    return generarResumenComparativo(Object.values(analisisXYZData));
-  }, [modoConsultorActivo, analisisXYZData]);
 
   // Handlers para Modo Consultor
   const handleComparativoClick = (producto: ProductoPedido) => {
@@ -668,21 +656,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       }
     }
 
-    // Caso especial para ABC v2 (ordenamiento por clasificación de valor)
-    if (sortField === 'abc_v2') {
-      const abcV2Order = { 'A': 1, 'B': 2, 'C': 3, 'NUEVO': 4, 'ERROR_COSTO': 5, 'SIN_MOVIMIENTO': 6, '-': 7 };
-      const aClasifV2 = clasificacionesV2.get(a.codigo_producto);
-      const bClasifV2 = clasificacionesV2.get(b.codigo_producto);
-      const aOrder = abcV2Order[(aClasifV2?.clasificacion_abc_valor || '-') as keyof typeof abcV2Order];
-      const bOrder = abcV2Order[(bClasifV2?.clasificacion_abc_valor || '-') as keyof typeof abcV2Order];
-
-      if (sortDirection === 'asc') {
-        return aOrder - bOrder;
-      } else {
-        return bOrder - aOrder;
-      }
-    }
-
     // Caso especial para Criticidad (ordenamiento por urgencia combinada)
     if (sortField === 'criticidad') {
       const aCriticidad = calcularCriticidad(a);
@@ -699,17 +672,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     let aValue: number, bValue: number;
 
     switch (sortField) {
-      case 'prom_5d':
-        aValue = a.prom_ventas_5dias_unid;
-        bValue = b.prom_ventas_5dias_unid;
-        break;
       case 'prom_20d':
         aValue = a.prom_ventas_20dias_unid;
         bValue = b.prom_ventas_20dias_unid;
-        break;
-      case 'prom_mismo_dia':
-        aValue = a.prom_mismo_dia_unid;
-        bValue = b.prom_mismo_dia_unid;
         break;
       case 'stock':
         aValue = a.stock_total;
@@ -723,6 +688,14 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         aValue = a.cantidad_pedida_bultos || 0;
         bValue = b.cantidad_pedida_bultos || 0;
         break;
+      case 'top3':
+        aValue = a.prom_top3_unid || 0;
+        bValue = b.prom_top3_unid || 0;
+        break;
+      case 'p75':
+        aValue = a.prom_p75_unid || 0;
+        bValue = b.prom_p75_unid || 0;
+        break;
       default:
         return 0;
     }
@@ -735,7 +708,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   });
 
   const productosIncluidos = productos.filter(p => p.incluido);
-  const totalBultos = productosIncluidos.reduce((sum, p) => sum + (p.cantidad_pedida_bultos || 0), 0);
 
   const SortableHeader = ({ field, label, bgColor = 'bg-gray-100', width }: { field: SortField; label: string; bgColor?: string; width?: string }) => (
     <th
@@ -760,18 +732,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Productos Sugeridos</h2>
 
-        {/* Modo Consultor IA Toggle */}
-        <ModoConsultorToggle
-          modoConsultorActivo={modoConsultorActivo}
-          onToggle={() => setModoConsultorActivo(!modoConsultorActivo)}
-          cargando={analisisXYZCargando}
-        />
-
-        {/* Resumen Comparativo (solo visible en Modo Consultor) */}
-        {modoConsultorActivo && resumenComparativo && (
-          <ResumenComparativo stats={resumenComparativo} />
-        )}
-
         {/* Información origen/destino */}
         <div className="grid grid-cols-2 gap-6 mb-6">
           <div>
@@ -791,25 +751,17 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         </div>
 
         {/* Estadísticas */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="bg-blue-50 rounded-md p-4">
-            <div className="text-xs text-blue-600 mb-1">Productos Seleccionados</div>
-            <div className="text-2xl font-bold text-blue-900">{productosIncluidos.length}</div>
-          </div>
-          <div className="bg-green-50 rounded-md p-4">
-            <div className="text-xs text-green-600 mb-1">Total Bultos</div>
-            <div className="text-2xl font-bold text-green-900">{formatNumber(totalBultos, 2)}</div>
-          </div>
-          <div className="bg-purple-50 rounded-md p-4">
-            <div className="text-xs text-purple-600 mb-1">Total Productos</div>
-            <div className="text-2xl font-bold text-purple-900">{productos.length}</div>
+        <div className="flex items-center gap-4 mb-6">
+          <div className="bg-purple-50 rounded-md px-4 py-3">
+            <span className="text-sm text-purple-600">Total Productos: </span>
+            <span className="text-xl font-bold text-purple-900">{productos.length}</span>
           </div>
         </div>
 
         {/* Filtros */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-wrap">
           {/* Búsqueda */}
-          <div className="flex-1">
+          <div className="flex-1 min-w-[200px]">
             <input
               type="text"
               placeholder="🔍 Buscar producto..."
@@ -819,16 +771,40 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             />
           </div>
 
-          {/* Dropdown de Cuadrantes */}
+          {/* Dropdown de Categoría */}
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Cuadrante:</label>
+            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Categoría:</label>
+            <select
+              value={categoriaActiva}
+              onChange={(e) => setCategoriaActiva(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent bg-white min-w-[150px]"
+            >
+              {categoriasDisponibles.map((categoria) => {
+                const count = productos.filter(p => categoria === 'Todas' || p.categoria === categoria).length;
+                return (
+                  <option key={categoria} value={categoria}>
+                    {categoria} ({count})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          {/* Dropdown de Cuadrante ABC-XYZ */}
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">ABC-XYZ:</label>
             <select
               value={cuadranteActivo}
               onChange={(e) => setCuadranteActivo(e.target.value)}
               className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent bg-white"
             >
-              {cuadrantesDisponibles.map((cuadrante) => {
-                const count = productos.filter(p => cuadrante === 'Todos' || p.cuadrante_producto === cuadrante).length;
+              {cuadrantesABCXYZ.map((cuadrante) => {
+                const count = productos.filter(p => {
+                  if (cuadrante === 'Todos') return true;
+                  const abc = getClasificacionABC(p);
+                  const xyz = getClasificacionXYZ(p);
+                  return `${abc}${xyz}` === cuadrante;
+                }).length;
                 return (
                   <option key={cuadrante} value={cuadrante}>
                     {cuadrante} ({count})
@@ -839,7 +815,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
           </div>
 
           {/* Contador de resultados */}
-          {searchTerm && (
+          {(searchTerm || categoriaActiva !== 'Todas' || cuadranteActivo !== 'Todos') && (
             <div className="text-sm text-gray-500 whitespace-nowrap">
               {productosFiltrados.length} de {productos.length}
             </div>
@@ -874,12 +850,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   <th className="sticky left-7 z-10 bg-blue-100 px-1.5 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '65px' }}>Código</th>
                   <th className="sticky left-[93px] z-10 bg-blue-100 px-2 py-1.5 text-left font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '110px' }}>Descripción</th>
                   <th className="bg-blue-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '50px' }}>Unid/Bto</th>
-                  <SortableHeader field="prom_5d" label="5d" bgColor="bg-purple-100" width="50px" />
-                  <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="50px" />
-                  <SortableHeader field="prom_mismo_dia" label="Mismo Día" bgColor="bg-purple-100" width="70px" />
-                  <th className="bg-purple-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '60px' }}>
-                    Proyección
+                  <th className="bg-purple-100 px-1 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '30px' }} title="Análisis de Ventas por Tienda (gráficos, forecast, inventario)">
+                    <span className="text-base">📈</span>
                   </th>
+                  <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="50px" />
+                  <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="50px" />
+                  <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="50px" />
                   <SortableHeader field="stock" label="Stock" bgColor="bg-green-100" width="50px" />
                   <th className="bg-green-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '55px' }}>
                     Tránsito
@@ -894,34 +870,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     CEDI
                   </th>
                   <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="40px" />
-                  {/* Nueva columna ABC v2 (Valor) - Ordenable */}
-                  <th
-                    onClick={() => handleSort('abc_v2')}
-                    className="bg-emerald-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap cursor-pointer hover:bg-emerald-200 select-none"
-                    style={{ width: '45px' }}
-                  >
-                    <div className="flex flex-col items-center gap-0.5">
-                      <div className="flex items-center gap-0.5">
-                        <span>ABC</span>
-                        {sortField === 'abc_v2' && (
-                          <span className="text-gray-900 text-xs">
-                            {sortDirection === 'asc' ? '↑' : '↓'}
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[8px] text-emerald-700">v2 💰</span>
-                    </div>
-                  </th>
-                  <th
-                    className="bg-blue-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap"
-                    style={{ width: '45px' }}
-                    title="XYZ: Variabilidad de demanda"
-                  >
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span>XYZ</span>
-                      <span className="text-[8px] text-blue-700">📊</span>
-                    </div>
-                  </th>
                   <SortableHeader field="criticidad" label="🔥" bgColor="bg-red-100" width="60px" />
                   <th className="bg-orange-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '45px' }}>
                     Min
@@ -978,45 +926,52 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     </td>
                     <td className="sticky left-7 z-10 bg-blue-50 px-1.5 py-1 font-mono text-[11px] font-medium text-gray-900 text-center" style={{ width: '65px' }}>{producto.codigo_producto}</td>
                     <td className="sticky left-[93px] z-10 bg-blue-50 px-2 py-1 text-[11px] text-left truncate" style={{ width: '110px' }}>
-                      <button
-                        onClick={() => handleVentasClick(producto)}
-                        className="text-gray-900 hover:text-blue-700 hover:underline cursor-pointer transition-colors text-left w-full truncate"
-                        title={`${producto.descripcion_producto}\n\nClick para ver análisis completo de ventas (gráficos, todas las tiendas, forecast)`}
+                      <span
+                        className="text-gray-900 text-left w-full truncate block"
+                        title={producto.descripcion_producto}
                       >
                         {producto.descripcion_producto}
-                      </button>
+                      </span>
                     </td>
                     <td className="bg-blue-50 px-2 py-1 text-[11px] text-gray-700 text-center" style={{ width: '50px' }}>{Math.round(producto.cantidad_bultos)}</td>
+                    <td className="bg-purple-50 px-1 py-1 text-center" style={{ width: '30px' }}>
+                      <button
+                        onClick={() => handleVentasClick(producto)}
+                        className="text-purple-600 hover:text-purple-800 hover:scale-110 cursor-pointer transition-all"
+                        title="Ver análisis de ventas por tienda (gráficos, forecast, inventario)"
+                      >
+                        <span className="text-sm">📈</span>
+                      </button>
+                    </td>
                     <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium" style={{ width: '50px' }}>
-                      {(producto.prom_ventas_5dias_unid / producto.cantidad_bultos).toFixed(1)}
+                      {(producto.prom_ventas_20dias_unid / producto.cantidad_bultos).toFixed(1)}
                     </td>
                     <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium" style={{ width: '50px' }}>
                       <button
-                        onClick={() => handleVentasClick(producto)}
-                        className="hover:text-purple-900 hover:underline cursor-pointer font-bold transition-colors"
-                        title="Click para ver análisis completo (gráficos, forecast, cálculo 20D)"
+                        onClick={() => handleMetodosPromedioClick(producto)}
+                        className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
+                        title="Click para ver comparativa TOP3 vs P75"
                       >
-                        {(producto.prom_ventas_20dias_unid / producto.cantidad_bultos).toFixed(1)}
+                        {producto.prom_top3_unid ? (producto.prom_top3_unid / producto.cantidad_bultos).toFixed(1) : '-'}
                       </button>
                     </td>
-                    <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium" style={{ width: '70px' }}>
-                      {(producto.prom_mismo_dia_unid / producto.cantidad_bultos).toFixed(1)}
-                    </td>
-                    <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium" style={{ width: '60px' }}>
-                      {forecastData[producto.codigo_producto] ? (
-                        <button
-                          onClick={() => handleProyeccionClick(producto)}
-                          className="hover:text-purple-900 hover:underline cursor-pointer font-bold transition-colors"
-                          title="Click para ver cálculo de la Proyección PMP"
-                        >
-                          {forecastData[producto.codigo_producto].toFixed(1)}
-                        </button>
-                      ) : (
-                        '-'
-                      )}
+                    <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-bold" style={{ width: '50px' }}>
+                      <button
+                        onClick={() => handleMetodosPromedioClick(producto)}
+                        className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
+                        title="Click para ver comparativa TOP3 vs P75"
+                      >
+                        {producto.prom_p75_unid ? (producto.prom_p75_unid / producto.cantidad_bultos).toFixed(1) : '-'}
+                      </button>
                     </td>
                     <td className="bg-green-50 px-2 py-1 text-[11px] text-gray-800 text-center font-medium" style={{ width: '50px' }}>
-                      {formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}
+                      <button
+                        onClick={() => handleHistoricoInventarioClick(producto)}
+                        className="hover:text-green-700 hover:underline cursor-pointer transition-colors"
+                        title="Click para ver histórico de inventario"
+                      >
+                        {formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}
+                      </button>
                     </td>
                     <td className="bg-green-50 px-2 py-1 text-[11px] text-amber-800 text-center font-medium" style={{ width: '55px' }}>
                       {formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}
@@ -1028,16 +983,22 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       <button
                         onClick={() => handleStockDiasClick(producto)}
                         className={`hover:underline cursor-pointer transition-colors ${stockCritico ? 'hover:text-red-900' : 'hover:text-indigo-900'}`}
-                        title="Click para ver análisis de urgencia de reposición"
+                        title="Click para ver análisis de urgencia de reposición (basado en P75)"
                       >
-                        {producto.prom_ventas_20dias_unid > 0
-                          ? ((producto.stock_tienda + producto.stock_en_transito) / producto.prom_ventas_20dias_unid).toFixed(1)
+                        {producto.prom_p75_unid && producto.prom_p75_unid > 0
+                          ? ((producto.stock_tienda + producto.stock_en_transito) / producto.prom_p75_unid).toFixed(1)
                           : '∞'
                         }
                       </button>
                     </td>
                     <td className="bg-green-50 px-2 py-1 text-[11px] text-green-800 text-center font-medium" style={{ width: '50px' }}>
-                      {formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}
+                      <button
+                        onClick={() => handleHistoricoCediClick(producto)}
+                        className="hover:text-green-900 hover:underline cursor-pointer transition-colors"
+                        title="Click para ver histórico de inventario en CEDI"
+                      >
+                        {formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}
+                      </button>
                     </td>
                     <td className="bg-orange-50 px-2 py-1 text-[11px] text-center" style={{ width: '40px' }}>
                       <button
@@ -1054,104 +1015,25 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {getClasificacionABC(producto)}
                       </button>
                     </td>
-                    {/* Nueva celda ABC v2 (Valor) */}
-                    <td
-                      onClick={() => handleABCClick(producto)}
-                      className="bg-emerald-50 px-2 py-1 text-center cursor-pointer hover:bg-emerald-100 transition-colors"
-                      style={{ width: '45px' }}
-                      title="ABC v2 basado en valor económico"
-                    >
-                      {(() => {
-                        const claseV2 = clasificacionesV2.get(producto.codigo_producto);
-                        if (!claseV2) {
-                          return <span className="text-gray-400 text-[10px]">-</span>;
-                        }
-
-                        const icono = getIconoDiscrepancia(claseV2);
-                        let colorClase = '';
-
-                        if (claseV2.clasificacion_abc_valor === 'A') {
-                          colorClase = 'text-red-700 font-bold';
-                        } else if (claseV2.clasificacion_abc_valor === 'B') {
-                          colorClase = 'text-yellow-700 font-semibold';
-                        } else if (claseV2.clasificacion_abc_valor === 'C') {
-                          colorClase = 'text-gray-600 font-medium';
-                        }
-
-                        return (
-                          <div className="flex flex-col items-center gap-0.5">
-                            <span className={`text-[11px] ${colorClase}`}>
-                              {claseV2.clasificacion_abc_valor}
-                            </span>
-                            {claseV2.tiene_discrepancia && (
-                              <span className="text-[10px]" title={claseV2.tipo_discrepancia}>
-                                {icono}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    {/* Nueva columna XYZ (Variabilidad) */}
-                    <td
-                      onClick={() => handleXYZClick(producto)}
-                      className="bg-blue-50 px-2 py-1 text-center cursor-pointer hover:bg-blue-100 transition-colors"
-                      style={{ width: '45px' }}
-                      title={(() => {
-                        const claseV2 = clasificacionesV2.get(producto.codigo_producto);
-                        if (!claseV2?.clasificacion_xyz) return 'Sin clasificación XYZ - Click para más info';
-                        return `${getDescripcionXYZ(claseV2.clasificacion_xyz)}\nCV: ${claseV2.coeficiente_variacion?.toFixed(2) || 'N/A'}\n\nClick para ver análisis detallado`;
-                      })()}
-                    >
-                      {(() => {
-                        const claseV2 = clasificacionesV2.get(producto.codigo_producto);
-                        if (!claseV2?.clasificacion_xyz) {
-                          return <span className="text-gray-400 text-[10px]">-</span>;
-                        }
-
-                        const matriz = claseV2.matriz_abc_xyz;
-                        let colorClase = '';
-
-                        // Colores por XYZ
-                        if (claseV2.clasificacion_xyz === 'X') {
-                          colorClase = 'text-green-700 font-semibold';
-                        } else if (claseV2.clasificacion_xyz === 'Y') {
-                          colorClase = 'text-yellow-700 font-semibold';
-                        } else if (claseV2.clasificacion_xyz === 'Z') {
-                          colorClase = 'text-red-700 font-bold';
-                        }
-
-                        // Mostrar matriz completa (ej: AX, BZ) en vez de solo X/Y/Z
-                        return (
-                          <div className="flex flex-col items-center gap-0.5">
-                            <span className={`text-[10px] ${colorClase}`}>
-                              {matriz || claseV2.clasificacion_xyz}
-                            </span>
-                            {claseV2.es_extremadamente_volatil && (
-                              <span className="text-[10px]" title="Extremadamente volátil (CV > 2.0)">
-                                ⚡
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </td>
                     <td className="bg-red-50 px-2 py-1 text-[10px] text-center font-bold" style={{ width: '60px' }}>
                       {stockParams && producto.prom_ventas_20dias_unid > 0 ? (() => {
                         const criticidad = calcularCriticidad(producto);
                         const clasificacion = getClasificacionABC(producto);
-                        const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+
+                        // Usar P75 para cálculos (consistente con calcularCriticidad)
+                        const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+                        const velocidadP75Bultos = velocidadP75 / producto.cantidad_bultos;
                         const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-                        const diasStockActual = stockTotalUnidades / producto.prom_ventas_20dias_unid;
+                        const diasStockActual = velocidadP75 > 0 ? stockTotalUnidades / velocidadP75 : 999;
 
                         const stockMinimoBultos = calcularStockMinimo(producto);
-                        const diasMinimo = ventaDiariaBultos > 0 ? stockMinimoBultos / ventaDiariaBultos : 0;
+                        const diasMinimo = velocidadP75Bultos > 0 ? stockMinimoBultos / velocidadP75Bultos : 0;
 
                         const puntoReordenBultos = calcularPuntoReorden(producto);
-                        const diasReorden = ventaDiariaBultos > 0 ? puntoReordenBultos / ventaDiariaBultos : 0;
+                        const diasReorden = velocidadP75Bultos > 0 ? puntoReordenBultos / velocidadP75Bultos : 0;
 
                         const stockMaximoBultos = calcularStockMaximo(producto);
-                        const diasMaximo = ventaDiariaBultos > 0 ? stockMaximoBultos / ventaDiariaBultos : 0;
+                        const diasMaximo = velocidadP75Bultos > 0 ? stockMaximoBultos / velocidadP75Bultos : 0;
 
                         const puntoMedio = diasMinimo + ((diasReorden - diasMinimo) * 0.5);
 
@@ -1372,7 +1254,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         />
       )}
 
-      {/* Modal de Clasificación ABC - Comparación v1 vs v2 */}
+      {/* Modal de Clasificación ABC */}
       {selectedProductoABC && (
         <ABCComparisonModal
           isOpen={abcModalOpen}
@@ -1384,19 +1266,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             velocidad_bultos_dia: selectedProductoABC.prom_ventas_20dias_unid / selectedProductoABC.cantidad_bultos,
           }}
           ubicacionId={orderData.tienda_destino}
-        />
-      )}
-
-      {/* Modal de Clasificación XYZ - Variabilidad Detallada */}
-      {selectedProductoXYZ && (
-        <XYZModal
-          isOpen={xyzModalOpen}
-          onClose={() => setXyzModalOpen(false)}
-          clasificacion={clasificacionesV2.get(selectedProductoXYZ.codigo_producto) || null}
-          producto={{
-            codigo_producto: selectedProductoXYZ.codigo_producto,
-            descripcion_producto: selectedProductoXYZ.descripcion_producto,
-          }}
         />
       )}
 
@@ -1498,6 +1367,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             codigo_producto: selectedProductoDias.codigo_producto,
             descripcion_producto: selectedProductoDias.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoDias.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoDias.prom_p75_unid || 0,
             cantidad_bultos: selectedProductoDias.cantidad_bultos,
             stock_tienda: selectedProductoDias.stock_tienda,
             stock_en_transito: selectedProductoDias.stock_en_transito,
@@ -1556,18 +1426,19 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         />
       )}
 
-      {/* Modal de Proyección PMP */}
-      {selectedProductoProyeccion && forecastData[selectedProductoProyeccion.codigo_producto] && (
-        <ProyeccionModal
-          isOpen={proyeccionModalOpen}
-          onClose={() => setProyeccionModalOpen(false)}
+      {/* Modal de Métodos de Promedio (TOP3 vs P75) */}
+      {selectedProductoMetodos && (
+        <MetodosPromedioModal
+          isOpen={metodosPromedioModalOpen}
+          onClose={() => setMetodosPromedioModalOpen(false)}
           producto={{
-            codigo_producto: selectedProductoProyeccion.codigo_producto,
-            descripcion_producto: selectedProductoProyeccion.descripcion_producto,
-            prom_ventas_20dias_unid: selectedProductoProyeccion.prom_ventas_20dias_unid,
-            cantidad_bultos: selectedProductoProyeccion.cantidad_bultos,
+            codigo_producto: selectedProductoMetodos.codigo_producto,
+            descripcion_producto: selectedProductoMetodos.descripcion_producto,
+            prom_ventas_20dias_unid: selectedProductoMetodos.prom_ventas_20dias_unid,
+            prom_top3_unid: selectedProductoMetodos.prom_top3_unid,
+            prom_p75_unid: selectedProductoMetodos.prom_p75_unid,
+            cantidad_bultos: selectedProductoMetodos.cantidad_bultos,
           }}
-          forecastDiarioBultos={forecastData[selectedProductoProyeccion.codigo_producto]}
         />
       )}
 
@@ -1580,6 +1451,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             codigo_producto: selectedProductoCriticidad.codigo_producto,
             descripcion_producto: selectedProductoCriticidad.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoCriticidad.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoCriticidad.prom_p75_unid,
             cantidad_bultos: selectedProductoCriticidad.cantidad_bultos,
             stock_tienda: selectedProductoCriticidad.stock_tienda,
             stock_en_transito: selectedProductoCriticidad.stock_en_transito,
@@ -1601,6 +1473,28 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             stock_max_mult_bc: stockParams.stock_max_mult_bc,
             stock_max_mult_c: stockParams.stock_max_mult_c,
           }}
+        />
+      )}
+
+      {/* Modal de Histórico de Inventario (Tienda) */}
+      {selectedProductoHistorico && (
+        <ProductHistoryModal
+          isOpen={historicoInventarioModalOpen}
+          onClose={() => setHistoricoInventarioModalOpen(false)}
+          codigoProducto={selectedProductoHistorico.codigo_producto}
+          descripcionProducto={selectedProductoHistorico.descripcion_producto}
+          ubicacionId={orderData.tienda_destino}
+        />
+      )}
+
+      {/* Modal de Histórico de Inventario (CEDI) */}
+      {selectedProductoCedi && (
+        <ProductHistoryModal
+          isOpen={historicoCediModalOpen}
+          onClose={() => setHistoricoCediModalOpen(false)}
+          codigoProducto={selectedProductoCedi.codigo_producto}
+          descripcionProducto={selectedProductoCedi.descripcion_producto}
+          ubicacionId={orderData.cedi_origen}
         />
       )}
 

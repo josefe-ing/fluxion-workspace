@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -44,7 +44,8 @@ const weekendPlugin: Plugin<'line'> = {
     const labels = chart.data.labels as string[];
 
     labels.forEach((label, index) => {
-      const fecha = new Date(label);
+      // Agregar T00:00:00 para evitar problemas de timezone UTC
+      const fecha = new Date(label + 'T00:00:00');
       const diaSemana = fecha.getDay();
 
       // 0 = Domingo, 6 = Sábado
@@ -74,20 +75,27 @@ const forecastZonePlugin: Plugin<'line'> = {
 
     ctx.save();
 
-    const labels = chart.data.labels as string[];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Encontrar el último punto con datos reales (no proyección)
+    // Los datos de proyección empiezan después del último dato histórico
+    // Buscamos el primer "salto" en las fechas consecutivas o usamos los datasets
+    const datasets = chart.data.datasets;
 
-    // Encontrar el índice donde comienza el forecast (fechas futuras)
-    let forecastStartIndex = -1;
-    for (let i = 0; i < labels.length; i++) {
-      const labelDate = new Date(labels[i]);
-      labelDate.setHours(0, 0, 0, 0);
-      if (labelDate > today) {
-        forecastStartIndex = i;
-        break;
+    // Buscar el índice donde termina la data histórica (primer dataset sin "Proyección")
+    let lastDataIndex = -1;
+    for (const dataset of datasets) {
+      if (dataset.label && !dataset.label.includes('Proyección') && !dataset.label.includes('Posible falta')) {
+        const data = dataset.data as (number | null)[];
+        for (let i = data.length - 1; i >= 0; i--) {
+          if (data[i] !== null && data[i] !== undefined) {
+            if (i > lastDataIndex) lastDataIndex = i;
+            break;
+          }
+        }
       }
     }
+
+    // El forecast empieza en el índice siguiente al último dato histórico
+    const forecastStartIndex = lastDataIndex >= 0 ? lastDataIndex + 1 : -1;
 
     // Si hay zona de forecast, dibujar fondo
     if (forecastStartIndex > 0) {
@@ -128,6 +136,7 @@ interface VentaDiaria {
       unidades: number;
       venta_total: number;
       es_outlier?: boolean;
+      inventario?: number;
     };
   };
 }
@@ -193,7 +202,7 @@ export default function ProductSalesModal({
   const [loading, setLoading] = useState(true);
   const [ventasData, setVentasData] = useState<VentasResponse | null>(null);
   const [selectedTiendas, setSelectedTiendas] = useState<Set<string>>(new Set());
-  const [semanas, setSemanas] = useState<number>(8); // Default: 8 semanas
+  const [semanas, setSemanas] = useState<number>(2); // Default: 2 semanas
   const [forecastData, setForecastData] = useState<{ [tiendaId: string]: ForecastResponse }>({});
   const [ventas20Dias, setVentas20Dias] = useState<VentaDiaria20D[]>([]);
   const [loading20D, setLoading20D] = useState(false);
@@ -300,16 +309,25 @@ export default function ProductSalesModal({
   const prepareChartData = () => {
     if (!ventasData) return null;
 
-    // Fechas históricas
+    // Fechas históricas (únicas, sin duplicados)
     const fechasHistoricas = ventasData.ventas_diarias.map(v => v.fecha);
 
-    // Fechas futuras (forecast - 7 días adelante)
+    // Última fecha histórica (puede ser hoy o ayer dependiendo de los datos)
+    const lastHistoricDateStr = fechasHistoricas[fechasHistoricas.length - 1];
+    const lastHistoricDate = new Date(lastHistoricDateStr + 'T00:00:00');
+
+    // Fechas futuras (forecast - 7 días después del último dato histórico)
+    // Asegurarse de no duplicar fechas que ya estén en históricos
+    const fechasHistoricasSet = new Set(fechasHistoricas);
     const fechasFuturas: string[] = [];
-    const lastDate = new Date(fechasHistoricas[fechasHistoricas.length - 1]);
     for (let i = 1; i <= 7; i++) {
-      const futureDate = new Date(lastDate);
-      futureDate.setDate(lastDate.getDate() + i);
-      fechasFuturas.push(futureDate.toISOString().split('T')[0]);
+      const futureDate = new Date(lastHistoricDate);
+      futureDate.setDate(lastHistoricDate.getDate() + i);
+      const futureDateStr = futureDate.toISOString().split('T')[0];
+      // Solo agregar si no está ya en las fechas históricas
+      if (!fechasHistoricasSet.has(futureDateStr)) {
+        fechasFuturas.push(futureDateStr);
+      }
     }
 
     // Combinar todas las fechas
@@ -337,7 +355,7 @@ export default function ProductSalesModal({
       });
 
       // Rellenar con nulls para las fechas futuras
-      const dataCompleta = [...dataHistoricaSuavizada, ...Array(7).fill(null)];
+      const dataCompleta = [...dataHistoricaSuavizada, ...Array(fechasFuturas.length).fill(null)];
 
       // Dataset principal (línea suavizada sin outliers)
       datasets.push({
@@ -350,38 +368,60 @@ export default function ProductSalesModal({
         spanGaps: true, // Importante: conecta los puntos saltando los nulls
       });
 
-      // Dataset de outliers (puntos rojos pequeños para indicar posible falta de stock)
+      // Dataset de outliers (puntos rojos para indicar posible falta de stock)
       const dataOutliers = dataHistoricaCompleta.map((valor, idx) => {
         return esOutlier[idx] ? valor : null;
       });
 
       datasets.push({
         label: `${nombreTienda} (⚠️ Posible falta de stock)`,
-        data: [...dataOutliers, ...Array(7).fill(null)],
-        borderColor: 'transparent',
-        backgroundColor: '#ef4444', // Rojo
-        pointRadius: 4,
-        pointStyle: 'crossRot',
+        data: [...dataOutliers, ...Array(fechasFuturas.length).fill(null)],
+        borderColor: '#dc2626', // Rojo oscuro para el borde
+        backgroundColor: '#fecaca', // Rojo claro para el relleno
+        pointRadius: 8, // Más grande para ser visible
+        pointHoverRadius: 10,
+        pointBorderWidth: 2,
+        pointStyle: 'circle',
         showLine: false, // Solo mostrar puntos, no línea
       });
 
-      // Dataset de forecast (línea punteada)
+      // Dataset de forecast (línea punteada) - solo para días FUTUROS
       if (forecastData[tiendaId] && forecastData[tiendaId].forecasts.length > 0) {
-        // Obtener el último valor válido (no outlier)
-        let lastHistoricValue: number | null = 0;
+        // Obtener el último valor histórico válido para conectar con la proyección
+        let lastHistoricValue: number | null = null;
+        let lastHistoricIndex = -1;
         for (let i = dataHistoricaSuavizada.length - 1; i >= 0; i--) {
           if (dataHistoricaSuavizada[i] !== null) {
             lastHistoricValue = dataHistoricaSuavizada[i];
+            lastHistoricIndex = i;
             break;
           }
         }
 
-        // Crear array con nulls para fechas históricas, excepto la última
+        // Solo usar tantos valores de forecast como fechas futuras tengamos
+        const forecastValues = forecastData[tiendaId].forecasts
+          .slice(0, fechasFuturas.length)
+          .map(f => f.forecast_bultos);
+
+        // Array de datos:
+        // - null para todo hasta el último dato histórico (exclusivo)
+        // - lastHistoricValue en el índice del último histórico (punto de conexión invisible)
+        // - null para cualquier día histórico después (si hubiera)
+        // - forecastValues para los días futuros
         const dataForecast = [
-          ...Array(fechasHistoricas.length - 1).fill(null),
-          lastHistoricValue, // Conectar con el último punto histórico
-          ...forecastData[tiendaId].forecasts.map(f => f.forecast_bultos)
+          ...Array(lastHistoricIndex).fill(null),
+          lastHistoricValue, // Punto de conexión (último dato histórico real)
+          ...Array(fechasHistoricas.length - lastHistoricIndex - 1).fill(null),
+          ...forecastValues
         ];
+
+        // pointRadius: 0 para todo excepto los días futuros que tienen forecast
+        // El punto de conexión (lastHistoricIndex) no debe mostrar triángulo
+        const pointRadiusArray = dataForecast.map((val, idx) => {
+          // Solo mostrar triángulo en días futuros (índice >= fechasHistoricas.length)
+          if (idx >= fechasHistoricas.length && val !== null) return 4;
+          return 0;
+        });
 
         datasets.push({
           label: `${nombreTienda} (Proyección PMP)`,
@@ -391,7 +431,7 @@ export default function ProductSalesModal({
           borderDash: [5, 5], // Línea punteada
           tension: 0.3,
           borderWidth: 2,
-          pointRadius: 4,
+          pointRadius: pointRadiusArray,
           pointStyle: 'triangle',
         });
       }
@@ -428,7 +468,8 @@ export default function ProductSalesModal({
         callbacks: {
           title: (tooltipItems) => {
             const fecha = tooltipItems[0].label;
-            const fechaObj = new Date(fecha);
+            // Agregar T00:00:00 para evitar problemas de timezone UTC
+            const fechaObj = new Date(fecha + 'T00:00:00');
             const diasSemana = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
             const diaNombre = diasSemana[fechaObj.getDay()];
             const esFinDeSemana = fechaObj.getDay() === 0 || fechaObj.getDay() === 6;
@@ -437,15 +478,68 @@ export default function ProductSalesModal({
           label: (context) => {
             const label = context.dataset.label || '';
             const value = context.parsed.y;
+            const fecha = context.label;
+
+            // Para datos históricos, buscar las unidades originales
+            if (ventasData && !label.includes('Proyección') && !label.includes('⚠️')) {
+              const tiendaId = Array.from(selectedTiendas).find(tid => {
+                const nombreTienda = ventasData.ventas_diarias
+                  .find(v => v.tiendas[tid])?.tiendas[tid]?.tienda;
+                return label === nombreTienda || label === tid;
+              });
+
+              if (tiendaId) {
+                const ventaDia = ventasData.ventas_diarias.find(v => v.fecha === fecha);
+                if (ventaDia?.tiendas[tiendaId]) {
+                  const unidades = ventaDia.tiendas[tiendaId].unidades || 0;
+                  return `${label}: ${value.toFixed(2)} bultos (${unidades.toFixed(0)} unid)`;
+                }
+              }
+            }
+
+            // Para proyección, mostrar también unidades estimadas
+            if (label.includes('Proyección') && forecastData) {
+              const tiendaId = Array.from(selectedTiendas).find(tid => {
+                const nombreTienda = ventasData?.ventas_diarias
+                  .find(v => v.tiendas[tid])?.tiendas[tid]?.tienda;
+                return label.includes(nombreTienda || '') || label.includes(tid);
+              });
+
+              if (tiendaId && forecastData[tiendaId]) {
+                const forecastDia = forecastData[tiendaId].forecasts.find(f => f.fecha === fecha);
+                if (forecastDia) {
+                  return `${label}: ${value.toFixed(2)} bultos (${forecastDia.forecast_unidades.toFixed(0)} unid)`;
+                }
+              }
+            }
+
             return `${label}: ${value.toFixed(2)} bultos`;
           },
         },
       },
       datalabels: {
         display: (context) => {
-          // Mostrar etiquetas en líneas principales y proyección PMP, pero NO en outliers
+          // NO mostrar en outliers
           const label = context.dataset.label || '';
-          return !label.includes('⚠️ Posible falta de stock');
+          if (label.includes('⚠️ Posible falta de stock')) return false;
+
+          // Para Proyección PMP: no mostrar etiqueta en el punto de conexión (el primero no-null)
+          // El punto de conexión es hoy (dato real), no queremos etiqueta naranja ahí
+          if (label.includes('Proyección')) {
+            const data = context.dataset.data as (number | null)[];
+            // Encontrar el índice del primer valor no-null (punto de conexión)
+            let firstNonNullIndex = -1;
+            for (let i = 0; i < data.length; i++) {
+              if (data[i] !== null) {
+                firstNonNullIndex = i;
+                break;
+              }
+            }
+            // Si este es el punto de conexión, no mostrar etiqueta
+            if (context.dataIndex === firstNonNullIndex) return false;
+          }
+
+          return true;
         },
         align: (context) => {
           const label = context.dataset.label || '';
@@ -462,7 +556,7 @@ export default function ProductSalesModal({
         },
         formatter: (value: number | null) => {
           if (value === null || value === undefined) return '';
-          return Math.round(value);
+          return value.toFixed(2);
         },
         padding: 4,
         backgroundColor: (context) => {
@@ -771,6 +865,172 @@ export default function ProductSalesModal({
                         )}
                       </div>
                     </div>
+
+                    {/* Tabla de Ventas Diarias y Proyección - Rediseñada */}
+                    {selectedTiendas.size > 0 && (
+                      <div className="mt-6">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-base font-semibold text-gray-800">
+                            Detalle de Ventas, Inventario y Proyección
+                          </h4>
+                          <div className="flex gap-3 text-xs flex-wrap">
+                            <span className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 rounded border border-blue-200">
+                              <span className="w-2 h-2 bg-blue-400 rounded-full"></span>
+                              Fin de semana
+                            </span>
+                            <span className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 rounded border border-amber-200">
+                              <span className="w-2 h-2 bg-amber-400 rounded-full"></span>
+                              Proyección
+                            </span>
+                            <span className="flex items-center gap-1.5 px-2 py-1 bg-red-50 rounded border border-red-200">
+                              <span className="text-red-500 text-sm">⚠️</span>
+                              Posible quiebre
+                            </span>
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto border rounded-lg shadow-sm max-h-[420px]">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-100 sticky top-0 z-10">
+                              <tr className="border-b-2 border-gray-300">
+                                <th className="px-3 py-2.5 text-left font-semibold text-gray-700 bg-gray-100 min-w-[180px]">
+                                  Fecha
+                                </th>
+                                {Array.from(selectedTiendas).map(tiendaId => {
+                                  const nombreTienda = ventasData.ventas_diarias
+                                    .find(v => v.tiendas[tiendaId])?.tiendas[tiendaId]?.tienda || tiendaId;
+                                  return (
+                                    <React.Fragment key={tiendaId}>
+                                      <th
+                                        className="px-3 py-2.5 text-center font-semibold whitespace-nowrap bg-purple-50 border-l border-gray-200"
+                                        style={{ color: COLORES_TIENDAS[tiendaId] || '#64748b' }}
+                                      >
+                                        <div>{nombreTienda}</div>
+                                        <div className="text-xs font-normal text-gray-500">Venta (Unid)</div>
+                                      </th>
+                                      <th
+                                        className="px-3 py-2.5 text-center font-semibold whitespace-nowrap bg-green-50"
+                                        style={{ color: COLORES_TIENDAS[tiendaId] || '#64748b' }}
+                                      >
+                                        <div>Inventario</div>
+                                        <div className="text-xs font-normal text-gray-500">Stock (Unid)</div>
+                                      </th>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(() => {
+                                const mesesCortos = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+                                const diasSemana = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+                                const fechasHistoricas = ventasData.ventas_diarias.map(v => v.fecha);
+                                const lastHistoricDate = new Date(fechasHistoricas[fechasHistoricas.length - 1] + 'T00:00:00');
+
+                                // Generar fechas futuras
+                                const fechasFuturas: string[] = [];
+                                for (let i = 1; i <= 7; i++) {
+                                  const futureDate = new Date(lastHistoricDate);
+                                  futureDate.setDate(lastHistoricDate.getDate() + i);
+                                  fechasFuturas.push(futureDate.toISOString().split('T')[0]);
+                                }
+
+                                const allRows = [
+                                  ...ventasData.ventas_diarias.map(v => ({ fecha: v.fecha, tipo: 'historico' as const, data: v })),
+                                  ...fechasFuturas.map(f => ({ fecha: f, tipo: 'proyeccion' as const, data: null }))
+                                ];
+
+                                return allRows.map((row) => {
+                                  const fechaObj = new Date(row.fecha + 'T00:00:00');
+                                  const diaSemana = diasSemana[fechaObj.getDay()];
+                                  const dia = fechaObj.getDate();
+                                  const mes = mesesCortos[fechaObj.getMonth()];
+                                  const esFinSemana = fechaObj.getDay() === 0 || fechaObj.getDay() === 6;
+                                  const esProyeccion = row.tipo === 'proyeccion';
+
+                                  // Formatear fecha: "Sáb 22 Nov"
+                                  const fechaFormateada = `${diaSemana} ${dia} ${mes}`;
+
+                                  return (
+                                    <tr
+                                      key={row.fecha}
+                                      className={`
+                                        border-b border-gray-100 transition-colors
+                                        ${esFinSemana && !esProyeccion ? 'bg-blue-50/50' : ''}
+                                        ${esProyeccion ? 'bg-amber-50/50' : ''}
+                                        ${!esFinSemana && !esProyeccion ? 'bg-white' : ''}
+                                        hover:bg-gray-50
+                                      `}
+                                    >
+                                      <td className="px-3 py-2">
+                                        <span className={`font-medium ${esFinSemana ? 'text-blue-700' : esProyeccion ? 'text-amber-700' : 'text-gray-700'}`}>
+                                          {fechaFormateada}
+                                        </span>
+                                      </td>
+                                      {Array.from(selectedTiendas).map(tiendaId => {
+                                        if (esProyeccion) {
+                                          const forecast = forecastData[tiendaId]?.forecasts?.find(f => f.fecha === row.fecha);
+                                          if (forecast) {
+                                            return (
+                                              <React.Fragment key={`${tiendaId}-${row.fecha}`}>
+                                                <td className="px-3 py-2 text-center bg-purple-50/30 border-l border-gray-100">
+                                                  <span className="font-semibold text-amber-700">
+                                                    {forecast.forecast_unidades.toFixed(0)}
+                                                  </span>
+                                                  <span className="text-xs text-amber-600 ml-1">
+                                                    ({forecast.forecast_bultos.toFixed(1)} btos)
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-2 text-center bg-green-50/30 text-gray-400">
+                                                  —
+                                                </td>
+                                              </React.Fragment>
+                                            );
+                                          }
+                                          return (
+                                            <React.Fragment key={`${tiendaId}-${row.fecha}`}>
+                                              <td className="px-3 py-2 text-center bg-purple-50/30 border-l border-gray-100 text-gray-400">—</td>
+                                              <td className="px-3 py-2 text-center bg-green-50/30 text-gray-400">—</td>
+                                            </React.Fragment>
+                                          );
+                                        }
+
+                                        // Datos históricos
+                                        const tiendaData = row.data?.tiendas[tiendaId];
+                                        const bultos = tiendaData?.bultos || 0;
+                                        const unidades = tiendaData?.unidades || 0;
+                                        const inventario = tiendaData?.inventario;
+                                        const esOutlier = tiendaData?.es_outlier || false;
+
+                                        return (
+                                          <React.Fragment key={`${tiendaId}-${row.fecha}`}>
+                                            <td className={`px-3 py-2 text-center border-l border-gray-100 ${esOutlier ? 'bg-red-50' : 'bg-purple-50/30'}`}>
+                                              {esOutlier && <span className="text-red-500 mr-0.5">⚠️</span>}
+                                              <span className={`font-semibold ${esOutlier ? 'text-red-600' : 'text-gray-800'}`}>
+                                                {unidades.toFixed(0)}
+                                              </span>
+                                              <span className={`text-xs ml-1 ${esOutlier ? 'text-red-500' : 'text-gray-500'}`}>
+                                                ({bultos.toFixed(1)} btos)
+                                              </span>
+                                            </td>
+                                            <td className={`px-3 py-2 text-center bg-green-50/30 ${inventario !== null && inventario !== undefined ? '' : 'text-gray-400'}`}>
+                                              {inventario !== null && inventario !== undefined ? (
+                                                <span className="font-medium text-green-700">{inventario.toFixed(0)}</span>
+                                              ) : (
+                                                '—'
+                                              )}
+                                            </td>
+                                          </React.Fragment>
+                                        );
+                                      })}
+                                    </tr>
+                                  );
+                                });
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Estadísticas resumidas */}
                     <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">

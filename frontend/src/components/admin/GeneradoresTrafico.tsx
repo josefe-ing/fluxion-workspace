@@ -147,7 +147,7 @@ const GeneradoresTrafico: React.FC = () => {
   const tabs = [
     { id: 'sugeridos' as TabType, label: 'Sugeridos por revisar', count: resumen?.total_sugeridos || 0, color: 'yellow' },
     { id: 'activos' as TabType, label: 'Marcados activos', count: resumen?.total_activos || 0, color: 'green' },
-    { id: 'todos_c' as TabType, label: 'Todos los productos C', count: resumen?.productos_clase_c || 0, color: 'gray' },
+    { id: 'todos_c' as TabType, label: 'Todos los productos', count: resumen?.productos_clase_c || 0, color: 'gray' },
     { id: 'ignorados' as TabType, label: 'Ignorados', count: resumen?.total_ignorados || 0, color: 'gray' },
   ];
 
@@ -187,9 +187,9 @@ const GeneradoresTrafico: React.FC = () => {
           <div className="text-xs text-gray-500 mt-1">Pendientes de revision</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500">
-          <div className="text-sm text-gray-600">Productos Clase C</div>
+          <div className="text-sm text-gray-600">Candidatos GAP Alto</div>
           <div className="text-2xl font-bold text-blue-600">{resumen?.productos_clase_c || 0}</div>
-          <div className="text-xs text-gray-500 mt-1">5% del valor de ventas</div>
+          <div className="text-xs text-gray-500 mt-1">GAP &gt; 200</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4 border-l-4 border-purple-500">
           <div className="text-sm text-gray-600">GAP Minimo Config</div>

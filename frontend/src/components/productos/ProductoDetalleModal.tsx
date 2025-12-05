@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   getProductoDetalleCompleto,
   getVentasPorTienda,
+  getVentasSemanales,
   ProductoDetalleCompleto,
   VentasPorTiendaResponse,
+  VentasSemanalesResponse,
   formatNumber
 } from '../../services/productosService';
 
@@ -17,12 +19,15 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
   const [loading, setLoading] = useState(true);
   const [detalle, setDetalle] = useState<ProductoDetalleCompleto | null>(null);
   const [ventasPorTienda, setVentasPorTienda] = useState<VentasPorTiendaResponse | null>(null);
+  const [ventasSemanales, setVentasSemanales] = useState<VentasSemanalesResponse | null>(null);
   const [loadingVentasPorTienda, setLoadingVentasPorTienda] = useState(true);
+  const [, setLoadingVentasSemanales] = useState(true);
   const [periodoSeleccionado, setPeriodoSeleccionado] = useState("2m");
 
   useEffect(() => {
     if (isOpen && codigo) {
       loadData();
+      loadVentasSemanales();
     }
   }, [isOpen, codigo]);
 
@@ -55,6 +60,51 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
       setLoadingVentasPorTienda(false);
     }
   };
+
+  const loadVentasSemanales = async () => {
+    setLoadingVentasSemanales(true);
+    try {
+      const data = await getVentasSemanales(codigo);
+      setVentasSemanales(data);
+    } catch (error) {
+      console.error('Error loading ventas semanales:', error);
+    } finally {
+      setLoadingVentasSemanales(false);
+    }
+  };
+
+  // Calcular CV y clasificacion XYZ de los datos semanales
+  const cvData = useMemo(() => {
+    if (!ventasSemanales?.semanas || ventasSemanales.semanas.length < 2) {
+      return null;
+    }
+
+    const unidadesSemanales = ventasSemanales.semanas.map(s => s.unidades);
+    const n = unidadesSemanales.length;
+    const promedio = unidadesSemanales.reduce((a, b) => a + b, 0) / n;
+
+    // Calcular desviacion estandar
+    const varianza = unidadesSemanales.reduce((acc, val) => acc + Math.pow(val - promedio, 2), 0) / (n - 1);
+    const desviacion = Math.sqrt(varianza);
+
+    // Coeficiente de variacion
+    const cv = promedio > 0 ? desviacion / promedio : 0;
+
+    // Clasificacion XYZ
+    let clasificacionXYZ = 'Z';
+    if (cv < 0.5) clasificacionXYZ = 'X';
+    else if (cv < 1.0) clasificacionXYZ = 'Y';
+
+    return {
+      semanas: ventasSemanales.semanas,
+      unidadesSemanales,
+      promedio,
+      desviacion,
+      cv,
+      clasificacionXYZ,
+      cvDelServicio: ventasSemanales.metricas.coeficiente_variacion
+    };
+  }, [ventasSemanales]);
 
   if (!isOpen) return null;
 
@@ -154,6 +204,118 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
                         <div className="text-xs text-gray-500 uppercase">Stock Total</div>
                         <div className="text-xl font-bold text-gray-900">
                           {detalle?.metricas_globales.total_inventario.toFixed(0)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Clasificacion XYZ y Calculo CV */}
+            {cvData && (
+              <div className={`rounded-lg p-6 border-2 ${
+                cvData.clasificacionXYZ === 'X' ? 'bg-green-50 border-green-300' :
+                cvData.clasificacionXYZ === 'Y' ? 'bg-blue-50 border-blue-300' :
+                'bg-red-50 border-red-300'
+              }`}>
+                <div className="flex items-start gap-6">
+                  {/* Badge XYZ */}
+                  <div className={`flex-shrink-0 w-24 h-24 rounded-xl flex items-center justify-center text-5xl font-black ${
+                    cvData.clasificacionXYZ === 'X' ? 'bg-green-600 text-white' :
+                    cvData.clasificacionXYZ === 'Y' ? 'bg-blue-600 text-white' :
+                    'bg-red-600 text-white'
+                  }`}>
+                    {cvData.clasificacionXYZ}
+                  </div>
+
+                  {/* Explicacion */}
+                  <div className="flex-1">
+                    <h3 className={`text-xl font-bold mb-2 ${
+                      cvData.clasificacionXYZ === 'X' ? 'text-green-800' :
+                      cvData.clasificacionXYZ === 'Y' ? 'text-blue-800' :
+                      'text-red-800'
+                    }`}>
+                      {cvData.clasificacionXYZ === 'X' && 'Demanda Estable - Clase X'}
+                      {cvData.clasificacionXYZ === 'Y' && 'Demanda Variable - Clase Y'}
+                      {cvData.clasificacionXYZ === 'Z' && 'Demanda Erratica - Clase Z'}
+                    </h3>
+
+                    <p className="text-gray-700 mb-4">
+                      {cvData.clasificacionXYZ === 'X' && 'Este producto tiene ventas consistentes semana a semana. Facil de predecir y planificar. Requiere stock de seguridad bajo.'}
+                      {cvData.clasificacionXYZ === 'Y' && 'Este producto tiene variabilidad moderada en sus ventas. Puede tener patrones estacionales o tendencias. Requiere analisis de ciclos.'}
+                      {cvData.clasificacionXYZ === 'Z' && 'Este producto tiene demanda muy impredecible. Alto riesgo de stockout o sobreinventario. Requiere atencion especial.'}
+                    </p>
+
+                    {/* Formula del Calculo */}
+                    <div className="bg-white rounded-lg p-4 border mb-4">
+                      <div className="text-sm font-semibold text-gray-700 mb-3">Calculo del Coeficiente de Variacion (CV):</div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                        <div className="text-center p-2 bg-gray-50 rounded">
+                          <div className="text-xs text-gray-500">Promedio Semanal</div>
+                          <div className="text-lg font-bold text-gray-900">{cvData.promedio.toFixed(1)}</div>
+                          <div className="text-xs text-gray-400">unidades/sem</div>
+                        </div>
+                        <div className="text-center p-2 bg-gray-50 rounded">
+                          <div className="text-xs text-gray-500">Desviacion (σ)</div>
+                          <div className="text-lg font-bold text-gray-900">{cvData.desviacion.toFixed(2)}</div>
+                        </div>
+                        <div className="text-center p-2 bg-gray-50 rounded">
+                          <div className="text-xs text-gray-500">Semanas Analizadas</div>
+                          <div className="text-lg font-bold text-gray-900">{cvData.semanas.length}</div>
+                        </div>
+                        <div className={`text-center p-2 rounded ${
+                          cvData.clasificacionXYZ === 'X' ? 'bg-green-100' :
+                          cvData.clasificacionXYZ === 'Y' ? 'bg-blue-100' :
+                          'bg-red-100'
+                        }`}>
+                          <div className="text-xs text-gray-500">CV = σ / μ</div>
+                          <div className={`text-xl font-bold ${
+                            cvData.clasificacionXYZ === 'X' ? 'text-green-700' :
+                            cvData.clasificacionXYZ === 'Y' ? 'text-blue-700' :
+                            'text-red-700'
+                          }`}>{cvData.cv.toFixed(3)}</div>
+                        </div>
+                      </div>
+
+                      {/* Visualizacion de umbrales */}
+                      <div className="relative h-8 bg-gradient-to-r from-green-500 via-blue-500 to-red-500 rounded-full overflow-hidden">
+                        <div className="absolute inset-0 flex">
+                          <div className="w-1/3 flex items-center justify-center text-white text-xs font-bold border-r border-white/30">X (&lt;0.5)</div>
+                          <div className="w-1/3 flex items-center justify-center text-white text-xs font-bold border-r border-white/30">Y (0.5-1.0)</div>
+                          <div className="w-1/3 flex items-center justify-center text-white text-xs font-bold">Z (&gt;1.0)</div>
+                        </div>
+                        {/* Indicador de posicion */}
+                        <div
+                          className="absolute top-0 w-1 h-full bg-white shadow-lg"
+                          style={{
+                            left: `${Math.min(cvData.cv / 1.5 * 100, 100)}%`,
+                            transform: 'translateX(-50%)'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Clasificacion combinada ABC-XYZ */}
+                    <div className={`p-3 rounded-lg border ${
+                      claseABC === 'A' && cvData.clasificacionXYZ === 'X' ? 'bg-emerald-100 border-emerald-300' :
+                      claseABC === 'A' && cvData.clasificacionXYZ === 'Z' ? 'bg-orange-100 border-orange-300' :
+                      'bg-gray-100 border-gray-300'
+                    }`}>
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl font-black">
+                          {claseABC}{cvData.clasificacionXYZ}
+                        </span>
+                        <div className="text-sm text-gray-600">
+                          {claseABC === 'A' && cvData.clasificacionXYZ === 'X' && '⭐ Producto estrella: Alto valor + Demanda estable. Nunca debe faltar.'}
+                          {claseABC === 'A' && cvData.clasificacionXYZ === 'Y' && 'Alto valor + Demanda variable. Monitorear tendencias y ciclos.'}
+                          {claseABC === 'A' && cvData.clasificacionXYZ === 'Z' && '⚠️ Riesgo critico: Alto valor + Demanda erratica. Requiere atencion especial.'}
+                          {claseABC === 'B' && cvData.clasificacionXYZ === 'X' && 'Valor medio + Demanda estable. Gestion estandar.'}
+                          {claseABC === 'B' && cvData.clasificacionXYZ === 'Y' && 'Valor medio + Demanda variable. Revision periodica.'}
+                          {claseABC === 'B' && cvData.clasificacionXYZ === 'Z' && 'Valor medio + Demanda erratica. Evaluar niveles de servicio.'}
+                          {claseABC === 'C' && cvData.clasificacionXYZ === 'X' && 'Bajo valor + Demanda estable. Automatizar reposicion.'}
+                          {claseABC === 'C' && cvData.clasificacionXYZ === 'Y' && 'Bajo valor + Demanda variable. Minima atencion.'}
+                          {claseABC === 'C' && cvData.clasificacionXYZ === 'Z' && 'Bajo valor + Demanda erratica. Evaluar si mantener en inventario.'}
                         </div>
                       </div>
                     </div>

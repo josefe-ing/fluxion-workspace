@@ -22,6 +22,7 @@ import GeneradoresTrafico from './components/admin/GeneradoresTrafico';
 import { getTenantId } from './utils/tenant';
 // import { checkMaintenanceStatus } from './services/maintenanceService';  // Descomentar el lunes
 import ABCXYZAnalysis from './components/productos/ABCXYZAnalysis';
+import ABCXYZFullAnalysis from './components/productos/ABCXYZFullAnalysis';
 import AnalisisMaestro from './components/productos/AnalisisMaestro';
 import ProductosLayout from './components/productos/ProductosLayout';
 
@@ -56,7 +57,8 @@ function ProtectedRoutes() {
         <Route path="productos" element={<ProductosLayout />}>
           <Route index element={<Navigate to="/productos/analisis-maestro" replace />} />
           <Route path="analisis-maestro" element={<AnalisisMaestro />} />
-          <Route path="abc-xyz" element={<ABCXYZAnalysis />} />
+          <Route path="abc" element={<ABCXYZAnalysis />} />
+          <Route path="abc-xyz" element={<ABCXYZFullAnalysis />} />
         </Route>
       </Route>
     </Routes>
