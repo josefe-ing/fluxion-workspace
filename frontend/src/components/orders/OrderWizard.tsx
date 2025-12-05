@@ -110,31 +110,31 @@ export default function OrderWizard() {
   };
 
   return (
-    <div className="space-y-3 w-full max-w-none px-4">
+    <div className="space-y-2 w-full max-w-none px-1">
       {/* Breadcrumb / Steps - COMPACTO */}
-      <nav aria-label="Progress" className="pb-2">
-        <ol className="flex items-center justify-center gap-x-16">
+      <nav aria-label="Progress" className="pb-1">
+        <ol className="flex items-center justify-center gap-x-8">
           {steps.map((step, stepIdx) => (
             <li
               key={step.name}
               className="relative flex items-center"
             >
-              <div className="flex items-center gap-x-3">
+              <div className="flex items-center gap-x-2">
                 {stepIdx !== 0 && (
-                  <div className="h-0.5 w-16 bg-gray-200"></div>
+                  <div className="h-0.5 w-8 bg-gray-200"></div>
                 )}
                 {currentStep > step.number ? (
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-900">
-                    <svg className="h-4 w-4 text-white" viewBox="0 0 20 20" fill="currentColor">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-900">
+                    <svg className="h-3 w-3 text-white" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
                   </div>
                 ) : currentStep === step.number ? (
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-900">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-900">
                     <span className="text-white font-semibold text-xs">{step.number}</span>
                   </div>
                 ) : (
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-gray-300 bg-white">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-gray-300 bg-white">
                     <span className="text-gray-500 text-xs">{step.number}</span>
                   </div>
                 )}
@@ -144,7 +144,7 @@ export default function OrderWizard() {
                   </div>
                 </div>
                 {stepIdx !== steps.length - 1 && (
-                  <div className="h-0.5 w-16 bg-gray-200"></div>
+                  <div className="h-0.5 w-8 bg-gray-200"></div>
                 )}
               </div>
             </li>
@@ -153,7 +153,7 @@ export default function OrderWizard() {
       </nav>
 
       {/* Step Content */}
-      <div className="mt-8">
+      <div className="mt-2">
         {currentStep === 1 && (
           <OrderStepOne
             orderData={orderData}

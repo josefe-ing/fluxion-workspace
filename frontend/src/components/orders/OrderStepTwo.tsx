@@ -88,6 +88,10 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [analisisXYZReal, setAnalisisXYZReal] = useState<Record<string, AnalisisXYZ>>({});
   const [usarDatosReales, setUsarDatosReales] = useState(true); // true = API real, false = dummy
 
+  // Paginación
+  const [paginaActual, setPaginaActual] = useState(1);
+  const productosPorPagina = 50;
+
   useEffect(() => {
     cargarStockParams();
     if (orderData.productos.length > 0) {
@@ -336,14 +340,14 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     );
   });
 
-  // Función auxiliar para calcular clasificación ABC
+  // Función auxiliar para obtener clasificación ABC del producto
+  // Usa el valor que viene del backend (Pareto por valor: A, B, C)
   const getClasificacionABC = (producto: ProductoPedido): string => {
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    if (ventaDiariaBultos >= 20) return 'A';
-    if (ventaDiariaBultos >= 5) return 'AB';
-    if (ventaDiariaBultos >= 0.45) return 'B';
-    if (ventaDiariaBultos >= 0.20) return 'BC';
-    if (ventaDiariaBultos >= 0.001) return 'C';
+    // Usar clasificacion_abc del backend (Pareto 80/15/5)
+    if (producto.clasificacion_abc && producto.clasificacion_abc !== '-') {
+      return producto.clasificacion_abc;
+    }
+    // Fallback si no hay clasificación
     return '-';
   };
 
@@ -565,15 +569,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     const stockMaximoBultos = calcularStockMaximo(producto);
     const diasMaximo = velocidadP75Bultos > 0 ? stockMaximoBultos / velocidadP75Bultos : 0;
 
-    // Pesos por clasificación ABC (A es más importante)
+    // Pesos por clasificación ABC Pareto (A es más importante)
     const pesoABC = {
       'A': 1,
-      'AB': 2,
-      'B': 3,
-      'BC': 4,
-      'C': 5,
-      '-': 6
-    }[clasificacion] || 6;
+      'B': 2,
+      'C': 3,
+      '-': 4
+    }[clasificacion] || 4;
 
     // Determinar nivel de urgencia de stock (5 niveles)
     let urgenciaStock = 0;
@@ -707,13 +709,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const productosOrdenados = [...productosFiltrados].sort((a, b) => {
     if (!sortField) return 0;
 
-    // Caso especial para ABC (ordenamiento alfabético por clasificación)
+    // Caso especial para ABC (ordenamiento por clasificación Pareto)
     if (sortField === 'abc') {
-      const abcOrder = { 'A': 1, 'AB': 2, 'B': 3, 'BC': 4, 'C': 5, '-': 6 };
+      const abcOrder = { 'A': 1, 'B': 2, 'C': 3, '-': 4 };
       const aClasif = getClasificacionABC(a);
       const bClasif = getClasificacionABC(b);
-      const aOrder = abcOrder[aClasif as keyof typeof abcOrder];
-      const bOrder = abcOrder[bClasif as keyof typeof abcOrder];
+      const aOrder = abcOrder[aClasif as keyof typeof abcOrder] || 4;
+      const bOrder = abcOrder[bClasif as keyof typeof abcOrder] || 4;
 
       if (sortDirection === 'asc') {
         return aOrder - bOrder;
@@ -778,13 +780,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const SortableHeader = ({ field, label, bgColor = 'bg-gray-100', width }: { field: SortField; label: string; bgColor?: string; width?: string }) => (
     <th
       onClick={() => handleSort(field)}
-      className={`px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap cursor-pointer hover:bg-gray-200 select-none ${bgColor}`}
+      className={`px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap cursor-pointer hover:bg-gray-200 select-none ${bgColor}`}
       style={width ? { width } : undefined}
     >
-      <div className="flex items-center gap-1 justify-center">
+      <div className="flex items-center gap-0.5 justify-center">
         <span>{label}</span>
         {sortField === field && (
-          <span className="text-gray-900 text-lg">
+          <span className="text-gray-900 text-xs">
             {sortDirection === 'asc' ? '↑' : '↓'}
           </span>
         )}
@@ -793,57 +795,47 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   );
 
   return (
-    <div className="w-full px-4 space-y-6">
+    <div className="w-full max-w-none px-2 space-y-4">
       {/* Header con información del pedido */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Productos Sugeridos</h2>
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 className="text-lg font-bold text-gray-900 mb-3">Productos Sugeridos</h2>
 
-        {/* Información origen/destino */}
-        <div className="grid grid-cols-2 gap-6 mb-6">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">Origen</h3>
-            <div className="bg-gray-50 rounded-md p-3">
-              <p className="text-sm font-medium text-gray-900">{orderData.cedi_origen_nombre}</p>
-              <p className="text-xs text-gray-500">CEDI Origen</p>
-            </div>
+        {/* Información origen/destino + Estadísticas en una fila */}
+        <div className="flex items-center gap-6 mb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Origen:</span>
+            <span className="text-sm font-medium text-gray-900 bg-gray-50 px-2 py-1 rounded">{orderData.cedi_origen_nombre}</span>
           </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">Destino</h3>
-            <div className="bg-gray-50 rounded-md p-3">
-              <p className="text-sm font-medium text-gray-900">{orderData.tienda_destino_nombre}</p>
-              <p className="text-xs text-gray-500">Tienda Destino</p>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Destino:</span>
+            <span className="text-sm font-medium text-gray-900 bg-gray-50 px-2 py-1 rounded">{orderData.tienda_destino_nombre}</span>
           </div>
-        </div>
-
-        {/* Estadísticas */}
-        <div className="flex items-center gap-4 mb-6">
-          <div className="bg-purple-50 rounded-md px-4 py-3">
-            <span className="text-sm text-purple-600">Total Productos: </span>
-            <span className="text-xl font-bold text-purple-900">{productos.length}</span>
+          <div className="bg-purple-50 rounded-md px-3 py-1.5">
+            <span className="text-xs text-purple-600">Total: </span>
+            <span className="text-sm font-bold text-purple-900">{productos.length}</span>
           </div>
         </div>
 
         {/* Filtros */}
-        <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
           {/* Búsqueda */}
-          <div className="flex-1 min-w-[200px]">
+          <div className="flex-1 min-w-[150px] max-w-[250px]">
             <input
               type="text"
-              placeholder="🔍 Buscar producto..."
+              placeholder="🔍 Buscar..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+              onChange={(e) => { setSearchTerm(e.target.value); setPaginaActual(1); }}
+              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900"
             />
           </div>
 
           {/* Dropdown de Categoría */}
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Categoría:</label>
+          <div className="flex items-center gap-1">
+            <label className="text-xs font-medium text-gray-600">Cat:</label>
             <select
               value={categoriaActiva}
-              onChange={(e) => setCategoriaActiva(e.target.value)}
-              className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent bg-white min-w-[150px]"
+              onChange={(e) => { setCategoriaActiva(e.target.value); setPaginaActual(1); }}
+              className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
             >
               {categoriasDisponibles.map((categoria) => {
                 const count = productos.filter(p => categoria === 'Todas' || p.categoria === categoria).length;
@@ -857,12 +849,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
           </div>
 
           {/* Dropdown de Cuadrante ABC-XYZ */}
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">ABC-XYZ:</label>
+          <div className="flex items-center gap-1">
+            <label className="text-xs font-medium text-gray-600">ABC:</label>
             <select
               value={cuadranteActivo}
-              onChange={(e) => setCuadranteActivo(e.target.value)}
-              className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent bg-white"
+              onChange={(e) => { setCuadranteActivo(e.target.value); setPaginaActual(1); }}
+              className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
             >
               {cuadrantesABCXYZ.map((cuadrante) => {
                 const count = productos.filter(p => {
@@ -882,8 +874,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
 
           {/* Contador de resultados */}
           {(searchTerm || categoriaActiva !== 'Todas' || cuadranteActivo !== 'Todos') && (
-            <div className="text-sm text-gray-500 whitespace-nowrap">
-              {productosFiltrados.length} de {productos.length}
+            <div className="text-xs text-gray-500">
+              {productosFiltrados.length}/{productos.length}
             </div>
           )}
         </div>
@@ -898,10 +890,10 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full divide-y divide-gray-200 text-lg" style={{ minWidth: '2600px' }}>
+            <table className="w-full divide-y divide-gray-200 text-sm" style={{ minWidth: '1500px' }}>
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="sticky left-0 z-10 bg-gray-100 px-3 py-4 text-left" style={{ width: '50px' }}>
+                  <th className="sticky left-0 z-10 bg-gray-100 px-2 py-2 text-left" style={{ width: '36px' }}>
                     <input
                       type="checkbox"
                       checked={productos.every(p => p.incluido)}
@@ -910,106 +902,106 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         setProductos(newProductos);
                         updateOrderData({ productos: newProductos });
                       }}
-                      className="h-6 w-6 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-gray-300"
                     />
                   </th>
-                  <th className="sticky left-[50px] z-10 bg-blue-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '120px' }}>Código</th>
-                  <th className="sticky left-[170px] z-10 bg-blue-100 px-4 py-4 text-left font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '280px' }}>Descripción</th>
-                  <th className="bg-blue-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '80px' }}>U/Bto</th>
-                  <th className="bg-purple-100 px-3 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '55px' }} title="Análisis de Ventas por Tienda (gráficos, forecast, inventario)">
-                    <span className="text-2xl">📈</span>
+                  <th className="sticky left-[36px] z-10 bg-blue-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '80px' }}>Código</th>
+                  <th className="sticky left-[116px] z-10 bg-blue-100 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '130px' }}>Descripción</th>
+                  <th className="bg-blue-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>U/B</th>
+                  <th className="bg-purple-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '32px' }} title="Análisis de Ventas por Tienda">
+                    <span className="text-sm">📈</span>
                   </th>
-                  <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="85px" />
-                  <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="85px" />
-                  <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="85px" />
-                  <SortableHeader field="stock" label="Stock" bgColor="bg-green-100" width="85px" />
-                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '90px' }}>
-                    Tráns.
+                  <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="55px" />
+                  <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="55px" />
+                  <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="55px" />
+                  <SortableHeader field="stock" label="Stock" bgColor="bg-green-100" width="55px" />
+                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }}>
+                    Trán
                   </th>
-                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '85px' }}>
+                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }}>
                     Total
                   </th>
-                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '80px' }}>
+                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
                     Días
                   </th>
-                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '85px' }}>
+                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }}>
                     CEDI
                   </th>
-                  <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="70px" />
-                  <SortableHeader field="criticidad" label="🔥" bgColor="bg-red-100" width="90px" />
-                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '75px' }}>
-                    SS (d)
+                  <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="45px" />
+                  <SortableHeader field="criticidad" label="🔥" bgColor="bg-red-100" width="50px" />
+                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                    SS
                   </th>
-                  <th className="bg-orange-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '75px' }}>
-                    ROP (d)
+                  <th className="bg-orange-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                    ROP
                   </th>
-                  <th className="bg-orange-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '75px' }}>
-                    Max (d)
+                  <th className="bg-orange-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                    Max
                   </th>
-                  <SortableHeader field="sugerido" label="Sugerido" bgColor="bg-gray-100" width="100px" />
+                  <SortableHeader field="sugerido" label="Sug" bgColor="bg-gray-100" width="60px" />
 
                   {/* Columnas XYZ - Solo visibles en Modo Consultor */}
                   {modoConsultorActivo && (
                     <>
-                      <th className="bg-indigo-100 px-4 py-4 text-center font-bold text-indigo-900 text-base uppercase whitespace-nowrap" style={{ width: '80px' }}>
-                        XYZ ✨
+                      <th className="bg-indigo-100 px-2 py-2 text-center font-semibold text-indigo-900 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                        XYZ
                       </th>
-                      <th className="bg-indigo-100 px-4 py-4 text-center font-bold text-indigo-900 text-base uppercase whitespace-nowrap" style={{ width: '90px' }}>
-                        Sug. XYZ
+                      <th className="bg-indigo-100 px-2 py-2 text-center font-semibold text-indigo-900 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }}>
+                        Sug
                       </th>
-                      <th className="bg-purple-100 px-4 py-4 text-center font-bold text-purple-900 text-base uppercase whitespace-nowrap" style={{ width: '80px' }}>
+                      <th className="bg-purple-100 px-2 py-2 text-center font-semibold text-purple-900 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
                         Δ
                       </th>
-                      <th className="bg-purple-100 px-4 py-4 text-center font-bold text-purple-900 text-base uppercase whitespace-nowrap" style={{ width: '110px' }}>
-                        Análisis
+                      <th className="bg-purple-100 px-2 py-2 text-center font-semibold text-purple-900 text-xs uppercase whitespace-nowrap" style={{ width: '60px' }}>
+                        Ver
                       </th>
                     </>
                   )}
 
-                  <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="95px" />
-                  <th className="bg-indigo-50 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '100px' }}>Peso (Kg)</th>
-                  <th className="bg-gray-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '180px' }}>Notas</th>
+                  <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="70px" />
+                  <th className="bg-indigo-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '60px' }}>Peso</th>
+                  <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '120px' }}>Notas</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {productosOrdenados.slice(0, 50).map((producto, index) => {
+                {productosOrdenados.slice((paginaActual - 1) * productosPorPagina, paginaActual * productosPorPagina).map((producto, index) => {
                   const stockCritico = esStockCritico(producto);
                   return (
                   <tr
                     key={`${producto.codigo_producto}-${index}`}
                     className={`${producto.incluido ? '' : 'opacity-40'} ${stockCritico ? 'bg-red-50 border-l-2 border-red-600' : 'hover:bg-gray-50'}`}
                   >
-                    <td className="sticky left-0 z-10 bg-white px-3 py-3" style={{ width: '50px' }}>
+                    <td className="sticky left-0 z-10 bg-white px-2 py-1.5" style={{ width: '36px' }}>
                       <input
                         type="checkbox"
                         checked={producto.incluido || false}
                         onChange={() => handleIncluirChange(producto.codigo_producto)}
-                        className="h-6 w-6 rounded border-gray-300"
+                        className="h-4 w-4 rounded border-gray-300"
                       />
                     </td>
-                    <td className="sticky left-[50px] z-10 bg-blue-50 px-4 py-3 font-mono text-base font-medium text-gray-900 text-center" style={{ width: '120px' }}>{producto.codigo_producto}</td>
-                    <td className="sticky left-[170px] z-10 bg-blue-50 px-4 py-3 text-base text-left truncate" style={{ width: '280px' }}>
+                    <td className="sticky left-[36px] z-10 bg-blue-50 px-2 py-1.5 font-mono text-xs font-medium text-gray-900 text-center" style={{ width: '80px' }}>{producto.codigo_producto}</td>
+                    <td className="sticky left-[116px] z-10 bg-blue-50 px-2 py-1.5 text-xs text-left" style={{ width: '130px', maxWidth: '130px' }}>
                       <span
-                        className="text-gray-900 text-left w-full truncate block"
+                        className="text-gray-900 text-left w-full block overflow-hidden text-ellipsis whitespace-nowrap"
                         title={producto.descripcion_producto}
                       >
                         {producto.descripcion_producto}
                       </span>
                     </td>
-                    <td className="bg-blue-50 px-4 py-3 text-base text-gray-700 text-center" style={{ width: '80px' }}>{Math.round(producto.cantidad_bultos)}</td>
-                    <td className="bg-purple-50 px-3 py-3 text-center" style={{ width: '55px' }}>
+                    <td className="bg-blue-50 px-2 py-1.5 text-xs text-gray-700 text-center" style={{ width: '50px' }}>{Math.round(producto.cantidad_bultos)}</td>
+                    <td className="bg-purple-50 px-1 py-1.5 text-center" style={{ width: '32px' }}>
                       <button
                         onClick={() => handleVentasClick(producto)}
                         className="text-purple-600 hover:text-purple-800 hover:scale-110 cursor-pointer transition-all"
-                        title="Ver análisis de ventas por tienda (gráficos, forecast, inventario)"
+                        title="Ver análisis de ventas"
                       >
-                        <span className="text-2xl">📈</span>
+                        <span className="text-sm">📈</span>
                       </button>
                     </td>
-                    <td className="bg-purple-50 px-4 py-3 text-base text-purple-800 text-center font-medium" style={{ width: '85px' }}>
+                    <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '55px' }}>
                       {(producto.prom_ventas_20dias_unid / producto.cantidad_bultos).toFixed(1)}
                     </td>
-                    <td className="bg-purple-50 px-4 py-3 text-base text-purple-800 text-center font-medium" style={{ width: '85px' }}>
+                    <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '55px' }}>
                       <button
                         onClick={() => handleMetodosPromedioClick(producto)}
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
@@ -1018,7 +1010,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.prom_top3_unid ? (producto.prom_top3_unid / producto.cantidad_bultos).toFixed(1) : '-'}
                       </button>
                     </td>
-                    <td className="bg-purple-50 px-4 py-3 text-base text-purple-800 text-center font-bold" style={{ width: '85px' }}>
+                    <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-semibold" style={{ width: '55px' }}>
                       <button
                         onClick={() => handleMetodosPromedioClick(producto)}
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
@@ -1027,26 +1019,26 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.prom_p75_unid ? (producto.prom_p75_unid / producto.cantidad_bultos).toFixed(1) : '-'}
                       </button>
                     </td>
-                    <td className="bg-green-50 px-4 py-3 text-base text-gray-800 text-center font-medium" style={{ width: '85px' }}>
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-gray-800 text-center font-medium" style={{ width: '55px' }}>
                       <button
                         onClick={() => handleHistoricoInventarioClick(producto)}
                         className="hover:text-green-700 hover:underline cursor-pointer transition-colors"
-                        title="Click para ver histórico de inventario"
+                        title="Click para ver histórico"
                       >
                         {formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}
                       </button>
                     </td>
-                    <td className="bg-green-50 px-4 py-3 text-base text-amber-800 text-center font-medium" style={{ width: '90px' }}>
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-amber-800 text-center font-medium" style={{ width: '55px' }}>
                       {formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}
                     </td>
-                    <td className="bg-green-50 px-4 py-3 text-base text-blue-800 text-center font-medium" style={{ width: '85px' }}>
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-blue-800 text-center font-medium" style={{ width: '55px' }}>
                       {formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}
                     </td>
-                    <td className={`bg-green-50 px-4 py-3 text-base text-center font-bold ${stockCritico ? 'text-red-700' : 'text-indigo-800'}`} style={{ width: '80px' }}>
+                    <td className={`bg-green-50 px-2 py-1.5 text-xs text-center font-semibold ${stockCritico ? 'text-red-700' : 'text-indigo-800'}`} style={{ width: '50px' }}>
                       <button
                         onClick={() => handleStockDiasClick(producto)}
                         className={`hover:underline cursor-pointer transition-colors ${stockCritico ? 'hover:text-red-900' : 'hover:text-indigo-900'}`}
-                        title="Click para ver análisis de urgencia de reposición (basado en P75)"
+                        title="Click para ver análisis de urgencia"
                       >
                         {producto.prom_p75_unid && producto.prom_p75_unid > 0
                           ? ((producto.stock_tienda + producto.stock_en_transito) / producto.prom_p75_unid).toFixed(1)
@@ -1054,31 +1046,31 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         }
                       </button>
                     </td>
-                    <td className="bg-green-50 px-4 py-3 text-base text-green-800 text-center font-medium" style={{ width: '85px' }}>
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-green-800 text-center font-medium" style={{ width: '55px' }}>
                       <button
                         onClick={() => handleHistoricoCediClick(producto)}
                         className="hover:text-green-900 hover:underline cursor-pointer transition-colors"
-                        title="Click para ver histórico de inventario en CEDI"
+                        title="Click para ver histórico CEDI"
                       >
                         {formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}
                       </button>
                     </td>
-                    <td className="bg-orange-50 px-4 py-3 text-base text-center" style={{ width: '70px' }}>
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-center" style={{ width: '45px' }}>
                       <button
                         onClick={() => handleABCClick(producto)}
-                        className={`font-bold hover:underline cursor-pointer transition-colors ${(() => {
+                        className={`font-semibold hover:underline cursor-pointer transition-colors ${(() => {
                           const clasif = getClasificacionABC(producto);
                           if (clasif === 'A') return 'text-red-700 hover:text-red-900';
-                          if (clasif === 'AB') return 'text-orange-700 hover:text-orange-900';
                           if (clasif === 'B') return 'text-yellow-700 hover:text-yellow-900';
+                          if (clasif === 'C') return 'text-green-700 hover:text-green-900';
                           return 'text-gray-600 hover:text-gray-800';
                         })()}`}
-                        title="Click para ver cálculo de clasificación ABC"
+                        title="Click para ver clasificación ABC"
                       >
                         {getClasificacionABC(producto)}
                       </button>
                     </td>
-                    <td className="bg-red-50 px-4 py-3 text-base text-center font-bold" style={{ width: '90px' }}>
+                    <td className="bg-red-50 px-2 py-1.5 text-xs text-center font-semibold" style={{ width: '50px' }}>
                       {stockParams && producto.prom_ventas_20dias_unid > 0 ? (() => {
                         const criticidad = calcularCriticidad(producto);
                         const clasificacion = getClasificacionABC(producto);
@@ -1106,12 +1098,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
 
                         if (diasStockActual <= diasMinimo) {
                           // NIVEL 1: CRÍTICO
-                          texto = clasificacion === 'A' ? '🔴🔴🔴' : clasificacion === 'AB' ? '🔴🔴' : '🔴';
+                          texto = clasificacion === 'A' ? '🔴🔴🔴' : clasificacion === 'B' ? '🔴🔴' : '🔴';
                           color = 'text-red-700';
                           nivel = 'CRÍTICO';
                         } else if (diasStockActual <= puntoMedio) {
                           // NIVEL 2: MUY URGENTE
-                          texto = clasificacion === 'A' || clasificacion === 'AB' ? '🔴🟠' : '🔴';
+                          texto = clasificacion === 'A' ? '🔴🟠' : '🔴';
                           color = 'text-red-600';
                           nivel = 'MUY URGENTE';
                         } else if (diasStockActual <= diasReorden) {
@@ -1142,12 +1134,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         );
                       })() : '-'}
                     </td>
-                    <td className="bg-green-50 px-4 py-3 text-base text-green-800 text-center font-medium" style={{ width: '75px' }}>
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-green-800 text-center font-medium" style={{ width: '50px' }}>
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockSeguridadClick(producto)}
                           className="hover:underline hover:text-green-900 cursor-pointer transition-colors font-medium"
-                          title={`Stock Seguridad: ${producto.stock_seguridad.toFixed(0)} unidades (${getStockSeguridadBultos(producto).toFixed(1)} bultos)\nMétodo: ${producto.metodo_calculo || 'N/A'}`}
+                          title={`SS: ${producto.stock_seguridad.toFixed(0)} und`}
                         >
                           {getDiasSeguridad(producto).toFixed(1)}
                         </button>
@@ -1155,12 +1147,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         '-'
                       )}
                     </td>
-                    <td className="bg-orange-50 px-4 py-3 text-base text-orange-800 text-center font-medium" style={{ width: '75px' }}>
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '50px' }}>
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockMinimoClick(producto)}
                           className="hover:underline hover:text-orange-900 cursor-pointer transition-colors font-medium"
-                          title={`Punto de Reorden: ${producto.stock_minimo.toFixed(0)} unidades (${getStockMinimoBultos(producto).toFixed(1)} bultos)\nMétodo: ${producto.metodo_calculo || 'N/A'}`}
+                          title={`ROP: ${producto.stock_minimo.toFixed(0)} und`}
                         >
                           {getDiasMinimo(producto).toFixed(1)}
                         </button>
@@ -1168,12 +1160,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         '-'
                       )}
                     </td>
-                    <td className="bg-orange-50 px-4 py-3 text-base text-orange-800 text-center font-medium" style={{ width: '75px' }}>
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '50px' }}>
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockMaximoClick(producto)}
                           className="hover:underline cursor-pointer hover:text-orange-900 transition-colors"
-                          title={`Stock Máximo: ${producto.stock_maximo.toFixed(0)} unidades (${getStockMaximoBultos(producto).toFixed(1)} bultos)\nClase: ${producto.clase_efectiva || producto.clasificacion_abc}`}
+                          title={`Max: ${producto.stock_maximo.toFixed(0)} und`}
                         >
                           {getDiasMaximo(producto).toFixed(1)}
                         </button>
@@ -1181,7 +1173,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         '-'
                       )}
                     </td>
-                    <td className="bg-gray-50 px-4 py-3 text-center" style={{ width: '100px' }}>
+                    <td className="bg-gray-50 px-2 py-1.5 text-center" style={{ width: '60px' }}>
                       {(() => {
                         const sugerido = calcularPedidoSugerido(producto);
                         const diasCobertura = calcularDiasPedidoSugerido(producto);
@@ -1189,11 +1181,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           <button
                             onClick={() => handlePedidoSugeridoClick(producto)}
                             className={`hover:underline cursor-pointer transition-colors ${sugerido > 0 ? 'text-orange-700 hover:text-orange-900' : 'text-gray-400 hover:text-gray-600'}`}
-                            title="Click para ver cálculo del pedido sugerido"
+                            title="Ver cálculo"
                           >
-                            <span className="text-base font-bold block">{sugerido}</span>
+                            <span className="text-xs font-semibold block">{sugerido}</span>
                             {diasCobertura !== null && (
-                              <span className="text-xs text-gray-500 block">~{Math.round(diasCobertura)}d</span>
+                              <span className="text-[10px] text-gray-500 block">~{Math.round(diasCobertura)}d</span>
                             )}
                           </button>
                         );
@@ -1207,73 +1199,73 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
 
                       // Badge para XYZ
                       const getXYZBadge = (clase: string) => {
-                        if (clase === 'X') return { text: '⭐ X', color: 'text-green-700 bg-green-100' };
-                        if (clase === 'Y') return { text: '⚡ Y', color: 'text-yellow-700 bg-yellow-100' };
-                        return { text: '🌀 Z', color: 'text-red-700 bg-red-100' };
+                        if (clase === 'X') return { text: 'X', color: 'text-green-700 bg-green-100' };
+                        if (clase === 'Y') return { text: 'Y', color: 'text-yellow-700 bg-yellow-100' };
+                        return { text: 'Z', color: 'text-red-700 bg-red-100' };
                       };
                       const xyzBadge = getXYZBadge(analisis.clasificacion_xyz);
 
                       return (
                         <>
                           {/* Clasificación XYZ */}
-                          <td className="bg-indigo-50 px-4 py-3 text-center" style={{ width: '80px' }}>
-                            <span className={`text-base font-bold px-2 py-1 rounded ${xyzBadge.color}`}>
+                          <td className="bg-indigo-50 px-2 py-1.5 text-center" style={{ width: '50px' }}>
+                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${xyzBadge.color}`}>
                               {xyzBadge.text}
                             </span>
                           </td>
 
                           {/* Sugerido XYZ */}
-                          <td className="bg-indigo-50 px-4 py-3 text-center" style={{ width: '90px' }}>
-                            <span className="text-base font-bold text-indigo-900">
+                          <td className="bg-indigo-50 px-2 py-1.5 text-center" style={{ width: '55px' }}>
+                            <span className="text-xs font-semibold text-indigo-900">
                               {analisis.stock_calculado.xyz.sugerido}
                             </span>
                           </td>
 
                           {/* Diferencia (Δ) */}
-                          <td className="bg-purple-50 px-4 py-3 text-center" style={{ width: '80px' }}>
+                          <td className="bg-purple-50 px-2 py-1.5 text-center" style={{ width: '50px' }}>
                             {diferencia === 0 ? (
-                              <span className="text-base font-bold text-green-700">✅</span>
+                              <span className="text-xs font-semibold text-green-700">✅</span>
                             ) : diferencia > 0 ? (
-                              <span className="text-base font-bold text-red-700">🔺 +{diferencia}</span>
+                              <span className="text-xs font-semibold text-red-700">+{diferencia}</span>
                             ) : (
-                              <span className="text-base font-bold text-blue-700">🔻 {diferencia}</span>
+                              <span className="text-xs font-semibold text-blue-700">{diferencia}</span>
                             )}
                           </td>
 
                           {/* Botón Análisis */}
-                          <td className="bg-purple-50 px-4 py-3 text-center" style={{ width: '110px' }}>
+                          <td className="bg-purple-50 px-2 py-1.5 text-center" style={{ width: '60px' }}>
                             <button
                               onClick={() => handleComparativoClick(producto)}
-                              className="text-base font-semibold text-purple-700 hover:text-purple-900 hover:underline transition-colors px-3 py-1.5 bg-purple-200 rounded"
+                              className="text-xs font-medium text-purple-700 hover:text-purple-900 hover:underline transition-colors"
                             >
-                              Ver Detalle
+                              Ver
                             </button>
                           </td>
                         </>
                       );
                     })()}
 
-                    <td className="bg-yellow-50 px-4 py-3 text-center" style={{ width: '95px' }}>
+                    <td className="bg-yellow-50 px-2 py-1.5 text-center" style={{ width: '70px' }}>
                       <input
                         type="number"
                         min="0"
                         value={producto.cantidad_pedida_bultos || 0}
                         onChange={(e) => handleCantidadChange(producto.codigo_producto, e.target.value)}
                         disabled={!producto.incluido}
-                        className="w-20 px-2 py-2 border border-gray-300 rounded text-lg text-center font-bold disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500"
+                        className="w-14 px-1 py-1 border border-gray-300 rounded text-xs text-center font-semibold disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="bg-indigo-50 px-4 py-3 text-base text-indigo-800 text-center font-medium" style={{ width: '100px' }}>
+                    <td className="bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800 text-center font-medium" style={{ width: '60px' }}>
                       {formatNumber((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos * (producto.peso_unidad || 0) / 1000, 2)}
                     </td>
-                    <td className="bg-gray-50 px-4 py-3 text-center" style={{ width: '180px' }}>
+                    <td className="bg-gray-50 px-2 py-1.5 text-center" style={{ width: '120px' }}>
                       <input
                         type="text"
                         value={producto.razon_pedido || ''}
                         onChange={(e) => handleNotasChange(producto.codigo_producto, e.target.value)}
                         placeholder="Notas..."
                         disabled={!producto.incluido}
-                        className="w-40 px-3 py-2 border border-gray-300 rounded text-base text-left disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-1 py-1 border border-gray-300 rounded text-xs text-left disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500"
                       />
                     </td>
                   </tr>
@@ -1282,6 +1274,48 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
               </tbody>
             </table>
           </div>
+
+          {/* Paginación */}
+          {productosOrdenados.length > productosPorPagina && (
+            <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-t">
+              <div className="text-xs text-gray-600">
+                Mostrando {((paginaActual - 1) * productosPorPagina) + 1} - {Math.min(paginaActual * productosPorPagina, productosOrdenados.length)} de {productosOrdenados.length}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPaginaActual(1)}
+                  disabled={paginaActual === 1}
+                  className="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  «
+                </button>
+                <button
+                  onClick={() => setPaginaActual(p => Math.max(1, p - 1))}
+                  disabled={paginaActual === 1}
+                  className="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  ‹ Ant
+                </button>
+                <span className="px-3 py-1 text-xs font-medium bg-white border rounded">
+                  {paginaActual} / {Math.ceil(productosOrdenados.length / productosPorPagina)}
+                </span>
+                <button
+                  onClick={() => setPaginaActual(p => Math.min(Math.ceil(productosOrdenados.length / productosPorPagina), p + 1))}
+                  disabled={paginaActual >= Math.ceil(productosOrdenados.length / productosPorPagina)}
+                  className="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Sig ›
+                </button>
+                <button
+                  onClick={() => setPaginaActual(Math.ceil(productosOrdenados.length / productosPorPagina))}
+                  disabled={paginaActual >= Math.ceil(productosOrdenados.length / productosPorPagina)}
+                  className="px-2 py-1 text-xs border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  »
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
