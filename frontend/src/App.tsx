@@ -15,10 +15,12 @@ import OrderWizard from './components/orders/OrderWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
 import ETLControlCenter from './components/settings/ETLControlCenter';
-import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
-import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
-import AlertasReclasificacion from './components/admin/AlertasReclasificacion';
+import ConfiguracionABC from './components/admin/ConfiguracionABC';
 import GeneradoresTrafico from './components/admin/GeneradoresTrafico';
+// DEPRECADOS: Comentados para futura eliminación
+// import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
+// import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
+// import AlertasReclasificacion from './components/admin/AlertasReclasificacion';
 import { getTenantId } from './utils/tenant';
 // import { checkMaintenanceStatus } from './services/maintenanceService';  // Descomentar el lunes
 import ABCXYZAnalysis from './components/productos/ABCXYZAnalysis';
@@ -50,10 +52,12 @@ function ProtectedRoutes() {
         <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
         <Route path="administrador" element={<ETLControlCenter />} />
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
-        <Route path="administrador/config-inventario" element={<ConfiguracionInventario />} />
-        <Route path="administrador/conjuntos" element={<ConjuntosAdmin />} />
-        <Route path="administrador/alertas" element={<AlertasReclasificacion />} />
+        <Route path="administrador/parametros-abc" element={<ConfiguracionABC />} />
         <Route path="administrador/generadores-trafico" element={<GeneradoresTrafico />} />
+        {/* DEPRECADOS: Redirigir rutas antiguas al nuevo panel */}
+        <Route path="administrador/config-inventario" element={<Navigate to="/administrador/parametros-abc" replace />} />
+        <Route path="administrador/conjuntos" element={<Navigate to="/administrador/parametros-abc" replace />} />
+        <Route path="administrador/alertas" element={<Navigate to="/administrador/parametros-abc" replace />} />
         <Route path="productos" element={<ProductosLayout />}>
           <Route index element={<Navigate to="/productos/analisis-maestro" replace />} />
           <Route path="analisis-maestro" element={<AnalisisMaestro />} />

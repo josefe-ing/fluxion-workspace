@@ -5,7 +5,6 @@ import ProductSalesModal from '../sales/ProductSalesModal';
 import ABCComparisonModal from './ABCComparisonModal';
 import StockMinimoModal from './StockMinimoModal';
 import StockSeguridadModal from './StockSeguridadModal';
-import PuntoReordenModal from './PuntoReordenModal';
 import StockMaximoModal from './StockMaximoModal';
 import StockDiasModal from './StockDiasModal';
 import PedidoSugeridoModal from './PedidoSugeridoModal';
@@ -63,8 +62,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [selectedProductoStockMin, setSelectedProductoStockMin] = useState<ProductoPedido | null>(null);
   const [stockSeguridadModalOpen, setStockSeguridadModalOpen] = useState(false);
   const [selectedProductoStockSeg, setSelectedProductoStockSeg] = useState<ProductoPedido | null>(null);
-  const [puntoReordenModalOpen, setPuntoReordenModalOpen] = useState(false);
-  const [selectedProductoReorden, setSelectedProductoReorden] = useState<ProductoPedido | null>(null);
   const [stockMaximoModalOpen, setStockMaximoModalOpen] = useState(false);
   const [selectedProductoStockMax, setSelectedProductoStockMax] = useState<ProductoPedido | null>(null);
   const [stockDiasModalOpen, setStockDiasModalOpen] = useState(false);
@@ -160,11 +157,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const handleStockSeguridadClick = (producto: ProductoPedido) => {
     setSelectedProductoStockSeg(producto);
     setStockSeguridadModalOpen(true);
-  };
-
-  const handlePuntoReordenClick = (producto: ProductoPedido) => {
-    setSelectedProductoReorden(producto);
-    setPuntoReordenModalOpen(true);
   };
 
   const handleStockMaximoClick = (producto: ProductoPedido) => {
@@ -365,71 +357,128 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     return producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
   };
 
-  const calcularStockMinimo = (producto: ProductoPedido): number => {
-    if (!stockParams) return 0;
+  // =====================================================================
+  // Funciones para obtener valores de stock del backend (nueva metodologia ABC)
+  // Los valores ya vienen calculados en UNIDADES desde el backend
+  // =====================================================================
 
-    // Usar promedio 20D para determinar clasificación ABC
+  // Stock Minimo en BULTOS (desde backend, ya calculado con nueva formula)
+  const getStockMinimoBultos = (producto: ProductoPedido): number => {
+    // El backend envia stock_minimo en UNIDADES, convertir a bultos
+    return producto.stock_minimo / producto.cantidad_bultos;
+  };
+
+  // Stock Seguridad en BULTOS
+  const getStockSeguridadBultos = (producto: ProductoPedido): number => {
+    return producto.stock_seguridad / producto.cantidad_bultos;
+  };
+
+  // Punto de Reorden en BULTOS
+  const getPuntoReordenBultos = (producto: ProductoPedido): number => {
+    return producto.punto_reorden / producto.cantidad_bultos;
+  };
+
+  // Stock Maximo en BULTOS
+  const getStockMaximoBultos = (producto: ProductoPedido): number => {
+    return producto.stock_maximo / producto.cantidad_bultos;
+  };
+
+  // =====================================================================
+  // Funciones para obtener DIAS de cobertura (dividiendo por P75)
+  // =====================================================================
+
+  // Dias de cobertura para Stock Minimo
+  const getDiasMinimo = (producto: ProductoPedido): number => {
+    const velocidadP75 = getVelocidadP75Bultos(producto);
+    if (velocidadP75 <= 0) return 0;
+    return getStockMinimoBultos(producto) / velocidadP75;
+  };
+
+  // Dias de cobertura para Stock Seguridad
+  const getDiasSeguridad = (producto: ProductoPedido): number => {
+    const velocidadP75 = getVelocidadP75Bultos(producto);
+    if (velocidadP75 <= 0) return 0;
+    return getStockSeguridadBultos(producto) / velocidadP75;
+  };
+
+  // Dias de cobertura para Stock Maximo
+  const getDiasMaximo = (producto: ProductoPedido): number => {
+    const velocidadP75 = getVelocidadP75Bultos(producto);
+    if (velocidadP75 <= 0) return 0;
+    return getStockMaximoBultos(producto) / velocidadP75;
+  };
+
+  // =====================================================================
+  // Funciones legacy para compatibilidad con modales (usan stockParams)
+  // TODO: Actualizar modales para usar valores del backend
+  // =====================================================================
+
+  const calcularStockMinimo = (producto: ProductoPedido): number => {
+    // Usar valor del backend si esta disponible
+    if (producto.stock_minimo > 0) {
+      return getStockMinimoBultos(producto);
+    }
+    // Fallback a calculo legacy
+    if (!stockParams) return 0;
     const ventaDiariaABC = getVelocidadPromBultos(producto);
-    // Usar P75 para el cálculo del stock
     const velocidadP75 = getVelocidadP75Bultos(producto);
     let multiplicador = 0;
-
-    // Clasificación ABC basada en promedio 20D
     if (ventaDiariaABC >= 20) multiplicador = stockParams.stock_min_mult_a;
     else if (ventaDiariaABC >= 5) multiplicador = stockParams.stock_min_mult_ab;
     else if (ventaDiariaABC >= 0.45) multiplicador = stockParams.stock_min_mult_b;
     else if (ventaDiariaABC >= 0.20) multiplicador = stockParams.stock_min_mult_bc;
     else if (ventaDiariaABC >= 0.001) multiplicador = stockParams.stock_min_mult_c;
     else return 0;
-
-    // Cálculo final usando P75
     return velocidadP75 * multiplicador;
   };
 
   const calcularStockSeguridad = (producto: ProductoPedido): number => {
+    // Usar valor del backend si esta disponible
+    if (producto.stock_seguridad > 0) {
+      return getStockSeguridadBultos(producto);
+    }
+    // Fallback a calculo legacy
     if (!stockParams) return 0;
-
-    // Usar promedio 20D para determinar clasificación ABC
     const ventaDiariaABC = getVelocidadPromBultos(producto);
-    // Usar P75 para el cálculo del stock
     const velocidadP75 = getVelocidadP75Bultos(producto);
     let multiplicador = 0;
-
-    // Clasificación ABC basada en promedio 20D
     if (ventaDiariaABC >= 20) multiplicador = stockParams.stock_seg_mult_a;
     else if (ventaDiariaABC >= 5) multiplicador = stockParams.stock_seg_mult_ab;
     else if (ventaDiariaABC >= 0.45) multiplicador = stockParams.stock_seg_mult_b;
     else if (ventaDiariaABC >= 0.20) multiplicador = stockParams.stock_seg_mult_bc;
     else if (ventaDiariaABC >= 0.001) multiplicador = stockParams.stock_seg_mult_c;
     else return 0;
-
-    // Cálculo final usando P75
     return velocidadP75 * multiplicador;
   };
 
   const calcularPuntoReorden = (producto: ProductoPedido): number => {
+    // Usar valor del backend si esta disponible
+    if (producto.punto_reorden > 0) {
+      return getPuntoReordenBultos(producto);
+    }
+    // Fallback a calculo legacy
     if (!stockParams) return 0;
-
     const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
     const stockMin = calcularStockMinimo(producto);
     const stockSeg = calcularStockSeguridad(producto);
-
     return stockMin + stockSeg + (1.25 * ventaDiariaBultos);
   };
 
   const calcularStockMaximo = (producto: ProductoPedido): number => {
+    // Usar valor del backend si esta disponible
+    if (producto.stock_maximo > 0) {
+      return getStockMaximoBultos(producto);
+    }
+    // Fallback a calculo legacy
     if (!stockParams) return 0;
-
     const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
     let multiplicador = 0;
-
     if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_max_mult_a;
     else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_max_mult_ab;
     else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_max_mult_b;
     else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_max_mult_bc;
     else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_max_mult_c;
     else return 0;
-
     return ventaDiariaBultos * multiplicador;
   };
 
@@ -461,6 +510,23 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     }
 
     return 0;
+  };
+
+  // Calcular cuántos días de cobertura proporciona el pedido sugerido
+  // Retorna: días totales de stock después de recibir el pedido
+  const calcularDiasPedidoSugerido = (producto: ProductoPedido): number | null => {
+    const pedidoBultos = calcularPedidoSugerido(producto);
+    if (pedidoBultos <= 0) return null;
+
+    // Usar velocidad P75 (más conservador)
+    const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+    if (velocidadP75 <= 0) return null;
+
+    const velocidadP75Bultos = velocidadP75 / producto.cantidad_bultos;
+    const stockActualBultos = (producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos;
+    const stockResultanteBultos = stockActualBultos + pedidoBultos;
+
+    return stockResultanteBultos / velocidadP75Bultos;
   };
 
   const esStockCritico = (producto: ProductoPedido): boolean => {
@@ -712,13 +778,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const SortableHeader = ({ field, label, bgColor = 'bg-gray-100', width }: { field: SortField; label: string; bgColor?: string; width?: string }) => (
     <th
       onClick={() => handleSort(field)}
-      className={`px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap cursor-pointer hover:bg-gray-200 select-none ${bgColor}`}
+      className={`px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap cursor-pointer hover:bg-gray-200 select-none ${bgColor}`}
       style={width ? { width } : undefined}
     >
-      <div className="flex items-center gap-0.5 justify-center">
+      <div className="flex items-center gap-1 justify-center">
         <span>{label}</span>
         {sortField === field && (
-          <span className="text-gray-900 text-xs">
+          <span className="text-gray-900 text-lg">
             {sortDirection === 'asc' ? '↑' : '↓'}
           </span>
         )}
@@ -727,7 +793,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   );
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full px-4 space-y-6">
       {/* Header con información del pedido */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Productos Sugeridos</h2>
@@ -832,10 +898,10 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full divide-y divide-gray-200 text-xs" style={{ minWidth: '1400px' }}>
+            <table className="w-full divide-y divide-gray-200 text-lg" style={{ minWidth: '2600px' }}>
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="sticky left-0 z-10 bg-gray-100 px-1 py-1.5 text-left" style={{ width: '28px' }}>
+                  <th className="sticky left-0 z-10 bg-gray-100 px-3 py-4 text-left" style={{ width: '50px' }}>
                     <input
                       type="checkbox"
                       checked={productos.every(p => p.incluido)}
@@ -844,68 +910,65 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         setProductos(newProductos);
                         updateOrderData({ productos: newProductos });
                       }}
-                      className="h-3 w-3 rounded border-gray-300"
+                      className="h-6 w-6 rounded border-gray-300"
                     />
                   </th>
-                  <th className="sticky left-7 z-10 bg-blue-100 px-1.5 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '65px' }}>Código</th>
-                  <th className="sticky left-[93px] z-10 bg-blue-100 px-2 py-1.5 text-left font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '110px' }}>Descripción</th>
-                  <th className="bg-blue-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '50px' }}>Unid/Bto</th>
-                  <th className="bg-purple-100 px-1 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '30px' }} title="Análisis de Ventas por Tienda (gráficos, forecast, inventario)">
-                    <span className="text-base">📈</span>
+                  <th className="sticky left-[50px] z-10 bg-blue-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '120px' }}>Código</th>
+                  <th className="sticky left-[170px] z-10 bg-blue-100 px-4 py-4 text-left font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '280px' }}>Descripción</th>
+                  <th className="bg-blue-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '80px' }}>U/Bto</th>
+                  <th className="bg-purple-100 px-3 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '55px' }} title="Análisis de Ventas por Tienda (gráficos, forecast, inventario)">
+                    <span className="text-2xl">📈</span>
                   </th>
-                  <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="50px" />
-                  <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="50px" />
-                  <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="50px" />
-                  <SortableHeader field="stock" label="Stock" bgColor="bg-green-100" width="50px" />
-                  <th className="bg-green-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '55px' }}>
-                    Tránsito
+                  <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="85px" />
+                  <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="85px" />
+                  <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="85px" />
+                  <SortableHeader field="stock" label="Stock" bgColor="bg-green-100" width="85px" />
+                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '90px' }}>
+                    Tráns.
                   </th>
-                  <th className="bg-green-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '85px' }}>
                     Total
                   </th>
-                  <th className="bg-green-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '45px' }}>
+                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '80px' }}>
                     Días
                   </th>
-                  <th className="bg-green-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '85px' }}>
                     CEDI
                   </th>
-                  <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="40px" />
-                  <SortableHeader field="criticidad" label="🔥" bgColor="bg-red-100" width="60px" />
-                  <th className="bg-orange-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '45px' }}>
-                    Min
+                  <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="70px" />
+                  <SortableHeader field="criticidad" label="🔥" bgColor="bg-red-100" width="90px" />
+                  <th className="bg-green-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '75px' }}>
+                    SS (d)
                   </th>
-                  <th className="bg-orange-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '70px' }}>
-                    Seguridad
+                  <th className="bg-orange-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '75px' }}>
+                    ROP (d)
                   </th>
-                  <th className="bg-orange-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '60px' }}>
-                    Reorden
+                  <th className="bg-orange-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '75px' }}>
+                    Max (d)
                   </th>
-                  <th className="bg-orange-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '45px' }}>
-                    Max
-                  </th>
-                  <SortableHeader field="sugerido" label="Sugerido" bgColor="bg-gray-100" width="60px" />
+                  <SortableHeader field="sugerido" label="Sugerido" bgColor="bg-gray-100" width="100px" />
 
                   {/* Columnas XYZ - Solo visibles en Modo Consultor */}
                   {modoConsultorActivo && (
                     <>
-                      <th className="bg-indigo-100 px-2 py-1.5 text-center font-semibold text-indigo-900 text-[10px] uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                      <th className="bg-indigo-100 px-4 py-4 text-center font-bold text-indigo-900 text-base uppercase whitespace-nowrap" style={{ width: '80px' }}>
                         XYZ ✨
                       </th>
-                      <th className="bg-indigo-100 px-2 py-1.5 text-center font-semibold text-indigo-900 text-[10px] uppercase whitespace-nowrap" style={{ width: '60px' }}>
+                      <th className="bg-indigo-100 px-4 py-4 text-center font-bold text-indigo-900 text-base uppercase whitespace-nowrap" style={{ width: '90px' }}>
                         Sug. XYZ
                       </th>
-                      <th className="bg-purple-100 px-2 py-1.5 text-center font-semibold text-purple-900 text-[10px] uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                      <th className="bg-purple-100 px-4 py-4 text-center font-bold text-purple-900 text-base uppercase whitespace-nowrap" style={{ width: '80px' }}>
                         Δ
                       </th>
-                      <th className="bg-purple-100 px-2 py-1.5 text-center font-semibold text-purple-900 text-[10px] uppercase whitespace-nowrap" style={{ width: '80px' }}>
+                      <th className="bg-purple-100 px-4 py-4 text-center font-bold text-purple-900 text-base uppercase whitespace-nowrap" style={{ width: '110px' }}>
                         Análisis
                       </th>
                     </>
                   )}
 
-                  <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="55px" />
-                  <th className="bg-indigo-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '60px' }}>Peso (Kg)</th>
-                  <th className="bg-gray-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase whitespace-nowrap" style={{ width: '120px' }}>Notas</th>
+                  <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="95px" />
+                  <th className="bg-indigo-50 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '100px' }}>Peso (Kg)</th>
+                  <th className="bg-gray-100 px-4 py-4 text-center font-bold text-gray-700 text-base uppercase whitespace-nowrap" style={{ width: '180px' }}>Notas</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -916,16 +979,16 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     key={`${producto.codigo_producto}-${index}`}
                     className={`${producto.incluido ? '' : 'opacity-40'} ${stockCritico ? 'bg-red-50 border-l-2 border-red-600' : 'hover:bg-gray-50'}`}
                   >
-                    <td className="sticky left-0 z-10 bg-white px-1 py-1" style={{ width: '28px' }}>
+                    <td className="sticky left-0 z-10 bg-white px-3 py-3" style={{ width: '50px' }}>
                       <input
                         type="checkbox"
                         checked={producto.incluido || false}
                         onChange={() => handleIncluirChange(producto.codigo_producto)}
-                        className="h-3 w-3 rounded border-gray-300"
+                        className="h-6 w-6 rounded border-gray-300"
                       />
                     </td>
-                    <td className="sticky left-7 z-10 bg-blue-50 px-1.5 py-1 font-mono text-[11px] font-medium text-gray-900 text-center" style={{ width: '65px' }}>{producto.codigo_producto}</td>
-                    <td className="sticky left-[93px] z-10 bg-blue-50 px-2 py-1 text-[11px] text-left truncate" style={{ width: '110px' }}>
+                    <td className="sticky left-[50px] z-10 bg-blue-50 px-4 py-3 font-mono text-base font-medium text-gray-900 text-center" style={{ width: '120px' }}>{producto.codigo_producto}</td>
+                    <td className="sticky left-[170px] z-10 bg-blue-50 px-4 py-3 text-base text-left truncate" style={{ width: '280px' }}>
                       <span
                         className="text-gray-900 text-left w-full truncate block"
                         title={producto.descripcion_producto}
@@ -933,20 +996,20 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.descripcion_producto}
                       </span>
                     </td>
-                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-gray-700 text-center" style={{ width: '50px' }}>{Math.round(producto.cantidad_bultos)}</td>
-                    <td className="bg-purple-50 px-1 py-1 text-center" style={{ width: '30px' }}>
+                    <td className="bg-blue-50 px-4 py-3 text-base text-gray-700 text-center" style={{ width: '80px' }}>{Math.round(producto.cantidad_bultos)}</td>
+                    <td className="bg-purple-50 px-3 py-3 text-center" style={{ width: '55px' }}>
                       <button
                         onClick={() => handleVentasClick(producto)}
                         className="text-purple-600 hover:text-purple-800 hover:scale-110 cursor-pointer transition-all"
                         title="Ver análisis de ventas por tienda (gráficos, forecast, inventario)"
                       >
-                        <span className="text-sm">📈</span>
+                        <span className="text-2xl">📈</span>
                       </button>
                     </td>
-                    <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-purple-50 px-4 py-3 text-base text-purple-800 text-center font-medium" style={{ width: '85px' }}>
                       {(producto.prom_ventas_20dias_unid / producto.cantidad_bultos).toFixed(1)}
                     </td>
-                    <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-purple-50 px-4 py-3 text-base text-purple-800 text-center font-medium" style={{ width: '85px' }}>
                       <button
                         onClick={() => handleMetodosPromedioClick(producto)}
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
@@ -955,7 +1018,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.prom_top3_unid ? (producto.prom_top3_unid / producto.cantidad_bultos).toFixed(1) : '-'}
                       </button>
                     </td>
-                    <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-bold" style={{ width: '50px' }}>
+                    <td className="bg-purple-50 px-4 py-3 text-base text-purple-800 text-center font-bold" style={{ width: '85px' }}>
                       <button
                         onClick={() => handleMetodosPromedioClick(producto)}
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
@@ -964,7 +1027,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.prom_p75_unid ? (producto.prom_p75_unid / producto.cantidad_bultos).toFixed(1) : '-'}
                       </button>
                     </td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-gray-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-green-50 px-4 py-3 text-base text-gray-800 text-center font-medium" style={{ width: '85px' }}>
                       <button
                         onClick={() => handleHistoricoInventarioClick(producto)}
                         className="hover:text-green-700 hover:underline cursor-pointer transition-colors"
@@ -973,13 +1036,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}
                       </button>
                     </td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-amber-800 text-center font-medium" style={{ width: '55px' }}>
+                    <td className="bg-green-50 px-4 py-3 text-base text-amber-800 text-center font-medium" style={{ width: '90px' }}>
                       {formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}
                     </td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-blue-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-green-50 px-4 py-3 text-base text-blue-800 text-center font-medium" style={{ width: '85px' }}>
                       {formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}
                     </td>
-                    <td className={`bg-green-50 px-2 py-1 text-[11px] text-center font-bold ${stockCritico ? 'text-red-700' : 'text-indigo-800'}`} style={{ width: '45px' }}>
+                    <td className={`bg-green-50 px-4 py-3 text-base text-center font-bold ${stockCritico ? 'text-red-700' : 'text-indigo-800'}`} style={{ width: '80px' }}>
                       <button
                         onClick={() => handleStockDiasClick(producto)}
                         className={`hover:underline cursor-pointer transition-colors ${stockCritico ? 'hover:text-red-900' : 'hover:text-indigo-900'}`}
@@ -991,7 +1054,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         }
                       </button>
                     </td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-green-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-green-50 px-4 py-3 text-base text-green-800 text-center font-medium" style={{ width: '85px' }}>
                       <button
                         onClick={() => handleHistoricoCediClick(producto)}
                         className="hover:text-green-900 hover:underline cursor-pointer transition-colors"
@@ -1000,7 +1063,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}
                       </button>
                     </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-center" style={{ width: '40px' }}>
+                    <td className="bg-orange-50 px-4 py-3 text-base text-center" style={{ width: '70px' }}>
                       <button
                         onClick={() => handleABCClick(producto)}
                         className={`font-bold hover:underline cursor-pointer transition-colors ${(() => {
@@ -1015,7 +1078,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {getClasificacionABC(producto)}
                       </button>
                     </td>
-                    <td className="bg-red-50 px-2 py-1 text-[10px] text-center font-bold" style={{ width: '60px' }}>
+                    <td className="bg-red-50 px-4 py-3 text-base text-center font-bold" style={{ width: '90px' }}>
                       {stockParams && producto.prom_ventas_20dias_unid > 0 ? (() => {
                         const criticidad = calcularCriticidad(producto);
                         const clasificacion = getClasificacionABC(producto);
@@ -1079,66 +1142,62 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         );
                       })() : '-'}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium" style={{ width: '45px' }}>
-                      {stockParams && producto.prom_ventas_20dias_unid > 0 ? (
+                    <td className="bg-green-50 px-4 py-3 text-base text-green-800 text-center font-medium" style={{ width: '75px' }}>
+                      {producto.prom_p75_unid > 0 ? (
+                        <button
+                          onClick={() => handleStockSeguridadClick(producto)}
+                          className="hover:underline hover:text-green-900 cursor-pointer transition-colors font-medium"
+                          title={`Stock Seguridad: ${producto.stock_seguridad.toFixed(0)} unidades (${getStockSeguridadBultos(producto).toFixed(1)} bultos)\nMétodo: ${producto.metodo_calculo || 'N/A'}`}
+                        >
+                          {getDiasSeguridad(producto).toFixed(1)}
+                        </button>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+                    <td className="bg-orange-50 px-4 py-3 text-base text-orange-800 text-center font-medium" style={{ width: '75px' }}>
+                      {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockMinimoClick(producto)}
                           className="hover:underline hover:text-orange-900 cursor-pointer transition-colors font-medium"
-                          title="Click para ver cálculo de Stock Mínimo"
+                          title={`Punto de Reorden: ${producto.stock_minimo.toFixed(0)} unidades (${getStockMinimoBultos(producto).toFixed(1)} bultos)\nMétodo: ${producto.metodo_calculo || 'N/A'}`}
                         >
-                          {(calcularStockMinimo(producto) / (producto.prom_ventas_20dias_unid / producto.cantidad_bultos)).toFixed(1)}
+                          {getDiasMinimo(producto).toFixed(1)}
                         </button>
                       ) : (
                         '-'
                       )}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium" style={{ width: '70px' }}>
-                      {stockParams && producto.prom_ventas_20dias_unid > 0 ? (
-                        <button
-                          onClick={() => handleStockSeguridadClick(producto)}
-                          className="hover:underline hover:text-blue-900 cursor-pointer transition-colors font-medium"
-                          title="Click para ver cálculo de Stock de Seguridad"
-                        >
-                          {(calcularStockSeguridad(producto) / (producto.prom_ventas_20dias_unid / producto.cantidad_bultos)).toFixed(1)}
-                        </button>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium" style={{ width: '60px' }}>
-                      {stockParams && producto.prom_ventas_20dias_unid > 0 ? (
-                        <button
-                          onClick={() => handlePuntoReordenClick(producto)}
-                          className="hover:underline hover:text-indigo-900 cursor-pointer transition-colors font-medium"
-                          title="Click para ver cálculo de Punto de Reorden"
-                        >
-                          {(calcularPuntoReorden(producto) / (producto.prom_ventas_20dias_unid / producto.cantidad_bultos)).toFixed(1)}
-                        </button>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium" style={{ width: '45px' }}>
-                      {stockParams && producto.prom_ventas_20dias_unid > 0 ? (
+                    <td className="bg-orange-50 px-4 py-3 text-base text-orange-800 text-center font-medium" style={{ width: '75px' }}>
+                      {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockMaximoClick(producto)}
                           className="hover:underline cursor-pointer hover:text-orange-900 transition-colors"
-                          title="Click para ver cálculo de Stock Máximo"
+                          title={`Stock Máximo: ${producto.stock_maximo.toFixed(0)} unidades (${getStockMaximoBultos(producto).toFixed(1)} bultos)\nClase: ${producto.clase_efectiva || producto.clasificacion_abc}`}
                         >
-                          {(calcularStockMaximo(producto) / (producto.prom_ventas_20dias_unid / producto.cantidad_bultos)).toFixed(1)}
+                          {getDiasMaximo(producto).toFixed(1)}
                         </button>
                       ) : (
                         '-'
                       )}
                     </td>
-                    <td className="bg-gray-50 px-2 py-1 text-center" style={{ width: '60px' }}>
-                      <button
-                        onClick={() => handlePedidoSugeridoClick(producto)}
-                        className={`text-[11px] font-bold hover:underline cursor-pointer transition-colors ${calcularPedidoSugerido(producto) > 0 ? 'text-orange-700 hover:text-orange-900' : 'text-gray-400 hover:text-gray-600'}`}
-                        title="Click para ver cálculo del pedido sugerido"
-                      >
-                        {calcularPedidoSugerido(producto)}
-                      </button>
+                    <td className="bg-gray-50 px-4 py-3 text-center" style={{ width: '100px' }}>
+                      {(() => {
+                        const sugerido = calcularPedidoSugerido(producto);
+                        const diasCobertura = calcularDiasPedidoSugerido(producto);
+                        return (
+                          <button
+                            onClick={() => handlePedidoSugeridoClick(producto)}
+                            className={`hover:underline cursor-pointer transition-colors ${sugerido > 0 ? 'text-orange-700 hover:text-orange-900' : 'text-gray-400 hover:text-gray-600'}`}
+                            title="Click para ver cálculo del pedido sugerido"
+                          >
+                            <span className="text-base font-bold block">{sugerido}</span>
+                            {diasCobertura !== null && (
+                              <span className="text-xs text-gray-500 block">~{Math.round(diasCobertura)}d</span>
+                            )}
+                          </button>
+                        );
+                      })()}
                     </td>
 
                     {/* Columnas XYZ - Solo visibles en Modo Consultor */}
@@ -1157,35 +1216,35 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       return (
                         <>
                           {/* Clasificación XYZ */}
-                          <td className="bg-indigo-50 px-2 py-1 text-center" style={{ width: '50px' }}>
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${xyzBadge.color}`}>
+                          <td className="bg-indigo-50 px-4 py-3 text-center" style={{ width: '80px' }}>
+                            <span className={`text-base font-bold px-2 py-1 rounded ${xyzBadge.color}`}>
                               {xyzBadge.text}
                             </span>
                           </td>
 
                           {/* Sugerido XYZ */}
-                          <td className="bg-indigo-50 px-2 py-1 text-center" style={{ width: '60px' }}>
-                            <span className="text-[11px] font-bold text-indigo-900">
+                          <td className="bg-indigo-50 px-4 py-3 text-center" style={{ width: '90px' }}>
+                            <span className="text-base font-bold text-indigo-900">
                               {analisis.stock_calculado.xyz.sugerido}
                             </span>
                           </td>
 
                           {/* Diferencia (Δ) */}
-                          <td className="bg-purple-50 px-2 py-1 text-center" style={{ width: '50px' }}>
+                          <td className="bg-purple-50 px-4 py-3 text-center" style={{ width: '80px' }}>
                             {diferencia === 0 ? (
-                              <span className="text-[11px] font-bold text-green-700">✅</span>
+                              <span className="text-base font-bold text-green-700">✅</span>
                             ) : diferencia > 0 ? (
-                              <span className="text-[11px] font-bold text-red-700">🔺 +{diferencia}</span>
+                              <span className="text-base font-bold text-red-700">🔺 +{diferencia}</span>
                             ) : (
-                              <span className="text-[11px] font-bold text-blue-700">🔻 {diferencia}</span>
+                              <span className="text-base font-bold text-blue-700">🔻 {diferencia}</span>
                             )}
                           </td>
 
                           {/* Botón Análisis */}
-                          <td className="bg-purple-50 px-2 py-1 text-center" style={{ width: '80px' }}>
+                          <td className="bg-purple-50 px-4 py-3 text-center" style={{ width: '110px' }}>
                             <button
                               onClick={() => handleComparativoClick(producto)}
-                              className="text-[10px] font-semibold text-purple-700 hover:text-purple-900 hover:underline transition-colors px-2 py-1 bg-purple-200 rounded"
+                              className="text-base font-semibold text-purple-700 hover:text-purple-900 hover:underline transition-colors px-3 py-1.5 bg-purple-200 rounded"
                             >
                               Ver Detalle
                             </button>
@@ -1194,27 +1253,27 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       );
                     })()}
 
-                    <td className="bg-yellow-50 px-2 py-1 text-center" style={{ width: '55px' }}>
+                    <td className="bg-yellow-50 px-4 py-3 text-center" style={{ width: '95px' }}>
                       <input
                         type="number"
                         min="0"
                         value={producto.cantidad_pedida_bultos || 0}
                         onChange={(e) => handleCantidadChange(producto.codigo_producto, e.target.value)}
                         disabled={!producto.incluido}
-                        className="w-14 px-1 py-0.5 border border-gray-300 rounded text-[11px] text-center font-bold disabled:bg-gray-100 focus:ring-1 focus:ring-blue-500"
+                        className="w-20 px-2 py-2 border border-gray-300 rounded text-lg text-center font-bold disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="bg-indigo-50 px-2 py-1 text-[11px] text-indigo-800 text-center font-medium" style={{ width: '60px' }}>
+                    <td className="bg-indigo-50 px-4 py-3 text-base text-indigo-800 text-center font-medium" style={{ width: '100px' }}>
                       {formatNumber((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos * (producto.peso_unidad || 0) / 1000, 2)}
                     </td>
-                    <td className="bg-gray-50 px-2 py-1 text-center" style={{ width: '120px' }}>
+                    <td className="bg-gray-50 px-4 py-3 text-center" style={{ width: '180px' }}>
                       <input
                         type="text"
                         value={producto.razon_pedido || ''}
                         onChange={(e) => handleNotasChange(producto.codigo_producto, e.target.value)}
                         placeholder="Notas..."
                         disabled={!producto.incluido}
-                        className="w-32 px-1 py-0.5 border border-gray-300 rounded text-[10px] text-left disabled:bg-gray-100 focus:ring-1 focus:ring-blue-500"
+                        className="w-40 px-3 py-2 border border-gray-300 rounded text-base text-left disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500"
                       />
                     </td>
                   </tr>
@@ -1270,7 +1329,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       )}
 
       {/* Modal de Stock Mínimo */}
-      {selectedProductoStockMin && stockParams && (
+      {selectedProductoStockMin && (
         <StockMinimoModal
           isOpen={stockMinimoModalOpen}
           onClose={() => setStockMinimoModalOpen(false)}
@@ -1278,20 +1337,21 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             codigo_producto: selectedProductoStockMin.codigo_producto,
             descripcion_producto: selectedProductoStockMin.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoStockMin.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoStockMin.prom_p75_unid,
             cantidad_bultos: selectedProductoStockMin.cantidad_bultos,
-          }}
-          stockParams={{
-            stock_min_mult_a: stockParams.stock_min_mult_a,
-            stock_min_mult_ab: stockParams.stock_min_mult_ab,
-            stock_min_mult_b: stockParams.stock_min_mult_b,
-            stock_min_mult_bc: stockParams.stock_min_mult_bc,
-            stock_min_mult_c: stockParams.stock_min_mult_c,
+            clasificacion_abc: selectedProductoStockMin.clasificacion_abc,
+            clase_efectiva: selectedProductoStockMin.clase_efectiva,
+            es_generador_trafico: selectedProductoStockMin.es_generador_trafico,
+            stock_minimo: selectedProductoStockMin.stock_minimo,
+            stock_seguridad: selectedProductoStockMin.stock_seguridad,
+            punto_reorden: selectedProductoStockMin.punto_reorden,
+            metodo_calculo: selectedProductoStockMin.metodo_calculo,
           }}
         />
       )}
 
       {/* Modal de Stock Seguridad */}
-      {selectedProductoStockSeg && stockParams && (
+      {selectedProductoStockSeg && (
         <StockSeguridadModal
           isOpen={stockSeguridadModalOpen}
           onClose={() => setStockSeguridadModalOpen(false)}
@@ -1299,46 +1359,19 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             codigo_producto: selectedProductoStockSeg.codigo_producto,
             descripcion_producto: selectedProductoStockSeg.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoStockSeg.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoStockSeg.prom_p75_unid || 0,
             cantidad_bultos: selectedProductoStockSeg.cantidad_bultos,
-          }}
-          stockParams={{
-            stock_seg_mult_a: stockParams.stock_seg_mult_a,
-            stock_seg_mult_ab: stockParams.stock_seg_mult_ab,
-            stock_seg_mult_b: stockParams.stock_seg_mult_b,
-            stock_seg_mult_bc: stockParams.stock_seg_mult_bc,
-            stock_seg_mult_c: stockParams.stock_seg_mult_c,
-          }}
-        />
-      )}
-
-      {/* Modal de Punto de Reorden */}
-      {selectedProductoReorden && stockParams && (
-        <PuntoReordenModal
-          isOpen={puntoReordenModalOpen}
-          onClose={() => setPuntoReordenModalOpen(false)}
-          producto={{
-            codigo_producto: selectedProductoReorden.codigo_producto,
-            descripcion_producto: selectedProductoReorden.descripcion_producto,
-            prom_ventas_20dias_unid: selectedProductoReorden.prom_ventas_20dias_unid,
-            cantidad_bultos: selectedProductoReorden.cantidad_bultos,
-          }}
-          stockParams={{
-            stock_min_mult_a: stockParams.stock_min_mult_a,
-            stock_min_mult_ab: stockParams.stock_min_mult_ab,
-            stock_min_mult_b: stockParams.stock_min_mult_b,
-            stock_min_mult_bc: stockParams.stock_min_mult_bc,
-            stock_min_mult_c: stockParams.stock_min_mult_c,
-            stock_seg_mult_a: stockParams.stock_seg_mult_a,
-            stock_seg_mult_ab: stockParams.stock_seg_mult_ab,
-            stock_seg_mult_b: stockParams.stock_seg_mult_b,
-            stock_seg_mult_bc: stockParams.stock_seg_mult_bc,
-            stock_seg_mult_c: stockParams.stock_seg_mult_c,
+            clasificacion_abc: selectedProductoStockSeg.clasificacion_abc,
+            clase_efectiva: selectedProductoStockSeg.clase_efectiva,
+            es_generador_trafico: selectedProductoStockSeg.es_generador_trafico || false,
+            stock_seguridad: selectedProductoStockSeg.stock_seguridad || 0,
+            metodo_calculo: selectedProductoStockSeg.metodo_calculo || 'estadistico',
           }}
         />
       )}
 
       {/* Modal de Stock Máximo */}
-      {selectedProductoStockMax && stockParams && (
+      {selectedProductoStockMax && (
         <StockMaximoModal
           isOpen={stockMaximoModalOpen}
           onClose={() => setStockMaximoModalOpen(false)}
@@ -1346,14 +1379,14 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             codigo_producto: selectedProductoStockMax.codigo_producto,
             descripcion_producto: selectedProductoStockMax.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoStockMax.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoStockMax.prom_p75_unid || 0,
             cantidad_bultos: selectedProductoStockMax.cantidad_bultos,
-          }}
-          stockParams={{
-            stock_max_mult_a: stockParams.stock_max_mult_a,
-            stock_max_mult_ab: stockParams.stock_max_mult_ab,
-            stock_max_mult_b: stockParams.stock_max_mult_b,
-            stock_max_mult_bc: stockParams.stock_max_mult_bc,
-            stock_max_mult_c: stockParams.stock_max_mult_c,
+            clasificacion_abc: selectedProductoStockMax.clasificacion_abc,
+            clase_efectiva: selectedProductoStockMax.clase_efectiva,
+            es_generador_trafico: selectedProductoStockMax.es_generador_trafico || false,
+            stock_maximo: selectedProductoStockMax.stock_maximo || 0,
+            punto_reorden: selectedProductoStockMax.punto_reorden || selectedProductoStockMax.stock_minimo || 0,
+            metodo_calculo: selectedProductoStockMax.metodo_calculo || 'estadistico',
           }}
         />
       )}
@@ -1393,35 +1426,25 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       )}
 
       {/* Modal de Pedido Sugerido */}
-      {selectedProductoPedido && stockParams && (
+      {selectedProductoPedido && (
         <PedidoSugeridoModal
           isOpen={pedidoSugeridoModalOpen}
           onClose={() => setPedidoSugeridoModalOpen(false)}
           producto={{
             codigo_producto: selectedProductoPedido.codigo_producto,
             descripcion_producto: selectedProductoPedido.descripcion_producto,
-            prom_ventas_20dias_unid: selectedProductoPedido.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoPedido.prom_p75_unid || 0,
             cantidad_bultos: selectedProductoPedido.cantidad_bultos,
             stock_tienda: selectedProductoPedido.stock_tienda,
             stock_en_transito: selectedProductoPedido.stock_en_transito,
             stock_cedi_origen: selectedProductoPedido.stock_cedi_origen,
-          }}
-          stockParams={{
-            stock_min_mult_a: stockParams.stock_min_mult_a,
-            stock_min_mult_ab: stockParams.stock_min_mult_ab,
-            stock_min_mult_b: stockParams.stock_min_mult_b,
-            stock_min_mult_bc: stockParams.stock_min_mult_bc,
-            stock_min_mult_c: stockParams.stock_min_mult_c,
-            stock_seg_mult_a: stockParams.stock_seg_mult_a,
-            stock_seg_mult_ab: stockParams.stock_seg_mult_ab,
-            stock_seg_mult_b: stockParams.stock_seg_mult_b,
-            stock_seg_mult_bc: stockParams.stock_seg_mult_bc,
-            stock_seg_mult_c: stockParams.stock_seg_mult_c,
-            stock_max_mult_a: stockParams.stock_max_mult_a,
-            stock_max_mult_ab: stockParams.stock_max_mult_ab,
-            stock_max_mult_b: stockParams.stock_max_mult_b,
-            stock_max_mult_bc: stockParams.stock_max_mult_bc,
-            stock_max_mult_c: stockParams.stock_max_mult_c,
+            clasificacion_abc: selectedProductoPedido.clasificacion_abc,
+            clase_efectiva: selectedProductoPedido.clase_efectiva,
+            es_generador_trafico: selectedProductoPedido.es_generador_trafico || false,
+            stock_seguridad: selectedProductoPedido.stock_seguridad || 0,
+            stock_minimo: selectedProductoPedido.stock_minimo || 0,
+            stock_maximo: selectedProductoPedido.stock_maximo || 0,
+            metodo_calculo: selectedProductoPedido.metodo_calculo || 'estadistico',
           }}
         />
       )}

@@ -46,6 +46,8 @@ export interface ProductoPedido {
   stock_cedi_verde: number;
   stock_cedi_origen: number;
   clasificacion_abc: string | null;
+  clase_efectiva: string | null;      // Clase usada para calculo (puede diferir por generador trafico)
+  es_generador_trafico: boolean;      // Si es generador de trafico
   cuadrante_producto: string | null;
   stock_minimo: number;
   stock_maximo: number;
@@ -55,6 +57,14 @@ export interface ProductoPedido {
   cantidad_sugerida_bultos: number;
   cantidad_ajustada_bultos: number;
   razon_pedido: string;
+  metodo_calculo: string;             // estadistico o padre_prudente
+  // Sobrestock
+  tiene_sobrestock: boolean;
+  exceso_unidades: number;
+  exceso_bultos: number;
+  dias_exceso: number;
+  // Warnings de sanity checks
+  warnings_calculo: string[];
   cantidad_pedida_bultos?: number;
   incluido?: boolean;
 }

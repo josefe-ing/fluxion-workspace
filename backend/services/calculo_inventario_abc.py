@@ -1,0 +1,354 @@
+"""
+Modulo de calculo de parametros de inventario por clasificacion ABC.
+Version ajustada para La Granja Mercado.
+
+Caracteristicas:
+- Lead time fijo: 1.5 dias
+- Pedidos diarios
+- Despacho solo en bultos completos
+- Usa P75 como base de demanda
+- Incluye sanity checks
+- Generadores de Trafico se tratan como Clase A
+"""
+import math
+from dataclasses import dataclass, field
+from typing import List, Optional
+from enum import Enum
+
+
+# Constantes operativas La Granja
+LEAD_TIME = 1.5  # dias (fijo, CEDI cercano)
+VENTANA_SIGMA_D = 30  # dias para calcular desviacion estandar
+
+
+class MetodoCalculo(Enum):
+    ESTADISTICO = "estadistico"
+    PADRE_PRUDENTE = "padre_prudente"
+
+
+@dataclass
+class ParametrosABC:
+    nivel_servicio_z: float
+    dias_cobertura: int
+    metodo: MetodoCalculo
+
+
+@dataclass
+class InputCalculo:
+    """Datos de entrada para el calculo de inventario."""
+    demanda_p75: float          # P75 de ventas diarias (unidades)
+    sigma_demanda: float        # sigmaD sobre ultimos 30 dias
+    demanda_maxima: float       # D_max en un dia
+    unidades_por_bulto: int     # Unidades por bulto del producto
+    stock_actual: float         # Stock actual en tienda (unidades)
+    stock_cedi: float           # Stock disponible en CEDI (unidades)
+    clase_abc: str              # A, B, o C
+    es_generador_trafico: bool  # Si es generador de trafico -> tratar como A
+
+
+@dataclass
+class ResultadoCalculo:
+    """Resultado del calculo de parametros de inventario."""
+    # Valores en UNIDADES (para calculos)
+    stock_minimo_unid: float
+    stock_seguridad_unid: float
+    stock_maximo_unid: float
+    punto_reorden_unid: float
+    cantidad_sugerida_unid: float
+
+    # Valores en BULTOS (para operacion)
+    stock_minimo_bultos: int
+    stock_seguridad_bultos: int
+    stock_maximo_bultos: int
+    punto_reorden_bultos: int
+    cantidad_sugerida_bultos: int
+
+    # Metadata
+    metodo_usado: str
+    clase_efectiva: str         # Clase usada para calculo (puede diferir de ABC real)
+    demanda_ciclo: float
+    dias_cobertura_actual: float
+
+    # Sobrestock
+    tiene_sobrestock: bool
+    exceso_unidades: float
+    exceso_bultos: int
+    dias_exceso: float
+
+    # Warnings de sanity checks
+    warnings: List[str] = field(default_factory=list)
+
+
+# Parametros por clase (niveles de servicio ajustados)
+PARAMS_ABC = {
+    'A': ParametrosABC(nivel_servicio_z=2.33, dias_cobertura=7, metodo=MetodoCalculo.ESTADISTICO),   # 99%
+    'B': ParametrosABC(nivel_servicio_z=1.88, dias_cobertura=14, metodo=MetodoCalculo.ESTADISTICO),  # 97%
+    'C': ParametrosABC(nivel_servicio_z=0.0, dias_cobertura=30, metodo=MetodoCalculo.PADRE_PRUDENTE),
+}
+
+
+def _redondear_a_bultos(cantidad_unid: float, unidades_bulto: int) -> int:
+    """
+    Redondea cantidad sugerida a bultos completos hacia arriba.
+
+    Si hay que pedir, siempre ceil. Sin excepciones.
+    """
+    if cantidad_unid <= 0:
+        return 0
+
+    return math.ceil(cantidad_unid / unidades_bulto)
+
+
+def _calcular_sobrestock(stock_actual: float, stock_maximo: float,
+                         demanda_p75: float, unidades_por_bulto: int) -> dict:
+    """
+    Calcula indicadores de sobrestock (complementa criticidad existente).
+    """
+    exceso = stock_actual - stock_maximo
+
+    if exceso <= 0:
+        return {
+            'tiene_sobrestock': False,
+            'exceso_unidades': 0.0,
+            'exceso_bultos': 0,
+            'dias_exceso': 0.0
+        }
+
+    return {
+        'tiene_sobrestock': True,
+        'exceso_unidades': exceso,
+        'exceso_bultos': math.ceil(exceso / unidades_por_bulto),
+        'dias_exceso': exceso / demanda_p75 if demanda_p75 > 0 else 999.0
+    }
+
+
+def _ejecutar_sanity_checks(resultado: 'ResultadoCalculo', input_data: InputCalculo,
+                             demanda_p75: float) -> List[str]:
+    """Ejecuta todas las validaciones de cordura."""
+    warnings = []
+
+    # 1. Stock minimo no puede ser menor a 1 dia de venta
+    if demanda_p75 > 0 and resultado.stock_minimo_unid < demanda_p75:
+        warnings.append(f"WARN: Stock minimo ({resultado.stock_minimo_unid:.0f}) < 1 dia de venta")
+
+    # 2. Stock maximo debe ser mayor que minimo
+    if resultado.stock_maximo_unid <= resultado.stock_minimo_unid:
+        warnings.append("ERROR: Stock maximo <= minimo")
+
+    # 3. Stock de seguridad no negativo
+    if resultado.stock_seguridad_unid < 0:
+        warnings.append("WARN: Stock seguridad negativo")
+
+    # 4. Cantidad sugerida no puede exceder stock CEDI
+    if resultado.cantidad_sugerida_unid > input_data.stock_cedi:
+        warnings.append(f"WARN: Sugerido ({resultado.cantidad_sugerida_unid:.0f}) > stock CEDI ({input_data.stock_cedi:.0f})")
+
+    # 5. Validar rangos por clase
+    if demanda_p75 > 0:
+        dias_max = resultado.stock_maximo_unid / demanda_p75
+        limites = {'A': 15, 'B': 30, 'C': 60}
+        limite = limites.get(resultado.clase_efectiva, 30)
+        if dias_max > limite:
+            warnings.append(f"WARN: Clase {resultado.clase_efectiva} con {dias_max:.0f} dias cobertura (limite: {limite})")
+
+    # 6. sigmaD no deberia ser > 2x la demanda (CV muy alto)
+    if input_data.sigma_demanda > input_data.demanda_p75 * 2 and input_data.demanda_p75 > 0:
+        warnings.append(f"WARN: sigmaD muy alta ({input_data.sigma_demanda:.1f}) vs P75 ({input_data.demanda_p75:.1f})")
+
+    return warnings
+
+
+def _crear_resultado(stock_minimo_unid: float, stock_seguridad_unid: float,
+                     stock_maximo_unid: float, punto_reorden_unid: float,
+                     cantidad_sugerida_unid: float, unidades_bulto: int,
+                     metodo: str, clase_efectiva: str, demanda_ciclo: float,
+                     demanda_p75: float, input_data: InputCalculo) -> ResultadoCalculo:
+    """Crea resultado con conversion a bultos y sanity checks."""
+
+    # Redondear a bultos (ceil para garantizar cobertura)
+    stock_minimo_bultos = math.ceil(stock_minimo_unid / unidades_bulto) if unidades_bulto > 0 else 0
+    stock_seguridad_bultos = math.ceil(stock_seguridad_unid / unidades_bulto) if unidades_bulto > 0 else 0
+    stock_maximo_bultos = math.ceil(stock_maximo_unid / unidades_bulto) if unidades_bulto > 0 else 0
+    punto_reorden_bultos = math.ceil(punto_reorden_unid / unidades_bulto) if unidades_bulto > 0 else 0
+
+    # Cantidad sugerida: siempre redondear hacia arriba
+    cantidad_bultos = _redondear_a_bultos(cantidad_sugerida_unid, unidades_bulto)
+    cantidad_unid_final = cantidad_bultos * unidades_bulto
+
+    # Dias de cobertura actual
+    dias_cobertura = (input_data.stock_actual + cantidad_unid_final) / demanda_p75 if demanda_p75 > 0 else 999.0
+
+    # Calcular sobrestock
+    sobrestock = _calcular_sobrestock(
+        input_data.stock_actual,
+        stock_maximo_unid,
+        demanda_p75,
+        unidades_bulto
+    )
+
+    resultado = ResultadoCalculo(
+        stock_minimo_unid=stock_minimo_unid,
+        stock_seguridad_unid=stock_seguridad_unid,
+        stock_maximo_unid=stock_maximo_unid,
+        punto_reorden_unid=punto_reorden_unid,
+        cantidad_sugerida_unid=cantidad_unid_final,
+        stock_minimo_bultos=stock_minimo_bultos,
+        stock_seguridad_bultos=stock_seguridad_bultos,
+        stock_maximo_bultos=stock_maximo_bultos,
+        punto_reorden_bultos=punto_reorden_bultos,
+        cantidad_sugerida_bultos=cantidad_bultos,
+        metodo_usado=metodo,
+        clase_efectiva=clase_efectiva,
+        demanda_ciclo=demanda_ciclo,
+        dias_cobertura_actual=dias_cobertura,
+        tiene_sobrestock=sobrestock['tiene_sobrestock'],
+        exceso_unidades=sobrestock['exceso_unidades'],
+        exceso_bultos=sobrestock['exceso_bultos'],
+        dias_exceso=sobrestock['dias_exceso'],
+        warnings=[]
+    )
+
+    # Ejecutar sanity checks
+    resultado.warnings = _ejecutar_sanity_checks(resultado, input_data, demanda_p75)
+
+    return resultado
+
+
+def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
+                         clase_efectiva: str) -> ResultadoCalculo:
+    """
+    Clase A y B: Formula estadistica simplificada (sin sigmaL porque L es fijo).
+
+    SS = Z * sigmaD * sqrt(L)
+    ROP = (D_P75 * L) + SS
+    Max = ROP + (D_P75 * dias_cobertura)
+    """
+    Z = params.nivel_servicio_z
+    D = input_data.demanda_p75
+    L = LEAD_TIME
+    sigma_D = input_data.sigma_demanda
+    unidades_bulto = input_data.unidades_por_bulto
+
+    # Stock de seguridad
+    stock_seguridad = Z * sigma_D * math.sqrt(L)
+
+    # Demanda durante lead time
+    demanda_ciclo = D * L
+
+    # Punto de reorden (Minimo)
+    punto_reorden = demanda_ciclo + stock_seguridad
+
+    # Maximo
+    stock_maximo = punto_reorden + (D * params.dias_cobertura)
+
+    # Cantidad a pedir
+    deficit = max(0, stock_maximo - input_data.stock_actual)
+    # Limitar al stock disponible en CEDI
+    cantidad_sugerida = min(deficit, input_data.stock_cedi)
+
+    return _crear_resultado(
+        stock_minimo_unid=punto_reorden,
+        stock_seguridad_unid=stock_seguridad,
+        stock_maximo_unid=stock_maximo,
+        punto_reorden_unid=punto_reorden,
+        cantidad_sugerida_unid=cantidad_sugerida,
+        unidades_bulto=unidades_bulto,
+        metodo="estadistico",
+        clase_efectiva=clase_efectiva,
+        demanda_ciclo=demanda_ciclo,
+        demanda_p75=D,
+        input_data=input_data
+    )
+
+
+def calcular_padre_prudente(input_data: InputCalculo, params: ParametrosABC,
+                            clase_efectiva: str) -> ResultadoCalculo:
+    """
+    Clase C: Metodo heuristico "Padre Prudente".
+
+    Min = D_max * L (peor escenario)
+    Max = Min + (D_P75 * dias_cobertura)
+    """
+    D = input_data.demanda_p75
+    D_max = input_data.demanda_maxima
+    L = LEAD_TIME
+    unidades_bulto = input_data.unidades_por_bulto
+
+    # Punto de reorden usando maximo (conservador)
+    punto_reorden = D_max * L
+
+    # Demanda durante lead time (para referencia)
+    demanda_ciclo = D * L
+
+    # Stock de seguridad implicito
+    stock_seguridad = max(0, punto_reorden - demanda_ciclo)
+
+    # Maximo
+    stock_maximo = punto_reorden + (D * params.dias_cobertura)
+
+    # Cantidad a pedir
+    deficit = max(0, stock_maximo - input_data.stock_actual)
+    cantidad_sugerida = min(deficit, input_data.stock_cedi)
+
+    return _crear_resultado(
+        stock_minimo_unid=punto_reorden,
+        stock_seguridad_unid=stock_seguridad,
+        stock_maximo_unid=stock_maximo,
+        punto_reorden_unid=punto_reorden,
+        cantidad_sugerida_unid=cantidad_sugerida,
+        unidades_bulto=unidades_bulto,
+        metodo="padre_prudente",
+        clase_efectiva=clase_efectiva,
+        demanda_ciclo=demanda_ciclo,
+        demanda_p75=D,
+        input_data=input_data
+    )
+
+
+def calcular_inventario(input_data: InputCalculo) -> ResultadoCalculo:
+    """
+    Funcion principal: calcula parametros de inventario segun clase ABC.
+
+    IMPORTANTE: Los Generadores de Trafico siempre se tratan como Clase A,
+    independientemente de su clasificacion ABC real.
+    """
+    # Determinar clase efectiva
+    if input_data.es_generador_trafico:
+        clase_efectiva = 'A'  # Forzar tratamiento clase A para generadores
+    else:
+        clase_efectiva = input_data.clase_abc
+
+    params = PARAMS_ABC.get(clase_efectiva, PARAMS_ABC['B'])
+
+    if params.metodo == MetodoCalculo.PADRE_PRUDENTE:
+        return calcular_padre_prudente(input_data, params, clase_efectiva)
+    else:
+        return calcular_estadistico(input_data, params, clase_efectiva)
+
+
+def calcular_inventario_simple(
+    demanda_p75: float,
+    sigma_demanda: float,
+    demanda_maxima: float,
+    unidades_por_bulto: int,
+    stock_actual: float,
+    stock_cedi: float,
+    clase_abc: str,
+    es_generador_trafico: bool = False
+) -> ResultadoCalculo:
+    """
+    Wrapper simple para calcular inventario sin crear InputCalculo manualmente.
+
+    Util para integracion con el endpoint existente.
+    """
+    input_data = InputCalculo(
+        demanda_p75=demanda_p75,
+        sigma_demanda=sigma_demanda,
+        demanda_maxima=demanda_maxima,
+        unidades_por_bulto=unidades_por_bulto,
+        stock_actual=stock_actual,
+        stock_cedi=stock_cedi,
+        clase_abc=clase_abc,
+        es_generador_trafico=es_generador_trafico
+    )
+    return calcular_inventario(input_data)

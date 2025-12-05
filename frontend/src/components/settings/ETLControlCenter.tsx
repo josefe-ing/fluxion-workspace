@@ -35,41 +35,38 @@ export default function ETLControlCenter() {
             </div>
           </Link>
           <Link
-            to="/administrador/config-inventario"
+            to="/administrador/parametros-abc"
             className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-blue-400 hover:shadow-md transition-all group"
           >
             <div className="flex items-center space-x-3">
-              <span className="text-2xl">⚙️</span>
+              <span className="text-2xl">📊</span>
               <div>
-                <div className="font-medium text-gray-900 group-hover:text-blue-600">Config Inventario</div>
-                <div className="text-xs text-gray-500">Parametros y reglas</div>
+                <div className="font-medium text-gray-900 group-hover:text-blue-600">Parametros ABC</div>
+                <div className="text-xs text-gray-500">Niveles de servicio y cobertura</div>
               </div>
             </div>
           </Link>
           <Link
-            to="/administrador/conjuntos"
-            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-purple-400 hover:shadow-md transition-all group"
+            to="/administrador/ventas/cobertura"
+            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-green-400 hover:shadow-md transition-all group"
           >
             <div className="flex items-center space-x-3">
-              <span className="text-2xl">📦</span>
+              <span className="text-2xl">📅</span>
               <div>
-                <div className="font-medium text-gray-900 group-hover:text-purple-600">Conjuntos</div>
-                <div className="text-xs text-gray-500">Agrupaciones de productos</div>
+                <div className="font-medium text-gray-900 group-hover:text-green-600">Cobertura Ventas</div>
+                <div className="text-xs text-gray-500">Calendario de datos</div>
               </div>
             </div>
           </Link>
-          <Link
-            to="/administrador/alertas"
-            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-red-400 hover:shadow-md transition-all group"
-          >
+          <div className="bg-gray-100 rounded-lg border border-gray-200 p-4 opacity-60 cursor-not-allowed">
             <div className="flex items-center space-x-3">
-              <span className="text-2xl">⚠️</span>
+              <span className="text-2xl">🔧</span>
               <div>
-                <div className="font-medium text-gray-900 group-hover:text-red-600">Alertas Reclasificacion</div>
-                <div className="text-xs text-gray-500">Cambios ABC pendientes</div>
+                <div className="font-medium text-gray-500">Mas opciones</div>
+                <div className="text-xs text-gray-400">Proximamente</div>
               </div>
             </div>
-          </Link>
+          </div>
         </div>
 
         {/* Panels Stack */}

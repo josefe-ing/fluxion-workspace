@@ -36,6 +36,7 @@ from models.pedidos_sugeridos import (
     EstadoPedido,
 )
 from db_manager import get_db_connection, get_db_connection_write
+from services.calculo_inventario_abc import calcular_inventario_simple
 
 logger = logging.getLogger(__name__)
 
@@ -841,6 +842,8 @@ class ProductoCalculado(BaseModel):
     stock_cedi_origen: float = 0.0
     # Configuración
     clasificacion_abc: Optional[str] = None
+    clase_efectiva: Optional[str] = None  # Clase usada para calculo (puede diferir por generador trafico)
+    es_generador_trafico: bool = False    # Si es generador de trafico
     stock_minimo: float = 0.0
     stock_maximo: float = 0.0
     stock_seguridad: float = 0.0
@@ -849,6 +852,14 @@ class ProductoCalculado(BaseModel):
     cantidad_sugerida_bultos: float = 0.0
     cantidad_ajustada_bultos: float = 0.0
     razon_pedido: str = ""
+    metodo_calculo: str = ""              # estadistico o padre_prudente
+    # Sobrestock
+    tiene_sobrestock: bool = False
+    exceso_unidades: float = 0.0
+    exceso_bultos: int = 0
+    dias_exceso: float = 0.0
+    # Warnings de sanity checks
+    warnings_calculo: List[str] = []
 
 
 @router.post("/calcular", response_model=List[ProductoCalculado])
@@ -930,6 +941,25 @@ async def calcular_productos_sugeridos(
                 FROM ventas_diarias_20d
                 GROUP BY producto_id
             ),
+            -- Estadisticas 30 dias para calculo ABC (sigma_demanda y demanda_maxima)
+            ventas_diarias_30d AS (
+                SELECT
+                    producto_id,
+                    fecha_venta::date as fecha,
+                    SUM(cantidad_vendida) as total_dia
+                FROM ventas
+                WHERE ubicacion_id = %s
+                    AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY producto_id, fecha_venta::date
+            ),
+            estadisticas_30d AS (
+                SELECT
+                    producto_id,
+                    COALESCE(STDDEV(total_dia), 0) as sigma_demanda,
+                    COALESCE(MAX(total_dia), 0) as demanda_maxima
+                FROM ventas_diarias_30d
+                GROUP BY producto_id
+            ),
             -- ABC por valor (Pareto 80/15/5) - Calculado para la tienda específica (30 días)
             ventas_30d_tienda AS (
                 SELECT
@@ -999,13 +1029,19 @@ async def calcular_productos_sugeridos(
                 COALESCE(t3.prom_top3, 0) as prom_top3,
                 COALESCE(p75.p75, 0) as prom_p75,
                 -- ABC por valor (Pareto)
-                abc.clase_abc_valor
+                abc.clase_abc_valor,
+                -- Estadisticas 30 dias para calculo inventario ABC
+                COALESCE(est30.sigma_demanda, 0) as sigma_demanda,
+                COALESCE(est30.demanda_maxima, 0) as demanda_maxima,
+                -- Generador de trafico (GAP > 400)
+                COALESCE(p.es_generador_trafico, false) as es_generador_trafico
             FROM productos p
             LEFT JOIN ventas_20dias v20 ON p.codigo = v20.producto_id
             LEFT JOIN ventas_5dias v5 ON p.codigo = v5.producto_id
             LEFT JOIN top3_ventas t3 ON p.codigo = t3.producto_id
             LEFT JOIN percentil_75 p75 ON p.codigo = p75.producto_id
             LEFT JOIN abc_clasificado abc ON p.codigo = abc.producto_id
+            LEFT JOIN estadisticas_30d est30 ON p.codigo = est30.producto_id
             LEFT JOIN inv_tienda it ON p.codigo = it.producto_id
             LEFT JOIN inv_cedi ic ON p.codigo = ic.producto_id
             WHERE p.activo = true
@@ -1016,6 +1052,7 @@ async def calcular_productos_sugeridos(
         cursor.execute(query, [
             request.tienda_destino,  # ventas_diarias_20d
             request.tienda_destino,  # ventas_diarias_5d
+            request.tienda_destino,  # ventas_diarias_30d (estadisticas)
             request.tienda_destino,  # ventas_30d_tienda (ABC por valor)
             request.tienda_destino,  # inv_tienda
             request.cedi_origen      # inv_cedi
@@ -1030,95 +1067,137 @@ async def calcular_productos_sugeridos(
         for row in rows:
             codigo = row[0]
             cantidad_bultos = float(row[8]) if row[8] and row[8] > 0 else 1.0
+            unidades_por_bulto = int(cantidad_bultos) if cantidad_bultos > 0 else 1
             prom_20d = float(row[11]) if row[11] else 0.0
             stock_tienda = float(row[14]) if row[14] else 0.0
             stock_cedi = float(row[15]) if row[15] else 0.0
             prom_top3 = float(row[16]) if row[16] else 0.0
             prom_p75 = float(row[17]) if row[17] else 0.0
             clase_abc_valor = row[18]  # ABC por valor (Pareto) de SQL
+            sigma_demanda = float(row[19]) if row[19] else 0.0
+            demanda_maxima = float(row[20]) if row[20] else 0.0
+            es_generador_trafico = bool(row[21]) if row[21] else False
 
-            # Calcular velocidad de venta en bultos/día usando P75 para cálculos de stock
-            # P75 es más robusto para planificación de stock porque considera días de alta demanda
-            venta_p75_bultos = prom_p75 / cantidad_bultos if cantidad_bultos > 0 and prom_p75 > 0 else 0
+            # Clasificacion ABC: usar ABC por valor (Pareto) del SQL si esta disponible
             venta_diaria_bultos = prom_20d / cantidad_bultos if cantidad_bultos > 0 else 0
-
-            # Clasificación ABC: usar ABC por valor (Pareto) del SQL si está disponible
-            # ABC por valor (Pareto 80/15/5): A = 80% valor, B = 15% valor, C = 5% valor
             if clase_abc_valor:
                 clasificacion = clase_abc_valor
             elif venta_diaria_bultos > 0:
-                clasificacion = 'C'  # Default para productos sin clasificación ABC pero con ventas
+                clasificacion = 'C'  # Default para productos sin clasificacion ABC pero con ventas
             else:
                 clasificacion = '-'
 
-            # Multiplicadores de stock según clasificación ABC por valor
-            # A: productos de alto valor - stock conservador
-            # B: productos de valor medio - stock moderado
-            # C: productos de bajo valor - stock más alto para evitar stockouts frecuentes
-            if clasificacion == 'A':
-                mult_min, mult_seg, mult_max = 2.0, 1.0, 5.0
-            elif clasificacion == 'B':
-                mult_min, mult_seg, mult_max = 3.0, 2.0, 12.0
-            elif clasificacion == 'C':
-                mult_min, mult_seg, mult_max = 5.0, 3.0, 15.0
-            else:
-                mult_min, mult_seg, mult_max = 0, 0, 0
-
-            # Calcular niveles de stock usando P75 (venta en días de alta demanda)
-            velocidad_stock = venta_p75_bultos if venta_p75_bultos > 0 else venta_diaria_bultos
-            stock_minimo = velocidad_stock * mult_min
-            stock_seguridad = velocidad_stock * mult_seg
-            stock_maximo = velocidad_stock * mult_max
-            punto_reorden = stock_minimo + stock_seguridad + (1.25 * velocidad_stock)
-
-            # Stock en días (usar P75 para cálculo más conservador)
+            # Stock total en bultos para referencia
             stock_total_bultos = stock_tienda / cantidad_bultos if cantidad_bultos > 0 else 0
-            stock_dias = stock_total_bultos / velocidad_stock if velocidad_stock > 0 else 999
 
-            # Calcular pedido sugerido usando velocidad de stock (P75)
-            if velocidad_stock > 0 and stock_dias <= (punto_reorden / velocidad_stock if velocidad_stock > 0 else 999):
-                cantidad_sugerida = max(0, stock_maximo - stock_total_bultos)
-                # Limitar al stock disponible en CEDI
-                stock_cedi_bultos = stock_cedi / cantidad_bultos if cantidad_bultos > 0 else 0
-                cantidad_sugerida = min(cantidad_sugerida, stock_cedi_bultos)
-                razon = "Stock bajo punto de reorden"
+            # Usar nuevo modulo de calculo ABC si hay demanda
+            if prom_p75 > 0 and clasificacion in ('A', 'B', 'C'):
+                resultado = calcular_inventario_simple(
+                    demanda_p75=prom_p75,
+                    sigma_demanda=sigma_demanda,
+                    demanda_maxima=demanda_maxima if demanda_maxima > 0 else prom_p75 * 2,
+                    unidades_por_bulto=unidades_por_bulto,
+                    stock_actual=stock_tienda,
+                    stock_cedi=stock_cedi,
+                    clase_abc=clasificacion,
+                    es_generador_trafico=es_generador_trafico
+                )
+
+                # Determinar razon del pedido
+                if resultado.tiene_sobrestock:
+                    razon = "Sobrestock - No pedir"
+                elif resultado.cantidad_sugerida_bultos > 0:
+                    razon = "Stock bajo punto de reorden"
+                else:
+                    razon = "Stock suficiente"
+
+                # Calcular dias cobertura actual
+                stock_dias = stock_tienda / prom_p75 if prom_p75 > 0 else 999
+
+                productos.append(ProductoCalculado(
+                    codigo_producto=codigo,
+                    codigo_barras=row[1],
+                    descripcion_producto=row[2] or codigo,
+                    categoria=row[3],
+                    grupo=row[4],
+                    subgrupo=row[5],
+                    marca=row[6],
+                    presentacion=row[7],
+                    cantidad_bultos=cantidad_bultos,
+                    peso_unidad=float(row[9]) if row[9] else 1000.0,
+                    prom_ventas_5dias_unid=float(row[10]) if row[10] else 0.0,
+                    prom_ventas_20dias_unid=prom_20d,
+                    prom_top3_unid=prom_top3,
+                    prom_p75_unid=prom_p75,
+                    prom_ventas_8sem_unid=prom_20d,  # Aproximacion
+                    prom_ventas_8sem_bultos=venta_diaria_bultos,
+                    stock_tienda=stock_tienda,
+                    stock_en_transito=0.0,
+                    stock_total=stock_tienda,
+                    stock_total_bultos=stock_total_bultos,
+                    stock_dias_cobertura=stock_dias,
+                    stock_cedi_origen=stock_cedi,
+                    clasificacion_abc=clasificacion,
+                    clase_efectiva=resultado.clase_efectiva,
+                    es_generador_trafico=es_generador_trafico,
+                    stock_minimo=resultado.stock_minimo_unid,
+                    stock_maximo=resultado.stock_maximo_unid,
+                    stock_seguridad=resultado.stock_seguridad_unid,
+                    punto_reorden=resultado.punto_reorden_unid,
+                    cantidad_sugerida_unid=resultado.cantidad_sugerida_unid,
+                    cantidad_sugerida_bultos=float(resultado.cantidad_sugerida_bultos),
+                    cantidad_ajustada_bultos=float(resultado.cantidad_sugerida_bultos),
+                    razon_pedido=razon,
+                    metodo_calculo=resultado.metodo_usado,
+                    tiene_sobrestock=resultado.tiene_sobrestock,
+                    exceso_unidades=resultado.exceso_unidades,
+                    exceso_bultos=resultado.exceso_bultos,
+                    dias_exceso=resultado.dias_exceso,
+                    warnings_calculo=resultado.warnings
+                ))
             else:
-                cantidad_sugerida = 0
-                razon = "Stock suficiente"
-
-            productos.append(ProductoCalculado(
-                codigo_producto=codigo,
-                codigo_barras=row[1],
-                descripcion_producto=row[2] or codigo,
-                categoria=row[3],
-                grupo=row[4],
-                subgrupo=row[5],
-                marca=row[6],
-                presentacion=row[7],
-                cantidad_bultos=cantidad_bultos,
-                peso_unidad=float(row[9]) if row[9] else 1000.0,
-                prom_ventas_5dias_unid=float(row[10]) if row[10] else 0.0,
-                prom_ventas_20dias_unid=prom_20d,
-                prom_top3_unid=prom_top3,
-                prom_p75_unid=prom_p75,
-                prom_ventas_8sem_unid=prom_20d,  # Aproximación
-                prom_ventas_8sem_bultos=venta_diaria_bultos,
-                stock_tienda=stock_tienda,
-                stock_en_transito=0.0,
-                stock_total=stock_tienda,
-                stock_total_bultos=stock_total_bultos,
-                stock_dias_cobertura=stock_dias,
-                stock_cedi_origen=stock_cedi,
-                clasificacion_abc=clasificacion,
-                stock_minimo=stock_minimo * cantidad_bultos,  # En unidades
-                stock_maximo=stock_maximo * cantidad_bultos,
-                stock_seguridad=stock_seguridad * cantidad_bultos,
-                punto_reorden=punto_reorden * cantidad_bultos,
-                cantidad_sugerida_unid=cantidad_sugerida * cantidad_bultos,
-                cantidad_sugerida_bultos=cantidad_sugerida,
-                cantidad_ajustada_bultos=round(cantidad_sugerida),
-                razon_pedido=razon
-            ))
+                # Producto sin demanda o sin clasificacion - no sugerir pedido
+                productos.append(ProductoCalculado(
+                    codigo_producto=codigo,
+                    codigo_barras=row[1],
+                    descripcion_producto=row[2] or codigo,
+                    categoria=row[3],
+                    grupo=row[4],
+                    subgrupo=row[5],
+                    marca=row[6],
+                    presentacion=row[7],
+                    cantidad_bultos=cantidad_bultos,
+                    peso_unidad=float(row[9]) if row[9] else 1000.0,
+                    prom_ventas_5dias_unid=float(row[10]) if row[10] else 0.0,
+                    prom_ventas_20dias_unid=prom_20d,
+                    prom_top3_unid=prom_top3,
+                    prom_p75_unid=prom_p75,
+                    prom_ventas_8sem_unid=prom_20d,
+                    prom_ventas_8sem_bultos=venta_diaria_bultos,
+                    stock_tienda=stock_tienda,
+                    stock_en_transito=0.0,
+                    stock_total=stock_tienda,
+                    stock_total_bultos=stock_total_bultos,
+                    stock_dias_cobertura=999,
+                    stock_cedi_origen=stock_cedi,
+                    clasificacion_abc=clasificacion,
+                    clase_efectiva=clasificacion,
+                    es_generador_trafico=es_generador_trafico,
+                    stock_minimo=0.0,
+                    stock_maximo=0.0,
+                    stock_seguridad=0.0,
+                    punto_reorden=0.0,
+                    cantidad_sugerida_unid=0.0,
+                    cantidad_sugerida_bultos=0.0,
+                    cantidad_ajustada_bultos=0.0,
+                    razon_pedido="Sin demanda historica",
+                    metodo_calculo="",
+                    tiene_sobrestock=False,
+                    exceso_unidades=0.0,
+                    exceso_bultos=0,
+                    dias_exceso=0.0,
+                    warnings_calculo=[]
+                ))
 
         logger.info(f"✅ Calculados {len(productos)} productos sugeridos")
         return productos

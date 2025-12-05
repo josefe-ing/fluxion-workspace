@@ -4,9 +4,9 @@ Router para gestionar configuración de inventario
 
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
-import duckdb
+import uuid
 from pydantic import BaseModel
-from database import get_db_connection, get_db_connection_write
+from db_manager import get_db_connection, get_db_connection_write, is_postgres_mode
 import logging
 
 logger = logging.getLogger(__name__)
@@ -302,4 +302,303 @@ async def delete_config_producto(config_id: str):
             return {"success": True, "message": "Configuración eliminada"}
     except Exception as e:
         logger.error(f"Error eliminando config producto: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== NUEVOS ENDPOINTS: PARÁMETROS ABC =====
+
+class ParametrosGlobales(BaseModel):
+    lead_time: float
+    ventana_sigma_d: int
+
+
+class NivelServicioClase(BaseModel):
+    clase: str
+    z_score: float
+    nivel_servicio_pct: int
+    dias_cobertura_max: int
+    metodo: str
+
+
+class NivelesServicioUpdate(BaseModel):
+    niveles: List[NivelServicioClase]
+
+
+class ConfigTiendaABC(BaseModel):
+    tienda_id: str
+    tienda_nombre: str
+    lead_time_override: Optional[float]
+    dias_cobertura_a: Optional[int]
+    dias_cobertura_b: Optional[int]
+    dias_cobertura_c: Optional[int]
+    activo: bool
+
+
+# Valores por defecto hardcodeados (los mismos que en calculo_inventario_abc.py)
+DEFAULTS_ABC = {
+    'lead_time': 1.5,
+    'ventana_sigma_d': 30,
+    'clases': [
+        {'clase': 'A', 'z_score': 2.33, 'nivel_servicio_pct': 99, 'dias_cobertura_max': 7, 'metodo': 'estadistico'},
+        {'clase': 'B', 'z_score': 1.88, 'nivel_servicio_pct': 97, 'dias_cobertura_max': 14, 'metodo': 'estadistico'},
+        {'clase': 'C', 'z_score': 0, 'nivel_servicio_pct': 0, 'dias_cobertura_max': 30, 'metodo': 'padre_prudente'},
+    ]
+}
+
+
+@router.get("/parametros-abc")
+async def get_parametros_abc():
+    """
+    Obtiene todos los parámetros del modelo ABC:
+    - Parámetros globales (lead_time, ventana_sigma_d)
+    - Niveles de servicio por clase
+    - Configuración por tienda (overrides)
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # 1. Obtener parámetros globales desde config_inventario_global
+            globales = {
+                'lead_time': DEFAULTS_ABC['lead_time'],
+                'ventana_sigma_d': DEFAULTS_ABC['ventana_sigma_d'],
+            }
+
+            try:
+                cursor.execute("""
+                    SELECT parametro, valor_numerico
+                    FROM config_inventario_global
+                    WHERE categoria = 'parametros_abc'
+                      AND activo = true
+                """)
+                result = cursor.fetchall()
+
+                for row in result:
+                    if row[0] == 'lead_time' and row[1] is not None:
+                        globales['lead_time'] = float(row[1])
+                    elif row[0] == 'ventana_sigma_d' and row[1] is not None:
+                        globales['ventana_sigma_d'] = int(row[1])
+            except Exception as e:
+                logger.warning(f"No se encontró tabla config_inventario_global: {e}")
+
+            # 2. Obtener niveles de servicio
+            niveles_servicio = []
+
+            try:
+                cursor.execute("""
+                    SELECT parametro, valor_numerico
+                    FROM config_inventario_global
+                    WHERE categoria = 'niveles_servicio'
+                      AND activo = true
+                """)
+                result = cursor.fetchall()
+
+                # Mapear z-scores a clases
+                zscores = {}
+                for row in result:
+                    zscores[row[0]] = float(row[1]) if row[1] else 0
+
+                # Obtener días de cobertura
+                cursor.execute("""
+                    SELECT parametro, valor_numerico
+                    FROM config_inventario_global
+                    WHERE categoria = 'dias_cobertura_abc'
+                      AND activo = true
+                """)
+                result_dias = cursor.fetchall()
+
+                dias_cobertura = {}
+                for row in result_dias:
+                    dias_cobertura[row[0]] = int(row[1]) if row[1] else None
+
+                # Construir niveles
+                for default in DEFAULTS_ABC['clases']:
+                    clase = default['clase']
+                    z_key = f'zscore_{clase.lower()}'
+                    dias_key = f'dias_cobertura_{clase.lower()}'
+
+                    niveles_servicio.append({
+                        'clase': clase,
+                        'z_score': zscores.get(z_key, default['z_score']),
+                        'nivel_servicio_pct': default['nivel_servicio_pct'],
+                        'dias_cobertura_max': dias_cobertura.get(dias_key, default['dias_cobertura_max']),
+                        'metodo': default['metodo'],
+                    })
+
+            except Exception as e:
+                logger.warning(f"Usando defaults para niveles de servicio: {e}")
+                niveles_servicio = DEFAULTS_ABC['clases']
+
+            # 3. Obtener configuración por tienda
+            config_tiendas = []
+
+            try:
+                cursor.execute("""
+                    SELECT
+                        ct.tienda_id,
+                        COALESCE(u.nombre, ct.tienda_id) as tienda_nombre,
+                        ct.lead_time_override,
+                        ct.dias_cobertura_a,
+                        ct.dias_cobertura_b,
+                        ct.dias_cobertura_c,
+                        ct.activo
+                    FROM config_parametros_abc_tienda ct
+                    LEFT JOIN ubicaciones u ON ct.tienda_id = u.id
+                    WHERE ct.activo = true
+                    ORDER BY u.nombre
+                """)
+                result = cursor.fetchall()
+
+                for row in result:
+                    config_tiendas.append({
+                        'tienda_id': row[0],
+                        'tienda_nombre': row[1],
+                        'lead_time_override': float(row[2]) if row[2] is not None else None,
+                        'dias_cobertura_a': int(row[3]) if row[3] is not None else None,
+                        'dias_cobertura_b': int(row[4]) if row[4] is not None else None,
+                        'dias_cobertura_c': int(row[5]) if row[5] is not None else None,
+                        'activo': row[6],
+                    })
+            except Exception as e:
+                logger.warning(f"No se encontró tabla config_parametros_abc_tienda: {e}")
+
+            cursor.close()
+            return {
+                'globales': globales,
+                'niveles_servicio': niveles_servicio,
+                'config_tiendas': config_tiendas,
+            }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo parámetros ABC: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/parametros-abc/globales")
+async def update_parametros_globales(params: ParametrosGlobales):
+    """Actualiza los parámetros globales del modelo ABC"""
+    try:
+        with get_db_connection_write() as conn:
+            cursor = conn.cursor()
+
+            # Upsert lead_time
+            cursor.execute("""
+                INSERT INTO config_inventario_global
+                (id, categoria, parametro, valor_numerico, descripcion, unidad, activo)
+                VALUES (%s, 'parametros_abc', 'lead_time', %s, 'Lead Time (días)', 'días', true)
+                ON CONFLICT (categoria, parametro)
+                DO UPDATE SET valor_numerico = EXCLUDED.valor_numerico,
+                              fecha_modificacion = CURRENT_TIMESTAMP
+            """, (str(uuid.uuid4()), params.lead_time))
+
+            # Upsert ventana_sigma_d
+            cursor.execute("""
+                INSERT INTO config_inventario_global
+                (id, categoria, parametro, valor_numerico, descripcion, unidad, activo)
+                VALUES (%s, 'parametros_abc', 'ventana_sigma_d', %s, 'Ventana para σD', 'días', true)
+                ON CONFLICT (categoria, parametro)
+                DO UPDATE SET valor_numerico = EXCLUDED.valor_numerico,
+                              fecha_modificacion = CURRENT_TIMESTAMP
+            """, (str(uuid.uuid4()), params.ventana_sigma_d))
+
+            conn.commit()
+            cursor.close()
+            return {"success": True, "message": "Parámetros globales actualizados"}
+
+    except Exception as e:
+        logger.error(f"Error actualizando parámetros globales: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/parametros-abc/niveles")
+async def update_niveles_servicio(update: NivelesServicioUpdate):
+    """Actualiza los niveles de servicio por clase ABC"""
+    try:
+        with get_db_connection_write() as conn:
+            cursor = conn.cursor()
+
+            for nivel in update.niveles:
+                clase = nivel.clase.lower()
+
+                # Upsert z-score
+                z_param = f'zscore_{clase}'
+                cursor.execute("""
+                    INSERT INTO config_inventario_global
+                    (id, categoria, parametro, valor_numerico, descripcion, unidad, activo)
+                    VALUES (%s, 'niveles_servicio', %s, %s, %s, 'zscore', true)
+                    ON CONFLICT (categoria, parametro)
+                    DO UPDATE SET valor_numerico = EXCLUDED.valor_numerico,
+                                  fecha_modificacion = CURRENT_TIMESTAMP
+                """, (str(uuid.uuid4()), z_param, nivel.z_score, f'Z-score para clase {nivel.clase}'))
+
+                # Upsert días de cobertura
+                dias_param = f'dias_cobertura_{clase}'
+                cursor.execute("""
+                    INSERT INTO config_inventario_global
+                    (id, categoria, parametro, valor_numerico, descripcion, unidad, activo)
+                    VALUES (%s, 'dias_cobertura_abc', %s, %s, %s, 'días', true)
+                    ON CONFLICT (categoria, parametro)
+                    DO UPDATE SET valor_numerico = EXCLUDED.valor_numerico,
+                                  fecha_modificacion = CURRENT_TIMESTAMP
+                """, (str(uuid.uuid4()), dias_param, nivel.dias_cobertura_max, f'Días cobertura máx clase {nivel.clase}'))
+
+            conn.commit()
+            cursor.close()
+            return {"success": True, "message": "Niveles de servicio actualizados"}
+
+    except Exception as e:
+        logger.error(f"Error actualizando niveles de servicio: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/parametros-abc/tienda/{tienda_id}")
+async def update_config_tienda_abc(tienda_id: str, config: ConfigTiendaABC):
+    """Actualiza o crea configuración ABC para una tienda específica"""
+    try:
+        with get_db_connection_write() as conn:
+            cursor = conn.cursor()
+
+            # Crear tabla si no existe
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS config_parametros_abc_tienda (
+                    id VARCHAR(50) PRIMARY KEY,
+                    tienda_id VARCHAR(50) NOT NULL UNIQUE,
+                    lead_time_override FLOAT,
+                    dias_cobertura_a INTEGER,
+                    dias_cobertura_b INTEGER,
+                    dias_cobertura_c INTEGER,
+                    activo BOOLEAN DEFAULT true,
+                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Upsert configuración de tienda
+            cursor.execute("""
+                INSERT INTO config_parametros_abc_tienda
+                (id, tienda_id, lead_time_override, dias_cobertura_a, dias_cobertura_b, dias_cobertura_c, activo)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (tienda_id)
+                DO UPDATE SET lead_time_override = EXCLUDED.lead_time_override,
+                              dias_cobertura_a = EXCLUDED.dias_cobertura_a,
+                              dias_cobertura_b = EXCLUDED.dias_cobertura_b,
+                              dias_cobertura_c = EXCLUDED.dias_cobertura_c,
+                              activo = EXCLUDED.activo,
+                              fecha_modificacion = CURRENT_TIMESTAMP
+            """, (
+                str(uuid.uuid4()),
+                tienda_id,
+                config.lead_time_override,
+                config.dias_cobertura_a,
+                config.dias_cobertura_b,
+                config.dias_cobertura_c,
+                config.activo
+            ))
+
+            conn.commit()
+            cursor.close()
+            return {"success": True, "message": f"Configuración de tienda {tienda_id} guardada"}
+
+    except Exception as e:
+        logger.error(f"Error actualizando config tienda ABC: {e}")
         raise HTTPException(status_code=500, detail=str(e))

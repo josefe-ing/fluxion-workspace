@@ -654,14 +654,15 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             codigo_producto: selectedProductoStockMin.codigo_producto,
             descripcion_producto: selectedProductoStockMin.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoStockMin.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoStockMin.prom_p75_unid,
             cantidad_bultos: selectedProductoStockMin.cantidad_bultos,
-          }}
-          stockParams={{
-            stock_min_mult_a: stockParams.stock_min_mult_a,
-            stock_min_mult_ab: stockParams.stock_min_mult_ab,
-            stock_min_mult_b: stockParams.stock_min_mult_b,
-            stock_min_mult_bc: stockParams.stock_min_mult_bc,
-            stock_min_mult_c: stockParams.stock_min_mult_c,
+            clasificacion_abc: selectedProductoStockMin.clasificacion_abc,
+            clase_efectiva: selectedProductoStockMin.clase_efectiva,
+            es_generador_trafico: selectedProductoStockMin.es_generador_trafico,
+            stock_minimo: selectedProductoStockMin.stock_minimo,
+            stock_seguridad: selectedProductoStockMin.stock_seguridad,
+            punto_reorden: selectedProductoStockMin.punto_reorden,
+            metodo_calculo: selectedProductoStockMin.metodo_calculo,
           }}
         />
       )}
@@ -674,14 +675,13 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             codigo_producto: selectedProductoStockSeg.codigo_producto,
             descripcion_producto: selectedProductoStockSeg.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoStockSeg.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoStockSeg.prom_p75_unid || 0,
             cantidad_bultos: selectedProductoStockSeg.cantidad_bultos,
-          }}
-          stockParams={{
-            stock_seg_mult_a: stockParams.stock_seg_mult_a,
-            stock_seg_mult_ab: stockParams.stock_seg_mult_ab,
-            stock_seg_mult_b: stockParams.stock_seg_mult_b,
-            stock_seg_mult_bc: stockParams.stock_seg_mult_bc,
-            stock_seg_mult_c: stockParams.stock_seg_mult_c,
+            clasificacion_abc: selectedProductoStockSeg.clasificacion_abc,
+            clase_efectiva: selectedProductoStockSeg.clase_efectiva,
+            es_generador_trafico: selectedProductoStockSeg.es_generador_trafico || false,
+            stock_seguridad: selectedProductoStockSeg.stock_seguridad || 0,
+            metodo_calculo: selectedProductoStockSeg.metodo_calculo || 'estadistico',
           }}
         />
       )}
@@ -719,14 +719,14 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             codigo_producto: selectedProductoStockMax.codigo_producto,
             descripcion_producto: selectedProductoStockMax.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoStockMax.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoStockMax.prom_p75_unid || 0,
             cantidad_bultos: selectedProductoStockMax.cantidad_bultos,
-          }}
-          stockParams={{
-            stock_max_mult_a: stockParams.stock_max_mult_a,
-            stock_max_mult_ab: stockParams.stock_max_mult_ab,
-            stock_max_mult_b: stockParams.stock_max_mult_b,
-            stock_max_mult_bc: stockParams.stock_max_mult_bc,
-            stock_max_mult_c: stockParams.stock_max_mult_c,
+            clasificacion_abc: selectedProductoStockMax.clasificacion_abc,
+            clase_efectiva: selectedProductoStockMax.clase_efectiva,
+            es_generador_trafico: selectedProductoStockMax.es_generador_trafico || false,
+            stock_maximo: selectedProductoStockMax.stock_maximo || 0,
+            punto_reorden: selectedProductoStockMax.punto_reorden || selectedProductoStockMax.stock_minimo || 0,
+            metodo_calculo: selectedProductoStockMax.metodo_calculo || 'estadistico',
           }}
         />
       )}
@@ -771,28 +771,18 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
           producto={{
             codigo_producto: selectedProductoPedido.codigo_producto,
             descripcion_producto: selectedProductoPedido.descripcion_producto,
-            prom_ventas_20dias_unid: selectedProductoPedido.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoPedido.prom_p75_unid || 0,
             cantidad_bultos: selectedProductoPedido.cantidad_bultos,
             stock_tienda: selectedProductoPedido.stock_tienda,
             stock_en_transito: selectedProductoPedido.stock_en_transito,
             stock_cedi_origen: selectedProductoPedido.stock_cedi_origen,
-          }}
-          stockParams={{
-            stock_min_mult_a: stockParams.stock_min_mult_a,
-            stock_min_mult_ab: stockParams.stock_min_mult_ab,
-            stock_min_mult_b: stockParams.stock_min_mult_b,
-            stock_min_mult_bc: stockParams.stock_min_mult_bc,
-            stock_min_mult_c: stockParams.stock_min_mult_c,
-            stock_seg_mult_a: stockParams.stock_seg_mult_a,
-            stock_seg_mult_ab: stockParams.stock_seg_mult_ab,
-            stock_seg_mult_b: stockParams.stock_seg_mult_b,
-            stock_seg_mult_bc: stockParams.stock_seg_mult_bc,
-            stock_seg_mult_c: stockParams.stock_seg_mult_c,
-            stock_max_mult_a: stockParams.stock_max_mult_a,
-            stock_max_mult_ab: stockParams.stock_max_mult_ab,
-            stock_max_mult_b: stockParams.stock_max_mult_b,
-            stock_max_mult_bc: stockParams.stock_max_mult_bc,
-            stock_max_mult_c: stockParams.stock_max_mult_c,
+            clasificacion_abc: selectedProductoPedido.clasificacion_abc,
+            clase_efectiva: selectedProductoPedido.clase_efectiva,
+            es_generador_trafico: selectedProductoPedido.es_generador_trafico || false,
+            stock_seguridad: selectedProductoPedido.stock_seguridad || 0,
+            stock_minimo: selectedProductoPedido.stock_minimo || 0,
+            stock_maximo: selectedProductoPedido.stock_maximo || 0,
+            metodo_calculo: selectedProductoPedido.metodo_calculo || 'estadistico',
           }}
         />
       )}
