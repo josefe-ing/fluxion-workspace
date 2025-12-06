@@ -211,7 +211,39 @@ jobs:
       frontend-bucket: ${{ steps.stack-outputs.outputs.frontend-bucket }}
       cloudfront-id: ${{ steps.stack-outputs.outputs.cloudfront-id }}
 
-  # Job 5: Deploy Frontend to S3 + CloudFront
+  # Job 5: Build Documentation Site
+  docs-build:
+    name: Docs Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./docs-site
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: './docs-site/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-dist
+          path: docs-site/build/
+          retention-days: 1
+
+  # Job 6: Deploy Frontend to S3 + CloudFront
   deploy-frontend:
     name: Deploy Frontend
     needs: deploy-infrastructure
@@ -262,7 +294,57 @@ jobs:
           echo "Backend API: ${{ needs.deploy-infrastructure.outputs.backend-url }}"
           echo "Frontend: https://${{ needs.deploy-infrastructure.outputs.cloudfront-id }}.cloudfront.net"
 
-  # Job 6: Health Check
+  # Job 7: Deploy Documentation to S3 + CloudFront
+  deploy-docs:
+    name: Deploy Documentation
+    needs: [deploy-infrastructure, docs-build]
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-dist
+          path: ./build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Stack Outputs
+        id: get-outputs
+        run: |
+          DOCS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name FluxionStackV2 \
+            --query 'Stacks[0].Outputs[?OutputKey==`DocsBucketName`].OutputValue' \
+            --output text)
+          DOCS_CLOUDFRONT_ID=$(aws cloudformation describe-stacks \
+            --stack-name FluxionStackV2 \
+            --query 'Stacks[0].Outputs[?OutputKey==`DocsCloudFrontDistributionId`].OutputValue' \
+            --output text)
+          echo "docs-bucket=$DOCS_BUCKET" >> $GITHUB_OUTPUT
+          echo "docs-cloudfront-id=$DOCS_CLOUDFRONT_ID" >> $GITHUB_OUTPUT
+
+      - name: Upload to S3
+        run: |
+          aws s3 sync ./build/ s3://${{ steps.get-outputs.outputs.docs-bucket }}/ --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.get-outputs.outputs.docs-cloudfront-id }} \
+            --paths "/*"
+
+      - name: Docs Deployment Summary
+        run: |
+          echo "✅ Documentation Deployed!"
+          echo "Docs URL: https://docs.fluxionia.co"
+
+  # Job 8: Health Check
   health-check:
     name: Health Check
     needs: [deploy-infrastructure, deploy-frontend]
