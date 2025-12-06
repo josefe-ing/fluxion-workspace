@@ -5,8 +5,9 @@ import {
   MatrizABCXYZ as MatrizData,
   ProductoEnriquecido,
   formatPercentageValue,
+  formatNumber,
 } from '../../services/productosService';
-// Nota: ubicaciones ya no se usan porque la cache ABC es global
+import { getUbicaciones, Ubicacion } from '../../services/ubicacionesService';
 import MatrizABCXYZ from './MatrizABCXYZ';
 import ProductoDetalleModal from './ProductoDetalleModal';
 import ABCDistributionChart from './charts/ABCDistributionChart';
@@ -15,10 +16,9 @@ import { isXYZEnabled } from '../../config/featureFlags';
 
 const ABCXYZAnalysis: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  // La cache ABC es global, no se filtra por ubicacion
   const [matrizData, setMatrizData] = useState<MatrizData | null>(null);
   const [selectedMatriz, setSelectedMatriz] = useState<string>('');
-  const [selectedABC, setSelectedABC] = useState<string>(''); // Filtro por clase ABC (A, B, C)
+  const [selectedABC, setSelectedABC] = useState<string>(''); // Filtro por clase ABC (A, B, C, Top50)
   const [productos, setProductos] = useState<ProductoEnriquecido[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [selectedProducto, setSelectedProducto] = useState<string | null>(null);
@@ -28,32 +28,52 @@ const ABCXYZAnalysis: React.FC = () => {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
+  // Nuevos estados para selector de tienda
+  const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
+  const [selectedUbicacion, setSelectedUbicacion] = useState<string>('todas');
+
+  // Cargar ubicaciones al inicio
+  useEffect(() => {
+    const loadUbicaciones = async () => {
+      try {
+        const data = await getUbicaciones('tienda');
+        setUbicaciones(data);
+      } catch (error) {
+        console.error('Error loading ubicaciones:', error);
+      }
+    };
+    loadUbicaciones();
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      // Cache es global, no se pasa ubicacion
-      const matriz = await getMatrizABCXYZ();
+      const ubicacionParam = selectedUbicacion === 'todas' ? undefined : selectedUbicacion;
+      const matriz = await getMatrizABCXYZ(ubicacionParam);
       setMatrizData(matriz);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedUbicacion]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Cargar TODOS los productos al montar el componente
+  // Cargar productos cuando cambia la ubicación o se monta
   useEffect(() => {
     const loadAllProducts = async () => {
       setLoadingProductos(true);
       try {
-        // Sin matriz = todos los productos (cache global)
-        const data = await getProductosPorMatriz(undefined, undefined, 10000, 0);
+        const ubicacionParam = selectedUbicacion === 'todas' ? undefined : selectedUbicacion;
+        const data = await getProductosPorMatriz(undefined, ubicacionParam, 10000, 0);
         setProductos(data);
         setHasMoreProducts(data.length >= 10000);
+        // Reset filters when location changes
+        setSelectedABC('');
+        setSelectedMatriz('');
       } catch (error) {
         console.error('Error loading all productos:', error);
       } finally {
@@ -61,17 +81,17 @@ const ABCXYZAnalysis: React.FC = () => {
       }
     };
     loadAllProducts();
-  }, []);
+  }, [selectedUbicacion]);
 
   const handleMatrizClick = async (matriz: string) => {
     setSelectedMatriz(matriz);
+    setSelectedABC('');
     setLoadingProductos(true);
     try {
-      // Load with high limit to get all products (cache global)
-      const data = await getProductosPorMatriz(matriz, undefined, 10000, 0);
+      const ubicacionParam = selectedUbicacion === 'todas' ? undefined : selectedUbicacion;
+      const data = await getProductosPorMatriz(matriz, ubicacionParam, 10000, 0);
       setProductos(data);
       setHasMoreProducts(data.length >= 10000);
-      // Reset sort to default when loading new data
       setSortBy('ranking');
       setSortOrder('asc');
     } catch (error) {
@@ -86,9 +106,10 @@ const ABCXYZAnalysis: React.FC = () => {
 
     setIsLoadingMore(true);
     try {
+      const ubicacionParam = selectedUbicacion === 'todas' ? undefined : selectedUbicacion;
       const data = await getProductosPorMatriz(
         selectedMatriz,
-        undefined, // cache global
+        ubicacionParam,
         10000,
         productos.length
       );
@@ -103,43 +124,50 @@ const ABCXYZAnalysis: React.FC = () => {
 
   const handleSort = (column: 'ranking' | 'stock' | 'abc' | 'xyz') => {
     if (sortBy === column) {
-      // Toggle sort order if clicking same column
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
-      // Set new column with default descending order for abc/xyz (higher values first)
       setSortBy(column);
       setSortOrder(column === 'abc' || column === 'xyz' ? 'desc' : 'asc');
     }
   };
 
-  // Handler para click en clase ABC
-  const handleABCClick = (clase: string) => {
-    // Si ya está seleccionada, deseleccionar (mostrar todos)
+  // Handler para click en clase ABC o Top50
+  const handleABCClick = async (clase: string) => {
     if (selectedABC === clase) {
       setSelectedABC('');
+      // Recargar todos los productos
+      setLoadingProductos(true);
+      try {
+        const ubicacionParam = selectedUbicacion === 'todas' ? undefined : selectedUbicacion;
+        const data = await getProductosPorMatriz(undefined, ubicacionParam, 10000, 0);
+        setProductos(data);
+        setHasMoreProducts(data.length >= 10000);
+      } catch (error) {
+        console.error('Error loading productos:', error);
+      } finally {
+        setLoadingProductos(false);
+      }
     } else {
       setSelectedABC(clase);
+      setSelectedMatriz('');
+      // Cargar productos filtrados por clase (incluye Top50)
+      setLoadingProductos(true);
+      try {
+        const ubicacionParam = selectedUbicacion === 'todas' ? undefined : selectedUbicacion;
+        const data = await getProductosPorMatriz(clase, ubicacionParam, 10000, 0);
+        setProductos(data);
+        setHasMoreProducts(data.length >= 10000);
+      } catch (error) {
+        console.error('Error loading productos:', error);
+      } finally {
+        setLoadingProductos(false);
+      }
     }
-    // Limpiar selección de matriz completa si existía
-    setSelectedMatriz('');
   };
 
   // Filter and sort productos based on search term, ABC filter, and sort settings
   const filteredAndSortedProductos = React.useMemo(() => {
     let filtered = productos;
-
-    // Filter by selected ABC class
-    if (selectedABC) {
-      filtered = filtered.filter(p => p.clasificacion_abc === selectedABC);
-    }
-
-    // Filter by selected matriz (for when XYZ is enabled)
-    if (selectedMatriz) {
-      filtered = filtered.filter(p =>
-        p.clasificacion_abc === selectedMatriz[0] &&
-        p.clasificacion_xyz === selectedMatriz[1]
-      );
-    }
 
     // Filter by search term
     if (searchTerm.trim()) {
@@ -168,7 +196,7 @@ const ABCXYZAnalysis: React.FC = () => {
       return sortOrder === 'asc' ? comparison : -comparison;
     });
     return sorted;
-  }, [productos, sortBy, sortOrder, searchTerm, selectedABC, selectedMatriz]);
+  }, [productos, sortBy, sortOrder, searchTerm]);
 
   if (loading) {
     return (
@@ -178,31 +206,58 @@ const ABCXYZAnalysis: React.FC = () => {
     );
   }
 
+  const ubicacionNombre = selectedUbicacion === 'todas'
+    ? 'Todas las tiendas'
+    : ubicaciones.find(u => u.id === selectedUbicacion)?.nombre || selectedUbicacion;
+
   return (
     <div className="space-y-6">
-      {/* Header con info de periodo - Cache global */}
+      {/* Header con selector de tienda */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
             <span className="text-2xl">📊</span>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Clasificación ABC Global</h2>
-              <p className="text-sm text-gray-500">Últimos 30 días - Todas las tiendas consolidado</p>
+              <h2 className="text-lg font-semibold text-gray-900">Clasificación ABC</h2>
+              <p className="text-sm text-gray-500">Últimos 30 días - {ubicacionNombre}</p>
             </div>
           </div>
-          <button
-            onClick={loadData}
-            className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-2"
-          >
-            🔄 Refrescar
-          </button>
+
+          <div className="flex items-center gap-4">
+            {/* Selector de tienda */}
+            <div className="flex items-center gap-2">
+              <label htmlFor="ubicacion-select" className="text-sm text-gray-600">
+                Tienda:
+              </label>
+              <select
+                id="ubicacion-select"
+                value={selectedUbicacion}
+                onChange={(e) => setSelectedUbicacion(e.target.value)}
+                className="block w-48 px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="todas">Global (todas)</option>
+                {ubicaciones.map((ub) => (
+                  <option key={ub.id} value={ub.id}>
+                    {ub.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={loadData}
+              className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-2"
+            >
+              🔄 Refrescar
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Resumen ABC (y XYZ si está habilitado) */}
+      {/* Resumen ABC + Top50 (y XYZ si está habilitado) */}
       {matrizData && (
         <div className={`grid grid-cols-1 ${isXYZEnabled() ? 'md:grid-cols-2' : ''} gap-6`}>
-          {/* Resumen ABC (Tabla Pareto) */}
+          {/* Resumen ABC (Tabla Pareto) + Top50 */}
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900">Resumen ABC (Pareto)</h2>
@@ -218,6 +273,39 @@ const ABCXYZAnalysis: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
+                {/* Top50 - Nueva categoría especial */}
+                {matrizData.resumen_top50 && (
+                  <tr
+                    onClick={() => handleABCClick('Top50')}
+                    className={`cursor-pointer transition-all hover:bg-amber-50 ${
+                      selectedABC === 'Top50' ? 'ring-2 ring-inset ring-amber-500 bg-amber-50' : ''
+                    }`}
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="px-3 py-1 rounded-full text-sm font-bold bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-sm">
+                        Top 50
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-amber-700">
+                      {matrizData.resumen_top50.count}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-amber-700">
+                      {matrizData.resumen_top50.porcentaje_productos.toFixed(1)}%
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-amber-700">
+                      {matrizData.resumen_top50.porcentaje_valor.toFixed(1)}%
+                    </td>
+                  </tr>
+                )}
+
+                {/* Separador visual */}
+                <tr className="bg-gray-100">
+                  <td colSpan={4} className="px-6 py-1 text-xs text-gray-500 uppercase tracking-wide">
+                    Clasificación Pareto
+                  </td>
+                </tr>
+
+                {/* Clases A, B, C */}
                 {Object.entries(matrizData.resumen_abc).map(([clase, data]) => (
                   <tr
                     key={clase}
@@ -249,11 +337,22 @@ const ABCXYZAnalysis: React.FC = () => {
                 ))}
               </tbody>
             </table>
+
+            {/* Insight Top50 */}
+            {matrizData.resumen_top50 && matrizData.resumen_top50.count > 0 && (
+              <div className="px-6 py-4 bg-amber-50 border-t border-amber-100">
+                <p className="text-sm text-amber-800 flex items-center gap-2">
+                  🏆 Los <strong>Top 50</strong> productos generan el <strong>{matrizData.resumen_top50.porcentaje_valor.toFixed(1)}%</strong> del valor total
+                </p>
+              </div>
+            )}
+
             <div className="px-6 py-4 bg-blue-50 border-t border-blue-100">
               <p className="text-sm text-blue-800 flex items-center gap-2">
                 💡 Solo el {matrizData.resumen_abc.A?.porcentaje_productos.toFixed(1)}% de tus productos generan el {matrizData.resumen_abc.A?.porcentaje_valor.toFixed(1)}% del valor
               </p>
             </div>
+
             {/* Chart ABC */}
             <div className="px-6 py-6 border-t border-gray-200">
               <ABCDistributionChart resumenABC={matrizData.resumen_abc} />
@@ -336,17 +435,37 @@ const ABCXYZAnalysis: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">
-                  {selectedABC
-                    ? `Productos Clase ${selectedABC}`
-                    : selectedMatriz
-                      ? `Productos en clasificación: ${selectedMatriz}`
-                      : 'Todos los productos'}
+                  {selectedABC === 'Top50'
+                    ? 'Top 50 Productos'
+                    : selectedABC
+                      ? `Productos Clase ${selectedABC}`
+                      : selectedMatriz
+                        ? `Productos en clasificación: ${selectedMatriz}`
+                        : 'Todos los productos'}
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">
                   Mostrando {filteredAndSortedProductos.length} de {productos.length} productos
-                  {selectedABC && (
+                  {(selectedABC || selectedMatriz) && (
                     <button
-                      onClick={() => setSelectedABC('')}
+                      onClick={() => {
+                        setSelectedABC('');
+                        setSelectedMatriz('');
+                        // Reload all products
+                        const loadAll = async () => {
+                          setLoadingProductos(true);
+                          try {
+                            const ubicacionParam = selectedUbicacion === 'todas' ? undefined : selectedUbicacion;
+                            const data = await getProductosPorMatriz(undefined, ubicacionParam, 10000, 0);
+                            setProductos(data);
+                            setHasMoreProducts(data.length >= 10000);
+                          } catch (error) {
+                            console.error('Error loading productos:', error);
+                          } finally {
+                            setLoadingProductos(false);
+                          }
+                        };
+                        loadAll();
+                      }}
                       className="ml-2 text-blue-600 hover:text-blue-800 underline"
                     >
                       Ver todos
@@ -388,140 +507,157 @@ const ABCXYZAnalysis: React.FC = () => {
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             </div>
           ) : productos.length > 0 ? (
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Categoría</th>
-                  <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('abc')}
-                  >
-                    <div className="flex items-center gap-1">
-                      ABC
-                      {sortBy === 'abc' && (
-                        <span className="text-blue-600">
-                          {sortOrder === 'asc' ? '↑' : '↓'}
-                        </span>
-                      )}
-                    </div>
-                  </th>
-                  {isXYZEnabled() && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Categoría</th>
                     <th
-                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
-                      onClick={() => handleSort('xyz')}
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                      onClick={() => handleSort('abc')}
                     >
                       <div className="flex items-center gap-1">
-                        XYZ
-                        {sortBy === 'xyz' && (
+                        ABC
+                        {sortBy === 'abc' && (
                           <span className="text-blue-600">
                             {sortOrder === 'asc' ? '↑' : '↓'}
                           </span>
                         )}
                       </div>
                     </th>
-                  )}
-                  {/* Siempre mostrar - cache global */}
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Tiendas
-                  </th>
-                  <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('ranking')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Ranking
-                      {sortBy === 'ranking' && (
-                        <span className="text-blue-600">
-                          {sortOrder === 'asc' ? '↑' : '↓'}
-                        </span>
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('stock')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Stock
-                      {sortBy === 'stock' && (
-                        <span className="text-blue-600">
-                          {sortOrder === 'asc' ? '↑' : '↓'}
-                        </span>
-                      )}
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredAndSortedProductos.map((producto, index) => (
-                  <tr
-                    key={producto.codigo_producto}
-                    onClick={() => setSelectedProducto(producto.codigo_producto)}
-                    className="hover:bg-gray-50 cursor-pointer"
-                  >
-                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {index + 1}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {producto.codigo_producto}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
-                      {producto.descripcion}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {producto.categoria}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        producto.clasificacion_abc === 'A' ? 'bg-red-100 text-red-800' :
-                        producto.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-800' :
-                        producto.clasificacion_abc === 'C' ? 'bg-gray-100 text-gray-800' :
-                        'bg-purple-100 text-purple-800'
-                      }`}>
-                        {producto.clasificacion_abc === 'SIN_VENTAS' ? 'Sin ventas' : producto.clasificacion_abc} {producto.clasificacion_abc !== 'SIN_VENTAS' && `(${formatPercentageValue(producto.porcentaje_valor)})`}
-                      </span>
-                    </td>
                     {isXYZEnabled() && (
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <th
+                        className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('xyz')}
+                      >
+                        <div className="flex items-center gap-1">
+                          XYZ
+                          {sortBy === 'xyz' && (
+                            <span className="text-blue-600">
+                              {sortOrder === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                    )}
+                    {selectedUbicacion === 'todas' && (
+                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Tiendas
+                      </th>
+                    )}
+                    <th
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                      onClick={() => handleSort('ranking')}
+                    >
+                      <div className="flex items-center gap-1">
+                        Ranking
+                        {sortBy === 'ranking' && (
+                          <span className="text-blue-600">
+                            {sortOrder === 'asc' ? '↑' : '↓'}
+                          </span>
+                        )}
+                      </div>
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase" title="Velocidad de venta: Percentil 75 de unidades vendidas por día">
+                      Venta P75
+                    </th>
+                    <th
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                      onClick={() => handleSort('stock')}
+                    >
+                      <div className="flex items-center gap-1">
+                        Stock
+                        {sortBy === 'stock' && (
+                          <span className="text-blue-600">
+                            {sortOrder === 'asc' ? '↑' : '↓'}
+                          </span>
+                        )}
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredAndSortedProductos.map((producto, index) => (
+                    <tr
+                      key={producto.codigo_producto}
+                      onClick={() => setSelectedProducto(producto.codigo_producto)}
+                      className="hover:bg-gray-50 cursor-pointer"
+                    >
+                      <td className="px-2 py-3 whitespace-nowrap text-sm text-gray-500">
+                        {index + 1}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {producto.codigo_producto}
+                      </td>
+                      <td className="px-3 py-3 text-sm text-gray-900 max-w-xs truncate">
+                        {producto.is_top50 && (
+                          <span className="inline-block mr-1 text-amber-500" title="Top 50">🏆</span>
+                        )}
+                        {producto.descripcion}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-500">
+                        {producto.categoria}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-sm">
                         <span className={`px-2 py-1 rounded text-xs font-medium ${
-                          producto.clasificacion_xyz === 'X' ? 'bg-green-100 text-green-800' :
-                          producto.clasificacion_xyz === 'Y' ? 'bg-blue-100 text-blue-800' :
-                          'bg-red-100 text-red-800'
+                          producto.clasificacion_abc === 'A' ? 'bg-red-100 text-red-800' :
+                          producto.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-800' :
+                          producto.clasificacion_abc === 'C' ? 'bg-gray-100 text-gray-800' :
+                          'bg-purple-100 text-purple-800'
                         }`}>
-                          {producto.clasificacion_xyz} ({producto.coeficiente_variacion !== null ? producto.coeficiente_variacion.toFixed(2) : 'Sin datos'})
+                          {producto.clasificacion_abc === 'SIN_VENTAS' ? 'Sin ventas' : producto.clasificacion_abc} {producto.clasificacion_abc !== 'SIN_VENTAS' && `(${formatPercentageValue(producto.porcentaje_valor)})`}
                         </span>
                       </td>
-                    )}
-                    {/* Siempre mostrar - cache global */}
-                    {producto.porcentaje_tiendas !== undefined && (
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <div className="flex flex-col">
-                          <span className={`font-medium ${
-                            producto.porcentaje_tiendas >= 80 ? 'text-green-700' :
-                            producto.porcentaje_tiendas >= 50 ? 'text-yellow-700' :
-                            'text-gray-600'
+                      {isXYZEnabled() && (
+                        <td className="px-3 py-3 whitespace-nowrap text-sm">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            producto.clasificacion_xyz === 'X' ? 'bg-green-100 text-green-800' :
+                            producto.clasificacion_xyz === 'Y' ? 'bg-blue-100 text-blue-800' :
+                            'bg-red-100 text-red-800'
                           }`}>
-                            {producto.porcentaje_tiendas.toFixed(0)}%
+                            {producto.clasificacion_xyz} ({producto.coeficiente_variacion !== null ? producto.coeficiente_variacion.toFixed(2) : 'Sin datos'})
                           </span>
-                          <span className="text-xs text-gray-500">
-                            {producto.tiendas_con_clasificacion}/{producto.total_tiendas}
-                          </span>
-                        </div>
+                        </td>
+                      )}
+                      {selectedUbicacion === 'todas' && (
+                        <td className="px-3 py-3 whitespace-nowrap text-sm">
+                          {producto.porcentaje_tiendas !== undefined ? (
+                            <div className="flex flex-col">
+                              <span className={`font-medium ${
+                                producto.porcentaje_tiendas >= 80 ? 'text-green-700' :
+                                producto.porcentaje_tiendas >= 50 ? 'text-yellow-700' :
+                                'text-gray-600'
+                              }`}>
+                                {producto.porcentaje_tiendas.toFixed(0)}%
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                {producto.tiendas_con_clasificacion}/{producto.total_tiendas}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                      )}
+                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-500">
+                        #{producto.ranking_valor}
                       </td>
-                    )}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      #{producto.ranking_valor}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {producto.stock_actual.toFixed(0)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900" title="Unidades/día (P75)">
+                        {producto.demanda_p75 !== undefined && producto.demanda_p75 > 0
+                          ? formatNumber(Math.round(producto.demanda_p75))
+                          : '-'}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {producto.stock_actual.toFixed(0)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <div className="px-6 py-8 text-center text-gray-500">
               No hay productos en esta clasificación

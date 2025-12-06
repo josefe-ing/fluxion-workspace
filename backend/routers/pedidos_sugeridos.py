@@ -1016,7 +1016,7 @@ async def calcular_productos_sugeridos(
                 p.marca,
                 p.presentacion,
                 COALESCE(p.unidades_por_bulto, 1) as cantidad_bultos,
-                COALESCE(p.peso_unitario, 1.0) as peso_unidad,
+                COALESCE(p.peso_unitario * 1000, 1000.0) as peso_unidad,  -- Convertir kg a gramos
                 -- Ventas
                 COALESCE(v5.prom_diario_5d, 0) as prom_ventas_5dias_unid,
                 COALESCE(v20.prom_diario, 0) as prom_ventas_20dias_unid,
@@ -1103,13 +1103,11 @@ async def calcular_productos_sugeridos(
                     es_generador_trafico=es_generador_trafico
                 )
 
-                # Determinar razon del pedido
+                # Determinar razon del pedido (dejar vacío por defecto)
                 if resultado.tiene_sobrestock:
                     razon = "Sobrestock - No pedir"
-                elif resultado.cantidad_sugerida_bultos > 0:
-                    razon = "Stock bajo punto de reorden"
                 else:
-                    razon = "Stock suficiente"
+                    razon = ""  # Usuario puede agregar notas manualmente
 
                 # Calcular dias cobertura actual
                 stock_dias = stock_tienda / prom_p75 if prom_p75 > 0 else 999

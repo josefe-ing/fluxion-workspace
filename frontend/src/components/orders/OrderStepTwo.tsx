@@ -892,6 +892,26 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
           <div className="overflow-x-auto">
             <table className="w-full divide-y divide-gray-200 text-sm" style={{ minWidth: '1500px' }}>
               <thead className="bg-gray-100">
+                {/* Fila de categorías */}
+                <tr className="border-b-2 border-gray-300">
+                  <th className="sticky left-0 z-10 bg-gray-200" style={{ width: '36px' }}></th>
+                  <th colSpan={3} className="sticky left-[36px] z-10 bg-blue-200 px-2 py-1 text-center font-bold text-blue-900 text-xs uppercase border-r border-blue-300">
+                    Producto
+                  </th>
+                  <th colSpan={4} className="bg-purple-200 px-2 py-1 text-center font-bold text-purple-900 text-xs uppercase border-r border-purple-300">
+                    Ventas
+                  </th>
+                  <th colSpan={5} className="bg-green-200 px-2 py-1 text-center font-bold text-green-900 text-xs uppercase border-r border-green-300">
+                    Inventario
+                  </th>
+                  <th colSpan={6 + (modoConsultorActivo ? 4 : 0)} className="bg-orange-200 px-2 py-1 text-center font-bold text-orange-900 text-xs uppercase border-r border-orange-300">
+                    Cálculos Pedido
+                  </th>
+                  <th colSpan={3} className="bg-gray-200 px-2 py-1 text-center font-bold text-gray-700 text-xs uppercase">
+                    Pedido
+                  </th>
+                </tr>
+                {/* Fila de columnas */}
                 <tr>
                   <th className="sticky left-0 z-10 bg-gray-100 px-2 py-2 text-left" style={{ width: '36px' }}>
                     <input
@@ -928,8 +948,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     CEDI
                   </th>
                   <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="45px" />
-                  <SortableHeader field="criticidad" label="🔥" bgColor="bg-red-100" width="50px" />
-                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
+                  <SortableHeader field="criticidad" label="🔥" bgColor="bg-orange-100" width="50px" />
+                  <th className="bg-orange-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
                     SS
                   </th>
                   <th className="bg-orange-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
@@ -938,7 +958,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   <th className="bg-orange-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
                     Max
                   </th>
-                  <SortableHeader field="sugerido" label="Sug" bgColor="bg-gray-100" width="60px" />
+                  <SortableHeader field="sugerido" label="Sug" bgColor="bg-orange-100" width="60px" />
 
                   {/* Columnas XYZ - Solo visibles en Modo Consultor */}
                   {modoConsultorActivo && (
@@ -959,7 +979,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   )}
 
                   <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="70px" />
-                  <th className="bg-indigo-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '60px' }}>Peso</th>
+                  <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '60px' }}>Peso</th>
                   <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '120px' }}>Notas</th>
                 </tr>
               </thead>
@@ -1070,7 +1090,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {getClasificacionABC(producto)}
                       </button>
                     </td>
-                    <td className="bg-red-50 px-2 py-1.5 text-xs text-center font-semibold" style={{ width: '50px' }}>
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-center font-semibold" style={{ width: '50px' }}>
                       {stockParams && producto.prom_ventas_20dias_unid > 0 ? (() => {
                         const criticidad = calcularCriticidad(producto);
                         const clasificacion = getClasificacionABC(producto);
@@ -1134,11 +1154,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         );
                       })() : '-'}
                     </td>
-                    <td className="bg-green-50 px-2 py-1.5 text-xs text-green-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '50px' }}>
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockSeguridadClick(producto)}
-                          className="hover:underline hover:text-green-900 cursor-pointer transition-colors font-medium"
+                          className="hover:underline hover:text-orange-900 cursor-pointer transition-colors font-medium"
                           title={`SS: ${producto.stock_seguridad.toFixed(0)} und`}
                         >
                           {getDiasSeguridad(producto).toFixed(1)}
@@ -1173,7 +1193,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         '-'
                       )}
                     </td>
-                    <td className="bg-gray-50 px-2 py-1.5 text-center" style={{ width: '60px' }}>
+                    <td className="bg-orange-50 px-2 py-1.5 text-center" style={{ width: '60px' }}>
                       {(() => {
                         const sugerido = calcularPedidoSugerido(producto);
                         const diasCobertura = calcularDiasPedidoSugerido(producto);
@@ -1255,7 +1275,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         className="w-14 px-1 py-1 border border-gray-300 rounded text-xs text-center font-semibold disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800 text-center font-medium" style={{ width: '60px' }}>
+                    <td className="bg-gray-50 px-2 py-1.5 text-xs text-gray-800 text-center font-medium" style={{ width: '60px' }}>
                       {formatNumber((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos * (producto.peso_unidad || 0) / 1000, 2)}
                     </td>
                     <td className="bg-gray-50 px-2 py-1.5 text-center" style={{ width: '120px' }}>

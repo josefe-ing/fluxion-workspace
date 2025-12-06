@@ -125,14 +125,6 @@ export default function ProductHistoryModal({
     }
   };
 
-  const formatHora = (fechaISO: string): string => {
-    const fecha = new Date(fechaISO);
-    return fecha.toLocaleString('es-VE', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
   const formatFecha = (fechaISO: string): string => {
     const fecha = new Date(fechaISO);
     return fecha.toLocaleString('es-VE', {
@@ -659,7 +651,7 @@ export default function ProductHistoryModal({
                                 {reconciliacionData.periodos.map((periodo, index) => (
                                   <tr key={index} className="hover:bg-gray-50">
                                     <td className="px-3 py-2 text-gray-900 whitespace-nowrap">
-                                      {formatHora(periodo.fecha_inicio)} → {formatHora(periodo.fecha_fin)}
+                                      {formatFechaCorta(periodo.fecha_inicio)} → {formatFechaCorta(periodo.fecha_fin)}
                                     </td>
                                     <td className="px-3 py-2 text-right text-gray-700">{formatInteger(periodo.stock_inicio)}</td>
                                     <td className="px-3 py-2 text-right text-gray-700">{formatInteger(periodo.stock_fin)}</td>

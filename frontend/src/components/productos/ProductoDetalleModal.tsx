@@ -342,6 +342,96 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
               </div>
             </div>
 
+            {/* Clasificación ABC por Tienda - Tabla Comparativa */}
+            {detalle?.clasificaciones && detalle.clasificaciones.length > 0 && (
+              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-amber-50 to-orange-50">
+                  <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    📊 Clasificación ABC por Tienda
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Comparativa de cómo se clasifica este producto en cada tienda
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tienda</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ABC</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">XYZ</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Matriz</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ranking</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Venta</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CV</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {detalle.clasificaciones.map((clasif) => (
+                        <tr key={clasif.ubicacion_id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {clasif.ubicacion_nombre}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 rounded text-xs font-bold ${
+                              clasif.clasificacion_abc === 'A' ? 'bg-red-100 text-red-800' :
+                              clasif.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-800' :
+                              clasif.clasificacion_abc === 'C' ? 'bg-gray-100 text-gray-800' :
+                              'bg-purple-100 text-purple-800'
+                            }`}>
+                              {clasif.clasificacion_abc}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              clasif.clasificacion_xyz === 'X' ? 'bg-green-100 text-green-800' :
+                              clasif.clasificacion_xyz === 'Y' ? 'bg-blue-100 text-blue-800' :
+                              clasif.clasificacion_xyz === 'Z' ? 'bg-red-100 text-red-800' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>
+                              {clasif.clasificacion_xyz || '-'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 rounded text-xs font-bold ${
+                              clasif.matriz?.startsWith('A') && clasif.matriz?.endsWith('X') ? 'bg-emerald-100 text-emerald-800' :
+                              clasif.matriz?.startsWith('A') && clasif.matriz?.endsWith('Z') ? 'bg-orange-100 text-orange-800' :
+                              clasif.matriz?.startsWith('A') ? 'bg-red-50 text-red-700' :
+                              clasif.matriz?.startsWith('B') ? 'bg-yellow-50 text-yellow-700' :
+                              'bg-gray-50 text-gray-600'
+                            }`}>
+                              {clasif.matriz || '-'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            #{clasif.ranking_valor}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            ${formatNumber(clasif.valor_consumo)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <span className={`${
+                              clasif.coeficiente_variacion !== null && clasif.coeficiente_variacion < 0.5 ? 'text-green-600' :
+                              clasif.coeficiente_variacion !== null && clasif.coeficiente_variacion < 1.0 ? 'text-blue-600' :
+                              clasif.coeficiente_variacion !== null ? 'text-red-600' :
+                              'text-gray-400'
+                            }`}>
+                              {clasif.coeficiente_variacion !== null ? clasif.coeficiente_variacion.toFixed(2) : '-'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-6 py-3 bg-gray-50 border-t border-gray-200">
+                  <p className="text-xs text-gray-500">
+                    💡 Un producto puede tener clasificación diferente en cada tienda según su comportamiento de ventas local
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Stock por Tienda */}
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-200">
