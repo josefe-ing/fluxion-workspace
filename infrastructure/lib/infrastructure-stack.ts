@@ -16,6 +16,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as rds from 'aws-cdk-lib/aws-rds';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 
 export class InfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -1148,7 +1149,56 @@ PersistentKeepalive = 25`),
     */ // END BACKUP COMMENT
 
     // ========================================
-    // 11. Outputs
+    // 14. Documentation Site (S3 + CloudFront)
+    // ========================================
+
+    // S3 Bucket for Documentation (Docusaurus static site)
+    const docsBucket = new s3.Bucket(this, 'FluxionDocsBucket', {
+      bucketName: `fluxion-docs-${cdk.Stack.of(this).account}`,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      versioned: false,
+    });
+
+    // Import existing ACM Certificate (wildcard for *.fluxionia.co)
+    const fluxionCertificate = acm.Certificate.fromCertificateArn(
+      this,
+      'FluxionWildcardCertificate',
+      'arn:aws:acm:us-east-1:611395766952:certificate/88d81742-53fc-49f5-9c72-3506dd712109'
+    );
+
+    // CloudFront Distribution for Documentation
+    const docsDistribution = new cloudfront.Distribution(this, 'FluxionDocsCDN', {
+      defaultBehavior: {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(docsBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        compress: true,
+      },
+      domainNames: ['docs.fluxionia.co'],
+      certificate: fluxionCertificate,
+      comment: 'Fluxion AI Documentation (Docusaurus)',
+      defaultRootObject: 'index.html',
+      errorResponses: [
+        {
+          httpStatus: 403,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html',
+          ttl: cdk.Duration.seconds(300),
+        },
+        {
+          httpStatus: 404,
+          responseHttpStatus: 200,
+          responsePagePath: '/404.html',
+          ttl: cdk.Duration.seconds(300),
+        },
+      ],
+    });
+
+    // ========================================
+    // 15. Outputs
     // ========================================
     new cdk.CfnOutput(this, 'BackendURL', {
       value: `http://${alb.loadBalancerDnsName}`,
@@ -1254,6 +1304,27 @@ PersistentKeepalive = 25`),
     new cdk.CfnOutput(this, 'PostgreSQLConnectionString', {
       value: `postgresql://{{username}}:{{password}}@${dbInstance.dbInstanceEndpointAddress}:${dbInstance.dbInstanceEndpointPort}/fluxion_production`,
       description: 'PostgreSQL connection string template (retrieve credentials from Secrets Manager)',
+    });
+
+    // Documentation Outputs
+    new cdk.CfnOutput(this, 'DocsBucketName', {
+      value: docsBucket.bucketName,
+      description: 'S3 bucket for documentation',
+    });
+
+    new cdk.CfnOutput(this, 'DocsCloudFrontURL', {
+      value: `https://${docsDistribution.distributionDomainName}`,
+      description: 'CloudFront URL for documentation',
+    });
+
+    new cdk.CfnOutput(this, 'DocsCloudFrontDistributionId', {
+      value: docsDistribution.distributionId,
+      description: 'CloudFront Distribution ID for docs cache invalidation',
+    });
+
+    new cdk.CfnOutput(this, 'DocsCloudFlareCNAME', {
+      value: docsDistribution.distributionDomainName,
+      description: 'Add this as CNAME target in Cloudflare for docs.fluxionia.co',
     });
   }
 }
