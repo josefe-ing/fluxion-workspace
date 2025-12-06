@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Search, Filter, Eye } from 'lucide-react';
 import MatrizABCXYZBadge from '../../shared/MatrizABCXYZBadge';
 import NivelObjetivoDetalleModal from '../NivelObjetivoDetalleModal';
@@ -89,6 +89,17 @@ export default function PasoSeleccionProductosV2Extended({
     }
   };
 
+  // Calcular Top50: los primeros 50 productos de clase A ordenados por demanda
+  const top50Ids = useMemo(() => {
+    const productosClaseA = productos
+      .filter(p => p.matriz_abc_xyz.startsWith('A'))
+      .sort((a, b) => b.demanda_promedio_diaria - a.demanda_promedio_diaria)
+      .slice(0, 50);
+    return new Set(productosClaseA.map(p => p.producto_id));
+  }, [productos]);
+
+  const esTop50 = (productoId: string) => top50Ids.has(productoId);
+
   const aplicarFiltros = () => {
     let filtrados = [...productos];
 
@@ -109,9 +120,14 @@ export default function PasoSeleccionProductosV2Extended({
       filtrados = filtrados.filter(p => p.cuadrante === filtroCuadrante);
     }
 
-    // Filtros ABC y XYZ independientes (no se limpian cuando hay cuadrante)
+    // Filtros ABC y XYZ independientes
     if (filtroABC) {
-      filtrados = filtrados.filter(p => p.matriz_abc_xyz.startsWith(filtroABC));
+      if (filtroABC === 'Top50') {
+        // Filtrar solo Top50
+        filtrados = filtrados.filter(p => top50Ids.has(p.producto_id));
+      } else {
+        filtrados = filtrados.filter(p => p.matriz_abc_xyz.startsWith(filtroABC));
+      }
     }
 
     if (filtroXYZ) {
@@ -312,7 +328,8 @@ export default function PasoSeleccionProductosV2Extended({
             onChange={(e) => setFiltroABC(e.target.value)}
             className="px-3 py-1.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
           >
-            <option value="">Todas ABC</option>
+            <option value="">ABC</option>
+            <option value="Top50">🏆 Top 50</option>
             <option value="A">Clase A</option>
             <option value="B">Clase B</option>
             <option value="C">Clase C</option>
@@ -483,13 +500,18 @@ export default function PasoSeleccionProductosV2Extended({
                   <td className="px-4 py-3 text-sm font-mono text-gray-900">{producto.producto_id}</td>
                   <td className="px-4 py-3 text-sm text-gray-900">{producto.nombre_producto}</td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={() => handleClickMatriz(producto)}
-                      className="hover:opacity-80 transition-opacity cursor-pointer"
-                      title="Click para ver detalles de clasificación ABC-XYZ"
-                    >
-                      <MatrizABCXYZBadge matriz={producto.matriz_abc_xyz} size="sm" mostrarPrioridad={false} />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {esTop50(producto.producto_id) && (
+                        <span className="text-amber-500" title="Top 50">🏆</span>
+                      )}
+                      <button
+                        onClick={() => handleClickMatriz(producto)}
+                        className="hover:opacity-80 transition-opacity cursor-pointer"
+                        title="Click para ver detalles de clasificación ABC-XYZ"
+                      >
+                        <MatrizABCXYZBadge matriz={producto.matriz_abc_xyz} size="sm" mostrarPrioridad={false} />
+                      </button>
+                    </div>
                   </td>
 
                   {/* Promedios de Demanda - con fondo amarillo */}

@@ -293,52 +293,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   // Obtener categorías únicas de los productos
   const categoriasDisponibles = ['Todas', ...Array.from(new Set(productos.map(p => p.categoria).filter((c): c is string => c !== null && c !== '')))].sort();
 
-  // Cuadrantes ABC-XYZ (9 cuadrantes + Todos)
-  const cuadrantesABCXYZ = ['Todos', 'AX', 'AY', 'AZ', 'BX', 'BY', 'BZ', 'CX', 'CY', 'CZ'];
-
-  // Función para obtener clasificación XYZ basada en coeficiente de variación
-  const getClasificacionXYZ = (producto: ProductoPedido): string => {
-    // Si no hay ventas, es Z (impredecible)
-    if (producto.prom_ventas_20dias_unid <= 0) return 'Z';
-
-    // Calcular coeficiente de variación aproximado usando la diferencia entre 5d y 20d
-    const prom5d = producto.prom_ventas_5dias_unid;
-    const prom20d = producto.prom_ventas_20dias_unid;
-
-    if (prom20d === 0) return 'Z';
-
-    // CV aproximado: diferencia relativa entre promedios
-    const variacion = Math.abs(prom5d - prom20d) / prom20d;
-
-    if (variacion <= 0.2) return 'X';  // Muy estable
-    if (variacion <= 0.5) return 'Y';  // Moderadamente variable
-    return 'Z';  // Alta variabilidad
-  };
-
-  // Filtrar productos por búsqueda, categoría y cuadrante ABC-XYZ
-  const productosFiltrados = productos.filter(p => {
-    // Filtro por categoría
-    if (categoriaActiva !== 'Todas' && p.categoria !== categoriaActiva) {
-      return false;
-    }
-
-    // Filtro por cuadrante ABC-XYZ
-    if (cuadranteActivo !== 'Todos') {
-      const abc = getClasificacionABC(p);
-      const xyz = getClasificacionXYZ(p);
-      if (`${abc}${xyz}` !== cuadranteActivo) {
-        return false;
-      }
-    }
-
-    // Filtro por búsqueda
-    if (!searchTerm) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      p.codigo_producto.toLowerCase().includes(term) ||
-      p.descripcion_producto.toLowerCase().includes(term)
-    );
-  });
+  // Filtros ABC simplificados: Top50, A, B, C
+  const filtrosABC = ['Todos', 'Top50', 'A', 'B', 'C'];
 
   // Función auxiliar para obtener clasificación ABC del producto
   // Usa el valor que viene del backend (Pareto por valor: A, B, C)
@@ -350,6 +306,55 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     // Fallback si no hay clasificación
     return '-';
   };
+
+  // Calcular Top50: primeros 50 productos clase A ordenados por demanda P75 (mayor velocidad de venta)
+  const top50Ids = useMemo(() => {
+    const productosClaseA = productos
+      .filter(p => p.clasificacion_abc === 'A')
+      .sort((a, b) => (b.prom_p75_unid || 0) - (a.prom_p75_unid || 0))
+      .slice(0, 50);
+    return new Set(productosClaseA.map(p => p.codigo_producto));
+  }, [productos]);
+
+  const esTop50 = (codigoProducto: string) => top50Ids.has(codigoProducto);
+
+  // Filtrar productos por búsqueda, categoría y clasificación ABC
+  const productosFiltrados = productos.filter(p => {
+    // Filtro por categoría
+    if (categoriaActiva !== 'Todas' && p.categoria !== categoriaActiva) {
+      return false;
+    }
+
+    // Filtro por clasificación ABC (Top50, A, B, C)
+    if (cuadranteActivo !== 'Todos') {
+      if (cuadranteActivo === 'Top50') {
+        // Solo mostrar productos Top50
+        if (!esTop50(p.codigo_producto)) {
+          return false;
+        }
+      } else if (cuadranteActivo === 'A') {
+        // Clase A pero excluyendo Top50 (productos A del puesto 51+)
+        const abc = getClasificacionABC(p);
+        if (abc !== 'A' || esTop50(p.codigo_producto)) {
+          return false;
+        }
+      } else {
+        // Filtrar por clase ABC (B, C)
+        const abc = getClasificacionABC(p);
+        if (abc !== cuadranteActivo) {
+          return false;
+        }
+      }
+    }
+
+    // Filtro por búsqueda
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      p.codigo_producto.toLowerCase().includes(term) ||
+      p.descripcion_producto.toLowerCase().includes(term)
+    );
+  });
 
   // Obtener velocidad de venta P75 en bultos/día (para cálculos de stock)
   const getVelocidadP75Bultos = (producto: ProductoPedido): number => {
@@ -848,7 +853,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             </select>
           </div>
 
-          {/* Dropdown de Cuadrante ABC-XYZ */}
+          {/* Dropdown de Clasificación ABC */}
           <div className="flex items-center gap-1">
             <label className="text-xs font-medium text-gray-600">ABC:</label>
             <select
@@ -856,16 +861,17 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
               onChange={(e) => { setCuadranteActivo(e.target.value); setPaginaActual(1); }}
               className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
             >
-              {cuadrantesABCXYZ.map((cuadrante) => {
+              {filtrosABC.map((filtro) => {
                 const count = productos.filter(p => {
-                  if (cuadrante === 'Todos') return true;
-                  const abc = getClasificacionABC(p);
-                  const xyz = getClasificacionXYZ(p);
-                  return `${abc}${xyz}` === cuadrante;
+                  if (filtro === 'Todos') return true;
+                  if (filtro === 'Top50') return esTop50(p.codigo_producto);
+                  if (filtro === 'A') return getClasificacionABC(p) === 'A' && !esTop50(p.codigo_producto);
+                  return getClasificacionABC(p) === filtro;
                 }).length;
+                const label = filtro === 'Top50' ? '🏆 Top 50' : filtro;
                 return (
-                  <option key={cuadrante} value={cuadrante}>
-                    {cuadrante} ({count})
+                  <option key={filtro} value={filtro}>
+                    {label} ({count})
                   </option>
                 );
               })}
@@ -1085,8 +1091,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           if (clasif === 'C') return 'text-green-700 hover:text-green-900';
                           return 'text-gray-600 hover:text-gray-800';
                         })()}`}
-                        title="Click para ver clasificación ABC"
+                        title={esTop50(producto.codigo_producto) ? 'Top 50 - Click para ver clasificación ABC' : 'Click para ver clasificación ABC'}
                       >
+                        {esTop50(producto.codigo_producto) && <span className="mr-0.5">🏆</span>}
                         {getClasificacionABC(producto)}
                       </button>
                     </td>
