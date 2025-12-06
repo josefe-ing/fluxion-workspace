@@ -812,7 +812,7 @@ PersistentKeepalive = 25`),
           containerName: 'etl',
           command: [
             'python', 'etl_inventario.py',
-            '--tiendas', 'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10', 'tienda_11', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_17', 'tienda_19', 'tienda_20', 'cedi_seco', 'cedi_frio', 'cedi_verde', 'cedi_caracas'
+            '--tiendas', 'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10', 'tienda_11', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_17', 'tienda_18', 'tienda_19', 'tienda_20', 'cedi_seco', 'cedi_frio', 'cedi_verde', 'cedi_caracas'
           ]
         }],
         // Prevent concurrent executions
@@ -1018,7 +1018,7 @@ PersistentKeepalive = 25`),
           containerName: 'etl',
           command: [
             'python', 'etl_ventas_postgres.py',
-            '--tiendas', 'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10', 'tienda_11', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_17', 'tienda_19', 'tienda_20'
+            '--tiendas', 'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10', 'tienda_11', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_17', 'tienda_18', 'tienda_19', 'tienda_20'
             // Script unificado detecta sistema_pos (klk/stellar) automáticamente
           ]
         }],
