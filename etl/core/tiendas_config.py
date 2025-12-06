@@ -382,15 +382,16 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_18": TiendaConfig(
         ubicacion_id="tienda_18",
         ubicacion_nombre="PARAISO",
-        server_ip="192.168.0.0",  # TODO: Confirmar IP con cliente
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=1433,
-        activo=False,  # ⚠️ INACTIVA - Aún no inaugurada
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
+        activo=True,  # ✅ ACTIVA - Tienda KLK
         codigo_deposito="1802",
-        sistema_pos="klk",  # Migrado a KLK (activar cuando inaugure)
-        codigo_almacen_klk="APP-TPAR"  # Código de almacén en KLK: PARAISO PV (corregido)
+        sistema_pos="klk",
+        codigo_almacen_klk="APP-TPAR",  # Código de almacén en KLK: PARAISO PV
+        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
     ),
 
     "tienda_19": TiendaConfig(
