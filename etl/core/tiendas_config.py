@@ -105,7 +105,7 @@ ALMACENES_KLK: Dict[str, List[AlmacenKLK]] = {
     ],
     # SUC004 - PARAISO: Solo piso de venta
     "tienda_18": [
-        AlmacenKLK(codigo="APP-TPAR", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+        AlmacenKLK(codigo="TPAR", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
     ],
     # SUC005 - TAZAJAL: Solo piso de venta
     "tienda_20": [
@@ -390,7 +390,7 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         activo=True,  # ✅ ACTIVA - Tienda KLK
         codigo_deposito="1802",
         sistema_pos="klk",
-        codigo_almacen_klk="APP-TPAR",  # Código de almacén en KLK: PARAISO PV
+        codigo_almacen_klk="TPAR",  # Código de almacén en KLK: PARAISO PV
         visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
     ),
 
