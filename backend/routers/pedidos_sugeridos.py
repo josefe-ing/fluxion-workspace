@@ -983,12 +983,14 @@ async def calcular_productos_sugeridos(
         query = """
             WITH ventas_diarias_disponibles AS (
                 -- Todas las ventas diarias disponibles (sin limite de dias)
+                -- IMPORTANTE: Excluir día actual (incompleto) para no sesgar promedios
                 SELECT
                     producto_id,
                     fecha_venta::date as fecha,
                     SUM(cantidad_vendida) as total_dia
                 FROM ventas
                 WHERE ubicacion_id = %s
+                  AND fecha_venta::date < CURRENT_DATE  -- Excluir hoy (día incompleto)
                 GROUP BY producto_id, fecha_venta::date
             ),
             ventas_20dias AS (
@@ -1060,6 +1062,7 @@ async def calcular_productos_sugeridos(
                 FROM ventas
                 WHERE ubicacion_id = %s
                   AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                  AND fecha_venta < CURRENT_DATE  -- Excluir hoy (día incompleto)
                   AND producto_id != '003760'
                 GROUP BY producto_id
             ),
