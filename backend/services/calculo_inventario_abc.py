@@ -16,9 +16,12 @@ from typing import List, Optional
 from enum import Enum
 
 
-# Constantes operativas La Granja
-LEAD_TIME = 1.5  # dias (fijo, CEDI cercano)
+# Constantes operativas La Granja (valores por defecto)
+LEAD_TIME_DEFAULT = 1.5  # dias (fijo, CEDI cercano)
 VENTANA_SIGMA_D = 30  # dias para calcular desviacion estandar
+
+# Variable global para lead time (puede ser sobrescrita por config de tienda)
+LEAD_TIME = LEAD_TIME_DEFAULT
 
 
 class MetodoCalculo(Enum):
@@ -79,12 +82,57 @@ class ResultadoCalculo:
     warnings: List[str] = field(default_factory=list)
 
 
-# Parametros por clase (niveles de servicio ajustados)
-PARAMS_ABC = {
+# Parametros por clase (niveles de servicio ajustados) - VALORES POR DEFECTO
+PARAMS_ABC_DEFAULT = {
     'A': ParametrosABC(nivel_servicio_z=2.33, dias_cobertura=7, metodo=MetodoCalculo.ESTADISTICO),   # 99%
     'B': ParametrosABC(nivel_servicio_z=1.88, dias_cobertura=14, metodo=MetodoCalculo.ESTADISTICO),  # 97%
     'C': ParametrosABC(nivel_servicio_z=0.0, dias_cobertura=30, metodo=MetodoCalculo.PADRE_PRUDENTE),
 }
+
+# Parametros activos (pueden ser sobrescritos por config de tienda)
+PARAMS_ABC = PARAMS_ABC_DEFAULT.copy()
+
+
+@dataclass
+class ConfigTiendaABC:
+    """Configuración de parámetros ABC específica para una tienda."""
+    lead_time: float = LEAD_TIME_DEFAULT
+    dias_cobertura_a: int = 7
+    dias_cobertura_b: int = 14
+    dias_cobertura_c: int = 30
+
+
+def set_config_tienda(config: Optional[ConfigTiendaABC] = None):
+    """
+    Configura los parámetros ABC para una tienda específica.
+    Si config es None, restaura los valores por defecto.
+    """
+    global LEAD_TIME, PARAMS_ABC
+
+    if config is None:
+        # Restaurar defaults
+        LEAD_TIME = LEAD_TIME_DEFAULT
+        PARAMS_ABC = PARAMS_ABC_DEFAULT.copy()
+    else:
+        # Aplicar config de tienda
+        LEAD_TIME = config.lead_time
+        PARAMS_ABC = {
+            'A': ParametrosABC(
+                nivel_servicio_z=2.33,
+                dias_cobertura=config.dias_cobertura_a,
+                metodo=MetodoCalculo.ESTADISTICO
+            ),
+            'B': ParametrosABC(
+                nivel_servicio_z=1.88,
+                dias_cobertura=config.dias_cobertura_b,
+                metodo=MetodoCalculo.ESTADISTICO
+            ),
+            'C': ParametrosABC(
+                nivel_servicio_z=0.0,
+                dias_cobertura=config.dias_cobertura_c,
+                metodo=MetodoCalculo.PADRE_PRUDENTE
+            ),
+        }
 
 
 def _redondear_a_bultos(cantidad_unid: float, unidades_bulto: int) -> int:
@@ -139,9 +187,9 @@ def _ejecutar_sanity_checks(resultado: 'ResultadoCalculo', input_data: InputCalc
     if resultado.stock_seguridad_unid < 0:
         warnings.append("WARN: Stock seguridad negativo")
 
-    # 4. Cantidad sugerida no puede exceder stock CEDI
-    if resultado.cantidad_sugerida_unid > input_data.stock_cedi:
-        warnings.append(f"WARN: Sugerido ({resultado.cantidad_sugerida_unid:.0f}) > stock CEDI ({input_data.stock_cedi:.0f})")
+    # 4. Cantidad sugerida vs stock CEDI (desactivado - datos CEDI no confiables)
+    # if resultado.cantidad_sugerida_unid > input_data.stock_cedi:
+    #     warnings.append(f"WARN: Sugerido ({resultado.cantidad_sugerida_unid:.0f}) > stock CEDI ({input_data.stock_cedi:.0f})")
 
     # 5. Validar rangos por clase
     if demanda_p75 > 0:
@@ -222,6 +270,9 @@ def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
     SS = Z * sigmaD * sqrt(L)
     ROP = (D_P75 * L) + SS
     Max = ROP + (D_P75 * dias_cobertura)
+
+    NOTA: Para tiendas nuevas con sigma_D = 0 (sin variabilidad calculable),
+    usamos un SS mínimo conservador del 30% de la demanda durante lead time.
     """
     Z = params.nivel_servicio_z
     D = input_data.demanda_p75
@@ -230,7 +281,12 @@ def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
     unidades_bulto = input_data.unidades_por_bulto
 
     # Stock de seguridad
-    stock_seguridad = Z * sigma_D * math.sqrt(L)
+    # Si sigma_D = 0 (tienda nueva, pocos datos), usar SS mínimo conservador
+    if sigma_D > 0:
+        stock_seguridad = Z * sigma_D * math.sqrt(L)
+    else:
+        # SS mínimo: 30% de demanda durante lead time (conservador para tiendas nuevas)
+        stock_seguridad = 0.30 * D * L
 
     # Demanda durante lead time
     demanda_ciclo = D * L
@@ -243,8 +299,8 @@ def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
 
     # Cantidad a pedir
     deficit = max(0, stock_maximo - input_data.stock_actual)
-    # Limitar al stock disponible en CEDI
-    cantidad_sugerida = min(deficit, input_data.stock_cedi)
+    # NO limitar por stock CEDI (datos no confiables actualmente)
+    cantidad_sugerida = deficit
 
     return _crear_resultado(
         stock_minimo_unid=punto_reorden,
@@ -268,27 +324,38 @@ def calcular_padre_prudente(input_data: InputCalculo, params: ParametrosABC,
 
     Min = D_max * L (peor escenario)
     Max = Min + (D_P75 * dias_cobertura)
+
+    NOTA: Para tiendas nuevas donde D_max = D_P75 (un solo dato),
+    usamos un SS mínimo del 20% de la demanda durante lead time.
     """
     D = input_data.demanda_p75
     D_max = input_data.demanda_maxima
     L = LEAD_TIME
     unidades_bulto = input_data.unidades_por_bulto
 
-    # Punto de reorden usando maximo (conservador)
-    punto_reorden = D_max * L
-
     # Demanda durante lead time (para referencia)
     demanda_ciclo = D * L
 
-    # Stock de seguridad implicito
-    stock_seguridad = max(0, punto_reorden - demanda_ciclo)
+    # Stock de seguridad implicito (diferencia entre D_max y D_P75 durante lead time)
+    stock_seguridad_calculado = max(0, (D_max * L) - demanda_ciclo)
+
+    # Si SS = 0 (tienda nueva, D_max = D_P75), usar SS mínimo conservador
+    if stock_seguridad_calculado > 0:
+        stock_seguridad = stock_seguridad_calculado
+    else:
+        # SS mínimo: 20% de demanda durante lead time (menos agresivo que clase A/B)
+        stock_seguridad = 0.20 * demanda_ciclo
+
+    # Punto de reorden usando demanda_ciclo + stock_seguridad
+    punto_reorden = demanda_ciclo + stock_seguridad
 
     # Maximo
     stock_maximo = punto_reorden + (D * params.dias_cobertura)
 
     # Cantidad a pedir
     deficit = max(0, stock_maximo - input_data.stock_actual)
-    cantidad_sugerida = min(deficit, input_data.stock_cedi)
+    # NO limitar por stock CEDI (datos no confiables actualmente)
+    cantidad_sugerida = deficit
 
     return _crear_resultado(
         stock_minimo_unid=punto_reorden,

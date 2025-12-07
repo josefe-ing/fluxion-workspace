@@ -23,6 +23,7 @@
     "axios": "^1.12.2",
     "chart.js": "^4.5.0",
     "chartjs-plugin-datalabels": "^2.2.0",
+    "chartjs-plugin-zoom": "^2.2.0",
     "dotenv": "^17.2.1",
     "lucide-react": "^0.294.0",
     "pg": "^8.16.3",
@@ -31,7 +32,8 @@
     "react-csv": "^2.2.2",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.9.3",
-    "recharts": "^2.15.4"
+    "recharts": "^2.15.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/pg": "^8.15.5",

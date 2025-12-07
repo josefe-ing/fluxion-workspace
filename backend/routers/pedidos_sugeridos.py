@@ -36,7 +36,12 @@ from models.pedidos_sugeridos import (
     EstadoPedido,
 )
 from db_manager import get_db_connection, get_db_connection_write
-from services.calculo_inventario_abc import calcular_inventario_simple
+from services.calculo_inventario_abc import (
+    calcular_inventario_simple,
+    set_config_tienda,
+    ConfigTiendaABC,
+    LEAD_TIME_DEFAULT
+)
 
 logger = logging.getLogger(__name__)
 
@@ -872,6 +877,7 @@ async def calcular_productos_sugeridos(
     - Maestro de productos (PostgreSQL)
     - Ventas históricas de la tienda destino
     - Inventario actual en tienda y CEDI origen
+    - Configuración ABC por tienda (si existe)
 
     Retorna lista de productos con cantidades sugeridas.
     """
@@ -879,51 +885,72 @@ async def calcular_productos_sugeridos(
         logger.info(f"📦 Calculando productos sugeridos: {request.cedi_origen} → {request.tienda_destino}")
         cursor = conn.cursor()
 
-        # Query principal para calcular productos sugeridos desde PostgreSQL
+        # 1. Cargar configuración ABC de la tienda (si existe)
+        try:
+            cursor.execute("""
+                SELECT lead_time_override, dias_cobertura_a, dias_cobertura_b, dias_cobertura_c
+                FROM config_parametros_abc_tienda
+                WHERE tienda_id = %s AND activo = true
+            """, [request.tienda_destino])
+            config_row = cursor.fetchone()
+
+            if config_row:
+                config_tienda = ConfigTiendaABC(
+                    lead_time=float(config_row[0]) if config_row[0] else LEAD_TIME_DEFAULT,
+                    dias_cobertura_a=int(config_row[1]) if config_row[1] else 7,
+                    dias_cobertura_b=int(config_row[2]) if config_row[2] else 14,
+                    dias_cobertura_c=int(config_row[3]) if config_row[3] else 30
+                )
+                set_config_tienda(config_tienda)
+                logger.info(f"📋 Config tienda aplicada: LT={config_tienda.lead_time}, A={config_tienda.dias_cobertura_a}d, B={config_tienda.dias_cobertura_b}d, C={config_tienda.dias_cobertura_c}d")
+            else:
+                set_config_tienda(None)  # Usar defaults
+                logger.info(f"📋 Usando configuración ABC por defecto para {request.tienda_destino}")
+        except Exception as e:
+            logger.warning(f"No se pudo cargar config tienda: {e}. Usando defaults.")
+            set_config_tienda(None)
+
+        # 2. Query principal para calcular productos sugeridos desde PostgreSQL
+        # NOTA: Esta consulta está diseñada para funcionar con tiendas nuevas que tienen
+        # pocos días de historial. Si hay menos de 20 días, usa los datos disponibles.
         query = """
-            WITH ventas_diarias_20d AS (
+            WITH ventas_diarias_disponibles AS (
+                -- Todas las ventas diarias disponibles (sin limite de dias)
                 SELECT
                     producto_id,
                     fecha_venta::date as fecha,
                     SUM(cantidad_vendida) as total_dia
                 FROM ventas
                 WHERE ubicacion_id = %s
-                    AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
                 GROUP BY producto_id, fecha_venta::date
             ),
             ventas_20dias AS (
+                -- Estadisticas de los ultimos 20 dias (o los dias disponibles si hay menos)
                 SELECT
                     producto_id,
                     COUNT(DISTINCT fecha) as dias_con_venta,
                     SUM(total_dia) as total_vendido,
                     AVG(total_dia) as prom_diario
-                FROM ventas_diarias_20d
+                FROM ventas_diarias_disponibles
+                WHERE fecha >= CURRENT_DATE - INTERVAL '20 days'
                 GROUP BY producto_id
-            ),
-            ventas_diarias_5d AS (
-                SELECT
-                    producto_id,
-                    fecha_venta::date as fecha,
-                    SUM(cantidad_vendida) as total_dia
-                FROM ventas
-                WHERE ubicacion_id = %s
-                    AND fecha_venta >= CURRENT_DATE - INTERVAL '5 days'
-                GROUP BY producto_id, fecha_venta::date
             ),
             ventas_5dias AS (
                 SELECT
                     producto_id,
                     AVG(total_dia) as prom_diario_5d
-                FROM ventas_diarias_5d
+                FROM ventas_diarias_disponibles
+                WHERE fecha >= CURRENT_DATE - INTERVAL '5 days'
                 GROUP BY producto_id
             ),
-            -- TOP3: promedio de los 3 días con más ventas
+            -- TOP3: promedio de los 3 días con más ventas (o menos si no hay 3 dias)
             ranked_days AS (
                 SELECT
                     producto_id,
                     total_dia,
                     ROW_NUMBER() OVER (PARTITION BY producto_id ORDER BY total_dia DESC) as rn
-                FROM ventas_diarias_20d
+                FROM ventas_diarias_disponibles
+                WHERE fecha >= CURRENT_DATE - INTERVAL '20 days'
             ),
             top3_ventas AS (
                 SELECT
@@ -933,31 +960,29 @@ async def calcular_productos_sugeridos(
                 WHERE rn <= 3
                 GROUP BY producto_id
             ),
-            -- P75: Percentil 75
+            -- P75: Percentil 75 (si solo hay 1 dia, usa ese valor como P75)
             percentil_75 AS (
                 SELECT
                     producto_id,
-                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75
-                FROM ventas_diarias_20d
+                    CASE
+                        WHEN COUNT(*) = 1 THEN MAX(total_dia)  -- Solo 1 dia: usar ese valor
+                        ELSE PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia)
+                    END as p75
+                FROM ventas_diarias_disponibles
+                WHERE fecha >= CURRENT_DATE - INTERVAL '20 days'
                 GROUP BY producto_id
             ),
-            -- Estadisticas 30 dias para calculo ABC (sigma_demanda y demanda_maxima)
-            ventas_diarias_30d AS (
-                SELECT
-                    producto_id,
-                    fecha_venta::date as fecha,
-                    SUM(cantidad_vendida) as total_dia
-                FROM ventas
-                WHERE ubicacion_id = %s
-                    AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                GROUP BY producto_id, fecha_venta::date
-            ),
+            -- Estadisticas para calculo ABC (sigma_demanda y demanda_maxima)
             estadisticas_30d AS (
                 SELECT
                     producto_id,
-                    COALESCE(STDDEV(total_dia), 0) as sigma_demanda,
+                    CASE
+                        WHEN COUNT(*) <= 1 THEN 0  -- Con 1 dia no hay desviacion
+                        ELSE COALESCE(STDDEV(total_dia), 0)
+                    END as sigma_demanda,
                     COALESCE(MAX(total_dia), 0) as demanda_maxima
-                FROM ventas_diarias_30d
+                FROM ventas_diarias_disponibles
+                WHERE fecha >= CURRENT_DATE - INTERVAL '30 days'
                 GROUP BY producto_id
             ),
             -- ABC por valor (Pareto 80/15/5) - Calculado para la tienda específica (30 días)
@@ -1050,9 +1075,7 @@ async def calcular_productos_sugeridos(
         """
 
         cursor.execute(query, [
-            request.tienda_destino,  # ventas_diarias_20d
-            request.tienda_destino,  # ventas_diarias_5d
-            request.tienda_destino,  # ventas_diarias_30d (estadisticas)
+            request.tienda_destino,  # ventas_diarias_disponibles
             request.tienda_destino,  # ventas_30d_tienda (ABC por valor)
             request.tienda_destino,  # inv_tienda
             request.cedi_origen      # inv_cedi

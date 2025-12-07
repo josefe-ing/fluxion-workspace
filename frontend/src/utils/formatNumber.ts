@@ -29,6 +29,11 @@ export function formatNumber(value: number | string | null | undefined, decimals
   const integerPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const decimalPart = parts[1];
 
+  // Si no hay decimales, solo devolver la parte entera
+  if (decimals === 0 || !decimalPart) {
+    return integerPart;
+  }
+
   return `${integerPart},${decimalPart}`;
 }
 

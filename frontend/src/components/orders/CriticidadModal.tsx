@@ -11,6 +11,11 @@ interface CriticidadModalProps {
     cantidad_bultos: number;
     stock_tienda: number;
     stock_en_transito: number;
+    // Valores calculados del backend
+    stock_seguridad?: number;
+    punto_reorden?: number;
+    stock_maximo?: number;
+    clasificacion_abc?: string;
   };
   stockParams: {
     stock_min_mult_a: number;
@@ -35,114 +40,73 @@ export default function CriticidadModal({
   isOpen,
   onClose,
   producto,
-  stockParams
 }: CriticidadModalProps) {
   if (!isOpen) return null;
 
   // Usar P75 para cálculos de días (más conservador, prepara para picos de demanda)
-  // Fallback a promedio 20D si P75 no está disponible
   const velocidadP75Unid = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
   const velocidadP75Bultos = velocidadP75Unid / producto.cantidad_bultos;
 
   // Promedio 20D se usa para clasificación ABC (velocidad/rotación)
   const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
 
-  // Calcular clasificación ABC (basada en promedio 20D)
-  const getClasificacionABC = (): string => {
+  // Usar clasificación ABC del backend si está disponible
+  const clasificacion = producto.clasificacion_abc || (() => {
+    // Fallback local
     if (ventaDiariaBultos >= 20) return 'A';
     if (ventaDiariaBultos >= 5) return 'AB';
     if (ventaDiariaBultos >= 0.45) return 'B';
     if (ventaDiariaBultos >= 0.20) return 'BC';
     if (ventaDiariaBultos >= 0.001) return 'C';
     return '-';
-  };
+  })();
 
-  const clasificacion = getClasificacionABC();
+  // Usar valores del backend (en unidades)
+  const stockSeguridadUnid = producto.stock_seguridad || 0;
+  const puntoReordenUnid = producto.punto_reorden || 0;
+  const stockMaximoUnid = producto.stock_maximo || 0;
 
-  // Calcular stock mínimo (usando P75 para el cálculo)
-  const calcularStockMinimo = (): number => {
-    let multiplicador = 0;
-    // Clasificación basada en promedio 20D
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_min_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_min_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_min_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_min_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_min_mult_c;
-    // Cálculo usando P75
-    return velocidadP75Bultos * multiplicador;
-  };
+  // Convertir a días usando P75
+  const diasSS = velocidadP75Unid > 0 ? stockSeguridadUnid / velocidadP75Unid : 0;
+  const diasROP = velocidadP75Unid > 0 ? puntoReordenUnid / velocidadP75Unid : 0;
+  const diasMAX = velocidadP75Unid > 0 ? stockMaximoUnid / velocidadP75Unid : 0;
 
-  const calcularStockSeguridad = (): number => {
-    let multiplicador = 0;
-    // Clasificación basada en promedio 20D
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_seg_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_seg_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_seg_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_seg_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_seg_mult_c;
-    // Cálculo usando P75
-    return velocidadP75Bultos * multiplicador;
-  };
-
-  const calcularPuntoReorden = (): number => {
-    const stockMin = calcularStockMinimo();
-    const stockSeg = calcularStockSeguridad();
-    return stockMin + stockSeg + (1.25 * velocidadP75Bultos);
-  };
-
-  const calcularStockMaximo = (): number => {
-    let multiplicador = 0;
-    // Clasificación basada en promedio 20D
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_max_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_max_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_max_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_max_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_max_mult_c;
-    // Cálculo usando P75
-    return velocidadP75Bultos * multiplicador;
-  };
-
-  const stockMinimoBultos = calcularStockMinimo();
-  const puntoReordenBultos = calcularPuntoReorden();
-  const stockMaximoBultos = calcularStockMaximo();
-
+  // Stock actual
   const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-  // Días de stock usando P75 (más conservador)
-  const diasStockActual = velocidadP75Unid > 0
-    ? stockTotalUnidades / velocidadP75Unid
-    : Infinity;
+  const diasStockActual = velocidadP75Unid > 0 ? stockTotalUnidades / velocidadP75Unid : Infinity;
 
-  const diasMinimo = velocidadP75Bultos > 0 ? stockMinimoBultos / velocidadP75Bultos : 0;
-  const diasReorden = velocidadP75Bultos > 0 ? puntoReordenBultos / velocidadP75Bultos : 0;
-  const diasMaximo = velocidadP75Bultos > 0 ? stockMaximoBultos / velocidadP75Bultos : 0;
+  // Convertir a bultos para mostrar
+  const stockSeguridadBultos = stockSeguridadUnid / producto.cantidad_bultos;
+  const puntoReordenBultos = puntoReordenUnid / producto.cantidad_bultos;
+  const stockMaximoBultos = stockMaximoUnid / producto.cantidad_bultos;
+  const stockActualBultos = stockTotalUnidades / producto.cantidad_bultos;
 
-  const puntoMedio = diasMinimo + ((diasReorden - diasMinimo) * 0.5);
-
-  // Determinar nivel de urgencia de stock
+  // Determinar nivel de urgencia (4 niveles claros basados en SS, ROP, MAX)
   let nivelUrgenciaStock: number;
   let textoUrgencia: string;
   let colorUrgencia: string;
+  let descripcionUrgencia: string;
 
-  if (diasStockActual <= diasMinimo) {
+  if (diasStockActual <= diasSS) {
     nivelUrgenciaStock = 1;
     textoUrgencia = 'CRÍTICO';
     colorUrgencia = 'bg-red-100 border-red-300 text-red-900';
-  } else if (diasStockActual <= puntoMedio) {
+    descripcionUrgencia = 'Stock por debajo del Stock de Seguridad. Riesgo alto de quiebre.';
+  } else if (diasStockActual <= diasROP) {
     nivelUrgenciaStock = 2;
-    textoUrgencia = 'MUY URGENTE';
-    colorUrgencia = 'bg-red-50 border-red-200 text-red-800';
-  } else if (diasStockActual <= diasReorden) {
-    nivelUrgenciaStock = 3;
     textoUrgencia = 'URGENTE';
-    colorUrgencia = 'bg-orange-50 border-orange-200 text-orange-800';
-  } else if (diasStockActual <= diasMaximo * 0.8) {
-    nivelUrgenciaStock = 4;
-    textoUrgencia = 'PREVENTIVO';
-    colorUrgencia = 'bg-green-50 border-green-200 text-green-800';
+    colorUrgencia = 'bg-orange-100 border-orange-300 text-orange-900';
+    descripcionUrgencia = 'Stock entre SS y ROP. Hay que pedir para evitar quiebre.';
+  } else if (diasStockActual <= diasMAX) {
+    nivelUrgenciaStock = 3;
+    textoUrgencia = 'ÓPTIMO';
+    colorUrgencia = 'bg-green-100 border-green-300 text-green-900';
+    descripcionUrgencia = 'Stock en nivel ideal (entre ROP y MAX). No es necesario pedir.';
   } else {
-    nivelUrgenciaStock = 5;
-    textoUrgencia = 'ÓPTIMO/EXCESO';
-    colorUrgencia = 'bg-blue-50 border-blue-200 text-blue-800';
+    nivelUrgenciaStock = 4;
+    textoUrgencia = 'EXCESO';
+    colorUrgencia = 'bg-blue-100 border-blue-300 text-blue-900';
+    descripcionUrgencia = 'Stock por encima del máximo. Posible sobreinventario.';
   }
 
   // Peso ABC (menor número = mayor prioridad)
@@ -153,15 +117,13 @@ export default function CriticidadModal({
   // Calcular criticidad final
   const criticidad = (nivelUrgenciaStock * 10) + pesoABC;
 
-  // Determinar emoji visual según clasificación y urgencia
+  // Determinar emoji visual según nivel de urgencia
   let emojiVisual: string;
   if (nivelUrgenciaStock === 1) {
-    emojiVisual = clasificacion === 'A' ? '🔴🔴🔴' : clasificacion === 'AB' ? '🔴🔴' : '🔴';
+    emojiVisual = clasificacion === 'A' ? '🔴🔴' : '🔴';
   } else if (nivelUrgenciaStock === 2) {
-    emojiVisual = (clasificacion === 'A' || clasificacion === 'AB') ? '🔴🟠' : '🔴';
-  } else if (nivelUrgenciaStock === 3) {
     emojiVisual = clasificacion === 'A' ? '🟠🟠' : '🟠';
-  } else if (nivelUrgenciaStock === 4) {
+  } else if (nivelUrgenciaStock === 3) {
     emojiVisual = '✓';
   } else {
     emojiVisual = '⚠️';
@@ -198,12 +160,106 @@ export default function CriticidadModal({
                 <div className="text-6xl mb-2">{emojiVisual}</div>
                 <div className="text-2xl font-bold">{textoUrgencia}</div>
                 <div className="text-sm mt-1">Criticidad: {criticidad}</div>
+                <div className="text-xs mt-2 max-w-xs">{descripcionUrgencia}</div>
               </div>
               <div className="text-right">
                 <div className="text-sm text-gray-600">Stock Actual</div>
                 <div className="text-3xl font-bold">{diasStockActual === Infinity ? '∞' : diasStockActual.toFixed(1)} días</div>
-                <div className="text-sm text-gray-600 mt-1">Clasificación: <span className="font-bold">{clasificacion}</span></div>
+                <div className="text-sm text-gray-500">({stockActualBultos.toFixed(1)} bultos)</div>
+                <div className="text-sm text-gray-600 mt-2">Clasificación: <span className="font-bold">{clasificacion}</span></div>
               </div>
+            </div>
+          </div>
+
+          {/* Barra visual de umbrales */}
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">📊 Posición del Stock vs Umbrales</h3>
+            <div className="relative h-8 bg-gradient-to-r from-red-200 via-orange-200 via-green-200 to-blue-200 rounded-full overflow-hidden">
+              {/* Marcadores de umbrales */}
+              <div className="absolute top-0 bottom-0 flex items-center" style={{ left: `${Math.min((diasSS / diasMAX) * 80, 80)}%` }}>
+                <div className="w-0.5 h-full bg-red-600"></div>
+                <span className="absolute -bottom-5 text-[10px] text-red-700 font-semibold whitespace-nowrap">SS</span>
+              </div>
+              <div className="absolute top-0 bottom-0 flex items-center" style={{ left: `${Math.min((diasROP / diasMAX) * 80, 80)}%` }}>
+                <div className="w-0.5 h-full bg-orange-600"></div>
+                <span className="absolute -bottom-5 text-[10px] text-orange-700 font-semibold whitespace-nowrap">ROP</span>
+              </div>
+              <div className="absolute top-0 bottom-0 flex items-center" style={{ left: '80%' }}>
+                <div className="w-0.5 h-full bg-blue-600"></div>
+                <span className="absolute -bottom-5 text-[10px] text-blue-700 font-semibold whitespace-nowrap">MAX</span>
+              </div>
+              {/* Indicador de stock actual */}
+              <div
+                className="absolute top-1 bottom-1 w-3 h-3 rounded-full bg-gray-900 border-2 border-white shadow-lg"
+                style={{ left: `${Math.min(Math.max((diasStockActual / diasMAX) * 80, 2), 98)}%`, transform: 'translateX(-50%)' }}
+                title={`Stock: ${diasStockActual.toFixed(1)}d`}
+              ></div>
+            </div>
+            <div className="mt-6 grid grid-cols-4 gap-2 text-xs">
+              <div className="text-center p-2 bg-red-100 rounded">
+                <div className="font-bold text-red-700">CRÍTICO</div>
+                <div className="text-gray-600">≤ SS</div>
+              </div>
+              <div className="text-center p-2 bg-orange-100 rounded">
+                <div className="font-bold text-orange-700">URGENTE</div>
+                <div className="text-gray-600">SS → ROP</div>
+              </div>
+              <div className="text-center p-2 bg-green-100 rounded">
+                <div className="font-bold text-green-700">ÓPTIMO</div>
+                <div className="text-gray-600">ROP → MAX</div>
+              </div>
+              <div className="text-center p-2 bg-blue-100 rounded">
+                <div className="font-bold text-blue-700">EXCESO</div>
+                <div className="text-gray-600">&gt; MAX</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Tabla de umbrales con valores */}
+          <div className="mb-6 p-4 bg-white rounded-lg border border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">📐 Umbrales de Inventario</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-2 px-3 font-semibold text-gray-600">Umbral</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-600">Días</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-600">Bultos</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-600">Unidades</th>
+                    <th className="text-left py-2 px-3 font-semibold text-gray-600">Significado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className={`border-b ${diasStockActual <= diasSS ? 'bg-red-50' : ''}`}>
+                    <td className="py-2 px-3 font-semibold text-red-700">SS (Stock Seguridad)</td>
+                    <td className="py-2 px-3 text-right">{diasSS.toFixed(1)}d</td>
+                    <td className="py-2 px-3 text-right">{stockSeguridadBultos.toFixed(1)}</td>
+                    <td className="py-2 px-3 text-right">{stockSeguridadUnid.toFixed(0)}</td>
+                    <td className="py-2 px-3 text-xs text-gray-600">Colchón para variabilidad de demanda</td>
+                  </tr>
+                  <tr className={`border-b ${diasStockActual > diasSS && diasStockActual <= diasROP ? 'bg-orange-50' : ''}`}>
+                    <td className="py-2 px-3 font-semibold text-orange-700">ROP (Punto Reorden)</td>
+                    <td className="py-2 px-3 text-right">{diasROP.toFixed(1)}d</td>
+                    <td className="py-2 px-3 text-right">{puntoReordenBultos.toFixed(1)}</td>
+                    <td className="py-2 px-3 text-right">{puntoReordenUnid.toFixed(0)}</td>
+                    <td className="py-2 px-3 text-xs text-gray-600">Momento de hacer pedido</td>
+                  </tr>
+                  <tr className={`border-b ${diasStockActual > diasROP && diasStockActual <= diasMAX ? 'bg-green-50' : ''}`}>
+                    <td className="py-2 px-3 font-semibold text-green-700">Stock Actual</td>
+                    <td className="py-2 px-3 text-right font-bold">{diasStockActual.toFixed(1)}d</td>
+                    <td className="py-2 px-3 text-right font-bold">{stockActualBultos.toFixed(1)}</td>
+                    <td className="py-2 px-3 text-right font-bold">{stockTotalUnidades.toFixed(0)}</td>
+                    <td className="py-2 px-3 text-xs text-gray-600">Tu inventario hoy</td>
+                  </tr>
+                  <tr className={`${diasStockActual > diasMAX ? 'bg-blue-50' : ''}`}>
+                    <td className="py-2 px-3 font-semibold text-blue-700">MAX (Stock Máximo)</td>
+                    <td className="py-2 px-3 text-right">{diasMAX.toFixed(1)}d</td>
+                    <td className="py-2 px-3 text-right">{stockMaximoBultos.toFixed(1)}</td>
+                    <td className="py-2 px-3 text-right">{stockMaximoUnid.toFixed(0)}</td>
+                    <td className="py-2 px-3 text-xs text-gray-600">Límite superior para evitar sobreinventario</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -216,7 +272,7 @@ export default function CriticidadModal({
                 no el promedio simple. Esto es más conservador y prepara el inventario para días de alta demanda.
                 {producto.prom_p75_unid && producto.prom_p75_unid !== producto.prom_ventas_20dias_unid && (
                   <span className="block mt-1">
-                    P75: <strong>{(producto.prom_p75_unid / producto.cantidad_bultos).toFixed(2)}</strong> bultos/día vs
+                    P75: <strong>{velocidadP75Bultos.toFixed(2)}</strong> bultos/día vs
                     Prom 20D: <strong>{ventaDiariaBultos.toFixed(2)}</strong> bultos/día
                   </span>
                 )}
@@ -231,17 +287,17 @@ export default function CriticidadModal({
               ¿Qué es la Criticidad?
             </h3>
             <p className="text-sm text-gray-700 leading-relaxed">
-              La <strong>criticidad</strong> es un número que combina dos factores críticos para decidir
+              La <strong>criticidad</strong> es un número que combina dos factores para decidir
               <strong> qué productos pedir primero</strong>:
             </p>
             <ul className="mt-3 space-y-2 text-sm text-gray-700">
               <li className="flex items-start gap-2">
                 <span className="text-red-600 font-bold">1.</span>
-                <span><strong>Urgencia de stock:</strong> Qué tan crítico está el nivel de inventario actual (basado en P75)</span>
+                <span><strong>Nivel de Urgencia (1-4):</strong> Basado en dónde está el stock vs los umbrales SS, ROP, MAX</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-orange-600 font-bold">2.</span>
-                <span><strong>Clasificación ABC:</strong> Qué tan importante es el producto por su rotación</span>
+                <span><strong>Clasificación ABC (1-6):</strong> Qué tan importante es el producto por su valor de ventas</span>
               </li>
             </ul>
           </div>
@@ -260,36 +316,31 @@ export default function CriticidadModal({
                   1
                 </div>
                 <div className="flex-1">
-                  <div className="font-medium text-gray-800 text-sm mb-2">Determinar Nivel de Urgencia de Stock (1-5)</div>
+                  <div className="font-medium text-gray-800 text-sm mb-2">Determinar Nivel de Urgencia (1-4)</div>
                   <div className="bg-gray-50 rounded p-3 space-y-2 text-xs">
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold">Nivel 1 - CRÍTICO:</span>
-                      <span className="text-red-700">Stock ≤ Mínimo ({diasMinimo.toFixed(1)}d)</span>
+                    <div className={`flex justify-between items-center p-1 rounded ${nivelUrgenciaStock === 1 ? 'bg-red-200 font-bold' : ''}`}>
+                      <span>Nivel 1 - CRÍTICO:</span>
+                      <span className="text-red-700">Stock ≤ SS ({diasSS.toFixed(1)}d)</span>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold">Nivel 2 - MUY URGENTE:</span>
-                      <span className="text-red-600">Mínimo a 50% hacia Reorden</span>
+                    <div className={`flex justify-between items-center p-1 rounded ${nivelUrgenciaStock === 2 ? 'bg-orange-200 font-bold' : ''}`}>
+                      <span>Nivel 2 - URGENTE:</span>
+                      <span className="text-orange-600">SS &lt; Stock ≤ ROP ({diasROP.toFixed(1)}d)</span>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold">Nivel 3 - URGENTE:</span>
-                      <span className="text-orange-600">50% hasta Reorden ({diasReorden.toFixed(1)}d)</span>
+                    <div className={`flex justify-between items-center p-1 rounded ${nivelUrgenciaStock === 3 ? 'bg-green-200 font-bold' : ''}`}>
+                      <span>Nivel 3 - ÓPTIMO:</span>
+                      <span className="text-green-600">ROP &lt; Stock ≤ MAX ({diasMAX.toFixed(1)}d)</span>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold">Nivel 4 - PREVENTIVO:</span>
-                      <span className="text-green-600">Reorden hasta 80% Máximo</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold">Nivel 5 - ÓPTIMO/EXCESO:</span>
-                      <span className="text-blue-600">&gt; 80% Máximo ({(diasMaximo * 0.8).toFixed(1)}d)</span>
+                    <div className={`flex justify-between items-center p-1 rounded ${nivelUrgenciaStock === 4 ? 'bg-blue-200 font-bold' : ''}`}>
+                      <span>Nivel 4 - EXCESO:</span>
+                      <span className="text-blue-600">Stock &gt; MAX</span>
                     </div>
                     <div className="mt-3 pt-3 border-t border-gray-300">
                       <div className="flex justify-between font-bold">
-                        <span>Este producto:</span>
+                        <span>Este producto ({diasStockActual.toFixed(1)}d):</span>
                         <span className={
                           nivelUrgenciaStock === 1 ? 'text-red-700' :
-                          nivelUrgenciaStock === 2 ? 'text-red-600' :
-                          nivelUrgenciaStock === 3 ? 'text-orange-600' :
-                          nivelUrgenciaStock === 4 ? 'text-green-600' : 'text-blue-600'
+                          nivelUrgenciaStock === 2 ? 'text-orange-600' :
+                          nivelUrgenciaStock === 3 ? 'text-green-600' : 'text-blue-600'
                         }>
                           Nivel {nivelUrgenciaStock} - {textoUrgencia}
                         </span>
@@ -307,30 +358,18 @@ export default function CriticidadModal({
                 <div className="flex-1">
                   <div className="font-medium text-gray-800 text-sm mb-2">Asignar Peso por Clasificación ABC</div>
                   <div className="bg-gray-50 rounded p-3 text-xs">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="flex justify-between">
-                        <span className="font-semibold text-red-700">A:</span>
-                        <span>Peso 1 (máxima prioridad)</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className={`flex justify-between p-1 rounded ${clasificacion === 'A' ? 'bg-red-200 font-bold' : ''}`}>
+                        <span className="text-red-700">A:</span>
+                        <span>Peso 1</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold text-orange-700">AB:</span>
-                        <span>Peso 2</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold text-yellow-700">B:</span>
+                      <div className={`flex justify-between p-1 rounded ${clasificacion === 'B' ? 'bg-yellow-200 font-bold' : ''}`}>
+                        <span className="text-yellow-700">B:</span>
                         <span>Peso 3</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold text-amber-700">BC:</span>
-                        <span>Peso 4</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold text-gray-700">C:</span>
+                      <div className={`flex justify-between p-1 rounded ${clasificacion === 'C' ? 'bg-gray-200 font-bold' : ''}`}>
+                        <span className="text-gray-700">C:</span>
                         <span>Peso 5</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold text-gray-500">-:</span>
-                        <span>Peso 6 (mínima prioridad)</span>
                       </div>
                     </div>
                     <div className="mt-3 pt-3 border-t border-gray-300">
@@ -386,10 +425,6 @@ export default function CriticidadModal({
                 <span className="text-green-600 font-bold">•</span>
                 <span><strong>Evita quiebres:</strong> Los productos de alta rotación con stock bajo pueden causar pérdidas de venta</span>
               </li>
-              <li className="flex items-start gap-2">
-                <span className="text-green-600 font-bold">•</span>
-                <span><strong>Optimiza recursos:</strong> Permite enfocar esfuerzos en lo que realmente importa</span>
-              </li>
             </ul>
           </div>
 
@@ -398,38 +433,21 @@ export default function CriticidadModal({
             <h3 className="text-sm font-semibold text-gray-900 mb-3">📊 Interpretación de Valores</h3>
             <div className="space-y-2 text-xs">
               <div className="flex justify-between p-2 bg-red-100 rounded">
-                <span className="font-semibold">11-16 (Crítico A/AB):</span>
-                <span className="text-red-700">🔴🔴🔴 MÁXIMA PRIORIDAD - Pedir YA</span>
+                <span className="font-semibold">11-16 (Crítico):</span>
+                <span className="text-red-700">🔴 MÁXIMA PRIORIDAD - Pedir inmediatamente</span>
               </div>
               <div className="flex justify-between p-2 bg-orange-100 rounded">
-                <span className="font-semibold">17-35 (Urgente):</span>
-                <span className="text-orange-700">🟠 Alta prioridad - Incluir en pedido</span>
+                <span className="font-semibold">21-26 (Urgente):</span>
+                <span className="text-orange-700">🟠 Alta prioridad - Incluir en próximo pedido</span>
               </div>
               <div className="flex justify-between p-2 bg-green-100 rounded">
-                <span className="font-semibold">41-45 (Preventivo):</span>
-                <span className="text-green-700">✓ Prioridad media - Evaluar</span>
+                <span className="font-semibold">31-36 (Óptimo):</span>
+                <span className="text-green-700">✓ Stock saludable - No es necesario pedir</span>
               </div>
               <div className="flex justify-between p-2 bg-blue-100 rounded">
-                <span className="font-semibold">51+ (Óptimo/Exceso):</span>
-                <span className="text-blue-700">⚠️ Baja prioridad - No pedir</span>
+                <span className="font-semibold">41+ (Exceso):</span>
+                <span className="text-blue-700">⚠️ Sobreinventario - Reducir próximos pedidos</span>
               </div>
-            </div>
-          </div>
-
-          {/* Ejemplo Práctico */}
-          <div className="mt-6 p-4 bg-amber-50 rounded-lg border border-amber-200">
-            <h3 className="text-sm font-semibold text-amber-900 mb-2">💡 Ejemplo Práctico</h3>
-            <div className="text-sm text-gray-700 space-y-2">
-              <p><strong>Escenario:</strong> Tienes 2 productos con stock bajo:</p>
-              <ul className="ml-4 space-y-1">
-                <li>→ Producto A (clase A) con stock crítico: Criticidad = <strong className="text-red-700">11</strong></li>
-                <li>→ Producto X (clase C) con stock crítico: Criticidad = <strong className="text-orange-600">15</strong></li>
-              </ul>
-              <p className="mt-2">
-                <strong className="text-amber-700">Decisión:</strong> Aunque ambos tienen stock crítico,
-                el Producto A es más urgente (criticidad 11 vs 15) porque tiene mayor rotación y genera más ventas.
-                Si solo puedes pedir uno, prioriza el A.
-              </p>
             </div>
           </div>
         </div>

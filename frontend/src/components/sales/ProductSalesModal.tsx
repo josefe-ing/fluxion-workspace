@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -13,6 +13,7 @@ import {
   Plugin
 } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
+import zoomPlugin from 'chartjs-plugin-zoom';
 import http from '../../services/http';
 import TransactionsModal from './TransactionsModal';
 
@@ -25,7 +26,8 @@ ChartJS.register(
   Title,
   Tooltip,
   Legend,
-  ChartDataLabels
+  ChartDataLabels,
+  zoomPlugin
 );
 
 // Plugin para resaltar fines de semana
@@ -210,6 +212,13 @@ export default function ProductSalesModal({
   // Estado para el modal de transacciones
   const [isTransactionsModalOpen, setIsTransactionsModalOpen] = useState(false);
   const [selectedTiendaForTransactions, setSelectedTiendaForTransactions] = useState<{id: string, nombre: string} | null>(null);
+
+  // Referencia al chart para control de zoom
+  const chartRef = useRef<ChartJS<'line'> | null>(null);
+  const [isZoomed, setIsZoomed] = useState(false);
+
+  // Estado para día seleccionado (click en punto)
+  const [selectedDay, setSelectedDay] = useState<{ fecha: string; data: VentaDiaria } | null>(null);
 
   // Cargar datos de 20 días para el cálculo educativo
   const fetch20DiasData = useCallback(async () => {
@@ -443,6 +452,46 @@ export default function ProductSalesModal({
     };
   };
 
+  // Funciones de control de zoom
+  const handleResetZoom = () => {
+    if (chartRef.current) {
+      chartRef.current.resetZoom();
+      setIsZoomed(false);
+    }
+  };
+
+  const handleZoomIn = () => {
+    if (chartRef.current) {
+      chartRef.current.zoom(1.5);
+      setIsZoomed(true);
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (chartRef.current) {
+      chartRef.current.zoom(0.7);
+    }
+  };
+
+  // Manejar click en punto del gráfico
+  const handleChartClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!chartRef.current || !ventasData) return;
+
+    const chart = chartRef.current;
+    const points = chart.getElementsAtEventForMode(event.nativeEvent, 'nearest', { intersect: true }, false);
+
+    if (points.length > 0) {
+      const firstPoint = points[0];
+      const fecha = chart.data.labels?.[firstPoint.index] as string;
+
+      // Buscar datos de ese día
+      const ventaDia = ventasData.ventas_diarias.find(v => v.fecha === fecha);
+      if (ventaDia) {
+        setSelectedDay({ fecha, data: ventaDia });
+      }
+    }
+  };
+
   const chartOptions: ChartOptions<'line'> = {
     responsive: true,
     maintainAspectRatio: false,
@@ -460,6 +509,30 @@ export default function ProductSalesModal({
         font: {
           size: 16,
           weight: 'bold',
+        },
+      },
+      zoom: {
+        pan: {
+          enabled: true,
+          mode: 'x',
+        },
+        zoom: {
+          wheel: {
+            enabled: true,
+          },
+          drag: {
+            enabled: true,
+            backgroundColor: 'rgba(59, 130, 246, 0.2)',
+            borderColor: 'rgba(59, 130, 246, 0.8)',
+            borderWidth: 1,
+          },
+          pinch: {
+            enabled: true,
+          },
+          mode: 'x',
+          onZoomComplete: () => {
+            setIsZoomed(true);
+          },
         },
       },
       tooltip: {
@@ -838,11 +911,49 @@ export default function ProductSalesModal({
 
                     {/* Gráfico */}
                     <div className="h-96 relative">
+                      {/* Controles de zoom */}
+                      <div className="absolute top-2 left-2 z-10 flex items-center gap-2">
+                        <button
+                          onClick={handleZoomIn}
+                          className="p-1.5 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors shadow-sm"
+                          title="Acercar"
+                        >
+                          <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={handleZoomOut}
+                          className="p-1.5 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors shadow-sm"
+                          title="Alejar"
+                        >
+                          <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+                          </svg>
+                        </button>
+                        {isZoomed && (
+                          <button
+                            onClick={handleResetZoom}
+                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors flex items-center gap-1"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Ver todo
+                          </button>
+                        )}
+                        <span className="text-xs text-gray-500 ml-2">
+                          Arrastra para hacer zoom | Click en punto para ver detalle
+                        </span>
+                      </div>
+
                       {prepareChartData() && (
                         <Line
+                          ref={chartRef}
                           options={chartOptions}
                           data={prepareChartData()!}
                           plugins={[forecastZonePlugin, weekendPlugin]}
+                          onClick={handleChartClick}
                         />
                       )}
                       <div className="absolute top-2 right-2 text-xs text-gray-500 bg-white/90 px-3 py-2 rounded border border-gray-200 space-y-1">
@@ -865,6 +976,58 @@ export default function ProductSalesModal({
                         )}
                       </div>
                     </div>
+
+                    {/* Panel de detalle del día seleccionado */}
+                    {selectedDay && (
+                      <div className="mt-4 bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-sm font-semibold text-indigo-900 flex items-center gap-2">
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            Detalle del {new Date(selectedDay.fecha + 'T00:00:00').toLocaleDateString('es-VE', {
+                              weekday: 'long',
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          </h4>
+                          <button
+                            onClick={() => setSelectedDay(null)}
+                            className="text-indigo-400 hover:text-indigo-600"
+                          >
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          {Object.entries(selectedDay.data.tiendas).map(([tiendaId, tiendaData]) => (
+                            <div
+                              key={tiendaId}
+                              className="bg-white rounded-lg p-3 border-l-4"
+                              style={{ borderColor: COLORES_TIENDAS[tiendaId] || '#64748b' }}
+                            >
+                              <div className="text-xs text-gray-600 font-medium">{tiendaData.tienda}</div>
+                              <div className="text-xl font-bold text-gray-900">{tiendaData.bultos.toFixed(2)}</div>
+                              <div className="text-xs text-gray-500">
+                                {tiendaData.unidades.toFixed(0)} unid • ${tiendaData.venta_total.toFixed(2)}
+                              </div>
+                              {tiendaData.inventario !== undefined && (
+                                <div className="text-xs text-green-600 mt-1">
+                                  Stock: {tiendaData.inventario}
+                                </div>
+                              )}
+                              {tiendaData.es_outlier && (
+                                <div className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                                  <span>⚠️</span> Posible quiebre
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Tabla de Ventas Diarias y Proyección - Rediseñada */}
                     {selectedTiendas.size > 0 && (

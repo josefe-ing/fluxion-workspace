@@ -5,13 +5,13 @@ import type { OrderData, ProductoPedido } from './OrderWizard';
 import { formatNumber } from '../../utils/formatNumber';
 import ProductSalesModal from '../sales/ProductSalesModal';
 import ABCClassificationModal from './ABCClassificationModal';
-import StockMinimoModal from './StockMinimoModal';
 import StockSeguridadModal from './StockSeguridadModal';
 import PuntoReordenModal from './PuntoReordenModal';
 import StockMaximoModal from './StockMaximoModal';
 import StockDiasModal from './StockDiasModal';
 import PedidoSugeridoModal from './PedidoSugeridoModal';
 import CriticidadModal from './CriticidadModal';
+import * as XLSX from 'xlsx';
 
 interface StockParams {
   stock_min_mult_a: number;
@@ -36,10 +36,13 @@ interface Props {
   onBack: () => void;
 }
 
+type ViewType = 'criticidad' | 'excel';
+
 export default function OrderStepThree({ orderData, onBack }: Props) {
   const navigate = useNavigate();
   const [observaciones, setObservaciones] = useState('');
   const [loading, setLoading] = useState(false);
+  const [activeView, setActiveView] = useState<ViewType>('criticidad');
   const [stockParams, setStockParams] = useState<StockParams>({
     stock_min_mult_a: 2.0,
     stock_min_mult_ab: 2.0,
@@ -63,8 +66,6 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
   const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
   const [abcModalOpen, setAbcModalOpen] = useState(false);
   const [selectedProductoABC, setSelectedProductoABC] = useState<ProductoPedido | null>(null);
-  const [stockMinimoModalOpen, setStockMinimoModalOpen] = useState(false);
-  const [selectedProductoStockMin, setSelectedProductoStockMin] = useState<ProductoPedido | null>(null);
   const [stockSeguridadModalOpen, setStockSeguridadModalOpen] = useState(false);
   const [selectedProductoStockSeg, setSelectedProductoStockSeg] = useState<ProductoPedido | null>(null);
   const [puntoReordenModalOpen, setPuntoReordenModalOpen] = useState(false);
@@ -86,7 +87,6 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
         setStockParams(response.data);
       } catch (error) {
         console.error('Error cargando parámetros de stock:', error);
-        // Mantener valores por defecto ya establecidos en useState
       }
     };
 
@@ -98,16 +98,14 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
   // Filtrar productos incluidos Y con cantidad pedida > 0
   const productosIncluidos = orderData.productos.filter(p => {
     const cantidadPedida = p.cantidad_pedida_bultos || 0;
-    const incluido = p.incluido !== false; // Si no está definido, lo consideramos incluido
+    const incluido = p.incluido !== false;
     const tienePedido = cantidadPedida > 0;
-
-    console.log(`Producto ${p.codigo_producto}: incluido=${incluido}, cantidad_pedida=${cantidadPedida}, pasa filtro=${incluido && tienePedido}`);
-
     return incluido && tienePedido;
   });
 
-  // Función para clasificación ABC
+  // Función para clasificación ABC (usar del backend si disponible)
   const getClasificacionABC = (producto: ProductoPedido): string => {
+    if (producto.clasificacion_abc) return producto.clasificacion_abc;
     const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
     if (ventaDiariaBultos >= 20) return 'A';
     if (ventaDiariaBultos >= 5) return 'AB';
@@ -117,145 +115,141 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
     return '-';
   };
 
-  // Funciones de cálculo de stock (igual que en OrderStepTwo)
-  const calcularStockMinimo = (producto: ProductoPedido): number => {
-    if (!stockParams) return 0;
-
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    let multiplicador = 0;
-
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_min_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_min_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_min_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_min_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_min_mult_c;
-    else return 0;
-
-    return ventaDiariaBultos * multiplicador;
-  };
-
-  const calcularStockSeguridad = (producto: ProductoPedido): number => {
-    if (!stockParams) return 0;
-
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    let multiplicador = 0;
-
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_seg_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_seg_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_seg_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_seg_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_seg_mult_c;
-    else return 0;
-
-    return ventaDiariaBultos * multiplicador;
-  };
-
-  const calcularPuntoReorden = (producto: ProductoPedido): number => {
-    if (!stockParams) return 0;
-
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    const stockMin = calcularStockMinimo(producto);
-    const stockSeg = calcularStockSeguridad(producto);
-
-    return stockMin + stockSeg + (1.25 * ventaDiariaBultos);
-  };
-
-  const calcularStockMaximo = (producto: ProductoPedido): number => {
-    if (!stockParams) return 0;
-
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    let multiplicador = 0;
-
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_max_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_max_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_max_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_max_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_max_mult_c;
-    else return 0;
-
-    return ventaDiariaBultos * multiplicador;
-  };
-
-  const calcularPedidoSugerido = (producto: ProductoPedido): number => {
-    if (!stockParams || producto.prom_ventas_20dias_unid <= 0) return 0;
-
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+  // Helpers para días de stock (usando valores del backend)
+  const getDiasStockActual = (producto: ProductoPedido): number => {
+    const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+    if (velocidadP75 <= 0) return 999;
     const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-    const stockTotalBultos = stockTotalUnidades / producto.cantidad_bultos;
-    const stockTotalDias = stockTotalUnidades / producto.prom_ventas_20dias_unid;
+    return stockTotalUnidades / velocidadP75;
+  };
 
-    // Calcular punto de reorden en días
-    const puntoReordenBultos = calcularPuntoReorden(producto);
-    const puntoReordenDias = puntoReordenBultos / ventaDiariaBultos;
+  const getDiasSeguridad = (producto: ProductoPedido): number => {
+    const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+    if (velocidadP75 <= 0) return 0;
+    return (producto.stock_seguridad || 0) / velocidadP75;
+  };
 
-    // Calcular stock máximo en bultos
-    const stockMaximoBultos = calcularStockMaximo(producto);
+  const getDiasMinimo = (producto: ProductoPedido): number => {
+    const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+    if (velocidadP75 <= 0) return 0;
+    const puntoReorden = producto.punto_reorden || producto.stock_minimo || 0;
+    return puntoReorden / velocidadP75;
+  };
 
-    // Si Stock Total (días) <= Punto de Reorden (días), necesitamos pedir
-    if (stockTotalDias <= puntoReordenDias) {
-      // Sugerido = Stock Máximo - Stock Total (en bultos)
-      const sugeridoSinLimite = stockMaximoBultos - stockTotalBultos;
+  const getDiasMaximo = (producto: ProductoPedido): number => {
+    const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+    if (velocidadP75 <= 0) return 0;
+    return (producto.stock_maximo || 0) / velocidadP75;
+  };
 
-      // Limitar al stock disponible en CEDI origen (en bultos)
-      const stockCediBultos = producto.stock_cedi_origen / producto.cantidad_bultos;
-      const sugerido = Math.min(sugeridoSinLimite, stockCediBultos);
+  // Helpers para bultos
+  const getStockSeguridadBultos = (producto: ProductoPedido): number => {
+    return (producto.stock_seguridad || 0) / producto.cantidad_bultos;
+  };
 
-      return Math.max(0, Math.round(sugerido)); // No sugerir valores negativos
+  const getPuntoReordenBultos = (producto: ProductoPedido): number => {
+    const puntoReorden = producto.punto_reorden || producto.stock_minimo || 0;
+    return puntoReorden / producto.cantidad_bultos;
+  };
+
+  const getStockMaximoBultos = (producto: ProductoPedido): number => {
+    return (producto.stock_maximo || 0) / producto.cantidad_bultos;
+  };
+
+  // Función para calcular criticidad numérica (4 niveles basados en SS, ROP, MAX)
+  const calcularCriticidad = (producto: ProductoPedido): number => {
+    if (producto.prom_ventas_20dias_unid <= 0) return 999;
+
+    const clasificacion = getClasificacionABC(producto);
+    const diasStockActual = getDiasStockActual(producto);
+    const diasSS = getDiasSeguridad(producto);
+    const diasROP = getDiasMinimo(producto);
+    const diasMAX = getDiasMaximo(producto);
+
+    // Peso ABC
+    const pesoABC = { 'A': 1, 'AB': 2, 'B': 3, 'BC': 4, 'C': 5, '-': 6 }[clasificacion] || 6;
+
+    // Determinar nivel de urgencia
+    let urgenciaStock = 0;
+    if (diasStockActual <= diasSS) {
+      urgenciaStock = 1; // CRÍTICO
+    } else if (diasStockActual <= diasROP) {
+      urgenciaStock = 2; // URGENTE
+    } else if (diasStockActual <= diasMAX) {
+      urgenciaStock = 3; // ÓPTIMO
+    } else {
+      urgenciaStock = 4; // EXCESO
     }
 
-    return 0;
+    return (urgenciaStock * 10) + pesoABC;
   };
 
-  // Función para calcular criticidad y emoji
-  const calcularCriticidadDisplay = (producto: ProductoPedido) => {
+  // Función para obtener display de criticidad
+  const getCriticidadDisplay = (producto: ProductoPedido) => {
     if (producto.prom_ventas_20dias_unid <= 0) {
-      return { emoji: '-', color: 'text-gray-400' };
+      return { emoji: '-', color: 'text-gray-400', nivel: '-' };
     }
 
     const clasificacion = getClasificacionABC(producto);
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-    const diasStockActual = stockTotalUnidades / producto.prom_ventas_20dias_unid;
-
-    // Calcular puntos de control en días usando funciones de cálculo (igual que OrderStepTwo)
-    const stockMinimoBultos = calcularStockMinimo(producto);
-    const diasMinimo = ventaDiariaBultos > 0 ? stockMinimoBultos / ventaDiariaBultos : 0;
-
-    const puntoReordenBultos = calcularPuntoReorden(producto);
-    const diasReorden = ventaDiariaBultos > 0 ? puntoReordenBultos / ventaDiariaBultos : 0;
-
-    const stockMaximoBultos = calcularStockMaximo(producto);
-    const diasMaximo = ventaDiariaBultos > 0 ? stockMaximoBultos / ventaDiariaBultos : 0;
-
-    const puntoMedio = diasMinimo + ((diasReorden - diasMinimo) * 0.5);
+    const diasStockActual = getDiasStockActual(producto);
+    const diasSS = getDiasSeguridad(producto);
+    const diasROP = getDiasMinimo(producto);
+    const diasMAX = getDiasMaximo(producto);
 
     let emoji = '';
     let color = '';
+    let nivel = '';
 
-    if (diasStockActual <= diasMinimo) {
-      // NIVEL 1: CRÍTICO
-      emoji = clasificacion === 'A' ? '🔴🔴🔴' : clasificacion === 'AB' ? '🔴🔴' : '🔴';
+    if (diasStockActual <= diasSS) {
+      emoji = clasificacion === 'A' ? '🔴🔴' : '🔴';
       color = 'text-red-700';
-    } else if (diasStockActual <= puntoMedio) {
-      // NIVEL 2: MUY URGENTE
-      emoji = clasificacion === 'A' || clasificacion === 'AB' ? '🔴🟠' : '🔴';
-      color = 'text-red-600';
-    } else if (diasStockActual <= diasReorden) {
-      // NIVEL 3: URGENTE
+      nivel = 'CRÍTICO';
+    } else if (diasStockActual <= diasROP) {
       emoji = clasificacion === 'A' ? '🟠🟠' : '🟠';
       color = 'text-orange-600';
-    } else if (diasStockActual <= diasMaximo * 0.8) {
-      // NIVEL 4: PREVENTIVO
+      nivel = 'URGENTE';
+    } else if (diasStockActual <= diasMAX) {
       emoji = '✓';
       color = 'text-green-600';
+      nivel = 'ÓPTIMO';
     } else {
-      // NIVEL 5: ÓPTIMO/EXCESO
       emoji = '⚠️';
       color = 'text-blue-600';
+      nivel = 'EXCESO';
     }
 
-    return { emoji, color };
+    return { emoji, color, nivel };
   };
+
+  // Ordenar por criticidad (menor = más crítico primero)
+  const productosOrdenados = useMemo(() => {
+    return [...productosIncluidos].sort((a, b) => {
+      const criticidadA = calcularCriticidad(a);
+      const criticidadB = calcularCriticidad(b);
+      return criticidadA - criticidadB;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productosIncluidos]);
+
+  const totalBultos = productosOrdenados.reduce((sum, p) => sum + (p.cantidad_pedida_bultos || 0), 0);
+
+  // Total de ventas para calcular % de participación (estimado mensual)
+  const totalVentasGeneral = useMemo(() => {
+    return productosOrdenados.reduce((sum, p) => sum + (p.prom_ventas_20dias_unid * 30), 0);
+  }, [productosOrdenados]);
+
+  // Ranking de productos por venta (para calcular Top50, Top100, Top150)
+  const rankingVentas = useMemo(() => {
+    const productosConVenta = [...productosOrdenados]
+      .map(p => ({ codigo: p.codigo_producto, venta: p.prom_ventas_20dias_unid * 30 }))
+      .sort((a, b) => b.venta - a.venta);
+
+    const ranking: { [codigo: string]: number } = {};
+    productosConVenta.forEach((p, idx) => {
+      ranking[p.codigo] = idx + 1; // Ranking 1-based
+    });
+    return ranking;
+  }, [productosOrdenados]);
 
   // Handlers para modales
   const handleSalesClick = (producto: ProductoPedido) => {
@@ -266,11 +260,6 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
   const handleABCClick = (producto: ProductoPedido) => {
     setSelectedProductoABC(producto);
     setAbcModalOpen(true);
-  };
-
-  const handleStockMinimoClick = (producto: ProductoPedido) => {
-    setSelectedProductoStockMin(producto);
-    setStockMinimoModalOpen(true);
   };
 
   const handleStockSeguridadClick = (producto: ProductoPedido) => {
@@ -303,42 +292,71 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
     setCriticidadModalOpen(true);
   };
 
-  // Ordenar por cuadrante y luego por criticidad (usando useMemo para evitar recalcular)
-  const productosOrdenados = useMemo(() => {
-    return [...productosIncluidos].sort((a, b) => {
-      // Primero por cuadrante (usando cuadrante_producto)
-      const cuadranteA = a.cuadrante_producto || 'ZZZ';
-      const cuadranteB = b.cuadrante_producto || 'ZZZ';
-
-      if (cuadranteA !== cuadranteB) {
-        return cuadranteA.localeCompare(cuadranteB);
-      }
-
-      // Luego por criticidad (calculada - más urgente primero)
-      const criticidadA = calcularCriticidadDisplay(a);
-      const criticidadB = calcularCriticidadDisplay(b);
-
-      // Orden de prioridad: 🔴🔴🔴 > 🔴🔴 > 🔴🟠 > 🔴 > 🟠🟠 > 🟠 > ✓ > ⚠️
-      const prioridadEmoji: {[key: string]: number} = {
-        '🔴🔴🔴': 1,
-        '🔴🔴': 2,
-        '🔴🟠': 3,
-        '🔴': 4,
-        '🟠🟠': 5,
-        '🟠': 6,
-        '✓': 7,
-        '⚠️': 8,
-        '-': 9
+  // Exportar a Excel
+  const handleExportExcel = () => {
+    const data = productosOrdenados.map((p, index) => {
+      const criticidad = calcularCriticidad(p);
+      const criticidadDisplay = getCriticidadDisplay(p);
+      return {
+        '#': index + 1,
+        'Código': p.codigo_producto,
+        'Cód. Barras': p.codigo_barras || '',
+        'Descripción': p.descripcion_producto,
+        'Und/Bulto': p.cantidad_bultos,
+        'Criticidad': criticidad,
+        'Nivel': criticidadDisplay.nivel,
+        'P75 (b/día)': formatNumber((p.prom_p75_unid || 0) / p.cantidad_bultos, 2),
+        'ABC': getClasificacionABC(p),
+        'Stock (b)': formatNumber((p.stock_tienda + p.stock_en_transito) / p.cantidad_bultos, 2),
+        'Días Stock': formatNumber(getDiasStockActual(p), 1),
+        'Stock CEDI (b)': formatNumber(p.stock_cedi_origen / p.cantidad_bultos, 2),
+        'SS (días)': formatNumber(getDiasSeguridad(p), 1),
+        'SS (bultos)': formatNumber(getStockSeguridadBultos(p), 1),
+        'ROP (días)': formatNumber(getDiasMinimo(p), 1),
+        'ROP (bultos)': formatNumber(getPuntoReordenBultos(p), 1),
+        'MAX (días)': formatNumber(getDiasMaximo(p), 1),
+        'MAX (bultos)': formatNumber(getStockMaximoBultos(p), 1),
+        'Pedir (bultos)': p.cantidad_pedida_bultos || 0,
+        'Pedir (unidades)': (p.cantidad_pedida_bultos || 0) * p.cantidad_bultos,
+        'Peso Total (kg)': formatNumber((p.cantidad_pedida_bultos || 0) * p.cantidad_bultos * (p.peso_unidad || 0) / 1000, 2),
+        'Notas': p.razon_pedido || '',
       };
-
-      const prioA = prioridadEmoji[criticidadA.emoji] || 10;
-      const prioB = prioridadEmoji[criticidadB.emoji] || 10;
-
-      return prioA - prioB;
     });
-  }, [productosIncluidos]);
 
-  const totalBultos = productosOrdenados.reduce((sum, p) => sum + (p.cantidad_pedida_bultos || 0), 0);
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Pedido');
+
+    // Ajustar anchos de columna
+    ws['!cols'] = [
+      { wch: 5 },   // #
+      { wch: 12 },  // Código
+      { wch: 15 },  // Cód. Barras
+      { wch: 40 },  // Descripción
+      { wch: 10 },  // Und/Bulto
+      { wch: 10 },  // Criticidad
+      { wch: 10 },  // Nivel
+      { wch: 10 },  // P75 (b/día)
+      { wch: 6 },   // ABC
+      { wch: 12 },  // Stock (b)
+      { wch: 12 },  // Días Stock
+      { wch: 12 },  // Stock CEDI
+      { wch: 10 },  // SS (días)
+      { wch: 12 },  // SS (bultos)
+      { wch: 10 },  // ROP (días)
+      { wch: 12 },  // ROP (bultos)
+      { wch: 10 },  // MAX (días)
+      { wch: 12 },  // MAX (bultos)
+      { wch: 14 },  // Pedir (bultos)
+      { wch: 14 },  // Pedir (unidades)
+      { wch: 14 },  // Peso Total
+      { wch: 30 }   // Notas
+    ];
+
+    const fecha = new Date().toISOString().split('T')[0];
+    const nombreArchivo = `Pedido_${orderData.tienda_destino_nombre}_${fecha}.xlsx`;
+    XLSX.writeFile(wb, nombreArchivo);
+  };
 
   const handleSubmit = async (enviar: boolean = false) => {
     setLoading(true);
@@ -351,16 +369,14 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
         dias_cobertura: 3,
         productos: orderData.productos,
         observaciones: observaciones,
-        enviar_aprobacion: enviar  // Enviar para aprobación del gerente si es true
+        enviar_aprobacion: enviar
       };
 
-      console.log('Guardando pedido:', payload);
       const response = await http.post('/api/pedidos-sugeridos', payload);
-      console.log('Pedido guardado:', response.data);
 
       const mensaje = enviar
-        ? `¡Pedido ${response.data.numero_pedido} enviado para aprobación del gerente!`
-        : `¡Pedido ${response.data.numero_pedido} guardado como borrador!`;
+        ? `Pedido ${response.data.numero_pedido} enviado para aprobacion del gerente!`
+        : `Pedido ${response.data.numero_pedido} guardado como borrador!`;
 
       alert(mensaje);
       navigate('/pedidos-sugeridos');
@@ -378,7 +394,18 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header con información del pedido */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Confirmación de Pedido</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-bold text-gray-900">Confirmacion de Pedido</h2>
+          <button
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Exportar Excel
+          </button>
+        </div>
 
         {/* Información origen/destino */}
         <div className="grid grid-cols-2 gap-6 mb-6">
@@ -401,15 +428,15 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
         {/* Estadísticas */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="bg-blue-50 rounded-md p-4">
-            <div className="text-xs text-blue-600 mb-1">Productos Seleccionados</div>
+            <div className="text-xs text-blue-600 mb-1">Productos a Pedir</div>
             <div className="text-2xl font-bold text-blue-900">{productosOrdenados.length}</div>
           </div>
           <div className="bg-green-50 rounded-md p-4">
             <div className="text-xs text-green-600 mb-1">Total Bultos</div>
-            <div className="text-2xl font-bold text-green-900">{formatNumber(totalBultos, 2)}</div>
+            <div className="text-2xl font-bold text-green-900">{formatNumber(totalBultos, 0)}</div>
           </div>
           <div className="bg-purple-50 rounded-md p-4">
-            <div className="text-xs text-purple-600 mb-1">Total Productos</div>
+            <div className="text-xs text-purple-600 mb-1">Total Productos Analizados</div>
             <div className="text-2xl font-bold text-purple-900">{orderData.productos.length}</div>
           </div>
         </div>
@@ -429,170 +456,327 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
         </div>
       </div>
 
-      {/* Tabla de productos con todas las columnas */}
+      {/* Tabs de vistas */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+          <div className="flex gap-1">
+            <button
+              onClick={() => setActiveView('criticidad')}
+              className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
+                activeView === 'criticidad'
+                  ? 'bg-white text-gray-900 border border-b-0 border-gray-200'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Vista Criticidad
+            </button>
+            <button
+              onClick={() => setActiveView('excel')}
+              className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
+                activeView === 'excel'
+                  ? 'bg-white text-gray-900 border border-b-0 border-gray-200'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Vista Planificacion
+            </button>
+          </div>
+          <p className="text-sm text-gray-600">
+            {activeView === 'criticidad'
+              ? <>Productos ordenados por <span className="font-semibold text-orange-600">criticidad</span> (mas urgentes primero)</>
+              : <>Vista de <span className="font-semibold text-blue-600">planificacion</span> estilo hoja de calculo</>
+            }
+          </p>
+        </div>
+
+        {/* Vista Criticidad */}
+        {activeView === 'criticidad' && (
         <div className="overflow-x-auto">
-          <table className="w-full divide-y divide-gray-200 text-xs" style={{ minWidth: '1400px' }}>
-            <thead className="bg-gray-100">
+          <table className="w-full divide-y divide-gray-200 text-xs" style={{ minWidth: '1200px' }}>
+            <thead className="bg-gray-100 sticky top-0 z-10">
               <tr>
-                <th className="sticky left-0 z-10 bg-gray-100 px-2 py-1.5 text-left font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '80px' }}>Código</th>
-                <th className="bg-gray-100 px-2 py-1.5 text-left font-semibold text-gray-700 text-[10px] uppercase" style={{ minWidth: '200px' }}>Descripción</th>
-                <th className="bg-gray-100 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '65px' }}>¿Bulto?</th>
-                <th className="bg-blue-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '40px' }}>5D</th>
-                <th className="bg-blue-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '40px' }}>20D</th>
-                <th className="bg-blue-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Mismo Día</th>
-                <th className="bg-purple-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Proyección</th>
-                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>Stock</th>
-                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Tránsito</th>
-                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>Total</th>
-                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '45px' }}>Días</th>
-                <th className="bg-green-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>CEDI</th>
-                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '40px' }}>ABC</th>
-                <th className="bg-red-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>🔥</th>
-                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '45px' }}>Min</th>
-                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '70px' }}>Seguridad</th>
-                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '70px' }}>Pto. Reorden</th>
-                <th className="bg-orange-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>Máx</th>
-                <th className="bg-yellow-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Sugerido</th>
-                <th className="bg-yellow-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '50px' }}>Pedir</th>
-                <th className="bg-indigo-50 px-2 py-1.5 text-center font-semibold text-gray-700 text-[10px] uppercase" style={{ width: '60px' }}>Peso (Kg)</th>
-                <th className="bg-yellow-50 px-2 py-1.5 text-left font-semibold text-gray-700 text-[10px] uppercase" style={{ minWidth: '150px' }}>Notas</th>
+                <th className="sticky left-0 z-20 bg-gray-100 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase" style={{ width: '80px' }}>Codigo</th>
+                <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '110px' }}>Cod. Barras</th>
+                <th className="bg-gray-100 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase" style={{ minWidth: '200px' }}>Descripcion</th>
+                <th className="bg-orange-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '50px' }}>Crit.</th>
+                <th className="bg-blue-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '55px' }}>P75</th>
+                <th className="bg-orange-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '45px' }}>ABC</th>
+                <th className="bg-green-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '60px' }}>Stock</th>
+                <th className="bg-green-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '55px' }}>Dias</th>
+                <th className="bg-green-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '60px' }}>CEDI</th>
+                <th className="bg-orange-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '60px' }}>SS</th>
+                <th className="bg-orange-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '60px' }}>ROP</th>
+                <th className="bg-orange-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '60px' }}>MAX</th>
+                <th className="bg-yellow-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '65px' }}>Pedir</th>
+                <th className="bg-indigo-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '65px' }}>Peso Kg</th>
+                <th className="bg-gray-50 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase" style={{ minWidth: '120px' }}>Notas</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {productosOrdenados.map((producto, index) => {
                 const clasificacion = getClasificacionABC(producto);
-                const criticidad = calcularCriticidadDisplay(producto);
-                const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
+                const criticidadNum = calcularCriticidad(producto);
+                const criticidadDisplay = getCriticidadDisplay(producto);
 
                 return (
                   <tr key={`${producto.codigo_producto}-${index}`} className="hover:bg-gray-50">
-                    <td className="sticky left-0 z-10 bg-white px-2 py-1 text-[11px] font-medium text-gray-900">{producto.codigo_producto}</td>
-                    <td className="px-2 py-1 text-[11px] text-gray-900">{producto.descripcion_producto}</td>
-                    <td className="bg-gray-50 px-2 py-1 text-[11px] text-gray-700 text-center">{producto.cantidad_bultos}</td>
-                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center">{formatNumber(producto.prom_ventas_5dias_unid / producto.cantidad_bultos, 1)}</td>
-                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center font-medium">
+                    {/* Código */}
+                    <td className="sticky left-0 z-10 bg-white px-2 py-1.5 text-xs font-medium text-gray-900">
+                      {producto.codigo_producto}
+                    </td>
+                    {/* Código de Barras */}
+                    <td className="px-2 py-1.5 text-xs text-gray-600 text-center font-mono">
+                      {producto.codigo_barras || '-'}
+                    </td>
+                    {/* Descripción */}
+                    <td className="px-2 py-1.5 text-xs text-gray-900">
                       <button
                         onClick={() => handleSalesClick(producto)}
-                        className="hover:underline cursor-pointer hover:text-blue-900"
-                        title="Click para ver análisis de ventas"
+                        className="hover:underline cursor-pointer hover:text-blue-700 text-left"
+                        title="Ver ventas del producto"
                       >
-                        {formatNumber(producto.prom_ventas_20dias_unid / producto.cantidad_bultos, 1)}
+                        {producto.descripcion_producto}
                       </button>
                     </td>
-                    <td className="bg-blue-50 px-2 py-1 text-[11px] text-blue-800 text-center">{formatNumber(producto.prom_mismo_dia_unid / producto.cantidad_bultos, 1)}</td>
-                    <td className="bg-purple-50 px-2 py-1 text-[11px] text-purple-800 text-center font-medium">-</td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-indigo-800 text-center">{formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}</td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-green-700 text-center">{formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}</td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-green-800 text-center font-medium">{formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}</td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-center font-bold">
+                    {/* Criticidad */}
+                    <td className="bg-orange-50 px-2 py-1.5 text-center">
                       <button
-                        onClick={() => handleStockDiasClick(producto)}
-                        className="hover:underline cursor-pointer hover:text-indigo-900"
-                        title="Click para ver análisis de urgencia de reposición"
+                        onClick={() => handleCriticidadClick(producto)}
+                        className={`${criticidadDisplay.color} hover:underline cursor-pointer font-bold text-sm`}
+                        title={`${criticidadDisplay.nivel} (${criticidadNum})\nStock: ${getDiasStockActual(producto).toFixed(1)}d | SS: ${getDiasSeguridad(producto).toFixed(1)}d | ROP: ${getDiasMinimo(producto).toFixed(1)}d | MAX: ${getDiasMaximo(producto).toFixed(1)}d`}
                       >
-                        {producto.prom_ventas_20dias_unid > 0
-                          ? formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.prom_ventas_20dias_unid, 1)
-                          : '∞'
-                        }
+                        {criticidadDisplay.emoji}
                       </button>
                     </td>
-                    <td className="bg-green-50 px-2 py-1 text-[11px] text-green-800 text-center font-medium">{formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}</td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-center">
+                    {/* P75 (Velocidad) */}
+                    <td className="bg-blue-50 px-2 py-1.5 text-xs text-blue-800 text-center font-medium">
+                      {formatNumber((producto.prom_p75_unid || 0) / producto.cantidad_bultos, 2)}
+                    </td>
+                    {/* ABC */}
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-center">
                       <button
                         onClick={() => handleABCClick(producto)}
-                        className={`font-bold hover:underline cursor-pointer ${(() => {
-                          if (clasificacion === 'A') return 'text-red-700 hover:text-red-900';
-                          if (clasificacion === 'AB') return 'text-orange-700 hover:text-orange-900';
-                          if (clasificacion === 'B') return 'text-yellow-700 hover:text-yellow-900';
-                          return 'text-gray-600 hover:text-gray-800';
-                        })()}`}
-                        title="Click para ver cálculo de clasificación ABC"
+                        className={`font-bold hover:underline cursor-pointer ${
+                          clasificacion === 'A' ? 'text-red-700' :
+                          clasificacion === 'B' ? 'text-yellow-700' : 'text-gray-600'
+                        }`}
+                        title="Ver clasificacion ABC"
                       >
                         {clasificacion}
                       </button>
                     </td>
-                    <td className="bg-red-50 px-2 py-1 text-[10px] text-center font-bold">
+                    {/* Stock */}
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-green-800 text-center">
+                      {formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}
+                    </td>
+                    {/* Días */}
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-center font-bold">
                       <button
-                        onClick={() => handleCriticidadClick(producto)}
-                        className={`${criticidad.color} hover:underline cursor-pointer`}
-                        title="Click para ver cálculo de Criticidad"
+                        onClick={() => handleStockDiasClick(producto)}
+                        className="hover:underline cursor-pointer hover:text-indigo-900"
+                        title="Ver analisis de urgencia"
                       >
-                        {criticidad.emoji}
+                        {producto.prom_ventas_20dias_unid > 0 ? getDiasStockActual(producto).toFixed(1) : '---'}
                       </button>
                     </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
-                      {stockParams && producto.prom_ventas_20dias_unid > 0 ? (
-                        <button
-                          onClick={() => handleStockMinimoClick(producto)}
-                          className="hover:underline cursor-pointer hover:text-orange-900"
-                          title="Click para ver cálculo de Stock Mínimo"
-                        >
-                          {(calcularStockMinimo(producto) / ventaDiariaBultos).toFixed(1)}
-                        </button>
-                      ) : '-'}
+                    {/* CEDI */}
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-green-800 text-center">
+                      {formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
-                      {stockParams && producto.prom_ventas_20dias_unid > 0 ? (
+                    {/* SS */}
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center">
+                      {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockSeguridadClick(producto)}
-                          className="hover:underline cursor-pointer hover:text-blue-900"
-                          title="Click para ver cálculo de Stock de Seguridad"
+                          className="hover:underline hover:text-orange-900 cursor-pointer"
+                          title={`SS: ${(producto.stock_seguridad || 0).toFixed(0)} und | ${getStockSeguridadBultos(producto).toFixed(1)} bultos`}
                         >
-                          {(calcularStockSeguridad(producto) / ventaDiariaBultos).toFixed(1)}
+                          <span className="font-medium block">{getDiasSeguridad(producto).toFixed(1)}</span>
+                          <span className="text-[10px] text-gray-500 block">{getStockSeguridadBultos(producto).toFixed(1)}b</span>
                         </button>
                       ) : '-'}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
-                      {stockParams && producto.prom_ventas_20dias_unid > 0 ? (
+                    {/* ROP */}
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center">
+                      {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handlePuntoReordenClick(producto)}
-                          className="hover:underline cursor-pointer hover:text-orange-900"
-                          title="Click para ver cálculo de Punto de Reorden"
+                          className="hover:underline hover:text-orange-900 cursor-pointer"
+                          title={`ROP: ${(producto.stock_minimo || 0).toFixed(0)} und | ${getPuntoReordenBultos(producto).toFixed(1)} bultos`}
                         >
-                          {(calcularPuntoReorden(producto) / ventaDiariaBultos).toFixed(1)}
+                          <span className="font-medium block">{getDiasMinimo(producto).toFixed(1)}</span>
+                          <span className="text-[10px] text-gray-500 block">{getPuntoReordenBultos(producto).toFixed(1)}b</span>
                         </button>
                       ) : '-'}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1 text-[11px] text-orange-800 text-center font-medium">
-                      {stockParams && producto.prom_ventas_20dias_unid > 0 ? (
+                    {/* MAX */}
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center">
+                      {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockMaximoClick(producto)}
-                          className="hover:underline cursor-pointer hover:text-orange-900"
-                          title="Click para ver cálculo de Stock Máximo"
+                          className="hover:underline hover:text-orange-900 cursor-pointer"
+                          title={`Max: ${(producto.stock_maximo || 0).toFixed(0)} und | ${getStockMaximoBultos(producto).toFixed(1)} bultos`}
                         >
-                          {(calcularStockMaximo(producto) / ventaDiariaBultos).toFixed(1)}
+                          <span className="font-medium block">{getDiasMaximo(producto).toFixed(1)}</span>
+                          <span className="text-[10px] text-gray-500 block">{getStockMaximoBultos(producto).toFixed(1)}b</span>
                         </button>
                       ) : '-'}
                     </td>
-                    <td className="bg-yellow-50 px-2 py-1 text-[11px] text-yellow-800 text-center font-medium">
+                    {/* Pedir */}
+                    <td className="bg-yellow-100 px-2 py-1.5 text-center">
                       <button
                         onClick={() => handlePedidoSugeridoClick(producto)}
-                        className={`hover:underline cursor-pointer transition-colors ${calcularPedidoSugerido(producto) > 0 ? 'text-orange-700 hover:text-orange-900' : 'text-gray-400 hover:text-gray-600'}`}
-                        title="Click para ver cálculo de Cantidad Sugerida"
+                        className="text-sm font-bold text-gray-900 hover:underline cursor-pointer hover:text-gray-700"
+                        title="Ver calculo de pedido sugerido"
                       >
-                        {calcularPedidoSugerido(producto)}
+                        {formatNumber(producto.cantidad_pedida_bultos || 0, 0)}
                       </button>
                     </td>
-                    <td className="bg-yellow-50 px-2 py-1 text-center">
-                      <button
-                        onClick={() => handlePedidoSugeridoClick(producto)}
-                        className="text-[11px] font-bold text-gray-900 hover:underline cursor-pointer hover:text-gray-700"
-                        title="Click para ver cálculo de Cantidad Pedida"
-                      >
-                        {formatNumber(producto.cantidad_pedida_bultos, 2)}
-                      </button>
+                    {/* Peso */}
+                    <td className="bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800 text-center">
+                      {formatNumber((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos * (producto.peso_unidad || 0) / 1000, 1)}
                     </td>
-                    <td className="bg-indigo-50 px-2 py-1 text-[11px] text-indigo-800 text-center font-medium">
-                      {formatNumber((producto.cantidad_pedida_bultos || 0) * producto.cantidad_bultos * (producto.peso_unidad || 0) / 1000, 2)}
+                    {/* Notas */}
+                    <td className="bg-gray-50 px-2 py-1.5 text-xs text-gray-600">
+                      {producto.razon_pedido || ''}
                     </td>
-                    <td className="bg-yellow-50 px-2 py-1 text-[11px] text-gray-700">{producto.razon_pedido}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
+        )}
+
+        {/* Vista Excel/Planificacion */}
+        {activeView === 'excel' && (
+        <div className="overflow-x-auto">
+          <table className="w-full divide-y divide-gray-200 text-xs" style={{ minWidth: '1400px' }}>
+            <thead className="bg-gray-100 sticky top-0 z-10">
+              <tr>
+                <th className="sticky left-0 z-20 bg-gray-100 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase" style={{ width: '80px' }}>Codigo</th>
+                <th className="bg-gray-100 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase" style={{ minWidth: '200px' }}>Descripcion</th>
+                <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '50px' }}>UM</th>
+                <th className="bg-blue-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '80px' }}>Vta Total</th>
+                <th className="bg-blue-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '60px' }}>% Vta</th>
+                <th className="bg-yellow-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '50px' }}>TOP</th>
+                <th className="bg-green-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '70px' }}>Dias Inv</th>
+                <th className="bg-green-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '80px' }}>Prom Vta</th>
+                <th className="bg-orange-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '90px' }}>Tot Almacenar</th>
+                <th className="bg-purple-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '80px' }}>Exist. Teor</th>
+                <th className="bg-purple-50 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '80px' }}>Req. Teor</th>
+                <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '80px' }}>Bulto/Emp</th>
+                <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '70px' }}>Ctd x Bulto</th>
+                <th className="bg-yellow-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '80px' }}>Escenario</th>
+                <th className="bg-yellow-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase" style={{ width: '70px' }}>Pedir</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {productosOrdenados.map((producto, index) => {
+                // Calculos para vista Excel
+                const ventaTotal = producto.prom_ventas_20dias_unid * 30; // Estimado mensual
+                const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+                const diasInventario = getDiasStockActual(producto);
+                const totalAlmacenar = producto.stock_maximo || 0; // Stock maximo como objetivo
+                const existenciaTeorica = producto.stock_tienda + producto.stock_en_transito;
+                const requerimientoTeorico = Math.max(0, totalAlmacenar - existenciaTeorica);
+                const bultosRequeridos = Math.ceil(requerimientoTeorico / producto.cantidad_bultos);
+
+                // Calcular ranking TOP basado en posición de venta
+                const rankingProducto = rankingVentas[producto.codigo_producto] || 999;
+
+                // Calcular % de venta sobre el total general
+                const porcentajeVenta = totalVentasGeneral > 0 ? (ventaTotal / totalVentasGeneral) * 100 : 0;
+
+                return (
+                  <tr key={`excel-${producto.codigo_producto}-${index}`} className="hover:bg-gray-50">
+                    {/* Código */}
+                    <td className="sticky left-0 z-10 bg-white px-2 py-1.5 text-xs font-medium text-gray-900">
+                      {producto.codigo_producto}
+                    </td>
+                    {/* Descripción */}
+                    <td className="px-2 py-1.5 text-xs text-gray-900">
+                      <button
+                        onClick={() => handleSalesClick(producto)}
+                        className="hover:underline cursor-pointer hover:text-blue-700 text-left"
+                        title="Ver ventas del producto"
+                      >
+                        {producto.descripcion_producto}
+                      </button>
+                    </td>
+                    {/* UM */}
+                    <td className="px-2 py-1.5 text-xs text-gray-600 text-center">
+                      {producto.unidad_medida || 'UND'}
+                    </td>
+                    {/* Venta Total */}
+                    <td className="bg-blue-50 px-2 py-1.5 text-xs text-blue-800 text-center">
+                      {formatNumber(ventaTotal, 0)}
+                    </td>
+                    {/* % Venta */}
+                    <td className="bg-blue-50 px-2 py-1.5 text-xs text-blue-800 text-center">
+                      {formatNumber(porcentajeVenta, 2)}%
+                    </td>
+                    {/* TOP */}
+                    <td className="bg-yellow-50 px-2 py-1.5 text-xs text-center">
+                      {rankingProducto <= 50 ? (
+                        <span className="text-red-600 font-bold">Top50</span>
+                      ) : rankingProducto <= 100 ? (
+                        <span className="text-orange-600 font-bold">Top100</span>
+                      ) : rankingProducto <= 150 ? (
+                        <span className="text-yellow-700 font-bold">Top150</span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+                    {/* Dias Inventario */}
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-green-800 text-center font-medium">
+                      {velocidadP75 > 0 ? formatNumber(diasInventario, 1) : '---'}
+                    </td>
+                    {/* Prom Venta (diaria) */}
+                    <td className="bg-green-50 px-2 py-1.5 text-xs text-green-800 text-center">
+                      {formatNumber(velocidadP75, 1)}
+                    </td>
+                    {/* Total a Almacenar (Stock Maximo) */}
+                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center">
+                      {formatNumber(totalAlmacenar, 0)}
+                    </td>
+                    {/* Existencia Teorica */}
+                    <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center">
+                      {formatNumber(existenciaTeorica, 0)}
+                    </td>
+                    {/* Requerimiento Teorico */}
+                    <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-medium">
+                      {formatNumber(requerimientoTeorico, 0)}
+                    </td>
+                    {/* Bulto/Empaque */}
+                    <td className="px-2 py-1.5 text-xs text-gray-700 text-center">
+                      BULTO
+                    </td>
+                    {/* Cantidad x Bulto */}
+                    <td className="px-2 py-1.5 text-xs text-gray-700 text-center">
+                      {formatNumber(producto.cantidad_bultos, 0)}
+                    </td>
+                    {/* Escenario Requerido (bultos teoricos) */}
+                    <td className="bg-yellow-100 px-2 py-1.5 text-xs text-yellow-800 text-center">
+                      {formatNumber(bultosRequeridos, 0)}
+                    </td>
+                    {/* Pedir (bultos finales) */}
+                    <td className="bg-yellow-100 px-2 py-1.5 text-center">
+                      <button
+                        onClick={() => handlePedidoSugeridoClick(producto)}
+                        className="text-sm font-bold text-gray-900 hover:underline cursor-pointer hover:text-gray-700"
+                        title="Ver calculo de pedido sugerido"
+                      >
+                        {formatNumber(producto.cantidad_pedida_bultos || 0, 0)}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        )}
       </div>
 
       {/* Botones */}
@@ -602,7 +786,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
           disabled={loading}
           className="px-6 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
-          ← Atrás
+          Atras
         </button>
         <div className="flex gap-3">
           <button
@@ -642,27 +826,6 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             descripcion_producto: selectedProductoABC.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoABC.prom_ventas_20dias_unid,
             cantidad_bultos: selectedProductoABC.cantidad_bultos,
-          }}
-        />
-      )}
-
-      {selectedProductoStockMin && (
-        <StockMinimoModal
-          isOpen={stockMinimoModalOpen}
-          onClose={() => setStockMinimoModalOpen(false)}
-          producto={{
-            codigo_producto: selectedProductoStockMin.codigo_producto,
-            descripcion_producto: selectedProductoStockMin.descripcion_producto,
-            prom_ventas_20dias_unid: selectedProductoStockMin.prom_ventas_20dias_unid,
-            prom_p75_unid: selectedProductoStockMin.prom_p75_unid,
-            cantidad_bultos: selectedProductoStockMin.cantidad_bultos,
-            clasificacion_abc: selectedProductoStockMin.clasificacion_abc,
-            clase_efectiva: selectedProductoStockMin.clase_efectiva,
-            es_generador_trafico: selectedProductoStockMin.es_generador_trafico,
-            stock_minimo: selectedProductoStockMin.stock_minimo,
-            stock_seguridad: selectedProductoStockMin.stock_seguridad,
-            punto_reorden: selectedProductoStockMin.punto_reorden,
-            metodo_calculo: selectedProductoStockMin.metodo_calculo,
           }}
         />
       )}
@@ -795,9 +958,14 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             codigo_producto: selectedProductoCriticidad.codigo_producto,
             descripcion_producto: selectedProductoCriticidad.descripcion_producto,
             prom_ventas_20dias_unid: selectedProductoCriticidad.prom_ventas_20dias_unid,
+            prom_p75_unid: selectedProductoCriticidad.prom_p75_unid,
             cantidad_bultos: selectedProductoCriticidad.cantidad_bultos,
             stock_tienda: selectedProductoCriticidad.stock_tienda,
             stock_en_transito: selectedProductoCriticidad.stock_en_transito,
+            stock_seguridad: selectedProductoCriticidad.stock_seguridad,
+            punto_reorden: selectedProductoCriticidad.punto_reorden || selectedProductoCriticidad.stock_minimo,
+            stock_maximo: selectedProductoCriticidad.stock_maximo,
+            clasificacion_abc: selectedProductoCriticidad.clasificacion_abc || undefined,
           }}
           stockParams={{
             stock_min_mult_a: stockParams.stock_min_mult_a,

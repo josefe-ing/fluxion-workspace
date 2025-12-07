@@ -58,6 +58,8 @@ export interface ProductoPedido {
   cantidad_ajustada_bultos: number;
   razon_pedido: string;
   metodo_calculo: string;             // estadistico o padre_prudente
+  unidad_medida?: string;             // Unidad de medida (UND, KG, etc)
+  es_top50?: boolean;                 // Si es producto Top 50
   // Sobrestock
   tiene_sobrestock: boolean;
   exceso_unidades: number;

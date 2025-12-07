@@ -23,7 +23,7 @@ interface Props {
   onBack: () => void;
 }
 
-type SortField = 'prom_20d' | 'stock' | 'sugerido' | 'pedir' | 'abc' | 'criticidad' | 'top3' | 'p75';
+type SortField = 'prom_20d' | 'stock' | 'stock_transito' | 'stock_total' | 'stock_dias' | 'stock_cedi' | 'sugerido' | 'pedir' | 'abc' | 'criticidad' | 'top3' | 'p75' | 'ss' | 'rop' | 'max';
 type SortDirection = 'asc' | 'desc';
 
 interface StockParams {
@@ -286,7 +286,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
       setSortField(field);
-      setSortDirection('desc');
+      // Para criticidad: asc = más críticos primero (menor número = más urgente)
+      // Para otras columnas: desc = valores más altos primero
+      setSortDirection(field === 'criticidad' ? 'asc' : 'desc');
     }
   };
 
@@ -509,11 +511,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     // Si Stock Total (días) <= Punto de Reorden (días), necesitamos pedir
     if (stockTotalDias <= puntoReordenDias) {
       // Sugerido = Stock Máximo - Stock Total (en bultos)
-      const sugeridoSinLimite = stockMaximoBultos - stockTotalBultos;
-
-      // Limitar al stock disponible en CEDI origen (en bultos)
-      const stockCediBultos = producto.stock_cedi_origen / producto.cantidad_bultos;
-      const sugerido = Math.min(sugeridoSinLimite, stockCediBultos);
+      // NOTA: No limitamos por stock CEDI porque su inventario no es confiable actualmente
+      const sugerido = stockMaximoBultos - stockTotalBultos;
 
       return Math.max(0, Math.round(sugerido)); // No sugerir valores negativos
     }
@@ -522,7 +521,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   };
 
   // Calcular cuántos días de cobertura proporciona el pedido sugerido
-  // Retorna: días totales de stock después de recibir el pedido
+  // Retorna: días que aporta SOLO el pedido (sin contar stock actual)
   const calcularDiasPedidoSugerido = (producto: ProductoPedido): number | null => {
     const pedidoBultos = calcularPedidoSugerido(producto);
     if (pedidoBultos <= 0) return null;
@@ -532,10 +531,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     if (velocidadP75 <= 0) return null;
 
     const velocidadP75Bultos = velocidadP75 / producto.cantidad_bultos;
-    const stockActualBultos = (producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos;
-    const stockResultanteBultos = stockActualBultos + pedidoBultos;
 
-    return stockResultanteBultos / velocidadP75Bultos;
+    // Días que aporta solo el pedido (no el total resultante)
+    return pedidoBultos / velocidadP75Bultos;
   };
 
   const esStockCritico = (producto: ProductoPedido): boolean => {
@@ -549,30 +547,22 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   };
 
   // Función para calcular criticidad (0 = más crítico, mayor número = menos crítico)
-  // NOTA: Usa P75 para cálculo de días de stock (más conservador, prepara para picos de demanda)
+  // Niveles basados en umbrales de inventario:
+  // - CRÍTICO: Stock ≤ SS (Stock de Seguridad)
+  // - URGENTE: SS < Stock ≤ ROP (Punto de Reorden)
+  // - ÓPTIMO: ROP < Stock ≤ MAX
+  // - EXCESO: Stock > MAX
   const calcularCriticidad = (producto: ProductoPedido): number => {
     try {
       if (!stockParams || !producto || producto.prom_ventas_20dias_unid <= 0) return 999;
 
     const clasificacion = getClasificacionABC(producto);
 
-    // Usar P75 para cálculo de días (consistente con stock mínimo, seguridad, etc.)
-    const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
-    const velocidadP75Bultos = velocidadP75 / producto.cantidad_bultos;
-
-    // Calcular stock actual en días usando P75
-    const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-    const diasStockActual = velocidadP75 > 0 ? stockTotalUnidades / velocidadP75 : 999;
-
-    // Calcular puntos de control en días (usando P75 para consistencia)
-    const stockMinimoBultos = calcularStockMinimo(producto);
-    const diasMinimo = velocidadP75Bultos > 0 ? stockMinimoBultos / velocidadP75Bultos : 0;
-
-    const puntoReordenBultos = calcularPuntoReorden(producto);
-    const diasReorden = velocidadP75Bultos > 0 ? puntoReordenBultos / velocidadP75Bultos : 0;
-
-    const stockMaximoBultos = calcularStockMaximo(producto);
-    const diasMaximo = velocidadP75Bultos > 0 ? stockMaximoBultos / velocidadP75Bultos : 0;
+    // Obtener días de stock actual y umbrales
+    const diasStockActual = getDiasStockActual(producto);
+    const diasSS = getDiasSeguridad(producto);
+    const diasROP = getDiasMinimo(producto); // ROP = Punto de Reorden
+    const diasMAX = getDiasMaximo(producto);
 
     // Pesos por clasificación ABC Pareto (A es más importante)
     const pesoABC = {
@@ -582,39 +572,37 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       '-': 4
     }[clasificacion] || 4;
 
-    // Determinar nivel de urgencia de stock (5 niveles)
+    // Determinar nivel de urgencia (4 niveles claros)
     let urgenciaStock = 0;
 
-    if (diasStockActual <= diasMinimo) {
-      // NIVEL 1: CRÍTICO - Por debajo del mínimo (MÁXIMA URGENCIA)
+    if (diasStockActual <= diasSS) {
+      // NIVEL 1: CRÍTICO - Por debajo o igual al Stock de Seguridad
       urgenciaStock = 1;
-    } else if (diasStockActual <= diasMinimo + ((diasReorden - diasMinimo) * 0.5)) {
-      // NIVEL 2: MUY URGENTE - Entre mínimo y 50% hacia reorden
+    } else if (diasStockActual <= diasROP) {
+      // NIVEL 2: URGENTE - Entre SS y ROP (hay que pedir)
       urgenciaStock = 2;
-    } else if (diasStockActual <= diasReorden) {
-      // NIVEL 3: URGENTE - Entre 50% y punto de reorden
+    } else if (diasStockActual <= diasMAX) {
+      // NIVEL 3: ÓPTIMO - Entre ROP y MAX (nivel ideal)
       urgenciaStock = 3;
-    } else if (diasStockActual <= diasMaximo * 0.8) {
-      // NIVEL 4: PREVENTIVO - Entre reorden y 80% del máximo
-      urgenciaStock = 4;
     } else {
-      // NIVEL 5: ÓPTIMO/EXCESO - Por encima del 80% del máximo
-      urgenciaStock = 5;
+      // NIVEL 4: EXCESO - Por encima del máximo
+      urgenciaStock = 4;
     }
 
     // Criticidad combinada: urgenciaStock tiene más peso (x10), luego ABC
     // Menor número = más crítico
-    // Ejemplos:
-    // - A con stock crítico (≤min): (1 * 10) + 1 = 11 (MÁS CRÍTICO) 🔴🔴🔴
-    // - AB con stock crítico: (1 * 10) + 2 = 12 🔴🔴
-    // - A muy urgente (50% a reorden): (2 * 10) + 1 = 21 🔴🟠
-    // - A urgente (cerca de reorden): (3 * 10) + 1 = 31 🟠
-    // - A preventivo: (4 * 10) + 1 = 41 ✓
-    // - C con exceso: (5 * 10) + 5 = 55 (MENOS CRÍTICO) ⚠️
     return (urgenciaStock * 10) + pesoABC;
     } catch {
       return 999;
     }
+  };
+
+  // Helper para obtener días de stock actual
+  const getDiasStockActual = (producto: ProductoPedido): number => {
+    const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
+    if (velocidadP75 <= 0) return 999;
+    const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
+    return stockTotalUnidades / velocidadP75;
   };
 
   // Cargar análisis XYZ desde API cuando se activa Modo Consultor
@@ -750,8 +738,25 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         bValue = b.prom_ventas_20dias_unid;
         break;
       case 'stock':
-        aValue = a.stock_total;
-        bValue = b.stock_total;
+        aValue = a.stock_tienda;
+        bValue = b.stock_tienda;
+        break;
+      case 'stock_transito':
+        aValue = a.stock_en_transito;
+        bValue = b.stock_en_transito;
+        break;
+      case 'stock_total':
+        aValue = a.stock_tienda + a.stock_en_transito;
+        bValue = b.stock_tienda + b.stock_en_transito;
+        break;
+      case 'stock_dias':
+        // Días de stock usando P75
+        aValue = a.prom_p75_unid > 0 ? (a.stock_tienda + a.stock_en_transito) / a.prom_p75_unid : 999;
+        bValue = b.prom_p75_unid > 0 ? (b.stock_tienda + b.stock_en_transito) / b.prom_p75_unid : 999;
+        break;
+      case 'stock_cedi':
+        aValue = a.stock_cedi_origen;
+        bValue = b.stock_cedi_origen;
         break;
       case 'sugerido':
         aValue = a.cantidad_ajustada_bultos;
@@ -768,6 +773,18 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       case 'p75':
         aValue = a.prom_p75_unid || 0;
         bValue = b.prom_p75_unid || 0;
+        break;
+      case 'ss':
+        aValue = a.stock_seguridad || 0;
+        bValue = b.stock_seguridad || 0;
+        break;
+      case 'rop':
+        aValue = a.stock_minimo || 0;
+        bValue = b.stock_minimo || 0;
+        break;
+      case 'max':
+        aValue = a.stock_maximo || 0;
+        bValue = b.stock_maximo || 0;
         break;
       default:
         return 0;
@@ -895,13 +912,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         </div>
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[calc(100vh-280px)]">
             <table className="w-full divide-y divide-gray-200 text-sm" style={{ minWidth: '1500px' }}>
-              <thead className="bg-gray-100">
+              <thead className="bg-gray-100 sticky top-0 z-20">
                 {/* Fila de categorías */}
                 <tr className="border-b-2 border-gray-300">
-                  <th className="sticky left-0 z-10 bg-gray-200" style={{ width: '36px' }}></th>
-                  <th colSpan={3} className="sticky left-[36px] z-10 bg-blue-200 px-2 py-1 text-center font-bold text-blue-900 text-xs uppercase border-r border-blue-300">
+                  <th className="sticky left-0 z-30 bg-gray-200" style={{ width: '36px' }}></th>
+                  <th colSpan={3} className="sticky left-[36px] z-30 bg-blue-200 px-2 py-1 text-center font-bold text-blue-900 text-xs uppercase border-r border-blue-300">
                     Producto
                   </th>
                   <th colSpan={4} className="bg-purple-200 px-2 py-1 text-center font-bold text-purple-900 text-xs uppercase border-r border-purple-300">
@@ -919,7 +936,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                 </tr>
                 {/* Fila de columnas */}
                 <tr>
-                  <th className="sticky left-0 z-10 bg-gray-100 px-2 py-2 text-left" style={{ width: '36px' }}>
+                  <th className="sticky left-0 z-30 bg-gray-100 px-2 py-2 text-left" style={{ width: '36px' }}>
                     <input
                       type="checkbox"
                       checked={productos.every(p => p.incluido)}
@@ -931,8 +948,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       className="h-4 w-4 rounded border-gray-300"
                     />
                   </th>
-                  <th className="sticky left-[36px] z-10 bg-blue-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '80px' }}>Código</th>
-                  <th className="sticky left-[116px] z-10 bg-blue-100 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '130px' }}>Descripción</th>
+                  <th className="sticky left-[36px] z-30 bg-blue-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '80px' }}>Código</th>
+                  <th className="sticky left-[116px] z-30 bg-blue-100 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '130px' }}>Descripción</th>
                   <th className="bg-blue-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>U/B</th>
                   <th className="bg-purple-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '32px' }} title="Análisis de Ventas por Tienda">
                     <span className="text-sm">📈</span>
@@ -941,29 +958,15 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="55px" />
                   <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="55px" />
                   <SortableHeader field="stock" label="Stock" bgColor="bg-green-100" width="55px" />
-                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }}>
-                    Trán
-                  </th>
-                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }}>
-                    Total
-                  </th>
-                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
-                    Días
-                  </th>
-                  <th className="bg-green-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }}>
-                    CEDI
-                  </th>
+                  <SortableHeader field="stock_transito" label="Trán" bgColor="bg-green-100" width="55px" />
+                  <SortableHeader field="stock_total" label="Total" bgColor="bg-green-100" width="55px" />
+                  <SortableHeader field="stock_dias" label="Días" bgColor="bg-green-100" width="50px" />
+                  <SortableHeader field="stock_cedi" label="CEDI" bgColor="bg-green-100" width="55px" />
                   <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="45px" />
                   <SortableHeader field="criticidad" label="🔥" bgColor="bg-orange-100" width="50px" />
-                  <th className="bg-orange-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
-                    SS
-                  </th>
-                  <th className="bg-orange-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
-                    ROP
-                  </th>
-                  <th className="bg-orange-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>
-                    Max
-                  </th>
+                  <SortableHeader field="ss" label="SS" bgColor="bg-orange-100" width="50px" />
+                  <SortableHeader field="rop" label="ROP" bgColor="bg-orange-100" width="50px" />
+                  <SortableHeader field="max" label="Max" bgColor="bg-orange-100" width="50px" />
                   <SortableHeader field="sugerido" label="Sug" bgColor="bg-orange-100" width="60px" />
 
                   {/* Columnas XYZ - Solo visibles en Modo Consultor */}
@@ -1102,49 +1105,33 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         const criticidad = calcularCriticidad(producto);
                         const clasificacion = getClasificacionABC(producto);
 
-                        // Usar P75 para cálculos (consistente con calcularCriticidad)
-                        const velocidadP75 = producto.prom_p75_unid || producto.prom_ventas_20dias_unid;
-                        const velocidadP75Bultos = velocidadP75 / producto.cantidad_bultos;
-                        const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-                        const diasStockActual = velocidadP75 > 0 ? stockTotalUnidades / velocidadP75 : 999;
-
-                        const stockMinimoBultos = calcularStockMinimo(producto);
-                        const diasMinimo = velocidadP75Bultos > 0 ? stockMinimoBultos / velocidadP75Bultos : 0;
-
-                        const puntoReordenBultos = calcularPuntoReorden(producto);
-                        const diasReorden = velocidadP75Bultos > 0 ? puntoReordenBultos / velocidadP75Bultos : 0;
-
-                        const stockMaximoBultos = calcularStockMaximo(producto);
-                        const diasMaximo = velocidadP75Bultos > 0 ? stockMaximoBultos / velocidadP75Bultos : 0;
-
-                        const puntoMedio = diasMinimo + ((diasReorden - diasMinimo) * 0.5);
+                        // Obtener días de stock actual y umbrales
+                        const diasStockActual = getDiasStockActual(producto);
+                        const diasSS = getDiasSeguridad(producto);
+                        const diasROP = getDiasMinimo(producto);
+                        const diasMAX = getDiasMaximo(producto);
 
                         let texto = '';
                         let color = '';
                         let nivel = '';
 
-                        if (diasStockActual <= diasMinimo) {
-                          // NIVEL 1: CRÍTICO
-                          texto = clasificacion === 'A' ? '🔴🔴🔴' : clasificacion === 'B' ? '🔴🔴' : '🔴';
+                        if (diasStockActual <= diasSS) {
+                          // CRÍTICO - Por debajo del Stock de Seguridad
+                          texto = clasificacion === 'A' ? '🔴🔴' : '🔴';
                           color = 'text-red-700';
                           nivel = 'CRÍTICO';
-                        } else if (diasStockActual <= puntoMedio) {
-                          // NIVEL 2: MUY URGENTE
-                          texto = clasificacion === 'A' ? '🔴🟠' : '🔴';
-                          color = 'text-red-600';
-                          nivel = 'MUY URGENTE';
-                        } else if (diasStockActual <= diasReorden) {
-                          // NIVEL 3: URGENTE
+                        } else if (diasStockActual <= diasROP) {
+                          // URGENTE - Entre SS y ROP (hay que pedir)
                           texto = clasificacion === 'A' ? '🟠🟠' : '🟠';
                           color = 'text-orange-600';
                           nivel = 'URGENTE';
-                        } else if (diasStockActual <= diasMaximo * 0.8) {
-                          // NIVEL 4: PREVENTIVO
+                        } else if (diasStockActual <= diasMAX) {
+                          // ÓPTIMO - Entre ROP y MAX (nivel ideal)
                           texto = '✓';
                           color = 'text-green-600';
-                          nivel = 'PREVENTIVO';
+                          nivel = 'ÓPTIMO';
                         } else {
-                          // NIVEL 5: ÓPTIMO/EXCESO
+                          // EXCESO - Por encima del máximo
                           texto = '⚠️';
                           color = 'text-blue-600';
                           nivel = 'EXCESO';
@@ -1154,7 +1141,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           <button
                             onClick={() => handleCriticidadClick(producto)}
                             className={`${color} hover:underline cursor-pointer transition-colors font-bold`}
-                            title={`Click para ver cálculo de Criticidad\n${nivel} - Criticidad: ${criticidad}\nStock: ${diasStockActual.toFixed(1)}d | Min: ${diasMinimo.toFixed(1)}d | Reorden: ${diasReorden.toFixed(1)}d | Max: ${diasMaximo.toFixed(1)}d`}
+                            title={`${nivel} (Criticidad: ${criticidad})\nStock: ${diasStockActual.toFixed(1)}d | SS: ${diasSS.toFixed(1)}d | ROP: ${diasROP.toFixed(1)}d | MAX: ${diasMAX.toFixed(1)}d`}
                           >
                             {texto}
                           </button>
@@ -1165,10 +1152,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockSeguridadClick(producto)}
-                          className="hover:underline hover:text-orange-900 cursor-pointer transition-colors font-medium"
-                          title={`SS: ${producto.stock_seguridad.toFixed(0)} und`}
+                          className="hover:underline hover:text-orange-900 cursor-pointer transition-colors"
+                          title={`SS: ${producto.stock_seguridad.toFixed(0)} und | ${getStockSeguridadBultos(producto).toFixed(1)} bultos`}
                         >
-                          {getDiasSeguridad(producto).toFixed(1)}
+                          <span className="font-medium block">{getDiasSeguridad(producto).toFixed(1)}</span>
+                          <span className="text-[10px] text-gray-500 block">{getStockSeguridadBultos(producto).toFixed(1)}b</span>
                         </button>
                       ) : (
                         '-'
@@ -1178,10 +1166,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockMinimoClick(producto)}
-                          className="hover:underline hover:text-orange-900 cursor-pointer transition-colors font-medium"
-                          title={`ROP: ${producto.stock_minimo.toFixed(0)} und`}
+                          className="hover:underline hover:text-orange-900 cursor-pointer transition-colors"
+                          title={`ROP: ${producto.stock_minimo.toFixed(0)} und | ${getPuntoReordenBultos(producto).toFixed(1)} bultos`}
                         >
-                          {getDiasMinimo(producto).toFixed(1)}
+                          <span className="font-medium block">{getDiasMinimo(producto).toFixed(1)}</span>
+                          <span className="text-[10px] text-gray-500 block">{getPuntoReordenBultos(producto).toFixed(1)}b</span>
                         </button>
                       ) : (
                         '-'
@@ -1192,9 +1181,10 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         <button
                           onClick={() => handleStockMaximoClick(producto)}
                           className="hover:underline cursor-pointer hover:text-orange-900 transition-colors"
-                          title={`Max: ${producto.stock_maximo.toFixed(0)} und`}
+                          title={`Max: ${producto.stock_maximo.toFixed(0)} und | ${getStockMaximoBultos(producto).toFixed(1)} bultos`}
                         >
-                          {getDiasMaximo(producto).toFixed(1)}
+                          <span className="font-medium block">{getDiasMaximo(producto).toFixed(1)}</span>
+                          <span className="text-[10px] text-gray-500 block">{getStockMaximoBultos(producto).toFixed(1)}b</span>
                         </button>
                       ) : (
                         '-'
@@ -1539,6 +1529,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             cantidad_bultos: selectedProductoCriticidad.cantidad_bultos,
             stock_tienda: selectedProductoCriticidad.stock_tienda,
             stock_en_transito: selectedProductoCriticidad.stock_en_transito,
+            // Valores del backend para umbrales
+            stock_seguridad: selectedProductoCriticidad.stock_seguridad,
+            punto_reorden: selectedProductoCriticidad.punto_reorden || selectedProductoCriticidad.stock_minimo,
+            stock_maximo: selectedProductoCriticidad.stock_maximo,
+            clasificacion_abc: selectedProductoCriticidad.clasificacion_abc || undefined,
           }}
           stockParams={{
             stock_min_mult_a: stockParams.stock_min_mult_a,
