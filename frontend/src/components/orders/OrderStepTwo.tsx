@@ -54,6 +54,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   // forecastData eliminado - reemplazado por TOP3 y P75 del backend
   const [cuadranteActivo, setCuadranteActivo] = useState<string>('Todos');
   const [categoriaActiva, setCategoriaActiva] = useState<string>('Todas');
+  const [vistaActiva, setVistaActiva] = useState<'seleccionados' | 'no_seleccionados' | 'todos'>('seleccionados');
+  const [filtroCedi, setFiltroCedi] = useState<'todos' | 'con_stock' | 'sin_stock'>('todos');
+  const [filtroPrioridad, setFiltroPrioridad] = useState<'todas' | 'critico' | 'urgente' | 'optimo' | 'exceso'>('todas');
   const [salesModalOpen, setSalesModalOpen] = useState(false);
   const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
   const [abcModalOpen, setAbcModalOpen] = useState(false);
@@ -90,7 +93,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
 
   // Paginación
   const [paginaActual, setPaginaActual] = useState(1);
-  const productosPorPagina = 50;
+  const productosPorPagina = 100;
 
   useEffect(() => {
     cargarStockParams();
@@ -325,8 +328,16 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
 
   const esTop50 = (codigoProducto: string) => top50Ids.has(codigoProducto);
 
-  // Filtrar productos por búsqueda, categoría y clasificación ABC
+  // Filtrar productos por vista, búsqueda, categoría y clasificación ABC
   const productosFiltrados = productos.filter(p => {
+    // Filtro por vista (seleccionados/no seleccionados/todos)
+    if (vistaActiva === 'seleccionados' && !p.incluido) {
+      return false;
+    }
+    if (vistaActiva === 'no_seleccionados' && p.incluido) {
+      return false;
+    }
+
     // Filtro por categoría
     if (categoriaActiva !== 'Todas' && p.categoria !== categoriaActiva) {
       return false;
@@ -352,6 +363,46 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
           return false;
         }
       }
+    }
+
+    // Filtro por CEDI (con stock / sin stock)
+    if (filtroCedi !== 'todos') {
+      const tienStockCedi = (p.stock_cedi_origen || 0) > 0;
+      if (filtroCedi === 'con_stock' && !tienStockCedi) return false;
+      if (filtroCedi === 'sin_stock' && tienStockCedi) return false;
+    }
+
+    // Filtro por prioridad (criticidad)
+    if (filtroPrioridad !== 'todas' && stockParams) {
+      const velocidadP75 = p.prom_p75_unid || p.prom_ventas_20dias_unid;
+      if (velocidadP75 <= 0) return false; // Sin ventas no tiene criticidad válida
+
+      const stockTotalUnidades = p.stock_tienda + p.stock_en_transito;
+      const diasStockActual = stockTotalUnidades / velocidadP75;
+
+      // Calcular umbrales de días según ABC
+      const abc = p.clasificacion_abc || '-';
+      const multSS = stockParams[`stock_seg_mult_${abc.toLowerCase()}` as keyof StockParams] || stockParams.stock_seg_mult_c;
+      const multMin = stockParams[`stock_min_mult_${abc.toLowerCase()}` as keyof StockParams] || stockParams.stock_min_mult_c;
+      const multMax = stockParams[`stock_max_mult_${abc.toLowerCase()}` as keyof StockParams] || stockParams.stock_max_mult_c;
+
+      const diasSS = multSS;
+      const diasROP = multMin;
+      const diasMAX = multMax;
+
+      // Determinar nivel de criticidad
+      let nivelCriticidad: 'critico' | 'urgente' | 'optimo' | 'exceso';
+      if (diasStockActual <= diasSS) {
+        nivelCriticidad = 'critico';
+      } else if (diasStockActual <= diasROP) {
+        nivelCriticidad = 'urgente';
+      } else if (diasStockActual <= diasMAX) {
+        nivelCriticidad = 'optimo';
+      } else {
+        nivelCriticidad = 'exceso';
+      }
+
+      if (nivelCriticidad !== filtroPrioridad) return false;
     }
 
     // Filtro por búsqueda
@@ -900,8 +951,64 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             </select>
           </div>
 
+          {/* Dropdown de Vista (Seleccionados/No seleccionados/Todos) */}
+          <div className="flex items-center gap-1">
+            <label className="text-xs font-medium text-gray-600">Vista:</label>
+            <select
+              value={vistaActiva}
+              onChange={(e) => { setVistaActiva(e.target.value as 'seleccionados' | 'no_seleccionados' | 'todos'); setPaginaActual(1); }}
+              className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
+            >
+              <option value="seleccionados">
+                Seleccionados ({productos.filter(p => p.incluido).length})
+              </option>
+              <option value="no_seleccionados">
+                No seleccionados ({productos.filter(p => !p.incluido).length})
+              </option>
+              <option value="todos">
+                Todos ({productos.length})
+              </option>
+            </select>
+          </div>
+
+          {/* Dropdown de CEDI (Con stock/Sin stock) */}
+          <div className="flex items-center gap-1">
+            <label className="text-xs font-medium text-gray-600">CEDI:</label>
+            <select
+              value={filtroCedi}
+              onChange={(e) => { setFiltroCedi(e.target.value as 'todos' | 'con_stock' | 'sin_stock'); setPaginaActual(1); }}
+              className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
+            >
+              <option value="todos">
+                Todos ({productos.length})
+              </option>
+              <option value="con_stock">
+                Con stock ({productos.filter(p => (p.stock_cedi_origen || 0) > 0).length})
+              </option>
+              <option value="sin_stock">
+                Sin stock ({productos.filter(p => (p.stock_cedi_origen || 0) === 0).length})
+              </option>
+            </select>
+          </div>
+
+          {/* Dropdown de Prioridad (Criticidad) */}
+          <div className="flex items-center gap-1">
+            <label className="text-xs font-medium text-gray-600">Prioridad:</label>
+            <select
+              value={filtroPrioridad}
+              onChange={(e) => { setFiltroPrioridad(e.target.value as 'todas' | 'critico' | 'urgente' | 'optimo' | 'exceso'); setPaginaActual(1); }}
+              className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
+            >
+              <option value="todas">Todas</option>
+              <option value="critico">🔴 Crítico</option>
+              <option value="urgente">🟠 Urgente</option>
+              <option value="optimo">🟢 Óptimo</option>
+              <option value="exceso">🔵 Exceso</option>
+            </select>
+          </div>
+
           {/* Contador de resultados */}
-          {(searchTerm || categoriaActiva !== 'Todas' || cuadranteActivo !== 'Todos') && (
+          {(searchTerm || categoriaActiva !== 'Todas' || cuadranteActivo !== 'Todos' || vistaActiva !== 'todos' || filtroCedi !== 'todos' || filtroPrioridad !== 'todas') && (
             <div className="text-xs text-gray-500">
               {productosFiltrados.length}/{productos.length}
             </div>
@@ -975,12 +1082,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="overflow-auto max-h-[calc(100vh-280px)]">
-            <table className="w-full divide-y divide-gray-200 text-sm" style={{ minWidth: '1500px' }}>
+            <table className="w-full divide-y divide-gray-200 text-sm" style={{ minWidth: '1400px' }}>
               <thead className="bg-gray-100 sticky top-0 z-20">
                 {/* Fila de categorías */}
                 <tr className="border-b-2 border-gray-300">
                   <th className="sticky left-0 z-30 bg-gray-200" style={{ width: '36px' }}></th>
-                  <th colSpan={3} className="sticky left-[36px] z-30 bg-blue-200 px-2 py-1 text-center font-bold text-blue-900 text-xs uppercase border-r border-blue-300">
+                  <th className="sticky left-[36px] z-30 bg-gray-200" style={{ width: '28px' }}></th>
+                  <th colSpan={3} className="sticky left-[64px] z-30 bg-blue-200 px-1 py-1 text-center font-bold text-blue-900 text-xs uppercase border-r border-blue-300">
                     Producto
                   </th>
                   <th colSpan={4} className="bg-purple-200 px-2 py-1 text-center font-bold text-purple-900 text-xs uppercase border-r border-purple-300">
@@ -1010,26 +1118,27 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       className="h-4 w-4 rounded border-gray-300"
                     />
                   </th>
-                  <th className="sticky left-[36px] z-30 bg-blue-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '80px' }}>Código</th>
-                  <th className="sticky left-[116px] z-30 bg-blue-100 px-2 py-2 text-left font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '130px' }}>Descripción</th>
-                  <th className="bg-blue-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '50px' }}>U/B</th>
-                  <th className="bg-purple-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '32px' }} title="Análisis de Ventas por Tienda">
+                  <th className="sticky left-[36px] z-30 bg-gray-100 px-0 py-2 text-center font-semibold text-gray-500 text-xs" style={{ width: '28px' }}>#</th>
+                  <th className="sticky left-[64px] z-30 bg-blue-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '70px' }}>Código</th>
+                  <th className="sticky left-[134px] z-30 bg-blue-100 px-1 py-2 text-left font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '200px' }}>Descripción</th>
+                  <th className="bg-blue-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '35px' }}>U/B</th>
+                  <th className="bg-purple-100 px-0 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '28px' }} title="Análisis de Ventas por Tienda">
                     <span className="text-sm">📈</span>
                   </th>
-                  <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="55px" />
-                  <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="55px" />
-                  <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="55px" />
-                  <SortableHeader field="stock" label="Stock" bgColor="bg-green-100" width="55px" />
-                  <SortableHeader field="stock_transito" label="Trán" bgColor="bg-green-100" width="55px" />
-                  <SortableHeader field="stock_total" label="Total" bgColor="bg-green-100" width="55px" />
-                  <SortableHeader field="stock_dias" label="Días" bgColor="bg-green-100" width="50px" />
-                  <SortableHeader field="stock_cedi" label="CEDI" bgColor="bg-green-100" width="55px" />
+                  <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="50px" />
+                  <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="50px" />
+                  <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="50px" />
+                  <SortableHeader field="stock" label="Stk" bgColor="bg-green-100" width="50px" />
+                  <SortableHeader field="stock_transito" label="Trán" bgColor="bg-green-100" width="45px" />
+                  <SortableHeader field="stock_total" label="Tot" bgColor="bg-green-100" width="50px" />
+                  <SortableHeader field="stock_dias" label="Días" bgColor="bg-green-100" width="40px" />
+                  <SortableHeader field="stock_cedi" label="CEDI" bgColor="bg-green-100" width="50px" />
                   <SortableHeader field="abc" label="ABC" bgColor="bg-orange-100" width="45px" />
-                  <SortableHeader field="criticidad" label="🔥" bgColor="bg-orange-100" width="50px" />
-                  <SortableHeader field="ss" label="SS" bgColor="bg-orange-100" width="50px" />
-                  <SortableHeader field="rop" label="ROP" bgColor="bg-orange-100" width="50px" />
-                  <SortableHeader field="max" label="Max" bgColor="bg-orange-100" width="50px" />
-                  <SortableHeader field="sugerido" label="Sug" bgColor="bg-orange-100" width="60px" />
+                  <SortableHeader field="criticidad" label="🔥" bgColor="bg-orange-100" width="35px" />
+                  <SortableHeader field="ss" label="SS" bgColor="bg-orange-100" width="45px" />
+                  <SortableHeader field="rop" label="ROP" bgColor="bg-orange-100" width="45px" />
+                  <SortableHeader field="max" label="Max" bgColor="bg-orange-100" width="45px" />
+                  <SortableHeader field="sugerido" label="Sug" bgColor="bg-orange-100" width="50px" />
 
                   {/* Columnas XYZ - Solo visibles en Modo Consultor */}
                   {modoConsultorActivo && (
@@ -1049,9 +1158,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     </>
                   )}
 
-                  <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="70px" />
-                  <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '60px' }}>Peso</th>
-                  <th className="bg-gray-100 px-2 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '120px' }}>Notas</th>
+                  <SortableHeader field="pedir" label="Pedir" bgColor="bg-yellow-100" width="55px" />
+                  <th className="bg-gray-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '45px' }}>Peso</th>
+                  <th className="bg-gray-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '80px' }}>Notas</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -1070,8 +1179,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         className="h-4 w-4 rounded border-gray-300"
                       />
                     </td>
-                    <td className="sticky left-[36px] z-10 bg-blue-50 px-2 py-1.5 font-mono text-xs font-medium text-gray-900 text-center" style={{ width: '80px' }}>{producto.codigo_producto}</td>
-                    <td className="sticky left-[116px] z-10 bg-blue-50 px-2 py-1.5 text-xs text-left" style={{ width: '130px', maxWidth: '130px' }}>
+                    <td className="sticky left-[36px] z-10 bg-gray-50 px-0 py-1.5 text-[10px] text-gray-400 text-center font-mono" style={{ width: '28px' }}>
+                      {(paginaActual - 1) * productosPorPagina + index + 1}
+                    </td>
+                    <td className="sticky left-[64px] z-10 bg-blue-50 px-1 py-1.5 font-mono text-xs font-medium text-gray-900 text-center" style={{ width: '70px' }}>{producto.codigo_producto}</td>
+                    <td className="sticky left-[134px] z-10 bg-blue-50 px-1 py-1.5 text-xs text-left" style={{ width: '200px', maxWidth: '200px' }}>
                       <span
                         className="text-gray-900 text-left w-full block overflow-hidden text-ellipsis whitespace-nowrap"
                         title={producto.descripcion_producto}
@@ -1079,8 +1191,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.descripcion_producto}
                       </span>
                     </td>
-                    <td className="bg-blue-50 px-2 py-1.5 text-xs text-gray-700 text-center" style={{ width: '50px' }}>{Math.round(producto.cantidad_bultos)}</td>
-                    <td className="bg-purple-50 px-1 py-1.5 text-center" style={{ width: '32px' }}>
+                    <td className="bg-blue-50 px-1 py-1.5 text-xs text-gray-700 text-center" style={{ width: '35px' }}>{Math.round(producto.cantidad_bultos)}</td>
+                    <td className="bg-purple-50 px-0 py-1.5 text-center" style={{ width: '28px' }}>
                       <button
                         onClick={() => handleVentasClick(producto)}
                         className="text-purple-600 hover:text-purple-800 hover:scale-110 cursor-pointer transition-all"
@@ -1089,11 +1201,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         <span className="text-sm">📈</span>
                       </button>
                     </td>
-                    <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '55px' }}>
+                    <td className="bg-purple-50 px-1 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '50px' }}>
                       <span className="font-medium block">{(producto.prom_ventas_20dias_unid / producto.cantidad_bultos).toFixed(1)}</span>
                       <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_ventas_20dias_unid)}u</span>
                     </td>
-                    <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '55px' }}>
+                    <td className="bg-purple-50 px-1 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '50px' }}>
                       <button
                         onClick={() => handleMetodosPromedioClick(producto)}
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
@@ -1103,7 +1215,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.prom_top3_unid && <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_top3_unid)}u</span>}
                       </button>
                     </td>
-                    <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-semibold" style={{ width: '55px' }}>
+                    <td className="bg-purple-50 px-1 py-1.5 text-xs text-purple-800 text-center font-semibold" style={{ width: '50px' }}>
                       <button
                         onClick={() => handleMetodosPromedioClick(producto)}
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
@@ -1113,7 +1225,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.prom_p75_unid && <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_p75_unid)}u</span>}
                       </button>
                     </td>
-                    <td className="bg-green-50 px-2 py-1.5 text-xs text-gray-800 text-center font-medium" style={{ width: '55px' }}>
+                    <td className="bg-green-50 px-1 py-1.5 text-xs text-gray-800 text-center font-medium" style={{ width: '50px' }}>
                       <button
                         onClick={() => handleHistoricoInventarioClick(producto)}
                         className="hover:text-green-700 hover:underline cursor-pointer transition-colors"
@@ -1123,15 +1235,15 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_tienda)}u</span>
                       </button>
                     </td>
-                    <td className="bg-green-50 px-2 py-1.5 text-xs text-amber-800 text-center font-medium" style={{ width: '55px' }}>
+                    <td className="bg-green-50 px-1 py-1.5 text-xs text-amber-800 text-center font-medium" style={{ width: '45px' }}>
                       <span className="font-medium block">{formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}</span>
                       <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_en_transito)}u</span>
                     </td>
-                    <td className="bg-green-50 px-2 py-1.5 text-xs text-blue-800 text-center font-medium" style={{ width: '55px' }}>
+                    <td className="bg-green-50 px-1 py-1.5 text-xs text-blue-800 text-center font-medium" style={{ width: '50px' }}>
                       <span className="font-medium block">{formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}</span>
                       <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_tienda + producto.stock_en_transito)}u</span>
                     </td>
-                    <td className={`bg-green-50 px-2 py-1.5 text-xs text-center font-semibold ${stockCritico ? 'text-red-700' : 'text-indigo-800'}`} style={{ width: '50px' }}>
+                    <td className={`bg-green-50 px-1 py-1.5 text-xs text-center font-semibold ${stockCritico ? 'text-red-700' : 'text-indigo-800'}`} style={{ width: '40px' }}>
                       <button
                         onClick={() => handleStockDiasClick(producto)}
                         className={`hover:underline cursor-pointer transition-colors ${stockCritico ? 'hover:text-red-900' : 'hover:text-indigo-900'}`}
@@ -1143,7 +1255,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         }
                       </button>
                     </td>
-                    <td className="bg-green-50 px-2 py-1.5 text-xs text-green-800 text-center font-medium" style={{ width: '55px' }}>
+                    <td className="bg-green-50 px-1 py-1.5 text-xs text-green-800 text-center font-medium" style={{ width: '50px' }}>
                       <button
                         onClick={() => handleHistoricoCediClick(producto)}
                         className="hover:text-green-900 hover:underline cursor-pointer transition-colors"
@@ -1153,7 +1265,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_cedi_origen)}u</span>
                       </button>
                     </td>
-                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-center" style={{ width: '45px' }}>
+                    <td className="bg-orange-50 px-1 py-1.5 text-xs text-center" style={{ width: '45px' }}>
                       <button
                         onClick={() => handleABCClick(producto)}
                         className={`font-semibold hover:underline cursor-pointer transition-colors ${(() => {
@@ -1169,7 +1281,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {getClasificacionABC(producto)}
                       </button>
                     </td>
-                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-center font-semibold" style={{ width: '50px' }}>
+                    <td className="bg-orange-50 px-0 py-1.5 text-xs text-center font-semibold" style={{ width: '35px' }}>
                       {stockParams && producto.prom_ventas_20dias_unid > 0 ? (() => {
                         const criticidad = calcularCriticidad(producto);
                         const clasificacion = getClasificacionABC(producto);
@@ -1217,7 +1329,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         );
                       })() : '-'}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-orange-50 px-1 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '45px' }}>
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockSeguridadClick(producto)}
@@ -1231,7 +1343,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         '-'
                       )}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-orange-50 px-1 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '45px' }}>
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockMinimoClick(producto)}
@@ -1245,7 +1357,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         '-'
                       )}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '50px' }}>
+                    <td className="bg-orange-50 px-1 py-1.5 text-xs text-orange-800 text-center font-medium" style={{ width: '45px' }}>
                       {producto.prom_p75_unid > 0 ? (
                         <button
                           onClick={() => handleStockMaximoClick(producto)}
@@ -1259,7 +1371,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         '-'
                       )}
                     </td>
-                    <td className="bg-orange-50 px-2 py-1.5 text-center" style={{ width: '60px' }}>
+                    <td className="bg-orange-50 px-1 py-1.5 text-center" style={{ width: '50px' }}>
                       {(() => {
                         const sugerido = calcularPedidoSugerido(producto);
                         const diasCobertura = calcularDiasPedidoSugerido(producto);
