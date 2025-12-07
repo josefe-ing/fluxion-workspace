@@ -16,70 +16,157 @@ Guía paso a paso para crear un pedido optimizado usando el wizard inteligente.
 
 Selecciona las ubicaciones:
 
-### Origen (Proveedor/Almacén)
+### Origen (CEDI)
 De dónde vendrá la mercancía:
-- Centro de distribución
-- Proveedor directo
-- Otra tienda (transferencia)
+- **CEDI Caracas** - Para tiendas de Caracas (Artigas, Paraíso)
+- **CEDI Seco** - Para tiendas de Valencia
 
 ### Destino (Tienda)
 La tienda que recibirá el pedido.
 
 ## Paso 2: Selección de Productos
 
-El sistema pre-selecciona productos que necesitan reposición basándose en:
+El sistema calcula automáticamente qué productos necesitas y cuánto pedir.
 
-### Criterios de Selección Automática
+### ¿Cómo se calcula la cantidad sugerida?
 
-1. **Stock bajo punto de reorden**
-2. **Cobertura menor a días configurados**
-3. **Clasificación ABC** (prioriza A y B)
+```
+Cantidad Sugerida = Stock Máximo - Stock Actual
+```
+
+Donde **Stock Máximo** se calcula según la clase ABC:
+
+| Clase | Fórmula MAX | Días Cobertura |
+|-------|-------------|----------------|
+| **A** | ROP + (P75 × 5 días) | 5 días |
+| **B** | ROP + (P75 × 7 días) | 7 días |
+| **C** | ROP + (P75 × 30 días) | 30 días |
+
+### Ejemplo Real: Harina PAN 1kg (Clase A)
+
+**Datos de producción** (tienda_17 Artigas):
+| Campo | Valor |
+|-------|-------|
+| P75 | 630 unid/día |
+| Stock Actual | -1,071 unid (deuda) |
+| Stock CEDI | 5,736 unid |
+| Unid/Bulto | 20 |
+
+**Cálculo:**
+```
+ROP = 1,454 unidades
+MAX = 1,454 + (630 × 7) = 5,864 unidades
+
+Déficit = MAX - Stock Actual
+Déficit = 5,864 - (-1,071) = 6,935 unidades
+
+Bultos = ceil(6,935 / 20) = 347 bultos
+```
+
+**Resultado:** El sistema sugiere **347 bultos** (6,940 unidades)
+
+---
+
+### Ejemplo Real: Azúcar Doce Día 1kg (Clase A)
+
+| Campo | Valor |
+|-------|-------|
+| P75 | 386 unid/día |
+| Stock Actual | 10 unid |
+| Stock CEDI | 6,933 unid |
+| Unid/Bulto | 30 |
+
+**Cálculo:**
+```
+MAX = 3,483 unidades
+Déficit = 3,483 - 10 = 3,473 unidades
+Bultos = ceil(3,473 / 30) = 116 bultos
+```
+
+**Resultado:** Sugiere **116 bultos**
+
+---
+
+### Ejemplo Real: Afeitadora Dorco (Clase C)
+
+| Campo | Valor |
+|-------|-------|
+| P75 | 22 unid/día |
+| Stock Actual | 0 unid |
+| Unid/Bulto | 2,000 |
+
+**Cálculo (Clase C usa 30 días cobertura):**
+```
+MAX = 712.50 unidades
+Déficit = 712.50 - 0 = 712.50 unidades
+Bultos = ceil(712.50 / 2000) = 1 bulto
+```
+
+**Resultado:** Sugiere **1 bulto** (2,000 unidades)
+
+> **Nota:** Clase C pide paquetes completos aunque parezca mucho. Esto es intencional para reducir frecuencia de pedidos.
 
 ### Tabla de Productos
 
 | Columna | Descripción |
 |---------|-------------|
-| **Producto** | Nombre y código |
-| **Stock Actual** | Existencia en destino |
-| **Venta Prom.** | Venta promedio diaria (20 días) |
-| **Sugerido** | Cantidad calculada por el sistema |
-| **Pedido** | Cantidad a pedir (editable) |
+| **Código** | Código del producto |
+| **Descripción** | Nombre del producto |
+| **U/B** | Unidades por bulto |
+| **P75** | Percentil 75 de ventas diarias |
+| **STK** | Stock actual en tienda |
+| **CEDI** | Stock disponible en CEDI |
 | **ABC** | Clasificación del producto |
+| **SS** | Stock de seguridad |
+| **ROP** | Punto de reorden |
+| **MAX** | Stock máximo |
+| **SUG** | Cantidad sugerida (bultos) |
+| **PEDIR** | Cantidad a pedir (editable) |
 
 ### Ajustar Cantidades
 
 Puedes modificar las cantidades sugeridas:
-- Click en el campo **Pedido**
+- Click en el campo **PEDIR**
 - Ingresa la cantidad deseada
 - El sistema recalculará totales
 
-### Agregar Productos
+### Filtros Disponibles
 
-Si necesitas agregar un producto no sugerido:
-1. Click en **Agregar Producto**
-2. Busca por nombre o código
-3. Ingresa la cantidad
+- **Por CEDI**: Ver solo productos de un CEDI específico
+- **Por Prioridad**: Alta (crítico), Media (urgente), Baja (óptimo)
+- **Por ABC**: Filtrar por clasificación A, B, C
+- **Buscar**: Por código o nombre (soporta múltiples separados por coma)
 
-### Quitar Productos
+### Casos Especiales
 
-Para remover un producto:
-- Click en el ícono de eliminar
-- O pon cantidad en 0
+#### Envío de Prueba (Productos Nuevos)
+
+Si un producto **no tiene ventas** en tu tienda pero **sí vende en otras tiendas de la región**, el sistema lo marca como "Envío de Prueba":
+
+- Usa el P75 de tiendas similares como referencia
+- Se trata como Clase C (conservador)
+- Aparece con badge amarillo "Envío Prueba"
+
+#### Generadores de Tráfico
+
+Productos con alto GAP (diferencia entre ranking de ventas y penetración en facturas):
+- Se tratan como Clase A aunque sean B o C
+- Nunca deben faltar
+- Aparecen con badge morado "Generador Tráfico"
 
 ## Paso 3: Confirmación
 
 Revisa el resumen del pedido:
 
 ### Resumen
-- Total de productos
-- Total de unidades
-- Valor estimado
+- Total de productos seleccionados
+- Total de bultos
+- Peso total estimado
 
 ### Validaciones
 El sistema verifica:
-- Cantidades mínimas de pedido
-- Disponibilidad en origen (si aplica)
-- Capacidad de almacenamiento
+- Cantidades mínimas de pedido (1 bulto mínimo)
+- Disponibilidad en CEDI
 
 ### Confirmar
 Click en **Crear Pedido** para finalizar.
@@ -88,11 +175,17 @@ Click en **Crear Pedido** para finalizar.
 
 El pedido queda en estado **Pendiente de Aprobación** y aparecerá en la lista principal.
 
-## Consejos
+## Estadísticas de Referencia
 
-- Revisa las cantidades sugeridas, el sistema aprende de tus ajustes
-- Prioriza productos clase A
-- Considera el lead time del proveedor
+Datos típicos de una tienda madura (tienda_17 Artigas):
+
+| Métrica | Valor |
+|---------|-------|
+| Total productos analizados | 1,703 |
+| Productos Clase A | 292 (17%) |
+| Productos Clase B | 539 (32%) |
+| Productos Clase C | 735 (43%) |
+| Con sugerencia > 0 | 1,298 (76%) |
 
 ## Próximos Pasos
 

@@ -1,4 +1,4 @@
-import { X, TrendingUp, AlertCircle, PackageCheck, Info, Zap, ShoppingCart } from 'lucide-react';
+import { X, TrendingUp, AlertCircle, PackageCheck, Info, Zap, ShoppingCart, FlaskConical } from 'lucide-react';
 
 interface PedidoSugeridoModalProps {
   isOpen: boolean;
@@ -18,6 +18,8 @@ interface PedidoSugeridoModalProps {
     stock_minimo: number;  // ROP
     stock_maximo: number;
     metodo_calculo: string;
+    razon_pedido?: string;
+    warnings_calculo?: string[];
   };
 }
 
@@ -91,7 +93,19 @@ export default function PedidoSugeridoModal({ isOpen, onClose, producto }: Pedid
             </h2>
             <p className="text-base text-gray-600 mt-2">
               Clase: <span className={`px-2 py-1 rounded text-sm font-bold ${getColorClase(claseEfectiva)}`}>{claseEfectiva}</span>
-              {' • '}Método: <span className="font-semibold">{producto.metodo_calculo === 'padre_prudente' ? 'Padre Prudente' : 'Estadístico'}</span>
+              {' • '}Método: <span className="font-semibold">
+                {producto.metodo_calculo === 'referencia_regional'
+                  ? 'Referencia Regional (Envío Prueba)'
+                  : producto.metodo_calculo === 'padre_prudente'
+                    ? 'Padre Prudente'
+                    : 'Estadístico'}
+              </span>
+              {producto.metodo_calculo === 'referencia_regional' && (
+                <span className="ml-2 px-2 py-1 bg-amber-100 text-amber-800 rounded text-sm font-bold">
+                  <FlaskConical className="inline w-4 h-4 mr-1" />
+                  Envío Prueba
+                </span>
+              )}
               {producto.es_generador_trafico && (
                 <span className="ml-2 px-2 py-1 bg-purple-100 text-purple-800 rounded text-sm font-bold">
                   <Zap className="inline w-4 h-4 mr-1" />
@@ -340,6 +354,35 @@ export default function PedidoSugeridoModal({ isOpen, onClose, producto }: Pedid
                   <p className="text-xs text-gray-500 mt-1">(antes del próximo pedido)</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Envío de Prueba - Referencia Regional */}
+          {producto.metodo_calculo === 'referencia_regional' && (
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <FlaskConical className="text-amber-600" size={20} />
+                <h4 className="font-semibold text-amber-900">Envío de Prueba</h4>
+              </div>
+              <p className="text-sm text-gray-700 mb-2">
+                Este producto <strong>no tiene historial de ventas</strong> en esta tienda, pero <strong>sí se vende en otras tiendas de la misma región</strong>.
+              </p>
+              <p className="text-sm text-gray-700 mb-2">
+                El P75 mostrado está basado en el comportamiento de ventas de tiendas similares (referencia regional).
+                Se sugiere un <strong>envío de prueba conservador</strong> para evaluar la demanda real.
+              </p>
+              {producto.warnings_calculo && producto.warnings_calculo.length > 0 && (
+                <div className="mt-2 text-xs text-amber-700 bg-amber-100 rounded p-2">
+                  {producto.warnings_calculo.map((w, i) => (
+                    <p key={i}>ℹ️ {w}</p>
+                  ))}
+                </div>
+              )}
+              {producto.razon_pedido && (
+                <p className="mt-2 text-xs font-medium text-amber-800">
+                  📝 {producto.razon_pedido}
+                </p>
+              )}
             </div>
           )}
 

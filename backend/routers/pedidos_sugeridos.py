@@ -977,9 +977,32 @@ async def calcular_productos_sugeridos(
             logger.warning(f"No se pudo cargar config tienda: {e}. Usando defaults.")
             set_config_tienda(None)
 
-        # 2. Query principal para calcular productos sugeridos desde PostgreSQL
+        # 2. Obtener la región de la tienda destino y tiendas de referencia
+        cursor.execute("""
+            SELECT region FROM ubicaciones WHERE id = %s
+        """, [request.tienda_destino])
+        region_row = cursor.fetchone()
+        tienda_region = region_row[0] if region_row and region_row[0] else 'VALENCIA'
+
+        # Obtener tiendas de la misma región (excluyendo la tienda destino y CEDIs)
+        cursor.execute("""
+            SELECT id, nombre FROM ubicaciones
+            WHERE region = %s
+              AND id != %s
+              AND tipo = 'tienda'
+              AND activo = true
+            ORDER BY nombre
+        """, [tienda_region, request.tienda_destino])
+        tiendas_referencia = cursor.fetchall()
+        tiendas_ref_ids = [t[0] for t in tiendas_referencia]
+        tiendas_ref_nombres = {t[0]: t[1] for t in tiendas_referencia}
+
+        logger.info(f"📍 Región: {tienda_region}, Tiendas referencia: {[t[1] for t in tiendas_referencia]}")
+
+        # 3. Query principal para calcular productos sugeridos desde PostgreSQL
         # NOTA: Esta consulta está diseñada para funcionar con tiendas nuevas que tienen
         # pocos días de historial. Si hay menos de 20 días, usa los datos disponibles.
+        # NUEVO: Incluye P75 de tiendas de referencia para productos sin ventas locales.
         query = """
             WITH ventas_diarias_disponibles AS (
                 -- Todas las ventas diarias disponibles (sin limite de dias)
@@ -1100,6 +1123,36 @@ async def calcular_productos_sugeridos(
                 FROM inventario_actual
                 WHERE ubicacion_id = %s
                 GROUP BY producto_id
+            ),
+            -- P75 de tiendas de referencia (misma región) para productos SIN ventas locales
+            -- Esto permite sugerir "envíos de prueba" basados en demanda de tiendas similares
+            ventas_referencia AS (
+                SELECT
+                    producto_id,
+                    fecha_venta::date as fecha,
+                    ubicacion_id,
+                    SUM(cantidad_vendida) as total_dia
+                FROM ventas
+                WHERE ubicacion_id = ANY(%s)  -- Tiendas de referencia (misma región)
+                  AND fecha_venta::date < CURRENT_DATE
+                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY producto_id, fecha_venta::date, ubicacion_id
+            ),
+            p75_referencia AS (
+                -- P75 promedio de las tiendas de referencia
+                SELECT
+                    producto_id,
+                    AVG(p75_tienda) as p75_ref,
+                    STRING_AGG(DISTINCT ubicacion_id, ',' ORDER BY ubicacion_id) as tiendas_con_venta
+                FROM (
+                    SELECT
+                        producto_id,
+                        ubicacion_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75_tienda
+                    FROM ventas_referencia
+                    GROUP BY producto_id, ubicacion_id
+                ) sub
+                GROUP BY producto_id
             )
             SELECT
                 p.codigo as codigo_producto,
@@ -1129,7 +1182,10 @@ async def calcular_productos_sugeridos(
                 COALESCE(est30.sigma_demanda, 0) as sigma_demanda,
                 COALESCE(est30.demanda_maxima, 0) as demanda_maxima,
                 -- Generador de trafico (GAP > 400)
-                COALESCE(p.es_generador_trafico, false) as es_generador_trafico
+                COALESCE(p.es_generador_trafico, false) as es_generador_trafico,
+                -- NUEVO: P75 de referencia (tiendas misma región)
+                COALESCE(p75ref.p75_ref, 0) as p75_referencia,
+                p75ref.tiendas_con_venta as tiendas_referencia
             FROM productos p
             LEFT JOIN ventas_20dias v20 ON p.codigo = v20.producto_id
             LEFT JOIN ventas_5dias v5 ON p.codigo = v5.producto_id
@@ -1139,6 +1195,7 @@ async def calcular_productos_sugeridos(
             LEFT JOIN estadisticas_30d est30 ON p.codigo = est30.producto_id
             LEFT JOIN inv_tienda it ON p.codigo = it.producto_id
             LEFT JOIN inv_cedi ic ON p.codigo = ic.producto_id
+            LEFT JOIN p75_referencia p75ref ON p.codigo = p75ref.producto_id
             WHERE p.activo = true
                 AND (v20.total_vendido > 0 OR it.stock_tienda > 0 OR ic.stock_cedi > 0)
             ORDER BY COALESCE(v20.total_vendido, 0) DESC
@@ -1148,7 +1205,8 @@ async def calcular_productos_sugeridos(
             request.tienda_destino,  # ventas_diarias_disponibles
             request.tienda_destino,  # ventas_30d_tienda (ABC por valor)
             request.tienda_destino,  # inv_tienda
-            request.cedi_origen      # inv_cedi
+            request.cedi_origen,     # inv_cedi
+            tiendas_ref_ids if tiendas_ref_ids else ['__NONE__']  # tiendas referencia (evitar error si vacío)
         ])
 
         rows = cursor.fetchall()
@@ -1157,6 +1215,7 @@ async def calcular_productos_sugeridos(
         logger.info(f"📊 Encontrados {len(rows)} productos con datos")
 
         productos = []
+        productos_sin_venta_con_ref = 0  # Contador para log
         for row in rows:
             codigo = row[0]
             cantidad_bultos = float(row[8]) if row[8] and row[8] > 0 else 1.0
@@ -1170,6 +1229,9 @@ async def calcular_productos_sugeridos(
             sigma_demanda = float(row[19]) if row[19] else 0.0
             demanda_maxima = float(row[20]) if row[20] else 0.0
             es_generador_trafico = bool(row[21]) if row[21] else False
+            # NUEVO: P75 de tiendas de referencia
+            p75_referencia = float(row[22]) if row[22] else 0.0
+            tiendas_referencia_str = row[23]  # String con IDs de tiendas separados por coma
 
             # Clasificacion ABC: usar ABC por valor (Pareto) del SQL si esta disponible
             venta_diaria_bultos = prom_20d / cantidad_bultos if cantidad_bultos > 0 else 0
@@ -1183,12 +1245,36 @@ async def calcular_productos_sugeridos(
             # Stock total en bultos para referencia
             stock_total_bultos = stock_tienda / cantidad_bultos if cantidad_bultos > 0 else 0
 
-            # Usar nuevo modulo de calculo ABC si hay demanda
-            if prom_p75 > 0 and clasificacion in ('A', 'B', 'C'):
+            # NUEVO: Detectar productos sin ventas locales (o muy pocas) pero con P75 de referencia y stock CEDI
+            # Estos son candidatos para "envío de prueba"
+            es_envio_prueba = False
+            p75_usado = prom_p75
+            nombre_tienda_ref = None
+
+            # Condición 1: Sin ventas locales pero con P75 de referencia
+            # Condición 2: Muy pocas ventas locales (P75 < 1 unidad) pero P75 regional significativamente mayor
+            sin_ventas_locales = prom_p75 == 0
+            pocas_ventas_locales = prom_p75 > 0 and prom_p75 < 1 and p75_referencia > prom_p75 * 3
+
+            if (sin_ventas_locales or pocas_ventas_locales) and p75_referencia > 0 and stock_cedi > 0:
+                # Producto sin ventas (o muy pocas) pero con demanda en tiendas de referencia
+                # y con stock disponible en CEDI -> Sugerir envío de prueba
+                es_envio_prueba = True
+                p75_usado = p75_referencia
+                clasificacion = 'C'  # Tratar como clase C (conservador) para envíos de prueba
+                productos_sin_venta_con_ref += 1
+
+                # Obtener nombre de la primera tienda de referencia
+                if tiendas_referencia_str:
+                    primera_tienda_id = tiendas_referencia_str.split(',')[0]
+                    nombre_tienda_ref = tiendas_ref_nombres.get(primera_tienda_id, primera_tienda_id)
+
+            # Usar nuevo modulo de calculo ABC si hay demanda (local o de referencia)
+            if p75_usado > 0 and clasificacion in ('A', 'B', 'C'):
                 resultado = calcular_inventario_simple(
-                    demanda_p75=prom_p75,
-                    sigma_demanda=sigma_demanda,
-                    demanda_maxima=demanda_maxima if demanda_maxima > 0 else prom_p75 * 2,
+                    demanda_p75=p75_usado,  # Usar P75 local o de referencia
+                    sigma_demanda=sigma_demanda if not es_envio_prueba else p75_usado * 0.3,  # Estimar sigma
+                    demanda_maxima=demanda_maxima if demanda_maxima > 0 else p75_usado * 2,
                     unidades_por_bulto=unidades_por_bulto,
                     stock_actual=stock_tienda,
                     stock_cedi=stock_cedi,
@@ -1196,14 +1282,25 @@ async def calcular_productos_sugeridos(
                     es_generador_trafico=es_generador_trafico
                 )
 
-                # Determinar razon del pedido (dejar vacío por defecto)
+                # Determinar razon del pedido
                 if resultado.tiene_sobrestock:
                     razon = "Sobrestock - No pedir"
+                elif es_envio_prueba:
+                    # Producto sin ventas locales -> Envío de prueba
+                    if nombre_tienda_ref:
+                        razon = f"Sin ventas - envío prueba (ref: {nombre_tienda_ref})"
+                    else:
+                        razon = "Sin ventas - envío prueba"
                 else:
                     razon = ""  # Usuario puede agregar notas manualmente
 
                 # Calcular dias cobertura actual
-                stock_dias = stock_tienda / prom_p75 if prom_p75 > 0 else 999
+                stock_dias = stock_tienda / p75_usado if p75_usado > 0 else 999
+
+                # Para envíos de prueba, agregar warning explicativo
+                warnings = resultado.warnings.copy() if resultado.warnings else []
+                if es_envio_prueba:
+                    warnings.append(f"P75 basado en tienda referencia: {nombre_tienda_ref or 'región'}")
 
                 productos.append(ProductoCalculado(
                     codigo_producto=codigo,
@@ -1219,7 +1316,7 @@ async def calcular_productos_sugeridos(
                     prom_ventas_5dias_unid=float(row[10]) if row[10] else 0.0,
                     prom_ventas_20dias_unid=prom_20d,
                     prom_top3_unid=prom_top3,
-                    prom_p75_unid=prom_p75,
+                    prom_p75_unid=p75_usado,  # Usar P75 local o de referencia
                     prom_ventas_8sem_unid=prom_20d,  # Aproximacion
                     prom_ventas_8sem_bultos=venta_diaria_bultos,
                     stock_tienda=stock_tienda,
@@ -1239,12 +1336,12 @@ async def calcular_productos_sugeridos(
                     cantidad_sugerida_bultos=float(resultado.cantidad_sugerida_bultos),
                     cantidad_ajustada_bultos=float(resultado.cantidad_sugerida_bultos),
                     razon_pedido=razon,
-                    metodo_calculo=resultado.metodo_usado,
+                    metodo_calculo="referencia_regional" if es_envio_prueba else resultado.metodo_usado,
                     tiene_sobrestock=resultado.tiene_sobrestock,
                     exceso_unidades=resultado.exceso_unidades,
                     exceso_bultos=resultado.exceso_bultos,
                     dias_exceso=resultado.dias_exceso,
-                    warnings_calculo=resultado.warnings
+                    warnings_calculo=warnings
                 ))
             else:
                 # Producto sin demanda o sin clasificacion - no sugerir pedido
@@ -1291,6 +1388,8 @@ async def calcular_productos_sugeridos(
                 ))
 
         logger.info(f"✅ Calculados {len(productos)} productos sugeridos")
+        if productos_sin_venta_con_ref > 0:
+            logger.info(f"📦 Incluidos {productos_sin_venta_con_ref} productos sin ventas locales (envíos de prueba basados en región {tienda_region})")
         return productos
 
     except Exception as e:
