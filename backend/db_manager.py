@@ -22,6 +22,7 @@ from db_config import (
     DB_MODE,
     DUCKDB_PATH,
     POSTGRES_DSN,
+    POSTGRES_DSN_PRIMARY,
     get_db_mode,
     is_duckdb_mode,
     is_postgres_mode,
@@ -64,7 +65,7 @@ def get_duckdb_connection(read_only: bool = True):
 @contextmanager
 def get_postgres_connection():
     """
-    Context manager para conexiones PostgreSQL
+    Context manager para conexiones PostgreSQL (READ - uses replica in prod)
     Usa connection pooling implícito de psycopg2
     """
     conn = None
@@ -77,6 +78,28 @@ def get_postgres_connection():
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error conectando a PostgreSQL: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+
+@contextmanager
+def get_postgres_connection_primary():
+    """
+    Context manager para conexiones PostgreSQL PRIMARY (WRITE operations)
+    Always connects to PRIMARY database, never to replica.
+    Use this for INSERT, UPDATE, DELETE, CREATE operations.
+    """
+    conn = None
+    try:
+        conn = psycopg2.connect(POSTGRES_DSN_PRIMARY)
+        conn.autocommit = False  # Transacciones explícitas
+        yield conn
+    except psycopg2.Error as e:
+        logger.error(f"PostgreSQL PRIMARY connection error: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error conectando a PostgreSQL PRIMARY: {str(e)}")
     finally:
         if conn:
             conn.close()
@@ -117,11 +140,10 @@ def get_db_connection(read_only: bool = True):
 @contextmanager
 def get_db_connection_write():
     """
-    Retorna una conexión WRITE a la base de datos primaria
+    Retorna una conexión WRITE a la base de datos PRIMARY.
 
-    Para migración dual-mode, escribe en AMBAS bases de datos:
-    - Primero escribe en PostgreSQL (nueva DB)
-    - Luego en DuckDB (legacy, para backward compatibility)
+    IMPORTANT: In Read Replica architecture, this ALWAYS connects to PRIMARY,
+    never to replica. Use this for INSERT, UPDATE, DELETE, CREATE operations.
 
     Usage:
         with get_db_connection_write() as conn:
@@ -135,8 +157,8 @@ def get_db_connection_write():
     if primary_db == "duckdb":
         with get_duckdb_connection(read_only=False) as conn:
             yield conn
-    else:  # postgresql
-        with get_postgres_connection() as conn:
+    else:  # postgresql - use PRIMARY connection for writes
+        with get_postgres_connection_primary() as conn:
             yield conn
 
 
@@ -280,6 +302,7 @@ __all__ = [
     'get_db_connection_write',
     'get_duckdb_connection',
     'get_postgres_connection',
+    'get_postgres_connection_primary',
     'execute_dual_write',
     'execute_query',
     'execute_query_dict',
@@ -299,6 +322,8 @@ def init_etl_tables():
     Crea las tablas necesarias para el ETL de inventario si no existen.
     Se ejecuta automáticamente al importar el módulo en modo PostgreSQL.
 
+    IMPORTANT: Uses PRIMARY connection because this creates tables (write operation).
+
     Tablas creadas:
     - ubicaciones: Tiendas y CEDIs
     - productos: Catálogo de productos
@@ -310,7 +335,7 @@ def init_etl_tables():
         return
 
     try:
-        with get_postgres_connection() as conn:
+        with get_postgres_connection_primary() as conn:
             cursor = conn.cursor()
 
             # 1. Tabla ubicaciones
