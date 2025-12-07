@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import http from '../../services/http';
 import type { OrderData, ProductoPedido } from './OrderWizard';
 import ProductSalesModal from '../sales/ProductSalesModal';
@@ -405,8 +406,25 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       if (nivelCriticidad !== filtroPrioridad) return false;
     }
 
-    // Filtro por búsqueda
+    // Filtro por búsqueda (soporta múltiples códigos separados por coma)
     if (!searchTerm) return true;
+
+    // Detectar si es búsqueda múltiple por códigos (contiene comas)
+    if (searchTerm.includes(',')) {
+      // Búsqueda múltiple por códigos
+      const codigos = searchTerm.split(',').map(c => c.trim()).filter(c => c.length > 0);
+      // Normalizar código del producto (quitar ceros a la izquierda)
+      const codigoNormalizado = p.codigo_producto.replace(/^0+/, '');
+      // Verificar si alguno de los códigos buscados coincide
+      return codigos.some(codigo => {
+        const codigoBuscado = codigo.replace(/^0+/, '');
+        return codigoNormalizado === codigoBuscado ||
+               p.codigo_producto === codigo ||
+               p.codigo_producto.endsWith(codigo);
+      });
+    }
+
+    // Búsqueda normal (texto libre)
     const term = searchTerm.toLowerCase();
     return (
       p.codigo_producto.toLowerCase().includes(term) ||
@@ -855,6 +873,66 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
 
   const productosIncluidos = productos.filter(p => p.incluido);
 
+  // Función para exportar a Excel
+  const exportarExcel = () => {
+    // Usar productos incluidos y ordenados
+    const productosParaExportar = productosOrdenados.filter(p => p.incluido);
+
+    if (productosParaExportar.length === 0) {
+      alert('No hay productos seleccionados para exportar');
+      return;
+    }
+
+    // Preparar datos para Excel siguiendo el formato solicitado
+    const datosExcel = productosParaExportar.map((p, index) => {
+      const pedidoUnidades = (p.cantidad_pedida_bultos || p.cantidad_ajustada_bultos) * p.cantidad_bultos;
+      const pedidoBultos = p.cantidad_pedida_bultos || p.cantidad_ajustada_bultos;
+
+      return {
+        '#': index + 1,
+        'Codigo': p.codigo_producto,
+        'Cod. Barra': p.codigo_barras || '',
+        'Descripción': p.descripcion_producto,
+        'Cuadrante': p.cuadrante_producto || '',
+        'ABC': p.clasificacion_abc || '',
+        'Pedido Unidades': pedidoUnidades,
+        'U/B': p.cantidad_bultos,
+        'Pedido Bultos': pedidoBultos,
+        'Stock Tienda': p.stock_tienda,
+        'Stock CEDI': p.stock_cedi_origen,
+      };
+    });
+
+    // Crear libro de Excel
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(datosExcel);
+
+    // Ajustar anchos de columnas
+    ws['!cols'] = [
+      { wch: 5 },   // #
+      { wch: 12 },  // Codigo
+      { wch: 15 },  // Cod. Barra
+      { wch: 50 },  // Descripción
+      { wch: 15 },  // Cuadrante
+      { wch: 5 },   // ABC
+      { wch: 15 },  // Pedido Unidades
+      { wch: 6 },   // U/B
+      { wch: 13 },  // Pedido Bultos
+      { wch: 12 },  // Stock Tienda
+      { wch: 12 },  // Stock CEDI
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Pedido');
+
+    // Generar nombre de archivo con fecha y tienda
+    const fecha = new Date().toISOString().split('T')[0];
+    const tiendaNombre = orderData.tienda_destino_nombre?.replace(/[^a-zA-Z0-9]/g, '_') || 'pedido';
+    const nombreArchivo = `Pedido_${tiendaNombre}_${fecha}.xlsx`;
+
+    // Descargar archivo
+    XLSX.writeFile(wb, nombreArchivo);
+  };
+
   const SortableHeader = ({ field, label, bgColor = 'bg-gray-100', width }: { field: SortField; label: string; bgColor?: string; width?: string }) => (
     <th
       onClick={() => handleSort(field)}
@@ -876,7 +954,19 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     <div className="w-full max-w-none px-2 space-y-4">
       {/* Header con información del pedido */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <h2 className="text-lg font-bold text-gray-900 mb-3">Productos Sugeridos</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold text-gray-900">Productos Sugeridos</h2>
+          <button
+            onClick={exportarExcel}
+            disabled={productosIncluidos.length === 0}
+            className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Exportar Excel ({productosIncluidos.length})
+          </button>
+        </div>
 
         {/* Información origen/destino + Estadísticas en una fila */}
         <div className="flex items-center gap-6 mb-3">
