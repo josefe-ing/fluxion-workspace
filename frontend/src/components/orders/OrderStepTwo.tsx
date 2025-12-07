@@ -128,11 +128,16 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       const needsUpdate = productos.some(p => p.cantidad_pedida_bultos === undefined);
 
       if (needsUpdate) {
-        const productosActualizados = productos.map(p => ({
-          ...p,
+        const productosActualizados = productos.map(p => {
           // Solo calcular si no está definido, de lo contrario preservar el valor del usuario
-          cantidad_pedida_bultos: p.cantidad_pedida_bultos !== undefined ? p.cantidad_pedida_bultos : calcularPedidoSugerido(p)
-        }));
+          const pedidoSugerido = p.cantidad_pedida_bultos !== undefined ? p.cantidad_pedida_bultos : calcularPedidoSugerido(p);
+          return {
+            ...p,
+            cantidad_pedida_bultos: pedidoSugerido,
+            // Solo preseleccionar si el pedido sugerido es > 0
+            incluido: pedidoSugerido > 0
+          };
+        });
 
         setProductos(productosActualizados);
         updateOrderData({ productos: productosActualizados });
@@ -902,6 +907,63 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             </div>
           )}
         </div>
+
+        {/* Resumen de productos seleccionados */}
+        {productos.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-200">
+            <div className="flex items-center gap-6 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-600">Seleccionados:</span>
+                <span className="text-sm font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded">
+                  {productos.filter(p => p.incluido).length}/{productos.length}
+                </span>
+              </div>
+
+              {/* Por Categoría */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-500">Cat:</span>
+                {(() => {
+                  const seleccionados = productos.filter(p => p.incluido);
+                  const porCategoria = seleccionados.reduce((acc, p) => {
+                    const cat = p.categoria || 'Sin Cat.';
+                    acc[cat] = (acc[cat] || 0) + 1;
+                    return acc;
+                  }, {} as Record<string, number>);
+
+                  return Object.entries(porCategoria)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([cat, count]) => (
+                      <span key={cat} className="text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+                        {cat.length > 10 ? cat.slice(0, 10) + '...' : cat}: {count}
+                      </span>
+                    ));
+                })()}
+              </div>
+
+              {/* Por ABC */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-500">ABC:</span>
+                {(() => {
+                  const seleccionados = productos.filter(p => p.incluido);
+                  const top50Count = seleccionados.filter(p => esTop50(p.codigo_producto)).length;
+                  const aCount = seleccionados.filter(p => getClasificacionABC(p) === 'A' && !esTop50(p.codigo_producto)).length;
+                  const bCount = seleccionados.filter(p => getClasificacionABC(p) === 'B').length;
+                  const cCount = seleccionados.filter(p => getClasificacionABC(p) === 'C').length;
+
+                  return (
+                    <>
+                      {top50Count > 0 && <span className="text-xs bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded font-medium">🏆{top50Count}</span>}
+                      {aCount > 0 && <span className="text-xs bg-red-50 text-red-700 px-1.5 py-0.5 rounded font-medium">A:{aCount}</span>}
+                      {bCount > 0 && <span className="text-xs bg-yellow-50 text-yellow-700 px-1.5 py-0.5 rounded font-medium">B:{bCount}</span>}
+                      {cCount > 0 && <span className="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-medium">C:{cCount}</span>}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Tabla de productos */}
@@ -1028,7 +1090,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       </button>
                     </td>
                     <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '55px' }}>
-                      {(producto.prom_ventas_20dias_unid / producto.cantidad_bultos).toFixed(1)}
+                      <span className="font-medium block">{(producto.prom_ventas_20dias_unid / producto.cantidad_bultos).toFixed(1)}</span>
+                      <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_ventas_20dias_unid)}u</span>
                     </td>
                     <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '55px' }}>
                       <button
@@ -1036,7 +1099,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
                         title="Click para ver comparativa TOP3 vs P75"
                       >
-                        {producto.prom_top3_unid ? (producto.prom_top3_unid / producto.cantidad_bultos).toFixed(1) : '-'}
+                        <span className="font-medium block">{producto.prom_top3_unid ? (producto.prom_top3_unid / producto.cantidad_bultos).toFixed(1) : '-'}</span>
+                        {producto.prom_top3_unid && <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_top3_unid)}u</span>}
                       </button>
                     </td>
                     <td className="bg-purple-50 px-2 py-1.5 text-xs text-purple-800 text-center font-semibold" style={{ width: '55px' }}>
@@ -1045,7 +1109,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
                         title="Click para ver comparativa TOP3 vs P75"
                       >
-                        {producto.prom_p75_unid ? (producto.prom_p75_unid / producto.cantidad_bultos).toFixed(1) : '-'}
+                        <span className="font-medium block">{producto.prom_p75_unid ? (producto.prom_p75_unid / producto.cantidad_bultos).toFixed(1) : '-'}</span>
+                        {producto.prom_p75_unid && <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_p75_unid)}u</span>}
                       </button>
                     </td>
                     <td className="bg-green-50 px-2 py-1.5 text-xs text-gray-800 text-center font-medium" style={{ width: '55px' }}>
@@ -1054,14 +1119,17 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         className="hover:text-green-700 hover:underline cursor-pointer transition-colors"
                         title="Click para ver histórico"
                       >
-                        {formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}
+                        <span className="font-medium block">{formatNumber(producto.stock_tienda / producto.cantidad_bultos, 1)}</span>
+                        <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_tienda)}u</span>
                       </button>
                     </td>
                     <td className="bg-green-50 px-2 py-1.5 text-xs text-amber-800 text-center font-medium" style={{ width: '55px' }}>
-                      {formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}
+                      <span className="font-medium block">{formatNumber(producto.stock_en_transito / producto.cantidad_bultos, 1)}</span>
+                      <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_en_transito)}u</span>
                     </td>
                     <td className="bg-green-50 px-2 py-1.5 text-xs text-blue-800 text-center font-medium" style={{ width: '55px' }}>
-                      {formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}
+                      <span className="font-medium block">{formatNumber((producto.stock_tienda + producto.stock_en_transito) / producto.cantidad_bultos, 1)}</span>
+                      <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_tienda + producto.stock_en_transito)}u</span>
                     </td>
                     <td className={`bg-green-50 px-2 py-1.5 text-xs text-center font-semibold ${stockCritico ? 'text-red-700' : 'text-indigo-800'}`} style={{ width: '50px' }}>
                       <button
@@ -1081,7 +1149,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         className="hover:text-green-900 hover:underline cursor-pointer transition-colors"
                         title="Click para ver histórico CEDI"
                       >
-                        {formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}
+                        <span className="font-medium block">{formatNumber(producto.stock_cedi_origen / producto.cantidad_bultos, 1)}</span>
+                        <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_cedi_origen)}u</span>
                       </button>
                     </td>
                     <td className="bg-orange-50 px-2 py-1.5 text-xs text-center" style={{ width: '45px' }}>
