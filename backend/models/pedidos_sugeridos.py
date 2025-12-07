@@ -107,8 +107,9 @@ class ProductoPedidoSugeridoBase(BaseModel):
 class ProductoPedidoSugeridoCalculado(ProductoPedidoSugeridoBase):
     """Producto con cálculos de sistema (response del endpoint de cálculo)"""
     # Cantidades SUGERIDAS (calculadas por el sistema)
-    cantidad_sugerida_unidades: Decimal
-    cantidad_sugerida_bultos: Decimal
+    # Acepta tanto 'cantidad_sugerida_unidades' como 'cantidad_sugerida_unid' del frontend
+    cantidad_sugerida_unidades: Decimal = Field(default=0, alias="cantidad_sugerida_unid")
+    cantidad_sugerida_bultos: Decimal = 0
     cantidad_sugerida_kg: Optional[Decimal] = None
 
     # Métricas de ventas usadas en el cálculo
@@ -149,6 +150,10 @@ class ProductoPedidoSugeridoCalculado(ProductoPedidoSugeridoBase):
     es_critico: bool = False
 
     class Config:
+        # Permitir campos extra del frontend sin fallar
+        extra = 'ignore'
+        # Permitir usar alias o nombre real
+        populate_by_name = True
         json_schema_extra = {
             "example": {
                 "codigo_producto": "12345",
@@ -170,12 +175,12 @@ class ProductoPedidoSugeridoCalculado(ProductoPedidoSugeridoBase):
 class ProductoPedidoSugeridoAjustado(ProductoPedidoSugeridoCalculado):
     """Producto con ajustes del usuario (para guardar pedido)"""
     # Cantidades PEDIDAS (ajustadas por usuario)
-    cantidad_pedida_unidades: Decimal
-    cantidad_pedida_bultos: Decimal
+    cantidad_pedida_unidades: Decimal = 0
+    cantidad_pedida_bultos: Decimal = 0
     cantidad_pedida_kg: Optional[Decimal] = None
 
-    # Totales calculados
-    total_unidades: Decimal
+    # Totales calculados (calculado si no viene)
+    total_unidades: Decimal = 0
     total_kg: Optional[Decimal] = None
 
     # Control de inclusión
@@ -185,11 +190,28 @@ class ProductoPedidoSugeridoAjustado(ProductoPedidoSugeridoCalculado):
     # Observaciones por línea
     observaciones: Optional[str] = None
 
-    @validator('cantidad_pedida_bultos', 'cantidad_pedida_unidades')
+    class Config:
+        # Permitir campos extra del frontend sin fallar
+        extra = 'ignore'
+        # Permitir usar alias o nombre real
+        populate_by_name = True
+
+    @validator('cantidad_pedida_bultos', 'cantidad_pedida_unidades', pre=True)
     def validate_positive(cls, v):
+        if v is None:
+            return 0
         if v < 0:
             raise ValueError('Las cantidades deben ser positivas')
         return v
+
+    @validator('total_unidades', pre=True, always=True)
+    def calcular_total_unidades(cls, v, values):
+        if v and v > 0:
+            return v
+        # Calcular si no viene: cantidad_pedida_bultos * cantidad_bultos
+        pedida = values.get('cantidad_pedida_bultos', 0) or 0
+        bultos = values.get('cantidad_bultos', 1) or 1
+        return pedida * bultos
 
 
 class ProductoPedidoSugeridoCompleto(ProductoPedidoSugeridoAjustado):

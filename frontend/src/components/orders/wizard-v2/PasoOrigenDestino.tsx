@@ -14,8 +14,8 @@ const REGION_CARACAS = {
     nombre: 'CEDI Caracas'
   },
   tiendas: [
-    { id: 'tienda_17', nombre: 'ARTIGAS', estado: 'Abierta hace 1 semana' },
-    { id: 'tienda_18', nombre: 'PARAISO', estado: 'Abre próximo sábado' }
+    { id: 'tienda_17', nombre: 'ARTIGAS' },
+    { id: 'tienda_18', nombre: 'PARAISO' }
   ]
 };
 
@@ -89,7 +89,7 @@ export default function PasoOrigenDestino({ onSiguiente, onCancelar }: PasoOrige
               <option value="">Seleccionar Tienda...</option>
               {REGION_CARACAS.tiendas.map((tienda) => (
                 <option key={tienda.id} value={tienda.id}>
-                  {tienda.nombre} - {tienda.estado}
+                  {tienda.nombre}
                 </option>
               ))}
             </select>

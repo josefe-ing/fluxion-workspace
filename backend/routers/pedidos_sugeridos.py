@@ -98,7 +98,7 @@ async def listar_pedidos(
                 total_productos, total_lineas, total_bultos, total_unidades, total_peso_kg,
                 fecha_entrega_solicitada, fecha_aprobacion, fecha_recepcion,
                 usuario_creador,
-                EXTRACT(DAY FROM (CURRENT_DATE - fecha_creacion::DATE))::INTEGER as dias_desde_creacion
+                COALESCE(EXTRACT(DAY FROM AGE(CURRENT_DATE, fecha_creacion::DATE)), 0)::INTEGER as dias_desde_creacion
             FROM pedidos_sugeridos
             WHERE 1=1
         """
@@ -500,6 +500,73 @@ async def obtener_pedido(
     except Exception as e:
         logger.error(f"❌ Error obteniendo pedido: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error obteniendo pedido: {str(e)}")
+
+
+# =====================================================================================
+# ELIMINAR PEDIDO
+# =====================================================================================
+
+@router.delete("/{pedido_id}")
+async def eliminar_pedido(
+    pedido_id: str,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Elimina un pedido y todos sus detalles asociados.
+    Solo se pueden eliminar pedidos en estado BORRADOR.
+    """
+    try:
+        cursor = conn.cursor()
+
+        # Verificar que el pedido existe y está en estado borrador
+        cursor.execute("""
+            SELECT id, numero_pedido, estado, tienda_destino_nombre
+            FROM pedidos_sugeridos
+            WHERE id = %s
+        """, [pedido_id])
+        pedido = cursor.fetchone()
+
+        if not pedido:
+            cursor.close()
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+        numero_pedido = pedido[1]
+        estado = pedido[2]
+        tienda = pedido[3]
+
+        # Solo permitir eliminar pedidos en borrador
+        if estado != ESTADO_BORRADOR:
+            cursor.close()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Solo se pueden eliminar pedidos en estado borrador. Estado actual: {estado}"
+            )
+
+        # Eliminar en cascada (las FK tienen ON DELETE CASCADE)
+        # Pero por seguridad eliminamos explícitamente
+        cursor.execute("DELETE FROM pedidos_sugeridos_comentarios WHERE pedido_id = %s", [pedido_id])
+        cursor.execute("DELETE FROM pedidos_sugeridos_historial WHERE pedido_id = %s", [pedido_id])
+        cursor.execute("DELETE FROM pedidos_sugeridos_devoluciones WHERE pedido_id = %s", [pedido_id])
+        cursor.execute("DELETE FROM pedidos_sugeridos_detalle WHERE pedido_id = %s", [pedido_id])
+        cursor.execute("DELETE FROM pedidos_sugeridos WHERE id = %s", [pedido_id])
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"🗑️ Pedido {numero_pedido} ({tienda}) eliminado exitosamente")
+
+        return {
+            "success": True,
+            "mensaje": f"Pedido {numero_pedido} eliminado exitosamente",
+            "pedido_id": pedido_id,
+            "numero_pedido": numero_pedido
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error eliminando pedido: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error eliminando pedido: {str(e)}")
 
 
 # =====================================================================================

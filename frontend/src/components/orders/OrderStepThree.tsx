@@ -362,17 +362,18 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
     setLoading(true);
     try {
       const payload = {
-        cedi_origen: orderData.cedi_origen,
+        cedi_origen_id: orderData.cedi_origen,
         cedi_origen_nombre: orderData.cedi_origen_nombre,
-        tienda_destino: orderData.tienda_destino,
+        tienda_destino_id: orderData.tienda_destino,
         tienda_destino_nombre: orderData.tienda_destino_nombre,
         dias_cobertura: 3,
         productos: orderData.productos,
+        devoluciones: [],
         observaciones: observaciones,
-        enviar_aprobacion: enviar
+        requiere_aprobacion: enviar
       };
 
-      const response = await http.post('/api/pedidos-sugeridos', payload);
+      const response = await http.post('/api/pedidos-sugeridos/', payload);
 
       const mensaje = enviar
         ? `Pedido ${response.data.numero_pedido} enviado para aprobacion del gerente!`

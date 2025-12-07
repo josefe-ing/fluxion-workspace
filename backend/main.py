@@ -8561,13 +8561,15 @@ class PedidoGuardadoResponse(BaseModel):
     total_bultos: float
     fecha_creacion: str
 
-@app.post("/api/pedidos-sugeridos", response_model=PedidoGuardadoResponse, tags=["Pedidos Sugeridos"])
-async def guardar_pedido_sugerido(request: GuardarPedidoRequest):
+# LEGACY ENDPOINT DISABLED - Use router in routers/pedidos_sugeridos.py instead
+# @app.post("/api/pedidos-sugeridos", response_model=PedidoGuardadoResponse, tags=["Pedidos Sugeridos"])
+async def guardar_pedido_sugerido_legacy_disabled(request: GuardarPedidoRequest):
     """
-    Guarda un pedido sugerido en la base de datos.
+    DISABLED: Guarda un pedido sugerido en la base de datos.
+    Use POST /api/pedidos-sugeridos/ (con trailing slash) del router en su lugar.
     """
     try:
-        logger.info(f"💾 Guardando pedido: CEDI {request.cedi_origen} → Tienda {request.tienda_destino}")
+        logger.info(f"💾 [LEGACY DISABLED] Guardando pedido: CEDI {request.cedi_origen} → Tienda {request.tienda_destino}")
 
         # Generar IDs únicos
         import uuid

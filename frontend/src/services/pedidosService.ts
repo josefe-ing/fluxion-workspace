@@ -128,6 +128,19 @@ export async function agregarComentarioProducto(
 }
 
 /**
+ * Elimina un pedido en estado borrador
+ */
+export async function eliminarPedido(pedidoId: string): Promise<{
+  success: boolean;
+  mensaje: string;
+  pedido_id: string;
+  numero_pedido: string;
+}> {
+  const response = await http.delete(`/api/pedidos-sugeridos/${pedidoId}`);
+  return response.data;
+}
+
+/**
  * Estados posibles de un pedido
  */
 export const ESTADOS_PEDIDO = {
