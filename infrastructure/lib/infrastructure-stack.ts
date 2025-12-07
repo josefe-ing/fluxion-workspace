@@ -168,7 +168,7 @@ PersistentKeepalive = 25`),
     });
 
     // ========================================
-    // 1c. RDS PostgreSQL v2.0 Database
+    // 1c. RDS PostgreSQL v2.0 Database (PRIMARY - for ETL writes)
     // ========================================
 
     // PostgreSQL RDS Instance for Fluxion v2.0
@@ -223,6 +223,38 @@ PersistentKeepalive = 25`),
       publiclyAccessible: false,  // Only accessible from within VPC
     });
 
+    // ========================================
+    // 1d. RDS Read Replica (for Backend reads)
+    // ========================================
+    // Separates read traffic (API/users) from write traffic (ETLs)
+    // Replication is automatic and near-instant (<1-5 seconds lag)
+    const dbReadReplica = new rds.DatabaseInstanceReadReplica(this, 'FluxionPostgresReadReplica', {
+      sourceDatabaseInstance: dbInstance,
+      instanceIdentifier: 'fluxion-postgres-replica',
+      instanceType: ec2.InstanceType.of(
+        ec2.InstanceClass.T3,
+        ec2.InstanceSize.SMALL  // Same size as primary
+      ),
+      vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+
+      // Storage inherits from primary (GP3, encrypted)
+      storageType: rds.StorageType.GP3,
+
+      // Monitoring
+      cloudwatchLogsExports: ['postgresql'],
+      cloudwatchLogsRetention: logs.RetentionDays.ONE_WEEK,
+      enablePerformanceInsights: false,
+
+      // Deletion protection
+      removalPolicy: cdk.RemovalPolicy.DESTROY,  // Replica can be recreated easily
+      deletionProtection: false,  // Allow deletion (can recreate from primary)
+
+      publiclyAccessible: false,
+    });
+
     // Security Group for PostgreSQL (will be configured below after ECS services are created)
     // This allows Backend and ETL tasks to connect to PostgreSQL
 
@@ -231,6 +263,13 @@ PersistentKeepalive = 25`),
       wireguardInstance,
       ec2.Port.tcp(5432),
       'Allow WireGuard bridge to access PostgreSQL'
+    );
+
+    // Grant WireGuard bridge access to Read Replica
+    dbReadReplica.connections.allowFrom(
+      wireguardInstance,
+      ec2.Port.tcp(5432),
+      'Allow WireGuard bridge to access PostgreSQL Read Replica'
     );
 
     // ========================================
@@ -568,8 +607,10 @@ PersistentKeepalive = 25`),
         ECS_CLUSTER_NAME: cluster.clusterName,
         // ETL task definition ARN will be set after etlTask is created
 
-        // PostgreSQL v2.0 Configuration
-        POSTGRES_HOST: dbInstance.dbInstanceEndpointAddress,
+        // PostgreSQL v2.0 Configuration - Backend reads from REPLICA
+        // This separates read traffic (users) from write traffic (ETLs)
+        POSTGRES_HOST: dbReadReplica.dbInstanceEndpointAddress,  // READ REPLICA for queries
+        POSTGRES_HOST_PRIMARY: dbInstance.dbInstanceEndpointAddress,  // PRIMARY for writes (if needed)
         POSTGRES_PORT: '5432',
         POSTGRES_DB: 'fluxion_production',
       },
@@ -606,11 +647,18 @@ PersistentKeepalive = 25`),
     // Allow ECS tasks to access EFS (keep for ETL compatibility)
     fileSystem.connections.allowDefaultPortFrom(backendService);
 
-    // Allow Backend to connect to PostgreSQL
+    // Allow Backend to connect to PostgreSQL Primary (for writes if needed)
     dbInstance.connections.allowFrom(
       backendService,
       ec2.Port.tcp(5432),
-      'Allow Backend service to access PostgreSQL'
+      'Allow Backend service to access PostgreSQL Primary'
+    );
+
+    // Allow Backend to connect to PostgreSQL Read Replica (for reads)
+    dbReadReplica.connections.allowFrom(
+      backendService,
+      ec2.Port.tcp(5432),
+      'Allow Backend service to access PostgreSQL Read Replica'
     );
 
     const alb = new elbv2.ApplicationLoadBalancer(this, 'FluxionALB', {
@@ -786,15 +834,19 @@ PersistentKeepalive = 25`),
     // ========================================
     // 10. Inventory ETL Scheduled Rule (Every 30 minutes at :00 and :30)
     // ========================================
-    // Runs inventory sync for 5 stores sequentially: tienda_01, tienda_08, tienda_17, tienda_20, cedi_seco
-    // Executes at exactly XX:00 and XX:30 every hour (e.g., 2:00pm, 2:30pm, 3:00pm, 3:30pm)
+    // Runs inventory sync for all stores sequentially
+    // Executes at XX:00 and XX:30 every hour, but ONLY between 6am-11pm Venezuela time
+    // Venezuela = UTC-4, so:
+    //   6am Venezuela = 10:00 UTC
+    //   11pm Venezuela = 03:00 UTC (next day)
+    // Hours in UTC: 10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2 (6am-11pm Venezuela)
     const inventorySyncRule = new events.Rule(this, 'FluxionInventorySync30Min', {
       schedule: events.Schedule.cron({
         minute: '0,30',  // Run at :00 and :30 of every hour
-        hour: '*',
+        hour: '10-23,0-2',  // 6am-11pm Venezuela time (UTC-4)
         weekDay: '*',
       }),
-      description: 'Sync inventory every 30 minutes for KLK stores + CEDIs (tienda_01, tienda_03, tienda_08, tienda_15, tienda_17, tienda_20, cedi_seco, cedi_frio, cedi_verde, cedi_caracas)',
+      description: 'Sync inventory every 30 minutes (6am-11pm Venezuela) for all stores + CEDIs',
       ruleName: 'fluxion-inventario-sync-30min',
       enabled: true,
     });
@@ -994,13 +1046,14 @@ PersistentKeepalive = 25`),
     // Runs unified ventas sync for ALL stores (KLK + Stellar) - similar to inventario
     // Script auto-detects sistema_pos for each tienda
     // Executes at XX:10 and XX:40 every hour (10 min offset from inventory)
+    // ONLY between 6am-11pm Venezuela time (same as inventory ETL)
     const ventasSyncRule = new events.Rule(this, 'FluxionVentasSync30Min', {
       schedule: events.Schedule.cron({
         minute: '10,40',  // Run at :10 and :40 of every hour (10 min after inventory)
-        hour: '*',
+        hour: '10-23,0-2',  // 6am-11pm Venezuela time (UTC-4)
         weekDay: '*',
       }),
-      description: 'Sync ventas every 30 minutes for all stores (KLK + Stellar) - PostgreSQL',
+      description: 'Sync ventas every 30 minutes (6am-11pm Venezuela) for all stores - PostgreSQL',
       ruleName: 'fluxion-ventas-sync-30min',
       enabled: true,
     });
@@ -1303,7 +1356,19 @@ PersistentKeepalive = 25`),
 
     new cdk.CfnOutput(this, 'PostgreSQLConnectionString', {
       value: `postgresql://{{username}}:{{password}}@${dbInstance.dbInstanceEndpointAddress}:${dbInstance.dbInstanceEndpointPort}/fluxion_production`,
-      description: 'PostgreSQL connection string template (retrieve credentials from Secrets Manager)',
+      description: 'PostgreSQL PRIMARY connection string (for ETL writes)',
+    });
+
+    // Read Replica Outputs
+    new cdk.CfnOutput(this, 'PostgreSQLReplicaEndpoint', {
+      value: dbReadReplica.dbInstanceEndpointAddress,
+      description: 'PostgreSQL Read Replica Endpoint (for Backend reads)',
+      exportName: 'FluxionPostgreSQLReplicaEndpoint',
+    });
+
+    new cdk.CfnOutput(this, 'PostgreSQLReplicaConnectionString', {
+      value: `postgresql://{{username}}:{{password}}@${dbReadReplica.dbInstanceEndpointAddress}:${dbReadReplica.dbInstanceEndpointPort}/fluxion_production`,
+      description: 'PostgreSQL READ REPLICA connection string (for API/user queries)',
     });
 
     // Documentation Outputs
