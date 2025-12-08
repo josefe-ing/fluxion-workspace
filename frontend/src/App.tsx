@@ -39,9 +39,9 @@ function ProtectedRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        {/* Default route: Ventas (migrado a PostgreSQL v2.0) */}
-        <Route index element={<Navigate to="/ventas" replace />} />
-        <Route path="dashboard" element={<Navigate to="/ventas" replace />} />
+        {/* Default route: Pedidos Sugeridos (faster load) */}
+        <Route index element={<Navigate to="/pedidos-sugeridos" replace />} />
+        <Route path="dashboard" element={<Navigate to="/pedidos-sugeridos" replace />} />
         <Route path="inventarios" element={<InventorySummary />} />
         <Route path="dashboard/:ubicacionId" element={<InventoryDashboard />} />
         <Route path="ventas" element={<SalesSummary />} />

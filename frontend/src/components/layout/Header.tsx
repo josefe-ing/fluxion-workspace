@@ -34,7 +34,7 @@ export default function Header() {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <div className="flex items-center">
-            <Link to="/ventas" className="flex items-center">
+            <Link to="/pedidos-sugeridos" className="flex items-center">
               <div className="text-2xl font-bold text-gray-900">
                 Fluxion <span className="text-gray-400">IA</span>
               </div>
