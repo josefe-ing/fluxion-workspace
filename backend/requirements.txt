@@ -3,9 +3,8 @@ fastapi>=0.119.1
 uvicorn[standard]>=0.34.0
 starlette>=0.47.2
 
-# Database
-duckdb>=1.4.0
-psycopg2-binary>=2.9.0  # PostgreSQL adapter para migración
+# Database - PostgreSQL only (DuckDB removed)
+psycopg2-binary>=2.9.0
 
 # Data Validation
 pydantic>=2.11.10

@@ -1,7 +1,7 @@
 """
 Módulo de autenticación para Fluxion AI
 Maneja login, verificación de tokens JWT y validación de usuarios
-Migrado a usar db_manager para dual-database support (DuckDB + PostgreSQL)
+PostgreSQL only - DuckDB removido (Dic 2025)
 """
 from datetime import datetime, timedelta
 from typing import Optional
@@ -12,8 +12,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 
-# Import db_manager para conexiones cross-database
-from db_manager import get_db_connection, get_db_connection_write, is_postgres_mode, execute_query_dict
+from db_manager import get_db_connection, get_db_connection_write
 
 # =====================================================================================
 # INICIALIZACIÓN DE TABLA USUARIOS (AUTO-CREATE SI NO EXISTE)
@@ -26,45 +25,26 @@ def init_usuarios_table():
     """
     try:
         with get_db_connection_write() as conn:
-            if is_postgres_mode():
-                cursor = conn.cursor()
-                # Crear tabla usuarios si no existe
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS usuarios (
-                        id VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-                        username VARCHAR(50) NOT NULL UNIQUE,
-                        password_hash VARCHAR(255) NOT NULL,
-                        nombre_completo VARCHAR(100),
-                        email VARCHAR(100),
-                        activo BOOLEAN DEFAULT TRUE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        ultimo_login TIMESTAMP
-                    )
-                """)
-                # Crear índices si no existen
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios(username)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_activo ON usuarios(activo) WHERE activo = TRUE")
-                conn.commit()
-                cursor.close()
-                print("✅ Tabla usuarios verificada/creada en PostgreSQL")
-            else:
-                # DuckDB
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS usuarios (
-                        id VARCHAR PRIMARY KEY,
-                        username VARCHAR(50) NOT NULL UNIQUE,
-                        password_hash VARCHAR(255) NOT NULL,
-                        nombre_completo VARCHAR(100),
-                        email VARCHAR(100),
-                        activo BOOLEAN DEFAULT TRUE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        ultimo_login TIMESTAMP
-                    )
-                """)
-                print("✅ Tabla usuarios verificada/creada en DuckDB")
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    id VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+                    username VARCHAR(50) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255) NOT NULL,
+                    nombre_completo VARCHAR(100),
+                    email VARCHAR(100),
+                    activo BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ultimo_login TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios(username)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_activo ON usuarios(activo) WHERE activo = TRUE")
+            conn.commit()
+            cursor.close()
+            print("✅ Tabla usuarios verificada/creada en PostgreSQL")
     except Exception as e:
         print(f"⚠️ Error inicializando tabla usuarios: {e}")
 
@@ -124,53 +104,36 @@ def get_password_hash(password: str) -> str:
 def authenticate_user(username: str, password: str) -> Optional[Usuario]:
     """Autentica un usuario verificando username y password"""
     try:
-        # Primero: SELECT con conexión read-only usando db_manager
         with get_db_connection(read_only=True) as conn:
-            if is_postgres_mode():
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, username, password_hash, nombre_completo, email, activo
-                    FROM usuarios
-                    WHERE username = %s AND activo = true
-                """, (username,))
-                result = cursor.fetchone()
-                cursor.close()
-            else:  # DuckDB
-                result = conn.execute("""
-                    SELECT id, username, password_hash, nombre_completo, email, activo
-                    FROM usuarios
-                    WHERE username = ? AND activo = true
-                """, (username,)).fetchone()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, username, password_hash, nombre_completo, email, activo
+                FROM usuarios
+                WHERE username = %s AND activo = true
+            """, (username,))
+            result = cursor.fetchone()
+            cursor.close()
 
             if not result:
                 return None
 
             user_id, username, password_hash, nombre_completo, email, activo = result
 
-            # Verificar contraseña
             if not verify_password(password, password_hash):
                 return None
 
-        # Segundo: UPDATE con conexión read-write (separada) usando db_manager
+        # UPDATE con conexión read-write
         try:
             with get_db_connection_write() as conn:
-                if is_postgres_mode():
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        UPDATE usuarios
-                        SET ultimo_login = CURRENT_TIMESTAMP
-                        WHERE id = %s
-                    """, (user_id,))
-                    conn.commit()
-                    cursor.close()
-                else:  # DuckDB
-                    conn.execute("""
-                        UPDATE usuarios
-                        SET ultimo_login = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                    """, (user_id,))
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE usuarios
+                    SET ultimo_login = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                """, (user_id,))
+                conn.commit()
+                cursor.close()
         except Exception as update_error:
-            # Log el error pero no fallar el login
             print(f"Warning: No se pudo actualizar ultimo_login: {update_error}")
 
         return Usuario(
@@ -216,26 +179,27 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     except JWTError:
         raise credentials_exception
 
-    # Buscar usuario en la base de datos usando execute_query_dict helper
     try:
-        results = execute_query_dict("""
-            SELECT id, username, nombre_completo, email, activo
-            FROM usuarios
-            WHERE username = ? AND activo = true
-        """, params=(username,))
+        with get_db_connection(read_only=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, username, nombre_completo, email, activo
+                FROM usuarios
+                WHERE username = %s AND activo = true
+            """, (username,))
+            row = cursor.fetchone()
+            cursor.close()
 
-        if not results or len(results) == 0:
-            raise credentials_exception
+            if not row:
+                raise credentials_exception
 
-        row = results[0]
-
-        return Usuario(
-            id=row['id'],
-            username=row['username'],
-            nombre_completo=row['nombre_completo'],
-            email=row['email'],
-            activo=row['activo']
-        )
+            return Usuario(
+                id=row[0],
+                username=row[1],
+                nombre_completo=row[2],
+                email=row[3],
+                activo=row[4]
+            )
     except Exception as e:
         print(f"Error en verify_token: {e}")
         raise credentials_exception
@@ -245,44 +209,27 @@ def create_user(username: str, password: str, nombre_completo: Optional[str] = N
     import uuid
 
     try:
-        # Usar conexión de escritura para crear usuarios
         with get_db_connection_write() as conn:
-            # Verificar si el usuario ya existe
-            if is_postgres_mode():
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT COUNT(*) FROM usuarios WHERE username = %s
-                """, (username,))
-                existing = cursor.fetchone()[0]
-                cursor.close()
-            else:  # DuckDB
-                existing = conn.execute("""
-                    SELECT COUNT(*) FROM usuarios WHERE username = ?
-                """, (username,)).fetchone()[0]
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM usuarios WHERE username = %s", (username,))
+            existing = cursor.fetchone()[0]
 
             if existing > 0:
+                cursor.close()
                 raise HTTPException(
                     status_code=400,
                     detail=f"El usuario '{username}' ya existe"
                 )
 
-            # Crear nuevo usuario
             user_id = str(uuid.uuid4())
             password_hash = get_password_hash(password)
 
-            if is_postgres_mode():
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (user_id, username, password_hash, nombre_completo, email, True))
-                conn.commit()
-                cursor.close()
-            else:  # DuckDB
-                conn.execute("""
-                    INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (user_id, username, password_hash, nombre_completo, email, True))
+            cursor.execute("""
+                INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (user_id, username, password_hash, nombre_completo, email, True))
+            conn.commit()
+            cursor.close()
 
             return Usuario(
                 id=user_id,
@@ -304,39 +251,27 @@ def auto_bootstrap_admin():
     """
     Auto-creates admin user if no users exist in the database
     Called automatically on startup
-    Uses db_manager for cross-database compatibility
     """
     import uuid
     try:
-        # First check with read-only connection
         with get_db_connection(read_only=True) as conn:
-            if is_postgres_mode():
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM usuarios")
-                count = cursor.fetchone()[0]
-                cursor.close()
-            else:  # DuckDB
-                count = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM usuarios")
+            count = cursor.fetchone()[0]
+            cursor.close()
 
         if count == 0:
-            # No users exist - create admin with write connection
             with get_db_connection_write() as conn:
                 user_id = str(uuid.uuid4())
                 password_hash = get_password_hash("admin123")
 
-                if is_postgres_mode():
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    """, (user_id, "admin", password_hash, "Administrador", "admin@fluxion.ai", True))
-                    conn.commit()
-                    cursor.close()
-                else:  # DuckDB
-                    conn.execute("""
-                        INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    """, (user_id, "admin", password_hash, "Administrador", "admin@fluxion.ai", True))
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO usuarios (id, username, password_hash, nombre_completo, email, activo, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, (user_id, "admin", password_hash, "Administrador", "admin@fluxion.ai", True))
+                conn.commit()
+                cursor.close()
 
                 print("✅ Auto-bootstrap: Admin user created (username: admin, password: admin123)")
                 return True

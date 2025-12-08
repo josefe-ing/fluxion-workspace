@@ -2,6 +2,8 @@
 """
 ETL Scheduler para Fluxion AI - Ventas Automáticas
 Ejecuta ETL de ventas diariamente a las 5:00 AM con política de reintentos
+
+PostgreSQL only - DuckDB removido completamente (Dic 2025)
 """
 
 import logging
@@ -10,7 +12,6 @@ from datetime import datetime, time, timedelta, date
 from typing import Dict, List, Optional, Set
 import threading
 from dataclasses import dataclass, field
-import duckdb
 from pathlib import Path
 import sys
 
@@ -57,10 +58,13 @@ class VentasETLScheduler:
     - Ejecuta diariamente a las 5:00 AM
     - Procesa todas las tiendas del día anterior
     - Implementa política de reintentos cada 20 minutos
+
+    PostgreSQL only - DuckDB removed (Dic 2025)
     """
 
-    def __init__(self, db_path: str, execution_hour: int = 5, execution_minute: int = 0):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: str = None, execution_hour: int = 5, execution_minute: int = 0):
+        # db_path is deprecated, kept for backward compatibility
+        self.db_path = Path(db_path) if db_path else None
         self.execution_time = time(hour=execution_hour, minute=execution_minute)
         self.status = SchedulerStatus()
         self.is_running_flag = False
@@ -115,19 +119,23 @@ class VentasETLScheduler:
         return next_exec
 
     def _get_all_tiendas(self) -> List[str]:
-        """Obtiene todas las tiendas desde la base de datos"""
+        """Obtiene todas las tiendas desde PostgreSQL"""
         try:
-            conn = duckdb.connect(str(self.db_path), read_only=True)
+            from db_manager import get_postgres_connection
 
-            # Obtener tiendas únicas que tienen ventas
-            query = """
-                SELECT DISTINCT ubicacion_id
-                FROM ventas_raw
-                ORDER BY ubicacion_id
-            """
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
 
-            result = conn.execute(query).fetchall()
-            conn.close()
+                # Obtener tiendas únicas que tienen ventas
+                query = """
+                    SELECT DISTINCT ubicacion_id
+                    FROM ventas
+                    ORDER BY ubicacion_id
+                """
+
+                cursor.execute(query)
+                result = cursor.fetchall()
+                cursor.close()
 
             tiendas = [row[0] for row in result]
             logger.info(f"📊 Tiendas encontradas: {len(tiendas)}")

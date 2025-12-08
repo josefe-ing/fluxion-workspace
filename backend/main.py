@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
 FastAPI Backend para Fluxion AI - La Granja Mercado
-Conecta con DuckDB para servir datos de inventario en tiempo real
+PostgreSQL only - DuckDB removido completamente (Dic 2025)
 """
 
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
-import duckdb
 from pathlib import Path
 from datetime import datetime, date, timedelta, time as dt_time
 import logging
@@ -17,7 +16,7 @@ import asyncio
 import os
 import time
 from contextlib import contextmanager
-from forecast_pmp import ForecastPMP
+# from forecast_pmp import ForecastPMP  # DEPRECADO: usa DuckDB
 from zoneinfo import ZoneInfo
 
 # Sentry para monitoreo de errores (optional)
@@ -60,11 +59,6 @@ from middleware.tenant import TenantMiddleware
 
 # Importar routers
 from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
-from routers.analisis_xyz_router import router as analisis_xyz_router
-from routers.config_inventario_router import router as config_inventario_router
-from routers.abc_v2_router import router as abc_v2_router
-from routers.nivel_objetivo_router import router as nivel_objetivo_router
-from routers.etl_tracking_router import router as etl_tracking_router
 from routers.generadores_trafico_router import router as generadores_trafico_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
@@ -195,11 +189,6 @@ app.add_middleware(
 
 # Registrar routers
 app.include_router(pedidos_sugeridos_router)
-app.include_router(analisis_xyz_router)
-app.include_router(config_inventario_router)
-app.include_router(abc_v2_router)
-app.include_router(nivel_objetivo_router)
-app.include_router(etl_tracking_router)
 app.include_router(generadores_trafico_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
@@ -322,8 +311,8 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 # Importar utilidades de base de datos
-from db_manager import get_db_connection, get_db_connection_write, execute_query_dict, is_postgres_mode, get_postgres_connection
-from database import DB_PATH
+from db_manager import get_db_connection, get_db_connection_write, execute_query_dict, get_postgres_connection
+# from database import DB_PATH  # DEPRECADO: ya no usamos DuckDB
 
 # Modelos Pydantic
 class UbicacionResponse(BaseModel):
@@ -857,7 +846,7 @@ async def health_check():
         "status": "OK",
         "service": "Fluxion AI - La Granja Mercado API",
         "timestamp": datetime.now().isoformat(),
-        "database": "DuckDB Connected" if DB_PATH.exists() else "Database Missing"
+        "database": "PostgreSQL"
     }
 
 @app.get("/maintenance-status", tags=["Health"])
@@ -1075,49 +1064,27 @@ async def get_ubicaciones_summary():
                     ubicacion_nombres_klk[tienda_id] = tienda_id
 
             # Query: Resumen de inventario por ubicación y almacén
-            # PostgreSQL v2.0: usa inventario_actual con LEFT JOIN a ubicaciones y almacenes
-            if is_postgres_mode():
-                query = """
-                    SELECT
-                        ia.ubicacion_id,
-                        u.nombre as ubicacion_nombre,
-                        'tienda' as tipo_ubicacion,
-                        COUNT(DISTINCT ia.producto_id) as total_productos,
-                        SUM(CASE WHEN ia.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
-                        SUM(CASE WHEN ia.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
-                        TO_CHAR(MAX(ia.fecha_actualizacion), 'YYYY-MM-DD HH24:MI:SS') as ultima_actualizacion,
-                        ia.almacen_codigo
-                    FROM inventario_actual ia
-                    LEFT JOIN ubicaciones u ON ia.ubicacion_id = u.id
-                    GROUP BY ia.ubicacion_id, u.nombre, ia.almacen_codigo
-                    ORDER BY ia.ubicacion_id, ia.almacen_codigo
-                """
-            else:
-                # DuckDB usa CAST() para fechas y tiene tabla stock_actual
-                query = """
-                    SELECT
-                        sa.ubicacion_id,
-                        sa.ubicacion_id as ubicacion_nombre,
-                        'tienda' as tipo_ubicacion,
-                        COUNT(DISTINCT sa.producto_id) as total_productos,
-                        SUM(CASE WHEN sa.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
-                        SUM(CASE WHEN sa.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
-                        CAST(MAX(sa.ultima_actualizacion) AS VARCHAR) as ultima_actualizacion,
-                        sa.almacen_codigo
-                    FROM stock_actual sa
-                    WHERE sa.ubicacion_id IN ('""" + "','".join(tiendas_klk_ids) + """')
-                    GROUP BY sa.ubicacion_id, sa.almacen_codigo
-                    ORDER BY sa.ubicacion_id, sa.almacen_codigo
-                """
+            query = """
+                SELECT
+                    ia.ubicacion_id,
+                    u.nombre as ubicacion_nombre,
+                    'tienda' as tipo_ubicacion,
+                    COUNT(DISTINCT ia.producto_id) as total_productos,
+                    SUM(CASE WHEN ia.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
+                    SUM(CASE WHEN ia.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
+                    TO_CHAR(MAX(ia.fecha_actualizacion), 'YYYY-MM-DD HH24:MI:SS') as ultima_actualizacion,
+                    ia.almacen_codigo
+                FROM inventario_actual ia
+                LEFT JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                GROUP BY ia.ubicacion_id, u.nombre, ia.almacen_codigo
+                ORDER BY ia.ubicacion_id, ia.almacen_codigo
+            """
 
-            # Ejecutar query según base de datos
-            if is_postgres_mode():
-                cursor = conn.cursor()
-                cursor.execute(query)
-                result = cursor.fetchall()
-                cursor.close()
-            else:
-                result = conn.execute(query).fetchall()
+            # Ejecutar query
+            cursor = conn.cursor()
+            cursor.execute(query)
+            result = cursor.fetchall()
+            cursor.close()
 
             summary = []
             for row in result:
@@ -1150,32 +1117,23 @@ async def get_ubicaciones_summary():
 
 @app.get("/api/ubicaciones/{ubicacion_id}/stock-params", tags=["Ubicaciones"])
 async def get_stock_params(ubicacion_id: str):
-    """Obtiene los parámetros de stock para una tienda específica desde base de datos"""
-    try:
-        with get_db_connection() as conn:
-            from services.config_inventario_service import ConfigInventarioService
+    """Obtiene los parámetros de stock para una tienda (valores por defecto)"""
+    # Valores por defecto hardcodeados (antes venían de DuckDB)
+    DEFAULTS = {
+        'a':  {'min': 2.0, 'seg': 1.0, 'max': 5.0},
+        'ab': {'min': 2.0, 'seg': 2.5, 'max': 7.0},
+        'b':  {'min': 3.0, 'seg': 2.0, 'max': 12.0},
+        'bc': {'min': 9.0, 'seg': 3.0, 'max': 17.0},
+        'c':  {'min': 15.0, 'seg': 7.0, 'max': 26.0},
+    }
 
-            # Obtener multiplicadores para cada categoría y clasificación ABC
-            # Nota: Este endpoint retorna config para categoria 'seco' por compatibilidad
-            # En el frontend se debe llamar con categoría específica si se necesita
+    result = {"ubicacion_id": ubicacion_id}
+    for abc, vals in DEFAULTS.items():
+        result[f"stock_min_mult_{abc}"] = vals['min']
+        result[f"stock_seg_mult_{abc}"] = vals['seg']
+        result[f"stock_max_mult_{abc}"] = vals['max']
 
-            result = {}
-            result["ubicacion_id"] = ubicacion_id
-
-            # Obtener config para cada ABC en categoría SECO (mayoría de productos)
-            for abc in ['A', 'AB', 'B', 'BC', 'C']:
-                config = ConfigInventarioService.obtener_config_global('seco', abc, conn)
-
-                suffix = abc.lower()
-                result[f"stock_min_mult_{suffix}"] = config['stock_min_mult']
-                result[f"stock_seg_mult_{suffix}"] = config['stock_seg_mult']
-                result[f"stock_max_mult_{suffix}"] = config['stock_max_mult']
-
-            return result
-
-    except Exception as e:
-        logger.error(f"Error obteniendo parámetros de stock: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+    return result
 
 
 @app.get("/api/ubicaciones/{ubicacion_id}/almacenes", response_model=AlmacenesUbicacionResponse, tags=["Ubicaciones"])
@@ -1305,39 +1263,21 @@ async def get_productos(categoria: Optional[str] = None, activo: bool = True):
 async def get_categorias():
     """
     Obtiene todas las categorías de productos
-
-    PostgreSQL v2.0: usa tabla productos
-    DuckDB legacy: usa tabla inventario_raw
     """
     try:
-        if is_postgres_mode():
-            # PostgreSQL v2.0: obtener categorías desde tabla productos
-            query = """
-                SELECT DISTINCT categoria
-                FROM productos
-                WHERE activo = true
-                    AND categoria IS NOT NULL
-                ORDER BY categoria
-            """
-        else:
-            # DuckDB legacy: usa inventario_raw
-            query = """
-                SELECT DISTINCT categoria
-                FROM inventario_raw
-                WHERE activo = true
-                    AND categoria IS NOT NULL
-                    AND tipo_ubicacion != 'mayorista'
-                ORDER BY categoria
-            """
+        query = """
+            SELECT DISTINCT categoria
+            FROM productos
+            WHERE activo = true
+                AND categoria IS NOT NULL
+            ORDER BY categoria
+        """
 
         with get_db_connection() as conn:
-            if is_postgres_mode():
-                cursor = conn.cursor()
-                cursor.execute(query)
-                result = cursor.fetchall()
-                cursor.close()
-            else:
-                result = conn.execute(query).fetchall()
+            cursor = conn.cursor()
+            cursor.execute(query)
+            result = cursor.fetchall()
+            cursor.close()
 
             return [row[0] for row in result]
 
@@ -3459,8 +3399,7 @@ async def get_stock(
     """
     Obtiene el estado del stock actual con paginación server-side
 
-    PostgreSQL v2.0: usa inventario_actual con JOINs a productos y ubicaciones
-    DuckDB legacy: usa inventario_raw
+    PostgreSQL: usa inventario_actual con JOINs a productos y ubicaciones
 
     Args:
         ubicacion_id: Filtrar por ID de ubicación
@@ -3480,233 +3419,130 @@ async def get_stock(
         if page_size < 1 or page_size > 500:
             raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 500")
 
-        if is_postgres_mode():
-            # ===================================================================
-            # PostgreSQL v2.0: Query simplificado usando inventario_actual
-            # ===================================================================
-            count_query = """
-                SELECT COUNT(*)
-                FROM inventario_actual ia
-                INNER JOIN productos p ON ia.producto_id = p.id
-                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
-                WHERE p.activo = true AND u.activo = true
-            """
+        # Query simplificado usando inventario_actual
+        count_query = """
+            SELECT COUNT(*)
+            FROM inventario_actual ia
+            INNER JOIN productos p ON ia.producto_id = p.id
+            INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+            WHERE p.activo = true AND u.activo = true
+        """
 
-            query = """
-                SELECT DISTINCT ON (ia.producto_id, ia.ubicacion_id)
-                    ia.ubicacion_id,
-                    u.nombre as ubicacion_nombre,
-                    'tienda' as tipo_ubicacion,
-                    ia.producto_id,
-                    COALESCE(p.codigo, '') as codigo_producto,
-                    COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
-                    COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
-                    COALESCE(p.marca, '') as marca,
-                    ia.cantidad as stock_actual,
-                    NULL as stock_minimo,
-                    NULL as stock_maximo,
-                    NULL as punto_reorden,
-                    NULL as precio_venta,
-                    NULL as cantidad_bultos,
-                    CASE
-                        WHEN ia.cantidad = 0 THEN 'sin_stock'
-                        WHEN ia.cantidad < 0 THEN 'stock_negativo'
-                        ELSE 'normal'
-                    END as estado_stock,
-                    NULL as dias_cobertura_actual,
-                    false as es_producto_estrella,
-                    TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion,
-                    NULL as peso_producto_kg,
-                    NULL as peso_total_kg
-                FROM inventario_actual ia
-                INNER JOIN productos p ON ia.producto_id = p.id
-                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
-                WHERE p.activo = true AND u.activo = true
-            """
+        query = """
+            SELECT DISTINCT ON (ia.producto_id, ia.ubicacion_id)
+                ia.ubicacion_id,
+                u.nombre as ubicacion_nombre,
+                'tienda' as tipo_ubicacion,
+                ia.producto_id,
+                COALESCE(p.codigo, '') as codigo_producto,
+                COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
+                COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
+                COALESCE(p.marca, '') as marca,
+                ia.cantidad as stock_actual,
+                NULL as stock_minimo,
+                NULL as stock_maximo,
+                NULL as punto_reorden,
+                NULL as precio_venta,
+                NULL as cantidad_bultos,
+                CASE
+                    WHEN ia.cantidad = 0 THEN 'sin_stock'
+                    WHEN ia.cantidad < 0 THEN 'stock_negativo'
+                    ELSE 'normal'
+                END as estado_stock,
+                NULL as dias_cobertura_actual,
+                false as es_producto_estrella,
+                TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion,
+                NULL as peso_producto_kg,
+                NULL as peso_total_kg
+            FROM inventario_actual ia
+            INNER JOIN productos p ON ia.producto_id = p.id
+            INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+            WHERE p.activo = true AND u.activo = true
+        """
 
-            stats_query = """
-                SELECT
-                    SUM(CASE WHEN ia.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
-                    SUM(CASE WHEN ia.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo
-                FROM inventario_actual ia
-                INNER JOIN productos p ON ia.producto_id = p.id
-                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
-                WHERE p.activo = true AND u.activo = true
-            """
+        stats_query = """
+            SELECT
+                SUM(CASE WHEN ia.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
+                SUM(CASE WHEN ia.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo
+            FROM inventario_actual ia
+            INNER JOIN productos p ON ia.producto_id = p.id
+            INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+            WHERE p.activo = true AND u.activo = true
+        """
 
-            params = []
+        params = []
 
-            # Aplicar filtros
-            if ubicacion_id:
-                query += " AND ia.ubicacion_id = %s"
-                count_query += " AND ia.ubicacion_id = %s"
-                stats_query += " AND ia.ubicacion_id = %s"
-                params.append(ubicacion_id)
+        # Aplicar filtros
+        if ubicacion_id:
+            query += " AND ia.ubicacion_id = %s"
+            count_query += " AND ia.ubicacion_id = %s"
+            stats_query += " AND ia.ubicacion_id = %s"
+            params.append(ubicacion_id)
 
-            if almacen_codigo:
-                query += " AND ia.almacen_codigo = %s"
-                count_query += " AND ia.almacen_codigo = %s"
-                stats_query += " AND ia.almacen_codigo = %s"
-                params.append(almacen_codigo)
+        if almacen_codigo:
+            query += " AND ia.almacen_codigo = %s"
+            count_query += " AND ia.almacen_codigo = %s"
+            stats_query += " AND ia.almacen_codigo = %s"
+            params.append(almacen_codigo)
 
-            if categoria:
-                query += " AND p.categoria = %s"
-                count_query += " AND p.categoria = %s"
-                stats_query += " AND p.categoria = %s"
-                params.append(categoria)
+        if categoria:
+            query += " AND p.categoria = %s"
+            count_query += " AND p.categoria = %s"
+            stats_query += " AND p.categoria = %s"
+            params.append(categoria)
 
-            if search:
-                search_term = f"%{search}%"
-                query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
-                count_query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
-                stats_query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
-                params.extend([search_term, search_term])
+        if search:
+            search_term = f"%{search}%"
+            query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
+            count_query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
+            stats_query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
+            params.extend([search_term, search_term])
 
-            # Ejecutar queries con PostgreSQL
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
+        # Ejecutar queries
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
 
-                # Count
-                cursor.execute(count_query, tuple(params))
-                total_items = cursor.fetchone()[0]
+            # Count
+            cursor.execute(count_query, tuple(params))
+            total_items = cursor.fetchone()[0]
 
-                # Stats
-                cursor.execute(stats_query, tuple(params))
-                stats_result = cursor.fetchone()
-                stock_cero = stats_result[0] if stats_result[0] is not None else 0
-                stock_negativo = stats_result[1] if stats_result[1] is not None else 0
+            # Stats
+            cursor.execute(stats_query, tuple(params))
+            stats_result = cursor.fetchone()
+            stock_cero = stats_result[0] if stats_result[0] is not None else 0
+            stock_negativo = stats_result[1] if stats_result[1] is not None else 0
 
-                # Paginación
-                total_pages = (total_items + page_size - 1) // page_size
-                offset = (page - 1) * page_size
+            # Paginación
+            total_pages = (total_items + page_size - 1) // page_size
+            offset = (page - 1) * page_size
 
-                # Ordenamiento - DISTINCT ON columns must appear first, but then sorted by user-requested field
-                if sort_by == 'stock':
-                    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                    # DISTINCT ON requires these fields first, but we can sub-sort by cantidad
-                    query += f" ORDER BY ia.producto_id, ia.ubicacion_id"
-                    # Now add pagination query with proper sort by cantidad
-                    paginated_query = f"""
-                        SELECT * FROM ({query}) AS distinct_rows
-                        ORDER BY stock_actual {order_direction}
-                    """
-                    query = paginated_query
-                elif sort_by == 'peso':
-                    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                    query += f" ORDER BY ia.producto_id, ia.ubicacion_id"
-                    paginated_query = f"""
-                        SELECT * FROM ({query}) AS distinct_rows
-                        ORDER BY peso_total_kg {order_direction} NULLS LAST
-                    """
-                    query = paginated_query
-                else:
-                    query += " ORDER BY ia.producto_id, ia.ubicacion_id, ia.fecha_actualizacion DESC"
+            # Ordenamiento - DISTINCT ON columns must appear first, but then sorted by user-requested field
+            if sort_by == 'stock':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                # DISTINCT ON requires these fields first, but we can sub-sort by cantidad
+                query += f" ORDER BY ia.producto_id, ia.ubicacion_id"
+                # Now add pagination query with proper sort by cantidad
+                paginated_query = f"""
+                    SELECT * FROM ({query}) AS distinct_rows
+                    ORDER BY stock_actual {order_direction}
+                """
+                query = paginated_query
+            elif sort_by == 'peso':
+                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+                query += f" ORDER BY ia.producto_id, ia.ubicacion_id"
+                paginated_query = f"""
+                    SELECT * FROM ({query}) AS distinct_rows
+                    ORDER BY peso_total_kg {order_direction} NULLS LAST
+                """
+                query = paginated_query
+            else:
+                query += " ORDER BY ia.producto_id, ia.ubicacion_id, ia.fecha_actualizacion DESC"
 
-                query += f" LIMIT {page_size} OFFSET {offset}"
+            query += f" LIMIT {page_size} OFFSET {offset}"
 
-                cursor.execute(query, tuple(params))
-                result = cursor.fetchall()
-                cursor.close()
-
-        else:
-            # ===================================================================
-            # DuckDB legacy: mantener query original con inventario_raw
-            # ===================================================================
-            count_query = """
-                SELECT COUNT(*)
-                FROM inventario_raw inv
-                WHERE inv.activo = true
-            """
-
-            query = """
-                SELECT
-                    inv.ubicacion_id,
-                    inv.ubicacion_nombre,
-                    inv.tipo_ubicacion,
-                    inv.codigo_producto as producto_id,
-                    inv.codigo_producto,
-                    inv.descripcion_producto,
-                    inv.categoria,
-                    inv.marca,
-                    inv.cantidad_actual as stock_actual,
-                    inv.stock_minimo,
-                    inv.stock_maximo,
-                    inv.punto_reorden,
-                    inv.precio_venta_actual as precio_venta,
-                    inv.cantidad_bultos,
-                    inv.estado_stock,
-                    inv.dias_sin_movimiento as dias_cobertura_actual,
-                    false as es_producto_estrella,
-                    CAST(inv.fecha_extraccion AS VARCHAR) as fecha_extraccion,
-                    inv.peso_producto as peso_producto_kg,
-                    (inv.cantidad_actual * inv.peso_producto) as peso_total_kg
-                FROM inventario_raw inv
-                WHERE inv.activo = true
-            """
-
-            stats_query = """
-                SELECT
-                    SUM(CASE WHEN inv.cantidad_actual = 0 THEN 1 ELSE 0 END) as stock_cero,
-                    SUM(CASE WHEN inv.cantidad_actual < 0 THEN 1 ELSE 0 END) as stock_negativo
-                FROM inventario_raw inv
-                WHERE inv.activo = true
-            """
-
-            params = []
-
-            # Aplicar filtros
-            if ubicacion_id:
-                query += " AND inv.ubicacion_id = ?"
-                count_query += " AND inv.ubicacion_id = ?"
-                stats_query += " AND inv.ubicacion_id = ?"
-                params.append(ubicacion_id)
-
-            if categoria:
-                query += " AND inv.categoria = ?"
-                count_query += " AND inv.categoria = ?"
-                stats_query += " AND inv.categoria = ?"
-                params.append(categoria)
-
-            if estado:
-                query += " AND inv.estado_stock = ?"
-                count_query += " AND inv.estado_stock = ?"
-                stats_query += " AND inv.estado_stock = ?"
-                params.append(estado)
-
-            if search:
-                search_term = f"%{search}%"
-                query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
-                count_query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
-                stats_query += " AND (inv.codigo_producto ILIKE ? OR inv.descripcion_producto ILIKE ?)"
-                params.extend([search_term, search_term])
-
-            # Ejecutar queries con DuckDB
-            with get_db_connection() as conn:
-                # Count
-                total_items = conn.execute(count_query, params).fetchone()[0]
-
-                # Stats
-                stats_result = conn.execute(stats_query, params).fetchone()
-                stock_cero = stats_result[0] if stats_result[0] is not None else 0
-                stock_negativo = stats_result[1] if stats_result[1] is not None else 0
-
-                # Paginación
-                total_pages = (total_items + page_size - 1) // page_size
-                offset = (page - 1) * page_size
-
-                # Ordenamiento
-                if sort_by == 'stock':
-                    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                    query += f" ORDER BY (CASE WHEN inv.cantidad_bultos > 0 THEN inv.cantidad_actual / inv.cantidad_bultos ELSE inv.cantidad_actual END) {order_direction}, inv.descripcion_producto"
-                elif sort_by == 'peso':
-                    order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                    query += f" ORDER BY (inv.cantidad_actual * inv.peso_producto) {order_direction} NULLS LAST, inv.descripcion_producto"
-                else:
-                    query += " ORDER BY inv.tipo_ubicacion, inv.ubicacion_nombre, inv.categoria, inv.descripcion_producto"
-
-                query += f" LIMIT {page_size} OFFSET {offset}"
-
-                result = conn.execute(query, params).fetchall()
+            cursor.execute(query, tuple(params))
+            result = cursor.fetchall()
+            cursor.close()
 
         # Construir respuesta (común para ambos modos)
         stock_data = []
@@ -3781,208 +3617,157 @@ async def get_anomalias_stock(
         Lista de productos con stock negativo y su evidencia de ventas
     """
     try:
-        if is_postgres_mode():
-            with get_postgres_connection() as conn:
-                cursor = conn.cursor()
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
 
-                # Obtener nombre de la ubicación
-                cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", (ubicacion_id,))
-                ubicacion_row = cursor.fetchone()
-                if not ubicacion_row:
-                    raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
-                ubicacion_nombre = ubicacion_row[0]
+            # Obtener nombre de la ubicación
+            cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", (ubicacion_id,))
+            ubicacion_row = cursor.fetchone()
+            if not ubicacion_row:
+                raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
+            ubicacion_nombre = ubicacion_row[0]
 
-                # Fecha de hace 7 días para buscar ventas recientes como evidencia
-                hoy_inicio = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            # Fecha de hace 7 días para buscar ventas recientes como evidencia
+            hoy_inicio = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
-                items = []
+            items = []
 
-                # Query: Productos con Stock Negativo
-                query_negativos = """
-                    SELECT
-                        ia.producto_id,
-                        p.codigo as codigo_producto,
-                        COALESCE(NULLIF(p.descripcion, ''), p.nombre, 'Sin Descripción') as descripcion_producto,
-                        p.categoria,
-                        ia.cantidad as stock_actual
-                    FROM inventario_actual ia
-                    INNER JOIN productos p ON ia.producto_id = p.id
-                    WHERE ia.ubicacion_id = %s
-                      AND ia.cantidad < 0
-                      AND p.activo = true
-                """
-                params_negativos = [ubicacion_id]
+            # Query: Productos con Stock Negativo
+            query_negativos = """
+                SELECT
+                    ia.producto_id,
+                    p.codigo as codigo_producto,
+                    COALESCE(NULLIF(p.descripcion, ''), p.nombre, 'Sin Descripción') as descripcion_producto,
+                    p.categoria,
+                    ia.cantidad as stock_actual
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                WHERE ia.ubicacion_id = %s
+                  AND ia.cantidad < 0
+                  AND p.activo = true
+            """
+            params_negativos = [ubicacion_id]
 
-                if almacen_codigo:
-                    query_negativos += " AND ia.almacen_codigo = %s"
-                    params_negativos.append(almacen_codigo)
+            if almacen_codigo:
+                query_negativos += " AND ia.almacen_codigo = %s"
+                params_negativos.append(almacen_codigo)
 
-                query_negativos += " ORDER BY ia.cantidad ASC"
+            query_negativos += " ORDER BY ia.cantidad ASC"
 
-                cursor.execute(query_negativos, params_negativos)
-                negativos = cursor.fetchall()
+            cursor.execute(query_negativos, params_negativos)
+            negativos = cursor.fetchall()
 
-                # Buscar ventas de los últimos 7 días como evidencia
-                hace_7_dias = hoy_inicio - timedelta(days=7)
+            # Buscar ventas de los últimos 7 días como evidencia
+            hace_7_dias = hoy_inicio - timedelta(days=7)
 
-                for row in negativos:
-                    producto_id, codigo, descripcion, categoria, stock = row
+            for row in negativos:
+                producto_id, codigo, descripcion, categoria, stock = row
 
-                    # Contar total de ventas RECIENTES (últimos 7 días) para este producto
-                    cursor.execute("""
-                        SELECT COUNT(*), COALESCE(SUM(cantidad_vendida), 0)
-                        FROM ventas
-                        WHERE producto_id = %s AND ubicacion_id = %s
-                          AND fecha_venta >= %s
-                    """, [producto_id, ubicacion_id, hace_7_dias])
-                    count_row = cursor.fetchone()
-                    total_ventas_recientes = count_row[0] if count_row else 0
-                    suma_cantidad_recientes = float(count_row[1]) if count_row else 0.0
+                # Contar total de ventas RECIENTES (últimos 7 días) para este producto
+                cursor.execute("""
+                    SELECT COUNT(*), COALESCE(SUM(cantidad_vendida), 0)
+                    FROM ventas
+                    WHERE producto_id = %s AND ubicacion_id = %s
+                      AND fecha_venta >= %s
+                """, [producto_id, ubicacion_id, hace_7_dias])
+                count_row = cursor.fetchone()
+                total_ventas_recientes = count_row[0] if count_row else 0
+                suma_cantidad_recientes = float(count_row[1]) if count_row else 0.0
 
-                    # Obtener últimas 10 ventas RECIENTES como evidencia (para mostrar detalles)
-                    cursor.execute("""
-                        SELECT numero_factura, fecha_venta,
-                               TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
-                               TO_CHAR(fecha_venta, 'HH24:MI') as hora, cantidad_vendida
-                        FROM ventas
-                        WHERE producto_id = %s AND ubicacion_id = %s
-                          AND fecha_venta >= %s
-                        ORDER BY fecha_venta DESC
-                        LIMIT 10
-                    """, [producto_id, ubicacion_id, hace_7_dias])
-                    ventas_evidencia = cursor.fetchall()
+                # Obtener últimas 10 ventas RECIENTES como evidencia (para mostrar detalles)
+                cursor.execute("""
+                    SELECT numero_factura, fecha_venta,
+                           TO_CHAR(fecha_venta, 'YYYY-MM-DD') as fecha,
+                           TO_CHAR(fecha_venta, 'HH24:MI') as hora, cantidad_vendida
+                    FROM ventas
+                    WHERE producto_id = %s AND ubicacion_id = %s
+                      AND fecha_venta >= %s
+                    ORDER BY fecha_venta DESC
+                    LIMIT 10
+                """, [producto_id, ubicacion_id, hace_7_dias])
+                ventas_evidencia = cursor.fetchall()
 
-                    # Para cada venta, buscar el stock histórico más cercano
-                    evidencias = []
-                    for v in ventas_evidencia:
-                        numero_factura, fecha_venta_ts, fecha_str, hora_str, cantidad = v
+                # Para cada venta, buscar el stock histórico más cercano
+                evidencias = []
+                for v in ventas_evidencia:
+                    numero_factura, fecha_venta_ts, fecha_str, hora_str, cantidad = v
 
-                        # Buscar el snapshot más cercano (antes o igual) a la fecha de venta
-                        stock_query = """
-                            SELECT cantidad
-                            FROM inventario_historico
-                            WHERE producto_id = %s
-                              AND ubicacion_id = %s
-                              AND fecha_snapshot <= %s
-                        """
-                        stock_params = [producto_id, ubicacion_id, fecha_venta_ts]
-                        if almacen_codigo:
-                            stock_query += " AND almacen_codigo = %s"
-                            stock_params.append(almacen_codigo)
-                        stock_query += " ORDER BY fecha_snapshot DESC LIMIT 1"
-
-                        cursor.execute(stock_query, stock_params)
-                        stock_row = cursor.fetchone()
-
-                        if stock_row:
-                            stock_al_momento = float(stock_row[0])
-                        else:
-                            # Si no hay histórico antes de la venta, usar el stock actual
-                            stock_al_momento = float(stock)
-
-                        evidencias.append(EvidenciaVenta(
-                            numero_factura=numero_factura,
-                            fecha_venta=fecha_str,
-                            hora=hora_str,
-                            cantidad_vendida=float(cantidad),
-                            stock_al_momento=stock_al_momento
-                        ))
-
-                    # Obtener histórico del día para este producto
-                    hist_query = """
-                        SELECT MAX(cantidad) as max_stock,
-                               MIN(cantidad) as min_stock,
-                               COUNT(*) as snapshots
+                    # Buscar el snapshot más cercano (antes o igual) a la fecha de venta
+                    stock_query = """
+                        SELECT cantidad
                         FROM inventario_historico
                         WHERE producto_id = %s
                           AND ubicacion_id = %s
-                          AND fecha_snapshot >= %s
+                          AND fecha_snapshot <= %s
                     """
-                    hist_params = [producto_id, ubicacion_id, hoy_inicio]
+                    stock_params = [producto_id, ubicacion_id, fecha_venta_ts]
                     if almacen_codigo:
-                        hist_query += " AND almacen_codigo = %s"
-                        hist_params.append(almacen_codigo)
+                        stock_query += " AND almacen_codigo = %s"
+                        stock_params.append(almacen_codigo)
+                    stock_query += " ORDER BY fecha_snapshot DESC LIMIT 1"
 
-                    cursor.execute(hist_query, hist_params)
-                    hist_row = cursor.fetchone()
-                    stock_max_hoy = float(hist_row[0]) if hist_row and hist_row[0] is not None else None
-                    stock_min_hoy = float(hist_row[1]) if hist_row and hist_row[1] is not None else None
-                    snapshots_hoy = hist_row[2] if hist_row else 0
+                    cursor.execute(stock_query, stock_params)
+                    stock_row = cursor.fetchone()
 
-                    items.append(AnomaliaStockItem(
-                        producto_id=producto_id,
-                        codigo_producto=codigo,
-                        descripcion_producto=descripcion,
-                        categoria=categoria,
-                        stock_actual=float(stock),
-                        tipo_anomalia="negativo",
-                        prioridad=1,
-                        total_ventas_evidencia=total_ventas_recientes,
-                        suma_cantidad_vendida=suma_cantidad_recientes,
-                        evidencias=evidencias,
-                        stock_max_hoy=stock_max_hoy,
-                        stock_min_hoy=stock_min_hoy,
-                        snapshots_hoy=snapshots_hoy
+                    if stock_row:
+                        stock_al_momento = float(stock_row[0])
+                    else:
+                        # Si no hay histórico antes de la venta, usar el stock actual
+                        stock_al_momento = float(stock)
+
+                    evidencias.append(EvidenciaVenta(
+                        numero_factura=numero_factura,
+                        fecha_venta=fecha_str,
+                        hora=hora_str,
+                        cantidad_vendida=float(cantidad),
+                        stock_al_momento=stock_al_momento
                     ))
 
-                cursor.close()
-
-                return AnomaliaStockResponse(
-                    ubicacion_id=ubicacion_id,
-                    ubicacion_nombre=ubicacion_nombre,
-                    total_anomalias=len(items),
-                    items=items
-                )
-        else:
-            # DuckDB legacy mode - query simplificada (sin evidencia detallada)
-            with get_db_connection() as conn:
-                ubicacion_row = conn.execute(
-                    "SELECT nombre FROM ubicaciones WHERE id = ?", [ubicacion_id]
-                ).fetchone()
-
-                if not ubicacion_row:
-                    raise HTTPException(status_code=404, detail=f"Ubicación {ubicacion_id} no encontrada")
-                ubicacion_nombre = ubicacion_row[0]
-
-                query = """
-                    SELECT
-                        inv.codigo_producto as producto_id,
-                        inv.codigo_producto,
-                        inv.descripcion_producto,
-                        inv.categoria,
-                        inv.cantidad_actual as stock_actual
-                    FROM inventario_raw inv
-                    WHERE inv.ubicacion_id = ?
-                      AND inv.cantidad_actual < 0
-                      AND inv.activo = true
-                    ORDER BY inv.cantidad_actual ASC
+                # Obtener histórico del día para este producto
+                hist_query = """
+                    SELECT MAX(cantidad) as max_stock,
+                           MIN(cantidad) as min_stock,
+                           COUNT(*) as snapshots
+                    FROM inventario_historico
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_snapshot >= %s
                 """
+                hist_params = [producto_id, ubicacion_id, hoy_inicio]
+                if almacen_codigo:
+                    hist_query += " AND almacen_codigo = %s"
+                    hist_params.append(almacen_codigo)
 
-                result = conn.execute(query, [ubicacion_id]).fetchall()
+                cursor.execute(hist_query, hist_params)
+                hist_row = cursor.fetchone()
+                stock_max_hoy = float(hist_row[0]) if hist_row and hist_row[0] is not None else None
+                stock_min_hoy = float(hist_row[1]) if hist_row and hist_row[1] is not None else None
+                snapshots_hoy = hist_row[2] if hist_row else 0
 
-                items = []
-                for row in result:
-                    producto_id, codigo, descripcion, categoria, stock = row
+                items.append(AnomaliaStockItem(
+                    producto_id=producto_id,
+                    codigo_producto=codigo,
+                    descripcion_producto=descripcion,
+                    categoria=categoria,
+                    stock_actual=float(stock),
+                    tipo_anomalia="negativo",
+                    prioridad=1,
+                    total_ventas_evidencia=total_ventas_recientes,
+                    suma_cantidad_vendida=suma_cantidad_recientes,
+                    evidencias=evidencias,
+                    stock_max_hoy=stock_max_hoy,
+                    stock_min_hoy=stock_min_hoy,
+                    snapshots_hoy=snapshots_hoy
+                ))
 
-                    items.append(AnomaliaStockItem(
-                        producto_id=producto_id,
-                        codigo_producto=codigo,
-                        descripcion_producto=descripcion,
-                        categoria=categoria,
-                        stock_actual=float(stock),
-                        tipo_anomalia="negativo",
-                        prioridad=1,
-                        total_ventas_evidencia=0,
-                        suma_cantidad_vendida=0,
-                        evidencias=[]
-                    ))
+            cursor.close()
 
-                return AnomaliaStockResponse(
-                    ubicacion_id=ubicacion_id,
-                    ubicacion_nombre=ubicacion_nombre,
-                    total_anomalias=len(items),
-                    items=items
-                )
+            return AnomaliaStockResponse(
+                ubicacion_id=ubicacion_id,
+                ubicacion_nombre=ubicacion_nombre,
+                total_anomalias=len(items),
+                items=items
+            )
 
     except HTTPException:
         raise
@@ -4009,114 +3794,107 @@ async def aplicar_ajustes_auditoria(request: AjusteAuditoriaRequest):
         resultados = []
         total_ajustados = 0
 
-        if is_postgres_mode():
-            with get_postgres_connection() as conn:
-                cursor = conn.cursor()
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
 
-                for ajuste in request.ajustes:
-                    try:
-                        # Obtener stock actual del producto
-                        query_stock = """
-                            SELECT cantidad
-                            FROM inventario_actual
-                            WHERE ubicacion_id = %s AND producto_id = %s
-                        """
-                        params = [request.ubicacion_id, ajuste.producto_id]
+            for ajuste in request.ajustes:
+                try:
+                    # Obtener stock actual del producto
+                    query_stock = """
+                        SELECT cantidad
+                        FROM inventario_actual
+                        WHERE ubicacion_id = %s AND producto_id = %s
+                    """
+                    params = [request.ubicacion_id, ajuste.producto_id]
 
-                        if request.almacen_codigo:
-                            query_stock += " AND almacen_codigo = %s"
-                            params.append(request.almacen_codigo)
+                    if request.almacen_codigo:
+                        query_stock += " AND almacen_codigo = %s"
+                        params.append(request.almacen_codigo)
 
-                        cursor.execute(query_stock, params)
-                        row = cursor.fetchone()
+                    cursor.execute(query_stock, params)
+                    row = cursor.fetchone()
 
-                        if not row:
-                            resultados.append(AjusteAuditoriaResultItem(
-                                producto_id=ajuste.producto_id,
-                                stock_anterior=0,
-                                conteo_fisico=ajuste.conteo_fisico,
-                                diferencia=ajuste.conteo_fisico,
-                                ajuste_aplicado=False,
-                                mensaje="Producto no encontrado en inventario"
-                            ))
-                            continue
-
-                        stock_anterior = float(row[0])
-                        diferencia = ajuste.conteo_fisico - stock_anterior
-
-                        # Si no hay diferencia, no hacer nada
-                        if diferencia == 0:
-                            resultados.append(AjusteAuditoriaResultItem(
-                                producto_id=ajuste.producto_id,
-                                stock_anterior=stock_anterior,
-                                conteo_fisico=ajuste.conteo_fisico,
-                                diferencia=0,
-                                ajuste_aplicado=False,
-                                mensaje="Sin diferencia - no se requiere ajuste"
-                            ))
-                            continue
-
-                        # Actualizar inventario_actual
-                        update_query = """
-                            UPDATE inventario_actual
-                            SET cantidad = %s, fecha_actualizacion = CURRENT_TIMESTAMP
-                            WHERE ubicacion_id = %s AND producto_id = %s
-                        """
-                        update_params = [ajuste.conteo_fisico, request.ubicacion_id, ajuste.producto_id]
-
-                        if request.almacen_codigo:
-                            update_query += " AND almacen_codigo = %s"
-                            update_params.append(request.almacen_codigo)
-
-                        cursor.execute(update_query, update_params)
-
-                        # Registrar en inventario_historico como snapshot de auditoría
-                        insert_historico = """
-                            INSERT INTO inventario_historico
-                            (ubicacion_id, producto_id, almacen_codigo, fecha_snapshot, cantidad, cantidad_cambio, etl_batch_id)
-                            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
-                        """
-                        almacen = request.almacen_codigo or 'APP-TPF'
-                        batch_id = f"AUDITORIA_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                        cursor.execute(insert_historico, [
-                            request.ubicacion_id,
-                            ajuste.producto_id,
-                            almacen,
-                            ajuste.conteo_fisico,
-                            diferencia,
-                            batch_id
-                        ])
-
-                        total_ajustados += 1
-                        resultados.append(AjusteAuditoriaResultItem(
-                            producto_id=ajuste.producto_id,
-                            stock_anterior=stock_anterior,
-                            conteo_fisico=ajuste.conteo_fisico,
-                            diferencia=diferencia,
-                            ajuste_aplicado=True,
-                            mensaje=f"Ajuste aplicado: {'+' if diferencia > 0 else ''}{diferencia:.2f} unidades"
-                        ))
-
-                    except Exception as e:
-                        logger.error(f"Error procesando ajuste para {ajuste.producto_id}: {str(e)}")
+                    if not row:
                         resultados.append(AjusteAuditoriaResultItem(
                             producto_id=ajuste.producto_id,
                             stock_anterior=0,
                             conteo_fisico=ajuste.conteo_fisico,
+                            diferencia=ajuste.conteo_fisico,
+                            ajuste_aplicado=False,
+                            mensaje="Producto no encontrado en inventario"
+                        ))
+                        continue
+
+                    stock_anterior = float(row[0])
+                    diferencia = ajuste.conteo_fisico - stock_anterior
+
+                    # Si no hay diferencia, no hacer nada
+                    if diferencia == 0:
+                        resultados.append(AjusteAuditoriaResultItem(
+                            producto_id=ajuste.producto_id,
+                            stock_anterior=stock_anterior,
+                            conteo_fisico=ajuste.conteo_fisico,
                             diferencia=0,
                             ajuste_aplicado=False,
-                            mensaje=f"Error: {str(e)}"
+                            mensaje="Sin diferencia - no se requiere ajuste"
                         ))
+                        continue
 
-                # Commit de la transacción
-                conn.commit()
-                cursor.close()
-        else:
-            # DuckDB no soporta escritura fácilmente en este contexto
-            raise HTTPException(
-                status_code=501,
-                detail="Los ajustes de auditoría solo están disponibles en modo PostgreSQL"
-            )
+                    # Actualizar inventario_actual
+                    update_query = """
+                        UPDATE inventario_actual
+                        SET cantidad = %s, fecha_actualizacion = CURRENT_TIMESTAMP
+                        WHERE ubicacion_id = %s AND producto_id = %s
+                    """
+                    update_params = [ajuste.conteo_fisico, request.ubicacion_id, ajuste.producto_id]
+
+                    if request.almacen_codigo:
+                        update_query += " AND almacen_codigo = %s"
+                        update_params.append(request.almacen_codigo)
+
+                    cursor.execute(update_query, update_params)
+
+                    # Registrar en inventario_historico como snapshot de auditoría
+                    insert_historico = """
+                        INSERT INTO inventario_historico
+                        (ubicacion_id, producto_id, almacen_codigo, fecha_snapshot, cantidad, cantidad_cambio, etl_batch_id)
+                        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
+                    """
+                    almacen = request.almacen_codigo or 'APP-TPF'
+                    batch_id = f"AUDITORIA_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    cursor.execute(insert_historico, [
+                        request.ubicacion_id,
+                        ajuste.producto_id,
+                        almacen,
+                        ajuste.conteo_fisico,
+                        diferencia,
+                        batch_id
+                    ])
+
+                    total_ajustados += 1
+                    resultados.append(AjusteAuditoriaResultItem(
+                        producto_id=ajuste.producto_id,
+                        stock_anterior=stock_anterior,
+                        conteo_fisico=ajuste.conteo_fisico,
+                        diferencia=diferencia,
+                        ajuste_aplicado=True,
+                        mensaje=f"Ajuste aplicado: {'+' if diferencia > 0 else ''}{diferencia:.2f} unidades"
+                    ))
+
+                except Exception as e:
+                    logger.error(f"Error procesando ajuste para {ajuste.producto_id}: {str(e)}")
+                    resultados.append(AjusteAuditoriaResultItem(
+                        producto_id=ajuste.producto_id,
+                        stock_anterior=0,
+                        conteo_fisico=ajuste.conteo_fisico,
+                        diferencia=0,
+                        ajuste_aplicado=False,
+                        mensaje=f"Error: {str(e)}"
+                    ))
+
+            # Commit de la transacción
+            conn.commit()
+            cursor.close()
 
         return AjusteAuditoriaResponse(
             success=True,
@@ -4149,120 +3927,101 @@ async def get_anomalias_count(
         Conteo de anomalías
     """
     try:
-        if is_postgres_mode():
-            with get_postgres_connection() as conn:
-                cursor = conn.cursor()
+        with get_postgres_connection() as conn:
+            cursor = conn.cursor()
 
-                query = """
-                    SELECT COUNT(*)
-                    FROM inventario_actual ia
-                    INNER JOIN productos p ON ia.producto_id = p.id
-                    WHERE ia.ubicacion_id = %s
-                      AND ia.cantidad < 0
-                      AND p.activo = true
-                """
-                params = [ubicacion_id]
+            query = """
+                SELECT COUNT(*)
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                WHERE ia.ubicacion_id = %s
+                  AND ia.cantidad < 0
+                  AND p.activo = true
+            """
+            params = [ubicacion_id]
 
-                if almacen_codigo:
-                    query += " AND ia.almacen_codigo = %s"
-                    params.append(almacen_codigo)
+            if almacen_codigo:
+                query += " AND ia.almacen_codigo = %s"
+                params.append(almacen_codigo)
 
-                cursor.execute(query, params)
-                negativos = cursor.fetchone()[0]
+            cursor.execute(query, params)
+            negativos = cursor.fetchone()[0]
 
-                # Contar ventas zombie (stock <= 0 TODO el día Y con ventas HOY)
-                hoy_inicio = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            # Contar ventas zombie (stock <= 0 TODO el día Y con ventas HOY)
+            hoy_inicio = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
-                # Construir filtros de almacén
-                almacen_filter_hist = ""
-                almacen_filter_hist2 = ""
-                almacen_filter_actual = ""
-                if almacen_codigo:
-                    almacen_filter_hist = "AND ih.almacen_codigo = %s"
-                    almacen_filter_hist2 = "AND almacen_codigo = %s"
-                    almacen_filter_actual = "AND ia.almacen_codigo = %s"
+            # Construir filtros de almacén
+            almacen_filter_hist = ""
+            almacen_filter_hist2 = ""
+            almacen_filter_actual = ""
+            if almacen_codigo:
+                almacen_filter_hist = "AND ih.almacen_codigo = %s"
+                almacen_filter_hist2 = "AND almacen_codigo = %s"
+                almacen_filter_actual = "AND ia.almacen_codigo = %s"
 
-                query_zombies = f"""
-                    WITH productos_con_ventas_hoy AS (
-                        SELECT DISTINCT v.producto_id
-                        FROM ventas v
-                        WHERE v.ubicacion_id = %s
-                          AND v.fecha_venta >= %s
-                    ),
-                    productos_sin_stock_todo_el_dia AS (
-                        SELECT ih.producto_id
-                        FROM inventario_historico ih
-                        WHERE ih.ubicacion_id = %s
-                          AND ih.fecha_snapshot >= %s
-                          {almacen_filter_hist}
-                        GROUP BY ih.producto_id
-                        HAVING MAX(ih.cantidad) <= 0
-                    ),
-                    productos_con_historico_hoy AS (
-                        SELECT DISTINCT producto_id
-                        FROM inventario_historico
-                        WHERE ubicacion_id = %s
-                          AND fecha_snapshot >= %s
-                          {almacen_filter_hist2}
-                    )
-                    SELECT COUNT(DISTINCT ia.producto_id)
-                    FROM inventario_actual ia
-                    INNER JOIN productos p ON ia.producto_id = p.id
-                    INNER JOIN productos_con_ventas_hoy pv ON pv.producto_id = ia.producto_id
-                    WHERE ia.ubicacion_id = %s
-                      AND ia.cantidad = 0
-                      AND p.activo = true
-                      {almacen_filter_actual}
-                      AND (
-                          ia.producto_id IN (SELECT producto_id FROM productos_sin_stock_todo_el_dia)
-                          OR ia.producto_id NOT IN (SELECT producto_id FROM productos_con_historico_hoy)
-                      )
-                """
+            query_zombies = f"""
+                WITH productos_con_ventas_hoy AS (
+                    SELECT DISTINCT v.producto_id
+                    FROM ventas v
+                    WHERE v.ubicacion_id = %s
+                      AND v.fecha_venta >= %s
+                ),
+                productos_sin_stock_todo_el_dia AS (
+                    SELECT ih.producto_id
+                    FROM inventario_historico ih
+                    WHERE ih.ubicacion_id = %s
+                      AND ih.fecha_snapshot >= %s
+                      {almacen_filter_hist}
+                    GROUP BY ih.producto_id
+                    HAVING MAX(ih.cantidad) <= 0
+                ),
+                productos_con_historico_hoy AS (
+                    SELECT DISTINCT producto_id
+                    FROM inventario_historico
+                    WHERE ubicacion_id = %s
+                      AND fecha_snapshot >= %s
+                      {almacen_filter_hist2}
+                )
+                SELECT COUNT(DISTINCT ia.producto_id)
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                INNER JOIN productos_con_ventas_hoy pv ON pv.producto_id = ia.producto_id
+                WHERE ia.ubicacion_id = %s
+                  AND ia.cantidad = 0
+                  AND p.activo = true
+                  {almacen_filter_actual}
+                  AND (
+                      ia.producto_id IN (SELECT producto_id FROM productos_sin_stock_todo_el_dia)
+                      OR ia.producto_id NOT IN (SELECT producto_id FROM productos_con_historico_hoy)
+                  )
+            """
 
-                if almacen_codigo:
-                    params_zombies = [
-                        ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
-                        ubicacion_id, hoy_inicio, almacen_codigo,  # productos_sin_stock_todo_el_dia
-                        ubicacion_id, hoy_inicio, almacen_codigo,  # productos_con_historico_hoy
-                        ubicacion_id, almacen_codigo,  # SELECT principal
-                    ]
-                else:
-                    params_zombies = [
-                        ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
-                        ubicacion_id, hoy_inicio,  # productos_sin_stock_todo_el_dia
-                        ubicacion_id, hoy_inicio,  # productos_con_historico_hoy
-                        ubicacion_id,  # SELECT principal
-                    ]
+            if almacen_codigo:
+                params_zombies = [
+                    ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
+                    ubicacion_id, hoy_inicio, almacen_codigo,  # productos_sin_stock_todo_el_dia
+                    ubicacion_id, hoy_inicio, almacen_codigo,  # productos_con_historico_hoy
+                    ubicacion_id, almacen_codigo,  # SELECT principal
+                ]
+            else:
+                params_zombies = [
+                    ubicacion_id, hoy_inicio,  # productos_con_ventas_hoy
+                    ubicacion_id, hoy_inicio,  # productos_sin_stock_todo_el_dia
+                    ubicacion_id, hoy_inicio,  # productos_con_historico_hoy
+                    ubicacion_id,  # SELECT principal
+                ]
 
-                cursor.execute(query_zombies, params_zombies)
-                zombies = cursor.fetchone()[0]
+            cursor.execute(query_zombies, params_zombies)
+            zombies = cursor.fetchone()[0]
 
-                cursor.close()
+            cursor.close()
 
-                return {
-                    "ubicacion_id": ubicacion_id,
-                    "total_anomalias": negativos + zombies,
-                    "anomalias_negativas": negativos,
-                    "anomalias_venta_zombie": zombies
-                }
-        else:
-            with get_db_connection() as conn:
-                query = """
-                    SELECT COUNT(*)
-                    FROM inventario_raw inv
-                    WHERE inv.ubicacion_id = ?
-                      AND inv.cantidad_actual <= 0
-                      AND inv.activo = true
-                """
-                result = conn.execute(query, [ubicacion_id]).fetchone()
-                total = result[0] if result else 0
-
-                return {
-                    "ubicacion_id": ubicacion_id,
-                    "total_anomalias": total,
-                    "anomalias_negativas": total,
-                    "anomalias_venta_zombie": 0
-                }
+            return {
+                "ubicacion_id": ubicacion_id,
+                "total_anomalias": negativos + zombies,
+                "anomalias_negativas": negativos,
+                "anomalias_venta_zombie": zombies
+            }
 
     except Exception as e:
         logger.error(f"Error obteniendo conteo de anomalías: {str(e)}")
@@ -4302,9 +4061,6 @@ async def get_agotados_visuales(
         Lista de productos con posible agotamiento visual
     """
     try:
-        if not is_postgres_mode():
-            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
-
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
@@ -4558,9 +4314,6 @@ async def get_agotados_visuales_count(
     Considera horarios de operación de la tienda.
     """
     try:
-        if not is_postgres_mode():
-            return {"ubicacion_id": ubicacion_id, "total_alertas": 0, "tienda_abierta": True}
-
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
@@ -4709,9 +4462,6 @@ async def get_ventas_perdidas(
         Análisis de ventas perdidas con KPIs, detalle y agregaciones
     """
     try:
-        if not is_postgres_mode():
-            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
-
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
@@ -5008,9 +4758,6 @@ async def get_ventas_perdidas_v2(
         umbral_medio: Porcentaje del promedio para alerta media (default 75%)
     """
     try:
-        if not is_postgres_mode():
-            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
-
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
@@ -5310,9 +5057,6 @@ async def get_ventas_perdidas_v3(
         Análisis de ventas perdidas con comparación histórica
     """
     try:
-        if not is_postgres_mode():
-            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
-
         # Parsear fechas
         try:
             fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
@@ -7020,8 +6764,7 @@ async def get_ventas_etl_logs():
 async def get_ventas_summary():
     """
     Obtiene resumen de ventas por ubicación
-    Soporta PostgreSQL v2.0 y DuckDB (legacy)
-    Incluye cache TTL de 5 minutos para mejorar rendimiento
+    PostgreSQL only - incluye cache TTL de 5 minutos para mejorar rendimiento
     """
     # Check cache first
     cached = get_cached_ventas_summary()
@@ -7030,47 +6773,25 @@ async def get_ventas_summary():
 
     try:
         with get_db_connection() as conn:
-            # Adaptar query según base de datos
-            if is_postgres_mode():
-                # PostgreSQL v2.0: usa tabla ventas con JOIN a ubicaciones
-                # Incluye fecha Y hora de primera y última venta sincronizada
-                query = """
-                    SELECT
-                        u.id as ubicacion_id,
-                        u.nombre as ubicacion_nombre,
-                        'tienda' as tipo_ubicacion,
-                        COUNT(DISTINCT v.numero_factura) as total_transacciones,
-                        COUNT(DISTINCT v.producto_id) as productos_unicos,
-                        CAST(SUM(v.cantidad_vendida) AS INTEGER) as unidades_vendidas,
-                        TO_CHAR(MIN(v.fecha_venta), 'YYYY-MM-DD HH24:MI') as primera_venta,
-                        TO_CHAR(MAX(v.fecha_venta), 'YYYY-MM-DD HH24:MI') as ultima_venta
-                    FROM ventas v
-                    INNER JOIN ubicaciones u ON v.ubicacion_id = u.id
-                    GROUP BY u.id, u.nombre
-                    ORDER BY u.nombre
-                """
-                # PostgreSQL - usar cursor
-                cursor = conn.cursor()
-                cursor.execute(query)
-                result = cursor.fetchall()
-                cursor.close()
-            else:
-                # DuckDB (legacy): usa ventas_raw con ubicacion_id/nombre dentro
-                query = """
-                    SELECT
-                        v.ubicacion_id,
-                        v.ubicacion_nombre,
-                        'tienda' as tipo_ubicacion,
-                        COUNT(DISTINCT v.numero_factura) as total_transacciones,
-                        COUNT(DISTINCT v.codigo_producto) as productos_unicos,
-                        CAST(SUM(CAST(v.cantidad_vendida AS DECIMAL)) AS INTEGER) as unidades_vendidas,
-                        MIN(v.fecha) as primera_venta,
-                        MAX(v.fecha) as ultima_venta
-                    FROM ventas_raw v
-                    GROUP BY v.ubicacion_id, v.ubicacion_nombre
-                    ORDER BY v.ubicacion_nombre
-                """
-                result = conn.execute(query).fetchall()
+            query = """
+                SELECT
+                    u.id as ubicacion_id,
+                    u.nombre as ubicacion_nombre,
+                    'tienda' as tipo_ubicacion,
+                    COUNT(DISTINCT v.numero_factura) as total_transacciones,
+                    COUNT(DISTINCT v.producto_id) as productos_unicos,
+                    CAST(SUM(v.cantidad_vendida) AS INTEGER) as unidades_vendidas,
+                    TO_CHAR(MIN(v.fecha_venta), 'YYYY-MM-DD HH24:MI') as primera_venta,
+                    TO_CHAR(MAX(v.fecha_venta), 'YYYY-MM-DD HH24:MI') as ultima_venta
+                FROM ventas v
+                INNER JOIN ubicaciones u ON v.ubicacion_id = u.id
+                GROUP BY u.id, u.nombre
+                ORDER BY u.nombre
+            """
+            cursor = conn.cursor()
+            cursor.execute(query)
+            result = cursor.fetchall()
+            cursor.close()
 
             response_data = [
                 VentasSummaryResponse(
@@ -7094,222 +6815,27 @@ async def get_ventas_summary():
         logger.error(f"Error obteniendo resumen de ventas: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-@app.get("/api/ventas/gaps", tags=["Ventas"])
+@app.get("/api/ventas/gaps", tags=["Ventas"], deprecated=True)
 async def get_ventas_gaps():
     """
-    Analiza gaps de data de ventas por tienda
-    Retorna: fecha más antigua, más reciente, días atrasados, y gaps detectados
+    [DEPRECADO] Este endpoint usaba DuckDB y ha sido deprecado.
+    Use /api/ventas/summary para información de ventas.
     """
-    try:
-        with get_db_connection() as conn:
-            # Query para obtener rango de fechas por tienda
-            query = """
-                SELECT
-                    ubicacion_id,
-                    ubicacion_nombre,
-                    COUNT(*) as total_registros,
-                    MIN(fecha)::DATE as fecha_mas_antigua,
-                    MAX(fecha)::DATE as fecha_mas_reciente,
-                    DATE_DIFF('day', MAX(fecha)::DATE, CURRENT_DATE) as dias_atrasados
-                FROM ventas_raw
-                GROUP BY ubicacion_id, ubicacion_nombre
-                ORDER BY ubicacion_id
-            """
+    raise HTTPException(
+        status_code=501,
+        detail="Endpoint deprecado. Usaba tabla DuckDB ventas_raw que ya no existe."
+    )
 
-            result = conn.execute(query).fetchall()
-
-            gaps_info = []
-            for row in result:
-                ubicacion_id = row[0]
-                ubicacion_nombre = row[1]
-                total_registros = row[2]
-                fecha_mas_antigua = row[3]
-                fecha_mas_reciente = row[4]
-                dias_atrasados = row[5] if row[5] is not None else 0
-
-                # Calcular días esperados vs días con data
-                if fecha_mas_antigua and fecha_mas_reciente:
-                    from datetime import datetime, timedelta
-                    fecha_antigua_dt = datetime.strptime(str(fecha_mas_antigua), '%Y-%m-%d')
-                    fecha_reciente_dt = datetime.strptime(str(fecha_mas_reciente), '%Y-%m-%d')
-                    dias_totales = (fecha_reciente_dt - fecha_antigua_dt).days + 1
-
-                    # Query para contar días únicos con ventas
-                    dias_con_data_query = f"""
-                        SELECT COUNT(DISTINCT fecha::DATE)
-                        FROM ventas_raw
-                        WHERE ubicacion_id = '{ubicacion_id}'
-                    """
-                    dias_con_data = conn.execute(dias_con_data_query).fetchone()[0]
-
-                    gaps_info.append({
-                        "ubicacion_id": ubicacion_id,
-                        "ubicacion_nombre": ubicacion_nombre,
-                        "total_registros": total_registros,
-                        "fecha_mas_antigua": str(fecha_mas_antigua),
-                        "fecha_mas_reciente": str(fecha_mas_reciente),
-                        "dias_atrasados": dias_atrasados,
-                        "dias_totales_periodo": dias_totales,
-                        "dias_con_data": dias_con_data,
-                        "dias_faltantes": dias_totales - dias_con_data,
-                        "completitud_porcentaje": round((dias_con_data / dias_totales * 100), 2) if dias_totales > 0 else 0,
-                        "necesita_actualizacion": dias_atrasados > 1,
-                        "tiene_gaps_historicos": (dias_totales - dias_con_data) > 0
-                    })
-
-            return {
-                "tiendas": gaps_info,
-                "total_tiendas": len(gaps_info),
-                "tiendas_desactualizadas": sum(1 for t in gaps_info if t["necesita_actualizacion"]),
-                "tiendas_con_gaps": sum(1 for t in gaps_info if t["tiene_gaps_historicos"])
-            }
-
-    except Exception as e:
-        logger.error(f"Error analizando gaps de ventas: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
-
-@app.get("/api/ventas/coverage-calendar", tags=["Ventas"])
+@app.get("/api/ventas/coverage-calendar", tags=["Ventas"], deprecated=True)
 async def get_ventas_coverage_calendar(days: Optional[int] = 90, mode: str = "days"):
     """
-    Retorna un calendario de cobertura de datos de ventas para los últimos N días
-    por tienda. Útil para visualizar qué días tienen datos y cuáles faltan.
-
-    Args:
-        days: Número de días hacia atrás a consultar (default: 90)
-        mode: 'days' para últimos N días, 'all' para todo el histórico
-
-    Returns:
-        {
-            "ubicaciones": [...],
-            "fechas": ["2025-01-01", "2025-01-02", ...],
-            "data": {
-                "tienda_01": {"2025-01-01": 150, "2025-01-02": null, ...},
-                ...
-            },
-            "meses": [...] // solo si mode='all'
-        }
+    [DEPRECADO] Este endpoint usaba DuckDB y ha sido deprecado.
+    Use /api/ventas/producto/diario para datos de ventas por día.
     """
-    try:
-        with get_db_connection() as conn:
-            # Calcular rango de fechas
-            fecha_fin = date.today()
-
-            if mode == "all":
-                # Obtener la fecha más antigua en la base de datos
-                fecha_min_query = "SELECT MIN(fecha::DATE) as fecha_min FROM ventas_raw"
-                result = conn.execute(fecha_min_query).fetchone()
-                fecha_inicio = result[0] if result[0] else fecha_fin - timedelta(days=365)
-            else:
-                fecha_inicio = fecha_fin - timedelta(days=days)
-
-            # Generar lista de todas las fechas en el rango
-            fechas = []
-            fecha_actual = fecha_inicio
-            while fecha_actual <= fecha_fin:
-                fechas.append(fecha_actual.strftime('%Y-%m-%d'))
-                fecha_actual += timedelta(days=1)
-
-            # Obtener lista de ubicaciones
-            ubicaciones_query = """
-                SELECT DISTINCT ubicacion_id, ubicacion_nombre
-                FROM ventas_raw
-                ORDER BY ubicacion_id
-            """
-            ubicaciones_result = conn.execute(ubicaciones_query).fetchall()
-            ubicaciones = [
-                {"id": row[0], "nombre": row[1]}
-                for row in ubicaciones_result
-            ]
-
-            # Obtener datos de ventas agrupados por ubicación y fecha
-            ventas_query = """
-                SELECT
-                    ubicacion_id,
-                    fecha::DATE as fecha,
-                    COUNT(*) as registros,
-                    SUM(TRY_CAST(venta_total AS DOUBLE)) as total_venta
-                FROM ventas_raw
-                WHERE fecha >= ? AND fecha <= ?
-                GROUP BY ubicacion_id, fecha::DATE
-                ORDER BY ubicacion_id, fecha::DATE
-            """
-            ventas_result = conn.execute(
-                ventas_query,
-                [fecha_inicio.strftime('%Y-%m-%d'), fecha_fin.strftime('%Y-%m-%d')]
-            ).fetchall()
-
-            # Organizar datos en estructura de mapa
-            data = {}
-            for ubicacion in ubicaciones:
-                ubicacion_id = ubicacion["id"]
-                data[ubicacion_id] = {fecha: None for fecha in fechas}
-
-            # Rellenar con datos reales
-            for row in ventas_result:
-                ubicacion_id = row[0]
-                fecha = str(row[1])
-                registros = row[2]
-                venta_total = float(row[3]) if row[3] else 0
-
-                if ubicacion_id in data and fecha in data[ubicacion_id]:
-                    data[ubicacion_id][fecha] = {
-                        "registros": registros,
-                        "venta_total": round(venta_total, 2)
-                    }
-
-            # Agrupar fechas por mes para facilitar visualización
-            from collections import defaultdict
-            meses = defaultdict(list)
-            for fecha_str in fechas:
-                fecha_obj = date.fromisoformat(fecha_str)
-                mes_key = fecha_obj.strftime('%Y-%m')  # "2024-09"
-                mes_nombre = fecha_obj.strftime('%B %Y')  # "September 2024"
-                meses[mes_key].append(fecha_str)
-
-            # Convertir a lista ordenada de meses con metadata
-            meses_list = []
-            for mes_key in sorted(meses.keys()):
-                fechas_mes = meses[mes_key]
-                # Calcular estadísticas por ubicación para este mes
-                estadisticas_ubicaciones = {}
-                for ubicacion in ubicaciones:
-                    ubicacion_id = ubicacion["id"]
-                    dias_con_datos = sum(1 for f in fechas_mes if data[ubicacion_id].get(f) is not None)
-                    total_dias = len(fechas_mes)
-                    estadisticas_ubicaciones[ubicacion_id] = {
-                        "dias_con_datos": dias_con_datos,
-                        "total_dias": total_dias,
-                        "porcentaje": round((dias_con_datos / total_dias * 100), 1) if total_dias > 0 else 0
-                    }
-
-                fecha_obj = date.fromisoformat(fechas_mes[0])
-                meses_list.append({
-                    "key": mes_key,
-                    "nombre": fecha_obj.strftime('%B %Y'),
-                    "nombre_corto": fecha_obj.strftime('%b %Y'),
-                    "fechas": fechas_mes,
-                    "total_dias": len(fechas_mes),
-                    "estadisticas": estadisticas_ubicaciones
-                })
-
-            response = {
-                "ubicaciones": ubicaciones,
-                "fechas": fechas,
-                "data": data,
-                "meses": meses_list,
-                "periodo": {
-                    "fecha_inicio": fecha_inicio.strftime('%Y-%m-%d'),
-                    "fecha_fin": fecha_fin.strftime('%Y-%m-%d'),
-                    "total_dias": len(fechas),
-                    "total_meses": len(meses_list)
-                }
-            }
-
-            return response
-
-    except Exception as e:
-        logger.error(f"Error obteniendo calendario de cobertura: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+    raise HTTPException(
+        status_code=501,
+        detail="Endpoint deprecado. Usaba tabla DuckDB ventas_raw que ya no existe."
+    )
 
 @app.get("/api/ventas/detail", response_model=PaginatedVentasResponse, tags=["Ventas"])
 async def get_ventas_detail(
@@ -7345,279 +6871,123 @@ async def get_ventas_detail(
             raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 500")
 
         with get_db_connection() as conn:
-            # PostgreSQL v2.0 - versión simplificada (sin categorías ni descripciones)
-            if is_postgres_mode():
-                cursor = conn.cursor()
+            cursor = conn.cursor()
 
-                # Calcular fechas por defecto
-                if not fecha_fin:
-                    fecha_fin = datetime.now().strftime('%Y-%m-%d')
-                if not fecha_inicio:
-                    fecha_inicio = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            # Calcular fechas por defecto
+            if not fecha_fin:
+                fecha_fin = datetime.now().strftime('%Y-%m-%d')
+            if not fecha_inicio:
+                fecha_inicio = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
 
-                # Construir filtros
-                where_clauses = ["fecha_venta >= %s::timestamp AND fecha_venta < (%s::date + interval '1 day')::timestamp"]
-                params = [fecha_inicio, fecha_fin]
-
-                if ubicacion_id:
-                    where_clauses.append("ubicacion_id = %s")
-                    params.append(ubicacion_id)
-
-                if search:
-                    # Buscar en código de producto y descripción (JOIN con productos)
-                    where_clauses.append("""
-                        (producto_id ILIKE %s OR EXISTS (
-                            SELECT 1 FROM productos p WHERE p.codigo = ventas.producto_id AND p.descripcion ILIKE %s
-                        ))
-                    """)
-                    params.append(f"%{search}%")
-                    params.append(f"%{search}%")
-
-                # Filtro por categoría (requiere JOIN con productos)
-                categoria_filter = ""
-                if categoria:
-                    categoria_filter = f" AND p.categoria = %s"
-
-                where_clause = " AND ".join(where_clauses)
-
-                # Contar productos únicos
-                count_query = f"""
-                    SELECT COUNT(DISTINCT producto_id)
-                    FROM ventas
-                    WHERE {where_clause}
-                """
-                cursor.execute(count_query, params)
-                total_items = cursor.fetchone()[0]
-
-                total_pages = (total_items + page_size - 1) // page_size
-                offset = (page - 1) * page_size
-
-                # Calcular días distintos en el rango
-                dias_query = f"""
-                    SELECT COUNT(DISTINCT fecha_venta::date) FROM ventas WHERE {where_clause}
-                """
-                cursor.execute(dias_query, params)
-                dias_distintos = cursor.fetchone()[0] or 1
-
-                # Query principal
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                order_by = 'cantidad_total' if sort_by in ['cantidad_total', None] else 'cantidad_total'
-
-                # Construir parámetros finales (incluyendo categoría si se especificó)
-                final_params = params.copy()
-                if categoria:
-                    final_params.append(categoria)
-
-                main_query = f"""
-                    WITH ventas_filtradas AS (
-                        SELECT producto_id, cantidad_vendida, venta_total, fecha_venta::date as fecha
-                        FROM ventas
-                        WHERE {where_clause}
-                    ),
-                    producto_stats AS (
-                        SELECT
-                            producto_id,
-                            SUM(cantidad_vendida) as cantidad_total,
-                            SUM(venta_total) as venta_total_sum
-                        FROM ventas_filtradas
-                        GROUP BY producto_id
-                    ),
-                    totales AS (
-                        SELECT SUM(cantidad_total) as gran_total FROM producto_stats
-                    ),
-                    -- Calcular P75 de ventas diarias
-                    ventas_diarias AS (
-                        SELECT
-                            producto_id,
-                            fecha,
-                            SUM(cantidad_vendida) as cantidad_dia
-                        FROM ventas_filtradas
-                        GROUP BY producto_id, fecha
-                    ),
-                    p75_stats AS (
-                        SELECT
-                            producto_id,
-                            PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as p75_unidades
-                        FROM ventas_diarias
-                        GROUP BY producto_id
-                    )
-                    SELECT
-                        ps.producto_id,
-                        COALESCE(p.descripcion, ps.producto_id) as descripcion,
-                        COALESCE(p.categoria, 'Sin categoría') as categoria,
-                        ps.cantidad_total,
-                        ps.cantidad_total / {dias_distintos}::float as promedio_diario,
-                        0 as promedio_mismo_dia_semana,
-                        NULL as comparacion_ano_anterior,
-                        (ps.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
-                        COALESCE(p.unidades_por_bulto, 1) as cantidad_bultos,
-                        ps.cantidad_total / NULLIF(COALESCE(p.unidades_por_bulto, 1), 0) as total_bultos,
-                        COALESCE(p75.p75_unidades, ps.cantidad_total / {dias_distintos}::float) / NULLIF(COALESCE(p.unidades_por_bulto, 1), 0) as promedio_bultos_diario
-                    FROM producto_stats ps
-                    CROSS JOIN totales t
-                    LEFT JOIN productos p ON ps.producto_id = p.codigo
-                    LEFT JOIN p75_stats p75 ON ps.producto_id = p75.producto_id
-                    WHERE 1=1 {categoria_filter}
-                    ORDER BY {order_by} {order_direction}
-                    LIMIT %s OFFSET %s
-                """
-                cursor.execute(main_query, final_params + [page_size, offset])
-                result = cursor.fetchall()
-                cursor.close()
-
-                items = [
-                    VentasDetailResponse(
-                        codigo_producto=row[0],
-                        descripcion_producto=row[1],
-                        categoria=row[2],
-                        cantidad_total=float(row[3]) if row[3] else 0,
-                        promedio_diario=float(row[4]) if row[4] else 0,
-                        promedio_mismo_dia_semana=float(row[5]) if row[5] else 0,
-                        comparacion_ano_anterior=float(row[6]) if row[6] else None,
-                        porcentaje_total=float(row[7]) if row[7] else 0,
-                        cantidad_bultos=float(row[8]) if row[8] else None,
-                        total_bultos=float(row[9]) if row[9] else None,
-                        promedio_bultos_diario=float(row[10]) if row[10] else None
-                    )
-                    for row in result
-                ]
-
-                return PaginatedVentasResponse(
-                    data=items,
-                    pagination=PaginationMetadata(
-                        total_items=total_items,
-                        total_pages=total_pages,
-                        current_page=page,
-                        page_size=page_size,
-                        has_next=page < total_pages,
-                        has_previous=page > 1
-                    )
-                )
-
-            # DuckDB (legacy)
-            # Si no se especifican fechas, usar último mes
-            if not fecha_inicio or not fecha_fin:
-                fecha_fin = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()[0]
-                fecha_inicio = conn.execute(
-                    "SELECT CAST(CAST(? AS DATE) - INTERVAL 30 DAY AS VARCHAR)",
-                    (fecha_fin,)
-                ).fetchone()[0]
-
-            # Construir query base (fecha es VARCHAR, usar comparación de strings)
-            where_clauses = ["v.fecha >= ? AND v.fecha <= ?"]
+            # Construir filtros
+            where_clauses = ["fecha_venta >= %s::timestamp AND fecha_venta < (%s::date + interval '1 day')::timestamp"]
             params = [fecha_inicio, fecha_fin]
 
             if ubicacion_id:
-                where_clauses.append("v.ubicacion_id = ?")
+                where_clauses.append("ubicacion_id = %s")
                 params.append(ubicacion_id)
 
-            if categoria:
-                where_clauses.append("v.categoria_producto = ?")
-                params.append(categoria)
-
-            # Añadir búsqueda si se proporciona
             if search:
-                search_term = f"%{search}%"
-                where_clauses.append("(v.codigo_producto ILIKE ? OR v.descripcion_producto ILIKE ?)")
-                params.append(search_term)
-                params.append(search_term)
+                # Buscar en código de producto y descripción (JOIN con productos)
+                where_clauses.append("""
+                    (producto_id ILIKE %s OR EXISTS (
+                        SELECT 1 FROM productos p WHERE p.codigo = ventas.producto_id AND p.descripcion ILIKE %s
+                    ))
+                """)
+                params.append(f"%{search}%")
+                params.append(f"%{search}%")
+
+            # Filtro por categoría (requiere JOIN con productos)
+            categoria_filter = ""
+            if categoria:
+                categoria_filter = f" AND p.categoria = %s"
 
             where_clause = " AND ".join(where_clauses)
 
-            # Primero obtener el conteo total para paginación
-            # Simplificamos para solo contar productos únicos que cumplen filtros
+            # Contar productos únicos
             count_query = f"""
-                SELECT COUNT(DISTINCT v.codigo_producto)
-                FROM ventas_raw v
+                SELECT COUNT(DISTINCT producto_id)
+                FROM ventas
                 WHERE {where_clause}
             """
+            cursor.execute(count_query, params)
+            total_items = cursor.fetchone()[0]
 
-            total_items = conn.execute(count_query, params).fetchone()[0]
-
-            # Calcular paginación
             total_pages = (total_items + page_size - 1) // page_size
             offset = (page - 1) * page_size
 
-            # Query principal con todos los cálculos
-            # NOTA: Removemos el cálculo de año anterior para mejorar performance (muy pesado)
-            # Se puede añadir condicionalmente si el usuario lo solicita
-            query = f"""
-                WITH periodo_actual AS (
-                    SELECT
-                        v.codigo_producto,
-                        v.descripcion_producto,
-                        v.categoria_producto,
-                        CAST(SUM(CAST(v.cantidad_vendida AS DECIMAL)) AS DECIMAL) as cantidad_total,
-                        COUNT(DISTINCT v.fecha) as dias_distintos,
-                        AVG(CAST(v.cantidad_bultos AS DECIMAL)) as cantidad_bultos_promedio
-                    FROM ventas_raw v
+            # Calcular días distintos en el rango
+            dias_query = f"""
+                SELECT COUNT(DISTINCT fecha_venta::date) FROM ventas WHERE {where_clause}
+            """
+            cursor.execute(dias_query, params)
+            dias_distintos = cursor.fetchone()[0] or 1
+
+            # Query principal
+            order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+            order_by = 'cantidad_total' if sort_by in ['cantidad_total', None] else 'cantidad_total'
+
+            # Construir parámetros finales (incluyendo categoría si se especificó)
+            final_params = params.copy()
+            if categoria:
+                final_params.append(categoria)
+
+            main_query = f"""
+                WITH ventas_filtradas AS (
+                    SELECT producto_id, cantidad_vendida, venta_total, fecha_venta::date as fecha
+                    FROM ventas
                     WHERE {where_clause}
-                    GROUP BY v.codigo_producto, v.descripcion_producto, v.categoria_producto
                 ),
-                por_dia_semana AS (
+                producto_stats AS (
                     SELECT
-                        v.codigo_producto,
-                        v.dia_semana,
-                        SUM(CAST(v.cantidad_vendida AS DECIMAL)) as cantidad_por_dia_semana,
-                        COUNT(DISTINCT v.fecha) as dias_de_este_dia_semana
-                    FROM ventas_raw v
-                    WHERE {where_clause}
-                    GROUP BY v.codigo_producto, v.dia_semana
-                ),
-                promedio_dia_semana AS (
-                    SELECT
-                        codigo_producto,
-                        AVG(cantidad_por_dia_semana / NULLIF(dias_de_este_dia_semana, 0)) as promedio_mismo_dia
-                    FROM por_dia_semana
-                    GROUP BY codigo_producto
+                        producto_id,
+                        SUM(cantidad_vendida) as cantidad_total,
+                        SUM(venta_total) as venta_total_sum
+                    FROM ventas_filtradas
+                    GROUP BY producto_id
                 ),
                 totales AS (
-                    SELECT SUM(cantidad_total) as gran_total
-                    FROM periodo_actual
+                    SELECT SUM(cantidad_total) as gran_total FROM producto_stats
+                ),
+                -- Calcular P75 de ventas diarias
+                ventas_diarias AS (
+                    SELECT
+                        producto_id,
+                        fecha,
+                        SUM(cantidad_vendida) as cantidad_dia
+                    FROM ventas_filtradas
+                    GROUP BY producto_id, fecha
+                ),
+                p75_stats AS (
+                    SELECT
+                        producto_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as p75_unidades
+                    FROM ventas_diarias
+                    GROUP BY producto_id
                 )
                 SELECT
-                    pa.codigo_producto,
-                    pa.descripcion_producto,
-                    pa.categoria_producto,
-                    pa.cantidad_total,
-                    pa.cantidad_total / NULLIF(pa.dias_distintos, 0) as promedio_diario,
-                    COALESCE(pds.promedio_mismo_dia, 0) as promedio_mismo_dia_semana,
+                    ps.producto_id,
+                    COALESCE(p.descripcion, ps.producto_id) as descripcion,
+                    COALESCE(p.categoria, 'Sin categoría') as categoria,
+                    ps.cantidad_total,
+                    ps.cantidad_total / {dias_distintos}::float as promedio_diario,
+                    0 as promedio_mismo_dia_semana,
                     NULL as comparacion_ano_anterior,
-                    (pa.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
-                    pa.cantidad_bultos_promedio as cantidad_bultos,
-                    pa.cantidad_total / NULLIF(pa.cantidad_bultos_promedio, 0) as total_bultos,
-                    (pa.cantidad_total / NULLIF(pa.dias_distintos, 0)) / NULLIF(pa.cantidad_bultos_promedio, 0) as promedio_bultos_diario
-                FROM periodo_actual pa
+                    (ps.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
+                    COALESCE(p.unidades_por_bulto, 1) as cantidad_bultos,
+                    ps.cantidad_total / NULLIF(COALESCE(p.unidades_por_bulto, 1), 0) as total_bultos,
+                    COALESCE(p75.p75_unidades, ps.cantidad_total / {dias_distintos}::float) / NULLIF(COALESCE(p.unidades_por_bulto, 1), 0) as promedio_bultos_diario
+                FROM producto_stats ps
                 CROSS JOIN totales t
-                LEFT JOIN promedio_dia_semana pds ON pa.codigo_producto = pds.codigo_producto
+                LEFT JOIN productos p ON ps.producto_id = p.codigo
+                LEFT JOIN p75_stats p75 ON ps.producto_id = p75.producto_id
+                WHERE 1=1 {categoria_filter}
+                ORDER BY {order_by} {order_direction}
+                LIMIT %s OFFSET %s
             """
-
-            # Añadir ORDER BY según sort_by
-            if sort_by == 'cantidad_total':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                query += f" ORDER BY pa.cantidad_total {order_direction}, pa.descripcion_producto"
-            elif sort_by == 'promedio_diario':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                query += f" ORDER BY promedio_diario {order_direction}, pa.descripcion_producto"
-            elif sort_by == 'categoria':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                query += f" ORDER BY pa.categoria_producto {order_direction}, pa.descripcion_producto"
-            elif sort_by == 'porcentaje_total':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                query += f" ORDER BY porcentaje_total {order_direction}, pa.descripcion_producto"
-            else:
-                # Orden por defecto: mayor cantidad vendida primero
-                query += " ORDER BY pa.cantidad_total DESC, pa.descripcion_producto"
-
-            # Añadir LIMIT y OFFSET para paginación
-            query += f" LIMIT {page_size} OFFSET {offset}"
-
-            # Construir lista de parámetros:
-            # params para count, params para periodo_actual, params para por_dia_semana
-            all_params = params.copy()  # Para periodo_actual
-            all_params.extend(params.copy())  # Para por_dia_semana (mismos parámetros)
-
-            result = conn.execute(query, all_params).fetchall()
+            cursor.execute(main_query, final_params + [page_size, offset])
+            result = cursor.fetchall()
+            cursor.close()
 
             items = [
                 VentasDetailResponse(
@@ -7657,28 +7027,17 @@ async def get_ventas_categorias():
     """Obtiene todas las categorías de productos vendidos"""
     try:
         with get_db_connection() as conn:
-            if is_postgres_mode():
-                # PostgreSQL v2.0: Obtener categorías desde tabla productos
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT DISTINCT p.categoria
-                    FROM productos p
-                    WHERE p.categoria IS NOT NULL
-                      AND EXISTS (SELECT 1 FROM ventas v WHERE v.producto_id = p.codigo)
-                    ORDER BY p.categoria
-                """)
-                result = cursor.fetchall()
-                cursor.close()
-                return [{"value": row[0], "label": row[0]} for row in result]
-            else:
-                # DuckDB (legacy)
-                result = conn.execute("""
-                    SELECT DISTINCT categoria_producto
-                    FROM ventas_raw
-                    WHERE categoria_producto IS NOT NULL
-                    ORDER BY categoria_producto
-                """).fetchall()
-                return [{"value": row[0], "label": row[0]} for row in result]
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT p.categoria
+                FROM productos p
+                WHERE p.categoria IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM ventas v WHERE v.producto_id = p.codigo)
+                ORDER BY p.categoria
+            """)
+            result = cursor.fetchall()
+            cursor.close()
+            return [{"value": row[0], "label": row[0]} for row in result]
 
     except Exception as e:
         logger.error(f"Error obteniendo categorías de ventas: {str(e)}")
@@ -7706,118 +7065,72 @@ async def get_ventas_producto_diario(
             fecha_inicio = (datetime.now() - timedelta(days=56)).strftime('%Y-%m-%d')
 
         with get_db_connection() as conn:
-            # PostgreSQL v2.0
-            if is_postgres_mode():
+            cursor = conn.cursor()
+
+            # Obtener información del producto desde tabla productos (incluyendo unidades_por_bulto)
+            cursor.execute("""
+                SELECT codigo, descripcion, categoria, COALESCE(unidades_por_bulto, 1) as unidades_por_bulto
+                FROM productos
+                WHERE codigo = %s
+            """, [codigo_producto])
+            producto_info = cursor.fetchone()
+
+            if not producto_info:
+                cursor.close()
+                raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+            unidades_por_bulto = float(producto_info[3]) if producto_info[3] else 1.0
+
+            # Obtener ventas diarias por tienda
+            ventas_query = """
+                SELECT
+                    v.fecha_venta::date as fecha,
+                    v.ubicacion_id,
+                    COALESCE(u.nombre, v.ubicacion_id) as ubicacion_nombre,
+                    SUM(v.cantidad_vendida) / %s as total_bultos,
+                    SUM(v.cantidad_vendida) as total_unidades,
+                    SUM(v.venta_total) as venta_total
+                FROM ventas v
+                LEFT JOIN ubicaciones u ON v.ubicacion_id = u.id
+                WHERE v.producto_id = %s
+                    AND v.fecha_venta::date BETWEEN %s AND %s
+                    AND v.cantidad_vendida > 0
+                GROUP BY v.fecha_venta::date, v.ubicacion_id, u.nombre
+                ORDER BY v.fecha_venta::date, v.ubicacion_id
+            """
+
+            cursor.execute(ventas_query, [unidades_por_bulto, codigo_producto, fecha_inicio, fecha_fin])
+            ventas_result = cursor.fetchall()
+            cursor.close()
+
+            # Obtener inventario histórico por día y tienda
+            inventario_por_fecha_tienda = {}
+            try:
                 cursor = conn.cursor()
-
-                # Obtener información del producto desde tabla productos (incluyendo unidades_por_bulto)
-                cursor.execute("""
-                    SELECT codigo, descripcion, categoria, COALESCE(unidades_por_bulto, 1) as unidades_por_bulto
-                    FROM productos
-                    WHERE codigo = %s
-                """, [codigo_producto])
-                producto_info = cursor.fetchone()
-
-                if not producto_info:
-                    cursor.close()
-                    raise HTTPException(status_code=404, detail="Producto no encontrado")
-
-                unidades_por_bulto = float(producto_info[3]) if producto_info[3] else 1.0
-
-                # Obtener ventas diarias por tienda
-                # cantidad_vendida está en unidades, dividimos por unidades_por_bulto para obtener bultos
-                ventas_query = """
+                inv_query = """
                     SELECT
-                        v.fecha_venta::date as fecha,
-                        v.ubicacion_id,
-                        COALESCE(u.nombre, v.ubicacion_id) as ubicacion_nombre,
-                        SUM(v.cantidad_vendida) / %s as total_bultos,
-                        SUM(v.cantidad_vendida) as total_unidades,
-                        SUM(v.venta_total) as venta_total
-                    FROM ventas v
-                    LEFT JOIN ubicaciones u ON v.ubicacion_id = u.id
-                    WHERE v.producto_id = %s
-                        AND v.fecha_venta::date BETWEEN %s AND %s
-                        AND v.cantidad_vendida > 0
-                    GROUP BY v.fecha_venta::date, v.ubicacion_id, u.nombre
-                    ORDER BY v.fecha_venta::date, v.ubicacion_id
+                        fecha_snapshot::date as fecha,
+                        ubicacion_id,
+                        SUM(cantidad) as inventario_total
+                    FROM inventario_historico
+                    WHERE producto_id = %s
+                        AND fecha_snapshot::date BETWEEN %s AND %s
+                    GROUP BY fecha_snapshot::date, ubicacion_id
+                    ORDER BY fecha_snapshot::date, ubicacion_id
                 """
-
-                cursor.execute(ventas_query, [unidades_por_bulto, codigo_producto, fecha_inicio, fecha_fin])
-                ventas_result = cursor.fetchall()
+                cursor.execute(inv_query, [codigo_producto, fecha_inicio, fecha_fin])
+                inv_result = cursor.fetchall()
                 cursor.close()
 
-            else:
-                # DuckDB (legacy)
-                # Obtener información del producto
-                producto_info = conn.execute("""
-                    SELECT DISTINCT
-                        codigo_producto,
-                        descripcion_producto,
-                        categoria_producto
-                    FROM ventas_raw
-                    WHERE codigo_producto = ?
-                    LIMIT 1
-                """, [codigo_producto]).fetchone()
-
-                if not producto_info:
-                    raise HTTPException(status_code=404, detail="Producto no encontrado")
-
-                # Obtener ventas diarias por tienda
-                # Calcular bultos correctamente: cantidad_vendida / cantidad_bultos
-                # cantidad_bultos representa las unidades por bulto para ese producto
-                ventas_query = """
-                    SELECT
-                        TRY_CAST(fecha AS DATE) as fecha,
-                        ubicacion_id,
-                        ubicacion_nombre,
-                        SUM(TRY_CAST(cantidad_vendida AS DOUBLE) / NULLIF(TRY_CAST(cantidad_bultos AS DOUBLE), 0)) as total_bultos,
-                        SUM(TRY_CAST(cantidad_vendida AS DOUBLE)) as total_unidades,
-                        SUM(TRY_CAST(venta_total AS DOUBLE)) as venta_total
-                    FROM ventas_raw
-                    WHERE codigo_producto = ?
-                        AND TRY_CAST(fecha AS DATE) BETWEEN ? AND ?
-                        AND TRY_CAST(cantidad_vendida AS DOUBLE) > 0
-                        AND TRY_CAST(cantidad_bultos AS DOUBLE) > 0
-                    GROUP BY fecha, ubicacion_id, ubicacion_nombre
-                    ORDER BY fecha, ubicacion_id
-                """
-
-                ventas_result = conn.execute(ventas_query, [
-                    codigo_producto,
-                    fecha_inicio,
-                    fecha_fin
-                ]).fetchall()
-
-            # Obtener inventario histórico por día y tienda (solo PostgreSQL)
-            inventario_por_fecha_tienda = {}
-            if is_postgres_mode():
-                try:
-                    cursor = conn.cursor()
-                    inv_query = """
-                        SELECT
-                            fecha_snapshot::date as fecha,
-                            ubicacion_id,
-                            SUM(cantidad) as inventario_total
-                        FROM inventario_historico
-                        WHERE producto_id = %s
-                            AND fecha_snapshot::date BETWEEN %s AND %s
-                        GROUP BY fecha_snapshot::date, ubicacion_id
-                        ORDER BY fecha_snapshot::date, ubicacion_id
-                    """
-                    cursor.execute(inv_query, [codigo_producto, fecha_inicio, fecha_fin])
-                    inv_result = cursor.fetchall()
-                    cursor.close()
-
-                    for row in inv_result:
-                        fecha_inv, ubic_id, inv_total = row
-                        fecha_inv_str = fecha_inv.strftime('%Y-%m-%d') if fecha_inv else None
-                        if fecha_inv_str:
-                            if fecha_inv_str not in inventario_por_fecha_tienda:
-                                inventario_por_fecha_tienda[fecha_inv_str] = {}
-                            inventario_por_fecha_tienda[fecha_inv_str][ubic_id] = float(inv_total) if inv_total else 0
-                except Exception as inv_err:
-                    logger.warning(f"No se pudo obtener inventario histórico: {inv_err}")
+                for row in inv_result:
+                    fecha_inv, ubic_id, inv_total = row
+                    fecha_inv_str = fecha_inv.strftime('%Y-%m-%d') if fecha_inv else None
+                    if fecha_inv_str:
+                        if fecha_inv_str not in inventario_por_fecha_tienda:
+                            inventario_por_fecha_tienda[fecha_inv_str] = {}
+                        inventario_por_fecha_tienda[fecha_inv_str][ubic_id] = float(inv_total) if inv_total else 0
+            except Exception as inv_err:
+                logger.warning(f"No se pudo obtener inventario histórico: {inv_err}")
 
             # Organizar datos por fecha y tienda
             ventas_por_fecha = {}
@@ -7924,48 +7237,17 @@ async def get_ventas_producto_diario(
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
-@app.get("/api/ventas/producto/forecast", tags=["Ventas"])
+@app.get("/api/ventas/producto/forecast", tags=["Ventas"], deprecated=True)
 async def get_forecast_producto(
     ubicacion_id: str,
     codigo_producto: str,
     dias_adelante: int = 7
 ):
-    """
-    Calcula el forecast PMP (Promedio Móvil Ponderado) para un producto en una ubicación específica.
-
-    Retorna proyección diaria de ventas para los próximos N días basado en:
-    - Promedios por día de la semana (últimas 8 semanas)
-    - Ajustes de estacionalidad y tendencia
-    """
-    try:
-        with ForecastPMP(str(DB_PATH)) as forecaster:
-            resultado = forecaster.calcular_forecast_diario(
-                ubicacion_id=ubicacion_id,
-                codigo_producto=codigo_producto,
-                dias_adelante=dias_adelante
-            )
-
-            if not resultado or not resultado.get("forecasts"):
-                return {
-                    "ubicacion_id": ubicacion_id,
-                    "codigo_producto": codigo_producto,
-                    "forecasts": [],
-                    "dias_excluidos": 0,
-                    "mensaje": "No hay datos históricos suficientes para calcular forecast"
-                }
-
-            return {
-                "ubicacion_id": ubicacion_id,
-                "codigo_producto": codigo_producto,
-                "dias_adelante": dias_adelante,
-                "forecasts": resultado.get("forecasts", []),
-                "dias_excluidos": resultado.get("dias_excluidos", 0),
-                "metodo": resultado.get("metodo", "PMP")
-            }
-
-    except Exception as e:
-        logger.error(f"Error calculando forecast PMP: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error calculando forecast: {str(e)}")
+    """[DEPRECADO] Este endpoint usaba DuckDB ventas_raw y ha sido deprecado."""
+    raise HTTPException(
+        status_code=501,
+        detail="Endpoint deprecado. Usaba tabla DuckDB ventas_raw que ya no existe."
+    )
 
 
 @app.get("/api/ventas/producto/{codigo_producto}/ultimos-20-dias", tags=["Ventas"])
@@ -7988,88 +7270,54 @@ async def get_ventas_ultimos_20_dias(
     """
     try:
         with get_db_connection() as conn:
-            # PostgreSQL mode
-            if is_postgres_mode():
-                cursor = conn.cursor()
+            cursor = conn.cursor()
 
-                # Obtener la fecha máxima disponible en ventas (excluyendo hoy que puede estar incompleto)
-                cursor.execute("""
-                    SELECT MAX(fecha_venta::date)
-                    FROM ventas
-                    WHERE fecha_venta::date < CURRENT_DATE
-                """)
-                fecha_max_result = cursor.fetchone()
-                fecha_max = fecha_max_result[0] if fecha_max_result else None
+            # Obtener la fecha máxima disponible en ventas (excluyendo hoy que puede estar incompleto)
+            cursor.execute("""
+                SELECT MAX(fecha_venta::date)
+                FROM ventas
+                WHERE fecha_venta::date < CURRENT_DATE
+            """)
+            fecha_max_result = cursor.fetchone()
+            fecha_max = fecha_max_result[0] if fecha_max_result else None
 
-                if not fecha_max:
-                    cursor.close()
-                    return {"ventas": []}
-
-                # Obtener ventas de los últimos 20 días
-                cursor.execute("""
-                    SELECT
-                        fecha_venta::date as fecha,
-                        TO_CHAR(fecha_venta::date, 'Dy') as dia_semana,
-                        SUM(cantidad_vendida) as cantidad_vendida
-                    FROM ventas
-                    WHERE producto_id = %s
-                        AND ubicacion_id = %s
-                        AND fecha_venta::date > %s - INTERVAL '20 days'
-                        AND fecha_venta::date <= %s
-                    GROUP BY fecha_venta::date
-                    ORDER BY fecha_venta::date ASC
-                """, [codigo_producto, ubicacion_id, fecha_max, fecha_max])
-
-                result = cursor.fetchall()
+            if not fecha_max:
                 cursor.close()
+                return {"ventas": []}
 
-                # Mapear días de semana de inglés a español
-                dias_map = {
-                    'Mon': 'Lunes', 'Tue': 'Martes', 'Wed': 'Miércoles',
-                    'Thu': 'Jueves', 'Fri': 'Viernes', 'Sat': 'Sábado', 'Sun': 'Domingo'
-                }
+            # Obtener ventas de los últimos 20 días
+            cursor.execute("""
+                SELECT
+                    fecha_venta::date as fecha,
+                    TO_CHAR(fecha_venta::date, 'Dy') as dia_semana,
+                    SUM(cantidad_vendida) as cantidad_vendida
+                FROM ventas
+                WHERE producto_id = %s
+                    AND ubicacion_id = %s
+                    AND fecha_venta::date > %s - INTERVAL '20 days'
+                    AND fecha_venta::date <= %s
+                GROUP BY fecha_venta::date
+                ORDER BY fecha_venta::date ASC
+            """, [codigo_producto, ubicacion_id, fecha_max, fecha_max])
 
-                ventas = []
-                for row in result:
-                    dia_en = row[1] if row[1] else ''
-                    dia_es = dias_map.get(dia_en, dia_en)
-                    ventas.append({
-                        "fecha": str(row[0]) if row[0] else '',
-                        "dia_semana": dia_es,
-                        "cantidad_vendida": float(row[2]) if row[2] else 0
-                    })
+            result = cursor.fetchall()
+            cursor.close()
 
-            else:
-                # DuckDB mode (legacy)
-                fecha_max_result = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()
-                fecha_max = fecha_max_result[0] if fecha_max_result else None
+            # Mapear días de semana de inglés a español
+            dias_map = {
+                'Mon': 'Lunes', 'Tue': 'Martes', 'Wed': 'Miércoles',
+                'Thu': 'Jueves', 'Fri': 'Viernes', 'Sat': 'Sábado', 'Sun': 'Domingo'
+            }
 
-                if not fecha_max:
-                    return {"ventas": []}
-
-                query = """
-                    SELECT
-                        fecha,
-                        dia_semana,
-                        SUM(CAST(cantidad_vendida AS DECIMAL)) as cantidad_vendida
-                    FROM ventas_raw
-                    WHERE codigo_producto = ?
-                        AND ubicacion_id = ?
-                        AND fecha >= CAST(CAST(? AS DATE) - INTERVAL 20 DAY AS VARCHAR)
-                        AND fecha <= ?
-                    GROUP BY fecha, dia_semana
-                    ORDER BY fecha ASC
-                """
-
-                result = conn.execute(query, [codigo_producto, ubicacion_id, fecha_max, fecha_max]).fetchall()
-
-                ventas = []
-                for row in result:
-                    ventas.append({
-                        "fecha": row[0],
-                        "dia_semana": row[1],
-                        "cantidad_vendida": float(row[2]) if row[2] else 0
-                    })
+            ventas = []
+            for row in result:
+                dia_en = row[1] if row[1] else ''
+                dia_es = dias_map.get(dia_en, dia_en)
+                ventas.append({
+                    "fecha": str(row[0]) if row[0] else '',
+                    "dia_semana": dia_es,
+                    "cantidad_vendida": float(row[2]) if row[2] else 0
+                })
 
             logger.info(f"✅ Obtenidos {len(ventas)} días de ventas para {codigo_producto} en {ubicacion_id}")
 
@@ -8119,155 +7367,126 @@ async def get_transacciones_producto(
             fecha_inicio = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
 
         with get_db_connection() as conn:
-            if is_postgres_mode():
-                # PostgreSQL v2.0: tabla ventas
-                cursor = conn.cursor()
+            cursor = conn.cursor()
 
-                # Query para contar total de registros
-                count_query = """
-                    SELECT COUNT(*)
-                    FROM ventas
-                    WHERE producto_id = %s
-                      AND ubicacion_id = %s
-                      AND fecha_venta >= %s::timestamp
-                      AND fecha_venta < (%s::date + interval '1 day')::timestamp
-                """
-                cursor.execute(count_query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin])
-                total_items = cursor.fetchone()[0]
+            # Query para contar total de registros
+            count_query = """
+                SELECT COUNT(*)
+                FROM ventas
+                WHERE producto_id = %s
+                  AND ubicacion_id = %s
+                  AND fecha_venta >= %s::timestamp
+                  AND fecha_venta < (%s::date + interval '1 day')::timestamp
+            """
+            cursor.execute(count_query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin])
+            total_items = cursor.fetchone()[0]
 
-                # Query para totales agregados
-                totales_query = """
-                    SELECT
-                        COALESCE(SUM(cantidad_vendida), 0) as total_cantidad,
-                        COALESCE(SUM(venta_total), 0) as total_venta,
-                        COALESCE(SUM(costo_total), 0) as total_costo,
-                        COALESCE(SUM(utilidad_bruta), 0) as total_utilidad,
-                        COUNT(DISTINCT SPLIT_PART(numero_factura, '_L', 1)) as total_facturas
-                    FROM ventas
-                    WHERE producto_id = %s
-                      AND ubicacion_id = %s
-                      AND fecha_venta >= %s::timestamp
-                      AND fecha_venta < (%s::date + interval '1 day')::timestamp
-                """
-                cursor.execute(totales_query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin])
-                totales_row = cursor.fetchone()
+            # Query para totales agregados
+            totales_query = """
+                SELECT
+                    COALESCE(SUM(cantidad_vendida), 0) as total_cantidad,
+                    COALESCE(SUM(venta_total), 0) as total_venta,
+                    COALESCE(SUM(costo_total), 0) as total_costo,
+                    COALESCE(SUM(utilidad_bruta), 0) as total_utilidad,
+                    COUNT(DISTINCT SPLIT_PART(numero_factura, '_L', 1)) as total_facturas
+                FROM ventas
+                WHERE producto_id = %s
+                  AND ubicacion_id = %s
+                  AND fecha_venta >= %s::timestamp
+                  AND fecha_venta < (%s::date + interval '1 day')::timestamp
+            """
+            cursor.execute(totales_query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin])
+            totales_row = cursor.fetchone()
 
-                # Query principal con paginación
-                query = """
-                    SELECT
-                        numero_factura,
-                        TO_CHAR(fecha_venta, 'YYYY-MM-DD HH24:MI') as fecha_venta,
-                        almacen_nombre,
-                        cantidad_vendida,
-                        unidad_medida_venta,
-                        precio_unitario,
-                        costo_unitario,
-                        venta_total,
-                        costo_total,
-                        utilidad_bruta,
-                        margen_bruto_pct
-                    FROM ventas
-                    WHERE producto_id = %s
-                      AND ubicacion_id = %s
-                      AND fecha_venta >= %s::timestamp
-                      AND fecha_venta < (%s::date + interval '1 day')::timestamp
-                    ORDER BY fecha_venta DESC
-                    LIMIT %s OFFSET %s
-                """
-                cursor.execute(query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin, page_size, offset])
-                result = cursor.fetchall()
+            # Query principal con paginación
+            query = """
+                SELECT
+                    numero_factura,
+                    TO_CHAR(fecha_venta, 'YYYY-MM-DD HH24:MI') as fecha_venta,
+                    almacen_nombre,
+                    cantidad_vendida,
+                    unidad_medida_venta,
+                    precio_unitario,
+                    costo_unitario,
+                    venta_total,
+                    costo_total,
+                    utilidad_bruta,
+                    margen_bruto_pct
+                FROM ventas
+                WHERE producto_id = %s
+                  AND ubicacion_id = %s
+                  AND fecha_venta >= %s::timestamp
+                  AND fecha_venta < (%s::date + interval '1 day')::timestamp
+                ORDER BY fecha_venta DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(query, [codigo_producto, ubicacion_id, fecha_inicio, fecha_fin, page_size, offset])
+            result = cursor.fetchall()
 
-                # Obtener información del producto desde tabla productos
-                cursor.execute("""
-                    SELECT descripcion, categoria
-                    FROM productos
-                    WHERE codigo = %s
-                """, [codigo_producto])
-                producto_info = cursor.fetchone()
-                cursor.close()
+            # Obtener información del producto desde tabla productos
+            cursor.execute("""
+                SELECT descripcion, categoria
+                FROM productos
+                WHERE codigo = %s
+            """, [codigo_producto])
+            producto_info = cursor.fetchone()
+            cursor.close()
 
-                descripcion_producto = producto_info[0] if producto_info else codigo_producto
-                categoria_producto = producto_info[1] if producto_info else "Sin categoría"
+            descripcion_producto = producto_info[0] if producto_info else codigo_producto
+            categoria_producto = producto_info[1] if producto_info else "Sin categoría"
 
-                transacciones = []
-                for row in result:
-                    # Extraer número de factura sin el sufijo _L{linea}
-                    factura_completa = row[0]
-                    factura_base = factura_completa.split('_L')[0] if '_L' in factura_completa else factura_completa
+            transacciones = []
+            for row in result:
+                # Extraer número de factura sin el sufijo _L{linea}
+                factura_completa = row[0]
+                factura_base = factura_completa.split('_L')[0] if '_L' in factura_completa else factura_completa
 
-                    transacciones.append({
-                        "numero_factura": factura_base,
-                        "numero_factura_linea": factura_completa,
-                        "fecha_venta": row[1],
-                        "almacen": row[2] or "N/A",
-                        "cantidad": float(row[3]) if row[3] else 0,
-                        "unidad_medida": row[4] or "UNIDAD",
-                        "precio_unitario": float(row[5]) if row[5] else 0,
-                        "costo_unitario": float(row[6]) if row[6] else 0,
-                        "venta_total": float(row[7]) if row[7] else 0,
-                        "costo_total": float(row[8]) if row[8] else 0,
-                        "utilidad": float(row[9]) if row[9] else 0,
-                        "margen_pct": float(row[10]) if row[10] else 0
-                    })
+                transacciones.append({
+                    "numero_factura": factura_base,
+                    "numero_factura_linea": factura_completa,
+                    "fecha_venta": row[1],
+                    "almacen": row[2] or "N/A",
+                    "cantidad": float(row[3]) if row[3] else 0,
+                    "unidad_medida": row[4] or "UNIDAD",
+                    "precio_unitario": float(row[5]) if row[5] else 0,
+                    "costo_unitario": float(row[6]) if row[6] else 0,
+                    "venta_total": float(row[7]) if row[7] else 0,
+                    "costo_total": float(row[8]) if row[8] else 0,
+                    "utilidad": float(row[9]) if row[9] else 0,
+                    "margen_pct": float(row[10]) if row[10] else 0
+                })
 
-                total_pages = (total_items + page_size - 1) // page_size
+            total_pages = (total_items + page_size - 1) // page_size
 
-                return {
-                    "transacciones": transacciones,
-                    "pagination": {
-                        "total_items": total_items,
-                        "total_pages": total_pages,
-                        "current_page": page,
-                        "page_size": page_size,
-                        "has_next": page < total_pages,
-                        "has_previous": page > 1
-                    },
-                    "totales": {
-                        "total_cantidad": float(totales_row[0]) if totales_row[0] else 0,
-                        "total_venta": float(totales_row[1]) if totales_row[1] else 0,
-                        "total_costo": float(totales_row[2]) if totales_row[2] else 0,
-                        "total_utilidad": float(totales_row[3]) if totales_row[3] else 0,
-                        "total_facturas": totales_row[4] if totales_row[4] else 0
-                    },
-                    "filtros": {
-                        "codigo_producto": codigo_producto,
-                        "ubicacion_id": ubicacion_id,
-                        "fecha_inicio": fecha_inicio,
-                        "fecha_fin": fecha_fin
-                    },
-                    "producto": {
-                        "codigo": codigo_producto,
-                        "descripcion": descripcion_producto,
-                        "categoria": categoria_producto
-                    }
+            return {
+                "transacciones": transacciones,
+                "pagination": {
+                    "total_items": total_items,
+                    "total_pages": total_pages,
+                    "current_page": page,
+                    "page_size": page_size,
+                    "has_next": page < total_pages,
+                    "has_previous": page > 1
+                },
+                "totales": {
+                    "total_cantidad": float(totales_row[0]) if totales_row[0] else 0,
+                    "total_venta": float(totales_row[1]) if totales_row[1] else 0,
+                    "total_costo": float(totales_row[2]) if totales_row[2] else 0,
+                    "total_utilidad": float(totales_row[3]) if totales_row[3] else 0,
+                    "total_facturas": totales_row[4] if totales_row[4] else 0
+                },
+                "filtros": {
+                    "codigo_producto": codigo_producto,
+                    "ubicacion_id": ubicacion_id,
+                    "fecha_inicio": fecha_inicio,
+                    "fecha_fin": fecha_fin
+                },
+                "producto": {
+                    "codigo": codigo_producto,
+                    "descripcion": descripcion_producto,
+                    "categoria": categoria_producto
                 }
-            else:
-                # DuckDB (legacy) - no implementado para transacciones
-                return {
-                    "transacciones": [],
-                    "pagination": {
-                        "total_items": 0,
-                        "total_pages": 0,
-                        "current_page": 1,
-                        "page_size": page_size,
-                        "has_next": False,
-                        "has_previous": False
-                    },
-                    "totales": {
-                        "total_cantidad": 0,
-                        "total_venta": 0,
-                        "total_costo": 0,
-                        "total_utilidad": 0,
-                        "total_facturas": 0
-                    },
-                    "filtros": {
-                        "codigo_producto": codigo_producto,
-                        "ubicacion_id": ubicacion_id,
-                        "fecha_inicio": fecha_inicio,
-                        "fecha_fin": fecha_fin
-                    },
-                    "error": "Transacciones solo disponibles en PostgreSQL v2.0"
-                }
+            }
 
     except Exception as e:
         logger.error(f"Error obteniendo transacciones de producto: {str(e)}")
@@ -8991,7 +8210,7 @@ async def get_analisis_cache_status():
 # ENDPOINTS - ALERTAS Y CAMBIOS DE CLASIFICACIÓN
 # ======================================================================================
 
-@app.get("/api/alertas/cambios-clasificacion", tags=["Alertas"])
+@app.get("/api/alertas/cambios-clasificacion", tags=["Alertas"], deprecated=True)
 async def get_alertas_cambios(
     ubicacion_id: Optional[str] = None,
     solo_pendientes: bool = True,
@@ -8999,294 +8218,46 @@ async def get_alertas_cambios(
     dias: int = 30,
     limit: int = 100
 ):
-    """
-    Obtiene alertas de cambios de clasificación ABC-XYZ.
-
-    Args:
-        ubicacion_id: Filtrar por tienda específica
-        solo_pendientes: Solo alertas no revisadas
-        solo_criticas: Solo alertas críticas
-        dias: Ventana de tiempo en días
-        limit: Número máximo de resultados
-    """
-    try:
-        conn = duckdb.connect(str(DB_PATH))
-
-        conditions = [f"fecha_cambio >= CURRENT_TIMESTAMP - INTERVAL '{dias} days'"]
-
-        if ubicacion_id:
-            conditions.append(f"ubicacion_id = '{ubicacion_id}'")
-
-        if solo_pendientes:
-            conditions.append("revisado = false")
-
-        if solo_criticas:
-            conditions.append("es_critico = true")
-
-        where_clause = " AND ".join(conditions)
-
-        query = f"""
-            SELECT
-                a.id,
-                a.codigo_producto,
-                p.descripcion as producto_descripcion,
-                p.categoria,
-                p.marca,
-                a.ubicacion_id,
-                a.tipo_cambio,
-                a.cambio_clasificacion,
-                a.clasificacion_anterior,
-                a.clasificacion_nueva,
-                a.fecha_cambio,
-                a.es_critico,
-                a.nivel_prioridad,
-                a.valor_anterior,
-                a.valor_nuevo,
-                a.cambio_porcentual,
-                a.ranking_anterior,
-                a.ranking_nuevo,
-                a.matriz_anterior,
-                a.matriz_nueva,
-                a.cv_anterior,
-                a.cv_nuevo,
-                a.accion_recomendada,
-                a.revisado,
-                a.revisado_por,
-                a.revisado_fecha,
-                a.notas
-            FROM alertas_cambio_clasificacion a
-            LEFT JOIN productos p ON a.codigo_producto = p.codigo
-            WHERE {where_clause}
-            ORDER BY
-                CASE a.nivel_prioridad
-                    WHEN 'ALTA' THEN 1
-                    WHEN 'MEDIA' THEN 2
-                    WHEN 'BAJA' THEN 3
-                END,
-                a.fecha_cambio DESC
-            LIMIT {limit}
-        """
-
-        result = conn.execute(query).fetchall()
-        columns = [desc[0] for desc in conn.description]
-
-        alertas = [dict(zip(columns, row)) for row in result]
-
-        # Estadísticas
-        stats_query = f"""
-            SELECT
-                COUNT(*) as total,
-                COUNT(CASE WHEN es_critico THEN 1 END) as criticas,
-                COUNT(CASE WHEN nivel_prioridad = 'ALTA' THEN 1 END) as alta_prioridad,
-                COUNT(CASE WHEN revisado = false THEN 1 END) as pendientes,
-                COUNT(CASE WHEN tipo_cambio = 'ABC' THEN 1 END) as cambios_abc,
-                COUNT(CASE WHEN tipo_cambio = 'XYZ' THEN 1 END) as cambios_xyz
-            FROM alertas_cambio_clasificacion
-            WHERE {where_clause}
-        """
-
-        stats = conn.execute(stats_query).fetchone()
-
-        conn.close()
-
-        return {
-            "success": True,
-            "alertas": alertas,
-            "total": len(alertas),
-            "estadisticas": {
-                "total_en_periodo": stats[0],
-                "criticas": stats[1],
-                "alta_prioridad": stats[2],
-                "pendientes": stats[3],
-                "cambios_abc": stats[4],
-                "cambios_xyz": stats[5]
-            }
-        }
-
-    except Exception as e:
-        logger.error(f"Error obteniendo alertas: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """[DEPRECADO] Este endpoint usaba DuckDB y ha sido deprecado."""
+    raise HTTPException(
+        status_code=501,
+        detail="Endpoint deprecado. Usaba tablas DuckDB que ya no existen."
+    )
 
 
-@app.get("/api/alertas/resumen-tiendas", tags=["Alertas"])
+@app.get("/api/alertas/resumen-tiendas", tags=["Alertas"], deprecated=True)
 async def get_resumen_alertas_tiendas(dias: int = 30):
-    """
-    Obtiene resumen de alertas agrupadas por tienda.
-    """
-    try:
-        conn = duckdb.connect(str(DB_PATH))
-
-        query = f"""
-            SELECT
-                ubicacion_id,
-                COUNT(*) as total_alertas,
-                COUNT(CASE WHEN es_critico THEN 1 END) as alertas_criticas,
-                COUNT(CASE WHEN nivel_prioridad = 'ALTA' THEN 1 END) as prioridad_alta,
-                COUNT(CASE WHEN nivel_prioridad = 'MEDIA' THEN 1 END) as prioridad_media,
-                COUNT(CASE WHEN nivel_prioridad = 'BAJA' THEN 1 END) as prioridad_baja,
-                COUNT(CASE WHEN revisado = false THEN 1 END) as pendientes_revision,
-                COUNT(CASE WHEN tipo_cambio = 'ABC' THEN 1 END) as cambios_abc,
-                COUNT(CASE WHEN tipo_cambio = 'XYZ' THEN 1 END) as cambios_xyz,
-                MAX(fecha_cambio) as ultima_alerta
-            FROM alertas_cambio_clasificacion
-            WHERE fecha_cambio >= CURRENT_TIMESTAMP - INTERVAL '{dias} days'
-            GROUP BY ubicacion_id
-            ORDER BY pendientes_revision DESC, alertas_criticas DESC
-        """
-
-        result = conn.execute(query).fetchall()
-        columns = [desc[0] for desc in conn.description]
-
-        resumen = [dict(zip(columns, row)) for row in result]
-
-        conn.close()
-
-        return {
-            "success": True,
-            "resumen": resumen,
-            "total_tiendas": len(resumen)
-        }
-
-    except Exception as e:
-        logger.error(f"Error obteniendo resumen por tiendas: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """[DEPRECADO] Este endpoint usaba DuckDB y ha sido deprecado."""
+    raise HTTPException(
+        status_code=501,
+        detail="Endpoint deprecado. Usaba tablas DuckDB que ya no existen."
+    )
 
 
-@app.post("/api/alertas/{alerta_id}/revisar", tags=["Alertas"])
+@app.post("/api/alertas/{alerta_id}/revisar", tags=["Alertas"], deprecated=True)
 async def marcar_alerta_revisada(
     alerta_id: str,
     notas: Optional[str] = None,
     current_user: Usuario = Depends(verify_token)
 ):
-    """
-    Marca una alerta como revisada.
-
-    Requiere autenticación.
-    """
-    try:
-        conn = duckdb.connect(str(DB_PATH))
-
-        # Verificar que existe la alerta
-        existe = conn.execute(
-            "SELECT COUNT(*) FROM alertas_cambio_clasificacion WHERE id = ?",
-            [alerta_id]
-        ).fetchone()[0]
-
-        if existe == 0:
-            raise HTTPException(status_code=404, detail="Alerta no encontrada")
-
-        # Actualizar
-        conn.execute("""
-            UPDATE alertas_cambio_clasificacion
-            SET
-                revisado = true,
-                revisado_por = ?,
-                revisado_fecha = CURRENT_TIMESTAMP,
-                notas = COALESCE(?, notas)
-            WHERE id = ?
-        """, [current_user.email, notas, alerta_id])
-
-        conn.close()
-
-        return {
-            "success": True,
-            "message": "Alerta marcada como revisada",
-            "alerta_id": alerta_id,
-            "revisado_por": current_user.email
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error marcando alerta como revisada: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """[DEPRECADO] Este endpoint usaba DuckDB y ha sido deprecado."""
+    raise HTTPException(
+        status_code=501,
+        detail="Endpoint deprecado. Usaba tablas DuckDB que ya no existen."
+    )
 
 
-@app.get("/api/productos/{codigo}/historico-abc-xyz", tags=["Productos"])
+@app.get("/api/productos/{codigo}/historico-abc-xyz", tags=["Productos"], deprecated=True)
 async def get_historico_abc_xyz_completo(
     codigo: str,
     ubicacion_id: Optional[str] = None,
     limit: int = 50
 ):
-    """
-    Obtiene el histórico completo de clasificaciones ABC y XYZ de un producto.
-
-    Args:
-        codigo: Código del producto
-        ubicacion_id: Filtrar por tienda (opcional)
-        limit: Número máximo de registros históricos
-    """
-    try:
-        conn = duckdb.connect(str(DB_PATH))
-
-        # Construir condiciones
-        conditions = ["codigo_producto = ?"]
-        params = [codigo]
-
-        if ubicacion_id:
-            conditions.append("ubicacion_id = ?")
-            params.append(ubicacion_id)
-
-        where_clause = " AND ".join(conditions)
-
-        # Obtener histórico
-        query = f"""
-            SELECT
-                fecha_calculo,
-                ubicacion_id,
-                periodo_analisis,
-                fecha_inicio,
-                fecha_fin,
-                clasificacion_abc_valor,
-                valor_consumo_total,
-                ranking_valor,
-                porcentaje_valor,
-                porcentaje_acumulado
-            FROM productos_abc_v2_historico
-            WHERE {where_clause}
-            ORDER BY fecha_calculo DESC
-            LIMIT {limit}
-        """
-
-        result = conn.execute(query, params).fetchall()
-        columns = [desc[0] for desc in conn.description]
-
-        historico = [dict(zip(columns, row)) for row in result]
-
-        # Obtener clasificación actual
-        query_actual = f"""
-            SELECT
-                fecha_calculo,
-                ubicacion_id,
-                clasificacion_abc_valor,
-                clasificacion_xyz,
-                matriz_abc_xyz,
-                valor_consumo_total,
-                ranking_valor,
-                coeficiente_variacion,
-                demanda_promedio_semanal
-            FROM productos_abc_v2
-            WHERE {where_clause}
-        """
-
-        actual_result = conn.execute(query_actual, params).fetchall()
-        actual_columns = [desc[0] for desc in conn.description]
-
-        clasificacion_actual = [dict(zip(actual_columns, row)) for row in actual_result]
-
-        conn.close()
-
-        return {
-            "success": True,
-            "codigo_producto": codigo,
-            "clasificacion_actual": clasificacion_actual,
-            "historico": historico,
-            "total_registros": len(historico)
-        }
-
-    except Exception as e:
-        logger.error(f"Error obteniendo histórico ABC-XYZ: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """[DEPRECADO] Este endpoint usaba DuckDB y ha sido deprecado."""
+    raise HTTPException(
+        status_code=501,
+        detail="Endpoint deprecado. Usaba tablas DuckDB que ya no existen."
+    )
 
 
 # ============================================================================
@@ -9528,9 +8499,6 @@ async def get_historial_ventas_inventario(
         Serie temporal combinada con ventas e inventario para gráficos dual Y-axis
     """
     try:
-        if not is_postgres_mode():
-            raise HTTPException(status_code=501, detail="Solo disponible en modo PostgreSQL")
-
         # Calcular fechas por defecto
         tz_vzla = ZoneInfo("America/Caracas")
         ahora = datetime.now(tz_vzla)

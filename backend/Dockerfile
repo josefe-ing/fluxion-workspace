@@ -1,4 +1,4 @@
-# Dockerfile para Fluxion Backend - FastAPI + DuckDB
+# Dockerfile para Fluxion Backend - FastAPI + PostgreSQL
 FROM python:3.11-slim
 
 # Instalar dependencias del sistema incluyendo AWS CLI

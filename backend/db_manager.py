@@ -1,77 +1,41 @@
 """
-Dual Database Manager para Fluxion AI
-Soporta migración gradual DuckDB → PostgreSQL
+Database Manager para Fluxion AI
+PostgreSQL Only - DuckDB eliminado completamente
 
-Durante la migración, el sistema puede funcionar en 3 modos:
-1. duckdb: Solo DuckDB (legacy, default)
-2. dual: DuckDB + PostgreSQL en paralelo (para validación)
-3. postgresql: Solo PostgreSQL (después de migración completa)
+Supports Read Replica architecture:
+- get_postgres_connection(): Reads (uses replica in prod)
+- get_postgres_connection_primary(): Writes (always uses primary)
 """
 
-import duckdb
 import psycopg2
 import psycopg2.extras
 import os
-from pathlib import Path
 from contextlib import contextmanager
 from fastapi import HTTPException
-from typing import Union, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import logging
 
 from db_config import (
-    DB_MODE,
-    DUCKDB_PATH,
     POSTGRES_DSN,
     POSTGRES_DSN_PRIMARY,
-    get_db_mode,
-    is_duckdb_mode,
-    is_postgres_mode,
-    get_primary_db
 )
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# DUCKDB CONNECTIONS (Legacy)
-# =============================================================================
-
-@contextmanager
-def get_duckdb_connection(read_only: bool = True):
-    """
-    Context manager para conexiones DuckDB
-
-    Args:
-        read_only: Si True, abre en modo read-only (permite múltiples lectores)
-    """
-    db_path = Path(DUCKDB_PATH)
-
-    if not db_path.exists():
-        raise HTTPException(status_code=500, detail=f"DuckDB no encontrada en {db_path}")
-
-    conn = None
-    try:
-        conn = duckdb.connect(str(db_path), read_only=read_only)
-        yield conn
-    finally:
-        if conn:
-            conn.close()
-
-
-# =============================================================================
-# POSTGRESQL CONNECTIONS (New)
+# POSTGRESQL CONNECTIONS
 # =============================================================================
 
 @contextmanager
 def get_postgres_connection():
     """
     Context manager para conexiones PostgreSQL (READ - uses replica in prod)
-    Usa connection pooling implícito de psycopg2
     """
     conn = None
     try:
         conn = psycopg2.connect(POSTGRES_DSN)
-        conn.autocommit = False  # Transacciones explícitas
+        conn.autocommit = False
         yield conn
     except psycopg2.Error as e:
         logger.error(f"PostgreSQL connection error: {e}")
@@ -93,7 +57,7 @@ def get_postgres_connection_primary():
     conn = None
     try:
         conn = psycopg2.connect(POSTGRES_DSN_PRIMARY)
-        conn.autocommit = False  # Transacciones explícitas
+        conn.autocommit = False
         yield conn
     except psycopg2.Error as e:
         logger.error(f"PostgreSQL PRIMARY connection error: {e}")
@@ -106,162 +70,66 @@ def get_postgres_connection_primary():
 
 
 # =============================================================================
-# UNIFIED DATABASE CONNECTION (Abstraction Layer)
+# UNIFIED DATABASE CONNECTION (Simplified - PostgreSQL only)
 # =============================================================================
 
 @contextmanager
 def get_db_connection(read_only: bool = True):
     """
-    Retorna una conexión a la base de datos primaria según DB_MODE
-
-    - duckdb mode: Retorna DuckDB connection
-    - dual mode: Retorna DuckDB connection (DuckDB es primary durante dual-mode)
-    - postgresql mode: Retorna PostgreSQL connection
+    Retorna una conexión PostgreSQL.
 
     Args:
-        read_only: Para DuckDB, si abrir en modo read-only. Ignorado para PostgreSQL.
+        read_only: Ignored (kept for backward compatibility)
 
     Usage:
         with get_db_connection() as conn:
-            cursor = conn.cursor() if is_postgres else conn
+            cursor = conn.cursor()
             cursor.execute("SELECT * FROM productos")
             results = cursor.fetchall()
+            cursor.close()
     """
-    primary_db = get_primary_db()
-
-    if primary_db == "duckdb":
-        with get_duckdb_connection(read_only=read_only) as conn:
-            yield conn
-    else:  # postgresql
-        with get_postgres_connection() as conn:
-            yield conn
+    with get_postgres_connection() as conn:
+        yield conn
 
 
 @contextmanager
 def get_db_connection_write():
     """
-    Retorna una conexión WRITE a la base de datos PRIMARY.
-
-    IMPORTANT: In Read Replica architecture, this ALWAYS connects to PRIMARY,
-    never to replica. Use this for INSERT, UPDATE, DELETE, CREATE operations.
+    Retorna una conexión WRITE a PostgreSQL PRIMARY.
+    Use this for INSERT, UPDATE, DELETE, CREATE operations.
 
     Usage:
         with get_db_connection_write() as conn:
-            # conn es PostgreSQL o DuckDB según modo
-            cursor = conn.cursor() if is_postgres_mode() else conn
+            cursor = conn.cursor()
             cursor.execute("INSERT INTO ubicaciones ...")
             conn.commit()
+            cursor.close()
     """
-    primary_db = get_primary_db()
-
-    if primary_db == "duckdb":
-        with get_duckdb_connection(read_only=False) as conn:
-            yield conn
-    else:  # postgresql - use PRIMARY connection for writes
-        with get_postgres_connection_primary() as conn:
-            yield conn
+    with get_postgres_connection_primary() as conn:
+        yield conn
 
 
 # =============================================================================
-# DUAL-MODE HELPERS (Para write operations en ambas DBs)
-# =============================================================================
-
-def execute_dual_write(
-    duckdb_sql: str,
-    postgres_sql: str,
-    params: Optional[tuple] = None,
-    duckdb_params: Optional[tuple] = None,
-    postgres_params: Optional[tuple] = None
-):
-    """
-    Ejecuta un INSERT/UPDATE/DELETE en ambas bases de datos durante dual-mode
-
-    Args:
-        duckdb_sql: SQL para DuckDB
-        postgres_sql: SQL para PostgreSQL
-        params: Parámetros compartidos (si son iguales para ambas DBs)
-        duckdb_params: Parámetros específicos para DuckDB
-        postgres_params: Parámetros específicos para PostgreSQL
-
-    Returns:
-        Dict con resultados de ambas ejecuciones
-
-    Raises:
-        Exception si alguna de las dos falla
-    """
-    if DB_MODE != "dual":
-        raise ValueError("execute_dual_write solo funciona en modo 'dual'")
-
-    # Usar parámetros específicos o fallback a params compartidos
-    duck_params = duckdb_params if duckdb_params is not None else params
-    pg_params = postgres_params if postgres_params is not None else params
-
-    results = {"duckdb": None, "postgresql": None}
-    errors = []
-
-    # Ejecutar en PostgreSQL primero (nueva DB tiene prioridad)
-    try:
-        with get_postgres_connection() as pg_conn:
-            cursor = pg_conn.cursor()
-            cursor.execute(postgres_sql, pg_params)
-            pg_conn.commit()
-            results["postgresql"] = {"rowcount": cursor.rowcount, "success": True}
-            logger.info(f"✅ PostgreSQL write OK: {cursor.rowcount} rows affected")
-    except Exception as e:
-        logger.error(f"❌ PostgreSQL write failed: {e}")
-        errors.append(("postgresql", str(e)))
-        results["postgresql"] = {"error": str(e), "success": False}
-
-    # Ejecutar en DuckDB (para backward compatibility)
-    try:
-        with get_duckdb_connection(read_only=False) as duck_conn:
-            duck_conn.execute(duckdb_sql, duck_params)
-            results["duckdb"] = {"success": True}
-            logger.info("✅ DuckDB write OK")
-    except Exception as e:
-        logger.error(f"❌ DuckDB write failed: {e}")
-        errors.append(("duckdb", str(e)))
-        results["duckdb"] = {"error": str(e), "success": False}
-
-    # Si ambas fallaron, lanzar excepción
-    if len(errors) == 2:
-        error_msg = "; ".join([f"{db}: {err}" for db, err in errors])
-        raise Exception(f"Dual write failed on both databases: {error_msg}")
-
-    # Si solo una falló, logear warning pero no fallar
-    if len(errors) == 1:
-        db, err = errors[0]
-        logger.warning(f"⚠️  Dual write partially failed on {db}: {err}")
-
-    return results
-
-
-# =============================================================================
-# QUERY HELPERS (Cross-database compatibility)
+# QUERY HELPERS
 # =============================================================================
 
 def execute_query(sql: str, params: Optional[tuple] = None) -> List[tuple]:
     """
     Ejecuta una query SELECT y retorna resultados
-    Funciona con DuckDB o PostgreSQL según el modo
 
     Args:
-        sql: SQL query
+        sql: SQL query (use %s for placeholders)
         params: Parámetros de la query
 
     Returns:
         Lista de tuplas con resultados
     """
-    with get_db_connection(read_only=True) as conn:
-        if is_postgres_mode():
-            cursor = conn.cursor()
-            cursor.execute(sql, params)
-            results = cursor.fetchall()
-            cursor.close()
-            return results
-        else:  # DuckDB
-            result = conn.execute(sql, params)
-            return result.fetchall()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
 
 
 def execute_query_dict(sql: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
@@ -269,71 +137,73 @@ def execute_query_dict(sql: str, params: Optional[tuple] = None) -> List[Dict[st
     Ejecuta una query SELECT y retorna resultados como lista de dicts
 
     Args:
-        sql: SQL query
+        sql: SQL query (use %s for placeholders)
         params: Parámetros de la query
 
     Returns:
         Lista de diccionarios con resultados
     """
-    with get_db_connection(read_only=True) as conn:
-        if is_postgres_mode():
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cursor.execute(sql, params)
-            results = cursor.fetchall()
-            cursor.close()
-            return [dict(row) for row in results]
-        else:  # DuckDB
-            result = conn.execute(sql, params)
-            columns = [desc[0] for desc in result.description]
-            return [dict(zip(columns, row)) for row in result.fetchall()]
+    with get_db_connection() as conn:
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor.execute(sql, params)
+        results = cursor.fetchall()
+        cursor.close()
+        return [dict(row) for row in results]
 
 
 # =============================================================================
-# BACKWARD COMPATIBILITY (Para código legacy que usa database.py)
+# COMPATIBILITY FUNCTIONS (Always return True/False for PostgreSQL)
 # =============================================================================
 
-# Aliases para compatibilidad con código existente
+def is_postgres_mode():
+    """Always returns True - PostgreSQL only"""
+    return True
+
+def is_duckdb_mode():
+    """Always returns False - DuckDB removed"""
+    return False
+
+def get_db_mode():
+    """Returns 'postgresql' always"""
+    return "postgresql"
+
+def get_primary_db():
+    """Returns 'postgresql' always"""
+    return "postgresql"
+
+
+# =============================================================================
+# BACKWARD COMPATIBILITY ALIASES
+# =============================================================================
+
 get_db_connection_read = get_db_connection
 
-# Para facilitar migración gradual
 __all__ = [
     'get_db_connection',
     'get_db_connection_read',
     'get_db_connection_write',
-    'get_duckdb_connection',
     'get_postgres_connection',
     'get_postgres_connection_primary',
-    'execute_dual_write',
     'execute_query',
     'execute_query_dict',
-    'get_db_mode',
-    'is_duckdb_mode',
     'is_postgres_mode',
+    'is_duckdb_mode',
+    'get_db_mode',
     'get_primary_db'
 ]
 
 
 # =============================================================================
-# AUTO-INITIALIZATION OF ETL TABLES (PostgreSQL Only)
+# AUTO-INITIALIZATION OF ETL TABLES
 # =============================================================================
 
 def init_etl_tables():
     """
     Crea las tablas necesarias para el ETL de inventario si no existen.
-    Se ejecuta automáticamente al importar el módulo en modo PostgreSQL.
+    Se ejecuta automáticamente al importar el módulo.
 
     IMPORTANT: Uses PRIMARY connection because this creates tables (write operation).
-
-    Tablas creadas:
-    - ubicaciones: Tiendas y CEDIs
-    - productos: Catálogo de productos
-    - almacenes: Almacenes por ubicación
-    - inventario_actual: Stock actual
-    - inventario_historico: Snapshots históricos
     """
-    if not is_postgres_mode():
-        return
-
     try:
         with get_postgres_connection_primary() as conn:
             cursor = conn.cursor()
@@ -350,16 +220,13 @@ def init_etl_tables():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Add missing columns to ubicaciones table and fix NOT NULL constraint on codigo
             cursor.execute("""
                 DO $$
                 BEGIN
-                    -- Add codigo_klk column if not exists
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='ubicaciones' AND column_name='codigo_klk') THEN
                         ALTER TABLE ubicaciones ADD COLUMN codigo_klk VARCHAR(50);
                     END IF;
-                    -- Make 'codigo' nullable (migration 002 created it as NOT NULL but loader doesn't use it)
                     IF EXISTS (SELECT 1 FROM information_schema.columns
                                WHERE table_name='ubicaciones' AND column_name='codigo' AND is_nullable='NO') THEN
                         ALTER TABLE ubicaciones ALTER COLUMN codigo DROP NOT NULL;
@@ -382,36 +249,29 @@ def init_etl_tables():
                     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Add missing columns to productos table (for RDS production schema compatibility)
             cursor.execute("""
                 DO $$
                 BEGIN
-                    -- nombre column
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='productos' AND column_name='nombre') THEN
                         ALTER TABLE productos ADD COLUMN nombre VARCHAR(200);
                     END IF;
-                    -- fecha_actualizacion column
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='productos' AND column_name='fecha_actualizacion') THEN
                         ALTER TABLE productos ADD COLUMN fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
                     END IF;
-                    -- codigo_barras column (ETL loader requirement)
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='productos' AND column_name='codigo_barras') THEN
                         ALTER TABLE productos ADD COLUMN codigo_barras VARCHAR(50);
                     END IF;
-                    -- modelo column (ETL loader requirement)
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='productos' AND column_name='modelo') THEN
                         ALTER TABLE productos ADD COLUMN modelo VARCHAR(100);
                     END IF;
-                    -- grupo_articulo column (ETL loader requirement)
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='productos' AND column_name='grupo_articulo') THEN
                         ALTER TABLE productos ADD COLUMN grupo_articulo VARCHAR(100);
                     END IF;
-                    -- subgrupo column (ETL loader requirement)
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                    WHERE table_name='productos' AND column_name='subgrupo') THEN
                         ALTER TABLE productos ADD COLUMN subgrupo VARCHAR(100);
@@ -469,9 +329,7 @@ def init_etl_tables():
             conn.commit()
             cursor.close()
 
-            logger.info("✅ Tablas ETL verificadas/creadas en PostgreSQL:")
-            logger.info("   - ubicaciones, productos, almacenes")
-            logger.info("   - inventario_actual, inventario_historico")
+            logger.info("✅ Tablas ETL verificadas/creadas en PostgreSQL")
 
     except Exception as e:
         logger.error(f"⚠️ Error inicializando tablas ETL: {e}")
