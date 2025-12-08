@@ -77,7 +77,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_API_URL: https://d1tgnaj74tv17v.cloudfront.net
+          VITE_API_URL: https://api.fluxionia.co
         run: npm run build
 
       - name: Upload build artifacts
