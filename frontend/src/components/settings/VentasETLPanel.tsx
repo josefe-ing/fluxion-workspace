@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import http from '../../services/http';
 import LogViewer from './LogViewer';
-import KLKRealTimeExecutions from './KLKRealTimeExecutions';
-import KLKGapRecoveryPanel from './KLKGapRecoveryPanel';
+// DISABLED: ETL tracking endpoints not implemented in backend
+// import KLKRealTimeExecutions from './KLKRealTimeExecutions';
+// import KLKGapRecoveryPanel from './KLKGapRecoveryPanel';
 
 interface LogEntry {
   timestamp: string;
@@ -77,10 +78,11 @@ export default function VentasETLPanel() {
   const [schedulerFechaFin, setSchedulerFechaFin] = useState<string>('');
   const [showSchedulerCustomDates, setShowSchedulerCustomDates] = useState(false);
 
-  // Load gaps and scheduler status on mount
+  // Load gaps on mount (scheduler disabled - backend not initialized)
   useEffect(() => {
     loadGaps();
-    loadSchedulerStatus();
+    // NOTE: loadSchedulerStatus() disabled - VentasETLScheduler not initialized in backend
+    // See backend/main.py line 148: "VentasETLScheduler DISABLED"
 
     // Set default dates for yesterday
     const yesterday = new Date();
@@ -88,10 +90,6 @@ export default function VentasETLPanel() {
     const yesterdayStr = yesterday.toISOString().split('T')[0];
     setSchedulerFechaInicio(yesterdayStr);
     setSchedulerFechaFin(yesterdayStr);
-
-    // Poll scheduler status every 30 seconds
-    const interval = setInterval(loadSchedulerStatus, 30000);
-    return () => clearInterval(interval);
   }, []);
 
   const loadGaps = async () => {
@@ -663,7 +661,9 @@ export default function VentasETLPanel() {
             </div>
           </div>
 
-          {/* Real-Time Executions */}
+          {/* Real-Time Executions - DISABLED: /api/etl/tracking/* endpoints not implemented */}
+          {/* TODO: Re-enable when ETL tracking backend is implemented */}
+          {/*
           <div className="mb-6">
             <KLKRealTimeExecutions
               etl_tipo="ventas"
@@ -671,8 +671,10 @@ export default function VentasETLPanel() {
               refreshInterval={30}
             />
           </div>
+          */}
 
-          {/* Gap Recovery */}
+          {/* Gap Recovery - DISABLED: /api/etl/tracking/* endpoints not implemented */}
+          {/*
           <div className="mb-6">
             <KLKGapRecoveryPanel
               etl_tipo="ventas"
@@ -680,6 +682,7 @@ export default function VentasETLPanel() {
               refreshInterval={60}
             />
           </div>
+          */}
         </div>
       </div>
     </div>

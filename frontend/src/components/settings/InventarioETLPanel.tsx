@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import http from '../../services/http';
 import LogViewer from './LogViewer';
-import KLKRealTimeExecutions from './KLKRealTimeExecutions';
-import KLKGapRecoveryPanel from './KLKGapRecoveryPanel';
+// DISABLED: ETL tracking endpoints not implemented in backend
+// import KLKRealTimeExecutions from './KLKRealTimeExecutions';
+// import KLKGapRecoveryPanel from './KLKGapRecoveryPanel';
 
 interface LogEntry {
   timestamp: string;
@@ -242,7 +243,8 @@ export default function InventarioETLPanel() {
             </div>
           </div>
 
-          {/* Real-Time Executions */}
+          {/* Real-Time Executions - DISABLED: /api/etl/tracking/* endpoints not implemented */}
+          {/*
           <div className="mb-6">
             <KLKRealTimeExecutions
               etl_tipo="inventario"
@@ -250,8 +252,10 @@ export default function InventarioETLPanel() {
               refreshInterval={30}
             />
           </div>
+          */}
 
-          {/* Gap Recovery */}
+          {/* Gap Recovery - DISABLED: /api/etl/tracking/* endpoints not implemented */}
+          {/*
           <div className="mb-6">
             <KLKGapRecoveryPanel
               etl_tipo="inventario"
@@ -259,6 +263,7 @@ export default function InventarioETLPanel() {
               refreshInterval={60}
             />
           </div>
+          */}
         </div>
       </div>
     </div>
