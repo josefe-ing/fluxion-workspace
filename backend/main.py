@@ -7988,37 +7988,88 @@ async def get_ventas_ultimos_20_dias(
     """
     try:
         with get_db_connection() as conn:
-            # Obtener la fecha máxima disponible en ventas
-            fecha_max_result = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()
-            fecha_max = fecha_max_result[0] if fecha_max_result else None
+            # PostgreSQL mode
+            if is_postgres_mode():
+                cursor = conn.cursor()
 
-            if not fecha_max:
-                return {"ventas": []}
+                # Obtener la fecha máxima disponible en ventas (excluyendo hoy que puede estar incompleto)
+                cursor.execute("""
+                    SELECT MAX(fecha_venta::date)
+                    FROM ventas
+                    WHERE fecha_venta::date < CURRENT_DATE
+                """)
+                fecha_max_result = cursor.fetchone()
+                fecha_max = fecha_max_result[0] if fecha_max_result else None
 
-            # Calcular fecha inicial (20 días atrás)
-            query = """
-                SELECT
-                    fecha,
-                    dia_semana,
-                    SUM(CAST(cantidad_vendida AS DECIMAL)) as cantidad_vendida
-                FROM ventas_raw
-                WHERE codigo_producto = ?
-                    AND ubicacion_id = ?
-                    AND fecha >= CAST(CAST(? AS DATE) - INTERVAL 20 DAY AS VARCHAR)
-                    AND fecha <= ?
-                GROUP BY fecha, dia_semana
-                ORDER BY fecha ASC
-            """
+                if not fecha_max:
+                    cursor.close()
+                    return {"ventas": []}
 
-            result = conn.execute(query, [codigo_producto, ubicacion_id, fecha_max, fecha_max]).fetchall()
+                # Obtener ventas de los últimos 20 días
+                cursor.execute("""
+                    SELECT
+                        fecha_venta::date as fecha,
+                        TO_CHAR(fecha_venta::date, 'Dy') as dia_semana,
+                        SUM(cantidad_vendida) as cantidad_vendida
+                    FROM ventas
+                    WHERE producto_id = %s
+                        AND ubicacion_id = %s
+                        AND fecha_venta::date > %s - INTERVAL '20 days'
+                        AND fecha_venta::date <= %s
+                    GROUP BY fecha_venta::date
+                    ORDER BY fecha_venta::date ASC
+                """, [codigo_producto, ubicacion_id, fecha_max, fecha_max])
 
-            ventas = []
-            for row in result:
-                ventas.append({
-                    "fecha": row[0],
-                    "dia_semana": row[1],
-                    "cantidad_vendida": float(row[2]) if row[2] else 0
-                })
+                result = cursor.fetchall()
+                cursor.close()
+
+                # Mapear días de semana de inglés a español
+                dias_map = {
+                    'Mon': 'Lunes', 'Tue': 'Martes', 'Wed': 'Miércoles',
+                    'Thu': 'Jueves', 'Fri': 'Viernes', 'Sat': 'Sábado', 'Sun': 'Domingo'
+                }
+
+                ventas = []
+                for row in result:
+                    dia_en = row[1] if row[1] else ''
+                    dia_es = dias_map.get(dia_en, dia_en)
+                    ventas.append({
+                        "fecha": str(row[0]) if row[0] else '',
+                        "dia_semana": dia_es,
+                        "cantidad_vendida": float(row[2]) if row[2] else 0
+                    })
+
+            else:
+                # DuckDB mode (legacy)
+                fecha_max_result = conn.execute("SELECT MAX(fecha) FROM ventas_raw").fetchone()
+                fecha_max = fecha_max_result[0] if fecha_max_result else None
+
+                if not fecha_max:
+                    return {"ventas": []}
+
+                query = """
+                    SELECT
+                        fecha,
+                        dia_semana,
+                        SUM(CAST(cantidad_vendida AS DECIMAL)) as cantidad_vendida
+                    FROM ventas_raw
+                    WHERE codigo_producto = ?
+                        AND ubicacion_id = ?
+                        AND fecha >= CAST(CAST(? AS DATE) - INTERVAL 20 DAY AS VARCHAR)
+                        AND fecha <= ?
+                    GROUP BY fecha, dia_semana
+                    ORDER BY fecha ASC
+                """
+
+                result = conn.execute(query, [codigo_producto, ubicacion_id, fecha_max, fecha_max]).fetchall()
+
+                ventas = []
+                for row in result:
+                    ventas.append({
+                        "fecha": row[0],
+                        "dia_semana": row[1],
+                        "cantidad_vendida": float(row[2]) if row[2] else 0
+                    })
 
             logger.info(f"✅ Obtenidos {len(ventas)} días de ventas para {codigo_producto} en {ubicacion_id}")
 
