@@ -35,10 +35,9 @@ COPY database/schema_etl_tracking.sql /app/database/schema_etl_tracking.sql
 
 # Copiar migraciones de PostgreSQL
 COPY database/migrations/ /app/database/migrations/
-COPY database/run_migrations.py /app/database/run_migrations.py
 
 # Hacer archivos ejecutables
-RUN chmod +x /app/startup.sh /app/run_migrations.py
+RUN chmod +x /app/startup.sh
 
 # Create /data directory and set ownership
 RUN mkdir -p /data && chown -R appuser:appuser /data /app
