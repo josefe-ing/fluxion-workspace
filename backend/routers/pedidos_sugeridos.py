@@ -1282,6 +1282,12 @@ async def calcular_productos_sugeridos(
                     es_generador_trafico=es_generador_trafico
                 )
 
+                # DEBUG: Log detallado para productos con déficit pequeño que resultan en 0 bultos
+                if codigo == '002595' or (resultado.cantidad_sugerida_bultos == 0 and resultado.stock_maximo_unid > stock_tienda):
+                    logger.warning(f"🔍 DEBUG {codigo}: P75={p75_usado}, Stock={stock_tienda}, U/B={unidades_por_bulto}, ABC={clasificacion}")
+                    logger.warning(f"🔍 DEBUG {codigo}: SS={resultado.stock_seguridad_unid:.2f}, ROP={resultado.punto_reorden_unid:.2f}, MAX={resultado.stock_maximo_unid:.2f}")
+                    logger.warning(f"🔍 DEBUG {codigo}: Déficit={resultado.stock_maximo_unid - stock_tienda:.2f}, SUG_UNID={resultado.cantidad_sugerida_unid:.2f}, SUG_BULTOS={resultado.cantidad_sugerida_bultos}")
+
                 # Determinar razon del pedido
                 if resultado.tiene_sobrestock:
                     razon = "Sobrestock - No pedir"

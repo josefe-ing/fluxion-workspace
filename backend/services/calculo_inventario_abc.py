@@ -135,7 +135,7 @@ def set_config_tienda(config: Optional[ConfigTiendaABC] = None):
         }
 
 
-def _redondear_a_bultos(cantidad_unid: float, unidades_bulto: int) -> int:
+def _redondear_a_bultos(cantidad_unid: float, unidades_bulto: int, debug_codigo: str = None) -> int:
     """
     Redondea cantidad sugerida a bultos completos hacia arriba.
 
@@ -144,7 +144,15 @@ def _redondear_a_bultos(cantidad_unid: float, unidades_bulto: int) -> int:
     if cantidad_unid <= 0:
         return 0
 
-    return math.ceil(cantidad_unid / unidades_bulto)
+    resultado = math.ceil(cantidad_unid / unidades_bulto)
+
+    # DEBUG temporal
+    if debug_codigo or (cantidad_unid > 0 and resultado == 0):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"🔧 _redondear_a_bultos: unid={cantidad_unid}, u/b={unidades_bulto}, division={cantidad_unid/unidades_bulto}, ceil={resultado}")
+
+    return resultado
 
 
 def _calcular_sobrestock(stock_actual: float, stock_maximo: float,
