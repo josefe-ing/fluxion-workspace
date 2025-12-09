@@ -1245,35 +1245,56 @@ async def calcular_productos_sugeridos(
             # Stock total en bultos para referencia
             stock_total_bultos = stock_tienda / cantidad_bultos if cantidad_bultos > 0 else 0
 
-            # NUEVO: Detectar productos sin ventas locales (o muy pocas) pero con P75 de referencia y stock CEDI
-            # Estos son candidatos para "envío de prueba"
-            es_envio_prueba = False
+            # ========================================================================
+            # LÓGICA DE REFERENCIA REGIONAL Y ENVÍO PRUEBA
+            # ========================================================================
+            # Dos casos diferentes cuando no hay ventas locales suficientes:
+            #
+            # 1. REFERENCIA REGIONAL: Producto con pocas ventas locales pero con
+            #    P75 significativo en tiendas de referencia. Se usa ese P75 para
+            #    calcular normalmente con la fórmula ABC.
+            #
+            # 2. ENVÍO PRUEBA: Producto SIN ventas locales (P75=0) pero que SÍ se
+            #    vende en otras tiendas. Se sugiere mínimo 1 bulto para "probar"
+            #    el producto en la tienda, independiente del cálculo matemático.
+            # ========================================================================
+
+            es_envio_prueba = False      # Sin ventas locales -> probar con 1 bulto mínimo
+            usa_referencia_regional = False  # Pocas ventas -> usar P75 de referencia para cálculo
             p75_usado = prom_p75
             nombre_tienda_ref = None
 
-            # Condición 1: Sin ventas locales pero con P75 de referencia
-            # Condición 2: Muy pocas ventas locales (P75 < 1 unidad) pero P75 regional significativamente mayor
-            sin_ventas_locales = prom_p75 == 0
-            pocas_ventas_locales = prom_p75 > 0 and prom_p75 < 1 and p75_referencia > prom_p75 * 3
+            # Obtener nombre de la primera tienda de referencia (para mensajes)
+            if tiendas_referencia_str:
+                primera_tienda_id = tiendas_referencia_str.split(',')[0]
+                nombre_tienda_ref = tiendas_ref_nombres.get(primera_tienda_id, primera_tienda_id)
 
-            if (sin_ventas_locales or pocas_ventas_locales) and p75_referencia > 0 and stock_cedi > 0:
-                # Producto sin ventas (o muy pocas) pero con demanda en tiendas de referencia
-                # y con stock disponible en CEDI -> Sugerir envío de prueba
+            # Caso 1: SIN ventas locales (P75 = 0) pero con referencia -> ENVÍO PRUEBA
+            sin_ventas_locales = prom_p75 == 0
+            if sin_ventas_locales and p75_referencia > 0 and stock_cedi > 0:
                 es_envio_prueba = True
-                p75_usado = p75_referencia
-                clasificacion = 'C'  # Tratar como clase C (conservador) para envíos de prueba
+                p75_usado = p75_referencia  # Usar referencia para el cálculo base
+                clasificacion = 'C'  # Conservador
                 productos_sin_venta_con_ref += 1
 
-                # Obtener nombre de la primera tienda de referencia
-                if tiendas_referencia_str:
-                    primera_tienda_id = tiendas_referencia_str.split(',')[0]
-                    nombre_tienda_ref = tiendas_ref_nombres.get(primera_tienda_id, primera_tienda_id)
+            # Caso 2: POCAS ventas locales pero P75 regional mucho mayor -> REFERENCIA REGIONAL
+            # (usar P75 de referencia para calcular, sin forzar mínimos)
+            pocas_ventas_locales = prom_p75 > 0 and prom_p75 < 1 and p75_referencia > prom_p75 * 3
+            if pocas_ventas_locales and p75_referencia > 0 and stock_cedi > 0:
+                usa_referencia_regional = True
+                p75_usado = p75_referencia
+                # Mantener clasificación original, no forzar a C
 
             # Usar nuevo modulo de calculo ABC si hay demanda (local o de referencia)
             if p75_usado > 0 and clasificacion in ('A', 'B', 'C'):
+                # Para envío prueba o referencia regional, estimar sigma si no hay datos locales
+                sigma_usada = sigma_demanda
+                if (es_envio_prueba or usa_referencia_regional) and sigma_demanda == 0:
+                    sigma_usada = p75_usado * 0.3  # Estimar 30% de variabilidad
+
                 resultado = calcular_inventario_simple(
                     demanda_p75=p75_usado,  # Usar P75 local o de referencia
-                    sigma_demanda=sigma_demanda if not es_envio_prueba else p75_usado * 0.3,  # Estimar sigma
+                    sigma_demanda=sigma_usada,
                     demanda_maxima=demanda_maxima if demanda_maxima > 0 else p75_usado * 2,
                     unidades_por_bulto=unidades_por_bulto,
                     stock_actual=stock_tienda,
@@ -1288,25 +1309,46 @@ async def calcular_productos_sugeridos(
                     logger.warning(f"🔍 DEBUG {codigo}: SS={resultado.stock_seguridad_unid:.2f}, ROP={resultado.punto_reorden_unid:.2f}, MAX={resultado.stock_maximo_unid:.2f}")
                     logger.warning(f"🔍 DEBUG {codigo}: Déficit={resultado.stock_maximo_unid - stock_tienda:.2f}, SUG_UNID={resultado.cantidad_sugerida_unid:.2f}, SUG_BULTOS={resultado.cantidad_sugerida_bultos}")
 
-                # Determinar razon del pedido
+                # ENVÍO PRUEBA: Garantizar mínimo 1 bulto
+                # Si es envío de prueba y la sugerencia es 0, forzar a 1 bulto
+                cantidad_sugerida_bultos_final = resultado.cantidad_sugerida_bultos
+                cantidad_sugerida_unid_final = resultado.cantidad_sugerida_unid
+                if es_envio_prueba and resultado.cantidad_sugerida_bultos == 0:
+                    cantidad_sugerida_bultos_final = 1
+                    cantidad_sugerida_unid_final = float(unidades_por_bulto)
+                    logger.info(f"📦 {codigo}: Envío prueba forzado a 1 bulto ({unidades_por_bulto} unid)")
+
+                # Determinar razon del pedido y método de cálculo
                 if resultado.tiene_sobrestock:
                     razon = "Sobrestock - No pedir"
+                    metodo_usado = resultado.metodo_usado
                 elif es_envio_prueba:
-                    # Producto sin ventas locales -> Envío de prueba
+                    # Producto SIN ventas locales -> Envío de prueba (mínimo 1 bulto)
                     if nombre_tienda_ref:
-                        razon = f"Sin ventas - envío prueba (ref: {nombre_tienda_ref})"
+                        razon = f"Envío prueba (ref: {nombre_tienda_ref})"
                     else:
-                        razon = "Sin ventas - envío prueba"
+                        razon = "Envío prueba"
+                    metodo_usado = "envio_prueba"
+                elif usa_referencia_regional:
+                    # Producto con POCAS ventas locales -> usar P75 de referencia
+                    if nombre_tienda_ref:
+                        razon = f"P75 ref: {nombre_tienda_ref}"
+                    else:
+                        razon = "P75 referencia regional"
+                    metodo_usado = "referencia_regional"
                 else:
                     razon = ""  # Usuario puede agregar notas manualmente
+                    metodo_usado = resultado.metodo_usado
 
                 # Calcular dias cobertura actual
                 stock_dias = stock_tienda / p75_usado if p75_usado > 0 else 999
 
-                # Para envíos de prueba, agregar warning explicativo
+                # Agregar warnings explicativos
                 warnings = resultado.warnings.copy() if resultado.warnings else []
                 if es_envio_prueba:
-                    warnings.append(f"P75 basado en tienda referencia: {nombre_tienda_ref or 'región'}")
+                    warnings.append(f"Sin ventas locales. P75 de {nombre_tienda_ref or 'región'}: {p75_usado:.1f} unid/día")
+                elif usa_referencia_regional:
+                    warnings.append(f"Ventas locales bajas. Usando P75 de {nombre_tienda_ref or 'región'}: {p75_usado:.1f} unid/día")
 
                 productos.append(ProductoCalculado(
                     codigo_producto=codigo,
@@ -1338,11 +1380,11 @@ async def calcular_productos_sugeridos(
                     stock_maximo=resultado.stock_maximo_unid,
                     stock_seguridad=resultado.stock_seguridad_unid,
                     punto_reorden=resultado.punto_reorden_unid,
-                    cantidad_sugerida_unid=resultado.cantidad_sugerida_unid,
-                    cantidad_sugerida_bultos=float(resultado.cantidad_sugerida_bultos),
-                    cantidad_ajustada_bultos=float(resultado.cantidad_sugerida_bultos),
+                    cantidad_sugerida_unid=cantidad_sugerida_unid_final,
+                    cantidad_sugerida_bultos=float(cantidad_sugerida_bultos_final),
+                    cantidad_ajustada_bultos=float(cantidad_sugerida_bultos_final),
                     razon_pedido=razon,
-                    metodo_calculo="referencia_regional" if es_envio_prueba else resultado.metodo_usado,
+                    metodo_calculo=metodo_usado,
                     tiene_sobrestock=resultado.tiene_sobrestock,
                     exceso_unidades=resultado.exceso_unidades,
                     exceso_bultos=resultado.exceso_bultos,

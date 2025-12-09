@@ -79,6 +79,9 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
   const [criticidadModalOpen, setCriticidadModalOpen] = useState(false);
   const [selectedProductoCriticidad, setSelectedProductoCriticidad] = useState<ProductoPedido | null>(null);
 
+  // Config de días de cobertura por clase ABC (para modales)
+  const [configDiasCobertura, setConfigDiasCobertura] = useState<{ clase_a: number; clase_b: number; clase_c: number } | null>(null);
+
   // Cargar parámetros de stock al montar componente
   useEffect(() => {
     const cargarStockParams = async () => {
@@ -90,8 +93,36 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
       }
     };
 
+    const cargarConfigABC = async () => {
+      try {
+        const response = await http.get('/api/config-inventario/parametros-abc');
+        const { niveles_servicio, config_tiendas } = response.data;
+
+        // Buscar config específica de la tienda
+        const configTienda = config_tiendas.find(
+          (t: { tienda_id: string }) => t.tienda_id === orderData.tienda_destino
+        );
+
+        // Obtener valores de niveles globales
+        const nivelA = niveles_servicio.find((n: { clase: string }) => n.clase === 'A');
+        const nivelB = niveles_servicio.find((n: { clase: string }) => n.clase === 'B');
+        const nivelC = niveles_servicio.find((n: { clase: string }) => n.clase === 'C');
+
+        // Priorizar config de tienda, luego niveles globales, luego defaults
+        setConfigDiasCobertura({
+          clase_a: configTienda?.dias_cobertura_a ?? nivelA?.dias_cobertura_max ?? 7,
+          clase_b: configTienda?.dias_cobertura_b ?? nivelB?.dias_cobertura_max ?? 14,
+          clase_c: configTienda?.dias_cobertura_c ?? nivelC?.dias_cobertura_max ?? 30,
+        });
+      } catch (error) {
+        console.error('Error cargando configuración ABC:', error);
+        setConfigDiasCobertura({ clase_a: 7, clase_b: 14, clase_c: 30 });
+      }
+    };
+
     if (orderData.tienda_destino) {
       cargarStockParams();
+      cargarConfigABC();
     }
   }, [orderData.tienda_destino]);
 
@@ -892,6 +923,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             punto_reorden: selectedProductoStockMax.punto_reorden || selectedProductoStockMax.stock_minimo || 0,
             metodo_calculo: selectedProductoStockMax.metodo_calculo || 'estadistico',
           }}
+          configDiasCobertura={configDiasCobertura || undefined}
         />
       )}
 

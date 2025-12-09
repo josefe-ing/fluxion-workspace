@@ -1,5 +1,11 @@
 import { X, Zap, TrendingUp, Info, Package } from 'lucide-react';
 
+interface ConfigDiasCobertura {
+  clase_a: number;
+  clase_b: number;
+  clase_c: number;
+}
+
 interface StockMaximoModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -16,6 +22,7 @@ interface StockMaximoModalProps {
     punto_reorden: number;
     metodo_calculo: string;
   };
+  configDiasCobertura?: ConfigDiasCobertura;
 }
 
 // Constantes del sistema (deben coincidir con backend)
@@ -25,11 +32,28 @@ const PARAMS_ABC = {
   'C': { diasCobertura: 30, descripcion: '1 mes - Baja rotación' },
 };
 
-export default function StockMaximoModal({ isOpen, onClose, producto }: StockMaximoModalProps) {
+export default function StockMaximoModal({ isOpen, onClose, producto, configDiasCobertura }: StockMaximoModalProps) {
   if (!isOpen) return null;
 
   const claseEfectiva = producto.clase_efectiva || producto.clasificacion_abc || 'C';
-  const params = PARAMS_ABC[claseEfectiva as keyof typeof PARAMS_ABC] || PARAMS_ABC['C'];
+
+  // Obtener días de cobertura: priorizar config de tienda, luego defaults
+  const getDiasCobertura = (clase: string): number => {
+    if (configDiasCobertura) {
+      switch (clase) {
+        case 'A': return configDiasCobertura.clase_a;
+        case 'B': return configDiasCobertura.clase_b;
+        case 'C': return configDiasCobertura.clase_c;
+      }
+    }
+    // Fallback a valores default
+    return PARAMS_ABC[clase as keyof typeof PARAMS_ABC]?.diasCobertura || 30;
+  };
+
+  const diasCoberturaActual = getDiasCobertura(claseEfectiva);
+  const descripcionClase = claseEfectiva === 'A' ? 'Alta rotación' :
+                           claseEfectiva === 'B' ? 'Rotación media' : 'Baja rotación';
+  const params = { diasCobertura: diasCoberturaActual, descripcion: descripcionClase };
 
   // Valores calculados
   const demandaP75 = producto.prom_p75_unid;
@@ -281,7 +305,7 @@ export default function StockMaximoModal({ isOpen, onClose, producto }: StockMax
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
             <p className="text-sm font-semibold text-gray-900 mb-3">
               <Info className="inline w-4 h-4 mr-1" />
-              Días de Cobertura por Clase ABC
+              Días de Cobertura por Clase ABC {configDiasCobertura && <span className="text-xs font-normal text-blue-600">(configurado para esta tienda)</span>}
             </p>
             <div className="overflow-hidden border border-gray-200 rounded-lg bg-white">
               <table className="w-full text-sm">
@@ -295,18 +319,18 @@ export default function StockMaximoModal({ isOpen, onClose, producto }: StockMax
                 <tbody className="divide-y divide-gray-200">
                   <tr className={claseEfectiva === 'A' ? 'bg-red-50 font-semibold' : ''}>
                     <td className="px-3 py-2"><span className="px-2 py-0.5 bg-red-100 text-red-800 rounded text-xs font-bold">A</span></td>
-                    <td className="px-3 py-2 text-center font-mono font-bold">7 días</td>
-                    <td className="px-3 py-2 text-gray-600">Alta rotación - reposición semanal</td>
+                    <td className="px-3 py-2 text-center font-mono font-bold">{getDiasCobertura('A')} días</td>
+                    <td className="px-3 py-2 text-gray-600">Alta rotación</td>
                   </tr>
                   <tr className={claseEfectiva === 'B' ? 'bg-yellow-50 font-semibold' : ''}>
                     <td className="px-3 py-2"><span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded text-xs font-bold">B</span></td>
-                    <td className="px-3 py-2 text-center font-mono font-bold">14 días</td>
-                    <td className="px-3 py-2 text-gray-600">Rotación media - reposición quincenal</td>
+                    <td className="px-3 py-2 text-center font-mono font-bold">{getDiasCobertura('B')} días</td>
+                    <td className="px-3 py-2 text-gray-600">Rotación media</td>
                   </tr>
                   <tr className={claseEfectiva === 'C' ? 'bg-gray-100 font-semibold' : ''}>
                     <td className="px-3 py-2"><span className="px-2 py-0.5 bg-gray-200 text-gray-800 rounded text-xs font-bold">C</span></td>
-                    <td className="px-3 py-2 text-center font-mono font-bold">30 días</td>
-                    <td className="px-3 py-2 text-gray-600">Baja rotación - reposición mensual</td>
+                    <td className="px-3 py-2 text-center font-mono font-bold">{getDiasCobertura('C')} días</td>
+                    <td className="px-3 py-2 text-gray-600">Baja rotación</td>
                   </tr>
                 </tbody>
               </table>

@@ -92,12 +92,16 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [analisisXYZReal, setAnalisisXYZReal] = useState<Record<string, AnalisisXYZ>>({});
   const [usarDatosReales, setUsarDatosReales] = useState(true); // true = API real, false = dummy
 
+  // Config de días de cobertura por clase ABC (para modales)
+  const [configDiasCobertura, setConfigDiasCobertura] = useState<{ clase_a: number; clase_b: number; clase_c: number } | null>(null);
+
   // Paginación
   const [paginaActual, setPaginaActual] = useState(1);
   const productosPorPagina = 100;
 
   useEffect(() => {
     cargarStockParams();
+    cargarConfigABC();
     if (orderData.productos.length > 0) {
       setProductos(orderData.productos);
     } else {
@@ -231,6 +235,34 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         stock_max_mult_bc: 17.0,
         stock_max_mult_c: 26.0
       });
+    }
+  };
+
+  const cargarConfigABC = async () => {
+    try {
+      const response = await http.get('/api/config-inventario/parametros-abc');
+      const { niveles_servicio, config_tiendas } = response.data;
+
+      // Buscar config específica de la tienda
+      const configTienda = config_tiendas.find(
+        (t: { tienda_id: string }) => t.tienda_id === orderData.tienda_destino
+      );
+
+      // Obtener valores de niveles globales
+      const nivelA = niveles_servicio.find((n: { clase: string }) => n.clase === 'A');
+      const nivelB = niveles_servicio.find((n: { clase: string }) => n.clase === 'B');
+      const nivelC = niveles_servicio.find((n: { clase: string }) => n.clase === 'C');
+
+      // Priorizar config de tienda, luego niveles globales, luego defaults
+      setConfigDiasCobertura({
+        clase_a: configTienda?.dias_cobertura_a ?? nivelA?.dias_cobertura_max ?? 7,
+        clase_b: configTienda?.dias_cobertura_b ?? nivelB?.dias_cobertura_max ?? 14,
+        clase_c: configTienda?.dias_cobertura_c ?? nivelC?.dias_cobertura_max ?? 30,
+      });
+    } catch (error) {
+      console.error('Error cargando configuración ABC:', error);
+      // Usar defaults
+      setConfigDiasCobertura({ clase_a: 7, clase_b: 14, clase_c: 30 });
     }
   };
 
@@ -1699,6 +1731,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             punto_reorden: selectedProductoStockMax.punto_reorden || selectedProductoStockMax.stock_minimo || 0,
             metodo_calculo: selectedProductoStockMax.metodo_calculo || 'estadistico',
           }}
+          configDiasCobertura={configDiasCobertura || undefined}
         />
       )}
 

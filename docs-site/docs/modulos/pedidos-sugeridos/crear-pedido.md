@@ -139,13 +139,43 @@ Puedes modificar las cantidades sugeridas:
 
 ### Casos Especiales
 
-#### Envío de Prueba (Productos Nuevos)
+#### Envío de Prueba vs Referencia Regional
 
-Si un producto **no tiene ventas** en tu tienda pero **sí vende en otras tiendas de la región**, el sistema lo marca como "Envío de Prueba":
+Cuando un producto tiene pocas o ninguna venta local, el sistema usa datos de tiendas de referencia (ej: Artigas) para sugerir cantidades. Hay **dos casos diferentes**:
 
-- Usa el P75 de tiendas similares como referencia
-- Se trata como Clase C (conservador)
-- Aparece con badge amarillo "Envío Prueba"
+##### 1. Envío de Prueba (P75 local = 0)
+
+Producto que **nunca se ha vendido** en tu tienda pero **sí se vende en otras tiendas similares**.
+
+| Característica | Valor |
+|----------------|-------|
+| **Condición** | P75 local = 0 y P75 referencia > 0 |
+| **Sugerencia** | **Mínimo 1 bulto** (independiente del cálculo) |
+| **Método** | `envio_prueba` |
+| **Nota** | "Envío prueba (ref: ARTIGAS)" |
+
+**Lógica:** Como no hay historial de ventas, el sistema sugiere enviar al menos 1 bulto para "probar" si el producto tiene demanda en esa tienda.
+
+##### 2. Referencia Regional (P75 local muy bajo)
+
+Producto con **muy pocas ventas locales** pero con **demanda significativa** en tiendas de referencia.
+
+| Característica | Valor |
+|----------------|-------|
+| **Condición** | P75 local > 0 pero < 1 unid/día, y P75 referencia > 3× P75 local |
+| **Sugerencia** | Calculada con fórmula ABC normal usando P75 de referencia |
+| **Método** | `referencia_regional` |
+| **Nota** | "P75 ref: ARTIGAS" |
+
+**Lógica:** El producto tiene algo de movimiento local pero está subabastecido. Se usa el P75 de la tienda de referencia para calcular un nivel de stock más adecuado.
+
+##### Ejemplo Comparativo
+
+| Producto | P75 Local | P75 Ref | Caso | Sugerencia |
+|----------|-----------|---------|------|------------|
+| Galleta A | 0 | 18 u/día | Envío Prueba | **1 bulto** (mínimo) |
+| Crema B | 0.5 | 12 u/día | Referencia Regional | Calculado (~3 bultos) |
+| Jabón C | 8 | 10 u/día | Normal | Calculado con P75 local |
 
 #### Generadores de Tráfico
 

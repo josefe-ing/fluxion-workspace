@@ -60,6 +60,7 @@ from middleware.tenant import TenantMiddleware
 # Importar routers
 from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
 from routers.generadores_trafico_router import router as generadores_trafico_router
+from routers.config_inventario import router as config_inventario_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
 # Configurar logging
@@ -190,6 +191,7 @@ app.add_middleware(
 # Registrar routers
 app.include_router(pedidos_sugeridos_router)
 app.include_router(generadores_trafico_router)
+app.include_router(config_inventario_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
 # ============================================================================
