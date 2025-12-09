@@ -406,6 +406,40 @@ class UbicacionSummaryResponse(BaseModel):
     almacen_nombre: Optional[str] = None
 
 
+class UbicacionRegionalDetail(BaseModel):
+    """Detalle de una ubicación dentro del resumen regional"""
+    ubicacion_id: str
+    ubicacion_nombre: str
+    tipo: str  # 'tienda' o 'cedi'
+    almacen_codigo: Optional[str] = None
+    almacen_nombre: Optional[str] = None
+    total_skus: int
+    skus_con_stock: int
+    stock_cero: int
+    stock_negativo: int
+    fill_rate: float  # % SKUs con stock (excluyendo fantasmas)
+    dias_cobertura_a: Optional[float] = None
+    dias_cobertura_b: Optional[float] = None
+    dias_cobertura_c: Optional[float] = None
+    riesgo_quiebre: int  # SKUs con < 1 día cobertura
+    ultima_actualizacion: Optional[str] = None
+
+
+class RegionSummary(BaseModel):
+    """Resumen agregado de una región"""
+    region: str
+    total_ubicaciones: int
+    total_skus_unicos: int
+    fill_rate_promedio: float
+    dias_cobertura_a: Optional[float] = None
+    dias_cobertura_b: Optional[float] = None
+    dias_cobertura_c: Optional[float] = None
+    total_stock_cero: int
+    total_stock_negativo: int
+    total_riesgo_quiebre: int
+    ubicaciones: List[UbicacionRegionalDetail]
+
+
 class AlmacenKLKResponse(BaseModel):
     """Representa un almacén KLK"""
     codigo: str
@@ -604,7 +638,8 @@ class HistorialDataPoint(BaseModel):
     fecha: str  # ISO format: YYYY-MM-DD o YYYY-MM-DDTHH:mm:ss
     timestamp: int  # Unix timestamp para ordenamiento
     ventas: float  # Unidades vendidas en este período
-    inventario: Optional[float]  # Stock al momento (puede ser null si no hay snapshot)
+    inventario: Optional[float]  # Stock al momento en unidades (puede ser null si no hay snapshot)
+    inventario_bultos: Optional[float] = None  # Stock al momento en bultos
     es_estimado: bool = False  # True si el inventario fue interpolado
 
 
@@ -636,6 +671,8 @@ class HistorialProductoResponse(BaseModel):
     stock_promedio: float
     stock_actual: float
     dias_con_stock_cero: int
+    # Info del producto para conversión
+    unidades_por_bulto: float = 1.0  # Para convertir unidades a bultos
     # Diagnóstico (si aplica)
     diagnostico: Optional[DiagnosticoVentaPerdida] = None
 
@@ -1133,6 +1170,593 @@ async def get_ubicaciones_summary():
     except Exception as e:
         logger.error(f"Error obteniendo resumen de ubicaciones: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/ubicaciones/summary-regional", response_model=List[RegionSummary], tags=["Ubicaciones"])
+async def get_ubicaciones_summary_regional():
+    """
+    Obtiene resumen de inventario agrupado por región (CARACAS / VALENCIA).
+
+    Métricas por ubicación:
+    - Fill Rate: % SKUs con stock > 0 (excluyendo fantasmas)
+    - Días de cobertura promedio por clase ABC
+    - Riesgo de quiebre: SKUs con < 1 día de cobertura
+    - Stock cero y negativo
+    """
+    try:
+        with get_db_connection() as conn:
+            # Importar configuración de almacenes KLK
+            import sys
+            from pathlib import Path
+            etl_core_path = Path(__file__).parent.parent / 'etl' / 'core'
+            if str(etl_core_path) not in sys.path:
+                sys.path.insert(0, str(etl_core_path))
+
+            from tiendas_config import ALMACENES_KLK
+
+            # Construir mapeo de código de almacén -> nombre
+            almacen_nombres = {}
+            for tienda_id, almacenes in ALMACENES_KLK.items():
+                for alm in almacenes:
+                    almacen_nombres[alm.codigo] = alm.nombre
+
+            cursor = conn.cursor()
+
+            # Query principal con métricas por ubicación y almacén
+            # Calcula métricas usando inventario_actual, productos_abc_tienda, y ventas
+            query = """
+                WITH ubicacion_data AS (
+                    SELECT
+                        u.id as ubicacion_id,
+                        u.nombre as ubicacion_nombre,
+                        u.tipo,
+                        COALESCE(u.region, 'VALENCIA') as region,
+                        ia.almacen_codigo,
+                        COUNT(DISTINCT ia.producto_id) as total_skus,
+                        SUM(CASE WHEN ia.cantidad > 0 THEN 1 ELSE 0 END) as skus_con_stock,
+                        SUM(CASE WHEN ia.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
+                        SUM(CASE WHEN ia.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo,
+                        TO_CHAR(MAX(ia.fecha_actualizacion), 'YYYY-MM-DD HH24:MI:SS') as ultima_actualizacion
+                    FROM inventario_actual ia
+                    JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                    GROUP BY u.id, u.nombre, u.tipo, u.region, ia.almacen_codigo
+                ),
+                -- Ventas diarias últimos 20 días para calcular P75
+                ventas_20d AS (
+                    SELECT
+                        ubicacion_id,
+                        producto_id,
+                        DATE(fecha_venta) as fecha,
+                        SUM(cantidad_vendida) as total_dia
+                    FROM ventas
+                    WHERE fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
+                      AND fecha_venta < CURRENT_DATE
+                    GROUP BY ubicacion_id, producto_id, DATE(fecha_venta)
+                ),
+                demanda_p75 AS (
+                    SELECT
+                        ubicacion_id,
+                        producto_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75
+                    FROM ventas_20d
+                    GROUP BY ubicacion_id, producto_id
+                ),
+                -- Combinar stock con demanda y ABC
+                stock_con_demanda AS (
+                    SELECT
+                        ia.ubicacion_id,
+                        ia.almacen_codigo,
+                        ia.producto_id,
+                        ia.cantidad as stock_actual,
+                        COALESCE(dp.p75, 0) as demanda_p75,
+                        COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
+                        -- Días cobertura
+                        CASE WHEN COALESCE(dp.p75, 0) > 0 THEN
+                            ia.cantidad / dp.p75
+                        ELSE NULL END as dias_cobertura
+                    FROM inventario_actual ia
+                    LEFT JOIN demanda_p75 dp ON dp.ubicacion_id = ia.ubicacion_id
+                        AND dp.producto_id = ia.producto_id
+                    LEFT JOIN productos_abc_tienda abc ON abc.ubicacion_id = ia.ubicacion_id
+                        AND abc.producto_id = ia.producto_id
+                ),
+                -- Métricas ABC agregadas por ubicación
+                abc_metrics AS (
+                    SELECT
+                        ubicacion_id,
+                        almacen_codigo,
+                        -- Días cobertura promedio por clase (excluyendo NULL y valores extremos)
+                        AVG(CASE WHEN clase_abc = 'A' AND dias_cobertura IS NOT NULL AND dias_cobertura BETWEEN 0 AND 365 THEN dias_cobertura END) as dias_cobertura_a,
+                        AVG(CASE WHEN clase_abc = 'B' AND dias_cobertura IS NOT NULL AND dias_cobertura BETWEEN 0 AND 365 THEN dias_cobertura END) as dias_cobertura_b,
+                        AVG(CASE WHEN clase_abc = 'C' AND dias_cobertura IS NOT NULL AND dias_cobertura BETWEEN 0 AND 365 THEN dias_cobertura END) as dias_cobertura_c,
+                        -- Riesgo de quiebre: productos ABC con stock > 0, demanda > 0, y < 1 día cobertura
+                        SUM(CASE
+                            WHEN stock_actual > 0
+                            AND demanda_p75 > 0
+                            AND dias_cobertura < 1
+                            AND clase_abc IN ('A', 'B', 'C')
+                            THEN 1 ELSE 0
+                        END) as riesgo_quiebre,
+                        -- Fill rate: SKUs con stock / SKUs con demanda o stock (excluyendo fantasmas)
+                        COUNT(CASE WHEN stock_actual > 0 THEN 1 END)::float /
+                            NULLIF(COUNT(CASE WHEN demanda_p75 > 0 OR stock_actual > 0 THEN 1 END), 0) * 100 as fill_rate
+                    FROM stock_con_demanda
+                    GROUP BY ubicacion_id, almacen_codigo
+                )
+                SELECT
+                    ud.region,
+                    ud.ubicacion_id,
+                    ud.ubicacion_nombre,
+                    ud.tipo,
+                    ud.almacen_codigo,
+                    ud.total_skus,
+                    ud.skus_con_stock,
+                    ud.stock_cero,
+                    ud.stock_negativo,
+                    ud.ultima_actualizacion,
+                    COALESCE(am.fill_rate, 0) as fill_rate,
+                    am.dias_cobertura_a,
+                    am.dias_cobertura_b,
+                    am.dias_cobertura_c,
+                    COALESCE(am.riesgo_quiebre, 0) as riesgo_quiebre
+                FROM ubicacion_data ud
+                LEFT JOIN abc_metrics am ON ud.ubicacion_id = am.ubicacion_id
+                    AND COALESCE(ud.almacen_codigo, '') = COALESCE(am.almacen_codigo, '')
+                ORDER BY ud.region, ud.tipo DESC, ud.ubicacion_nombre, ud.almacen_codigo
+            """
+
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            cursor.close()
+
+            # Agrupar por región
+            regions_data: Dict[str, List[UbicacionRegionalDetail]] = {}
+
+            for row in rows:
+                region = row[0]
+                ubicacion_id = row[1]
+                almacen_codigo = row[4]
+
+                if region not in regions_data:
+                    regions_data[region] = []
+
+                detail = UbicacionRegionalDetail(
+                    ubicacion_id=ubicacion_id,
+                    ubicacion_nombre=row[2],
+                    tipo=row[3],
+                    almacen_codigo=almacen_codigo,
+                    almacen_nombre=almacen_nombres.get(almacen_codigo) if almacen_codigo else None,
+                    total_skus=row[5] or 0,
+                    skus_con_stock=row[6] or 0,
+                    stock_cero=row[7] or 0,
+                    stock_negativo=row[8] or 0,
+                    ultima_actualizacion=row[9],
+                    fill_rate=round(row[10] or 0, 1),
+                    dias_cobertura_a=round(row[11], 1) if row[11] else None,
+                    dias_cobertura_b=round(row[12], 1) if row[12] else None,
+                    dias_cobertura_c=round(row[13], 1) if row[13] else None,
+                    riesgo_quiebre=row[14] or 0
+                )
+                regions_data[region].append(detail)
+
+            # Construir respuesta con agregados por región
+            result = []
+            for region, ubicaciones in regions_data.items():
+                # Calcular agregados
+                total_stock_cero = sum(u.stock_cero for u in ubicaciones)
+                total_stock_negativo = sum(u.stock_negativo for u in ubicaciones)
+                total_riesgo_quiebre = sum(u.riesgo_quiebre for u in ubicaciones)
+
+                # Fill rate promedio ponderado por SKUs
+                total_skus_con_stock = sum(u.skus_con_stock for u in ubicaciones)
+                total_skus = sum(u.total_skus for u in ubicaciones)
+                fill_rate_promedio = (total_skus_con_stock / total_skus * 100) if total_skus > 0 else 0
+
+                # Días cobertura promedio por clase (promedio de promedios, excluyendo None)
+                dias_a = [u.dias_cobertura_a for u in ubicaciones if u.dias_cobertura_a is not None]
+                dias_b = [u.dias_cobertura_b for u in ubicaciones if u.dias_cobertura_b is not None]
+                dias_c = [u.dias_cobertura_c for u in ubicaciones if u.dias_cobertura_c is not None]
+
+                # SKUs únicos en la región (aproximación: suma de ubicaciones)
+                # TODO: Query separada para contar SKUs únicos reales por región
+
+                region_summary = RegionSummary(
+                    region=region,
+                    total_ubicaciones=len(set(u.ubicacion_id for u in ubicaciones)),
+                    total_skus_unicos=total_skus,  # Aproximación
+                    fill_rate_promedio=round(fill_rate_promedio, 1),
+                    dias_cobertura_a=round(sum(dias_a) / len(dias_a), 1) if dias_a else None,
+                    dias_cobertura_b=round(sum(dias_b) / len(dias_b), 1) if dias_b else None,
+                    dias_cobertura_c=round(sum(dias_c) / len(dias_c), 1) if dias_c else None,
+                    total_stock_cero=total_stock_cero,
+                    total_stock_negativo=total_stock_negativo,
+                    total_riesgo_quiebre=total_riesgo_quiebre,
+                    ubicaciones=ubicaciones
+                )
+                result.append(region_summary)
+
+            # Ordenar: VALENCIA primero (más ubicaciones), luego CARACAS
+            result.sort(key=lambda r: (0 if r.region == 'VALENCIA' else 1, r.region))
+
+            return result
+
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen regional: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+# ============================================================================
+# ANÁLISIS DE DISTRIBUCIÓN REGIONAL
+# ============================================================================
+
+class StockTiendaDetalle(BaseModel):
+    """Detalle de stock y P75 de una tienda"""
+    tienda_id: str
+    tienda_nombre: str
+    stock: float
+    p75_diario: float
+
+
+class OportunidadCediItem(BaseModel):
+    """Producto con stock en CEDI pero bajo/sin stock en tiendas"""
+    producto_id: str
+    codigo: str
+    descripcion: str
+    categoria: str
+    stock_cedi_unidades: float  # Stock en unidades
+    stock_cedi_bultos: float    # Stock en bultos
+    unidades_por_bulto: int
+    clase_abc_predominante: str
+    tiendas: List[StockTiendaDetalle]  # Detalle por tienda
+
+
+class OportunidadesCediResponse(BaseModel):
+    """Respuesta del análisis de oportunidades CEDI"""
+    region: str
+    cedi_id: str
+    cedi_nombre: str
+    umbral_stock_bajo: int
+    total_oportunidades: int
+    productos: List[OportunidadCediItem]
+
+
+@app.get("/api/inventario/oportunidades-cedi", response_model=List[OportunidadesCediResponse], tags=["Análisis Distribución"])
+async def get_oportunidades_cedi(
+    region: Optional[str] = None,
+    umbral_stock: int = 5,  # Stock <= este valor se considera "sin stock"
+    min_stock_cedi: int = 10,  # Mínimo stock en CEDI para considerar (en unidades)
+    limit: int = 50
+):
+    """
+    Identifica productos con stock en CEDI pero bajo/sin stock en tiendas.
+    Muestra stock CEDI en bultos y detalle por tienda con P75.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Construir filtro de región
+            region_filter = "AND u.region = %(region)s" if region else ""
+
+            # Query para obtener productos con stock en CEDI y al menos una tienda con stock bajo
+            query = f"""
+                WITH cedi_stock AS (
+                    SELECT
+                        ia.producto_id,
+                        u.id as cedi_id,
+                        u.nombre as cedi_nombre,
+                        u.region,
+                        SUM(ia.cantidad) as stock_cedi
+                    FROM inventario_actual ia
+                    JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                    WHERE u.tipo = 'cedi' AND ia.cantidad >= %(min_stock_cedi)s {region_filter}
+                    GROUP BY ia.producto_id, u.id, u.nombre, u.region
+                ),
+                tiendas_con_bajo_stock AS (
+                    SELECT
+                        ia.producto_id,
+                        u.region,
+                        COUNT(*) FILTER (WHERE ia.cantidad <= %(umbral_stock)s) as tiendas_bajo
+                    FROM inventario_actual ia
+                    JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                    WHERE u.tipo = 'tienda' {region_filter}
+                    GROUP BY ia.producto_id, u.region
+                    HAVING COUNT(*) FILTER (WHERE ia.cantidad <= %(umbral_stock)s) > 0
+                ),
+                producto_abc AS (
+                    SELECT
+                        producto_id,
+                        MODE() WITHIN GROUP (ORDER BY clase_abc) as clase_abc
+                    FROM productos_abc_tienda
+                    GROUP BY producto_id
+                )
+                SELECT
+                    cs.producto_id,
+                    COALESCE(p.codigo, cs.producto_id) as codigo,
+                    COALESCE(p.descripcion, 'Sin descripción') as descripcion,
+                    COALESCE(p.categoria, 'Sin categoría') as categoria,
+                    cs.cedi_id,
+                    cs.cedi_nombre,
+                    cs.region,
+                    cs.stock_cedi,
+                    COALESCE(p.unidades_por_bulto, 1) as unidades_por_bulto,
+                    COALESCE(pa.clase_abc, 'C') as clase_abc
+                FROM cedi_stock cs
+                JOIN tiendas_con_bajo_stock tb ON cs.producto_id = tb.producto_id AND cs.region = tb.region
+                LEFT JOIN productos p ON cs.producto_id = p.id
+                LEFT JOIN producto_abc pa ON cs.producto_id = pa.producto_id
+                ORDER BY cs.stock_cedi DESC
+                LIMIT %(query_limit)s
+            """
+
+            params = {
+                'umbral_stock': umbral_stock,
+                'min_stock_cedi': min_stock_cedi,
+                'query_limit': limit
+            }
+            if region:
+                params['region'] = region
+
+            cursor.execute(query, params)
+            productos_rows = cursor.fetchall()
+
+            if not productos_rows:
+                return []
+
+            # Obtener IDs de productos para buscar detalle de tiendas
+            producto_ids = [row[0] for row in productos_rows]
+
+            # Query para obtener stock y venta diaria por tienda para estos productos
+            tiendas_query = f"""
+                SELECT
+                    ia.producto_id,
+                    ia.ubicacion_id as tienda_id,
+                    u.nombre as tienda_nombre,
+                    u.region,
+                    ia.cantidad as stock,
+                    COALESCE(abc.venta_30d / 30.0, 0) as venta_diaria
+                FROM inventario_actual ia
+                JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                LEFT JOIN productos_abc_tienda abc ON ia.producto_id = abc.producto_id AND ia.ubicacion_id = abc.ubicacion_id
+                WHERE u.tipo = 'tienda' AND ia.producto_id = ANY(%(producto_ids)s) {region_filter}
+                ORDER BY ia.producto_id, u.nombre
+            """
+            tiendas_params = {'producto_ids': producto_ids}
+            if region:
+                tiendas_params['region'] = region
+            cursor.execute(tiendas_query, tiendas_params)
+            tiendas_rows = cursor.fetchall()
+            cursor.close()
+
+            # Organizar datos de tiendas por producto y región
+            tiendas_por_producto: Dict[str, Dict[str, List[StockTiendaDetalle]]] = {}
+            for row in tiendas_rows:
+                prod_id = row[0]
+                region_tienda = row[3]
+                if prod_id not in tiendas_por_producto:
+                    tiendas_por_producto[prod_id] = {}
+                if region_tienda not in tiendas_por_producto[prod_id]:
+                    tiendas_por_producto[prod_id][region_tienda] = []
+                tiendas_por_producto[prod_id][region_tienda].append(
+                    StockTiendaDetalle(
+                        tienda_id=row[1],
+                        tienda_nombre=row[2],
+                        stock=float(row[4] or 0),
+                        p75_diario=float(row[5] or 0)
+                    )
+                )
+
+            # Construir respuesta agrupada por CEDI
+            cedis_data: Dict[str, OportunidadesCediResponse] = {}
+
+            for row in productos_rows:
+                prod_id = row[0]
+                cedi_id = row[4]
+                cedi_nombre = row[5]
+                prod_region = row[6]
+                stock_cedi = float(row[7] or 0)
+                unidades_por_bulto = int(row[8] or 1)
+                clase_abc = row[9]
+
+                # Filtrar por región si se especifica
+                if region and prod_region != region:
+                    continue
+
+                cedi_key = f"{cedi_id}_{prod_region}"
+
+                if cedi_key not in cedis_data:
+                    cedis_data[cedi_key] = OportunidadesCediResponse(
+                        region=prod_region,
+                        cedi_id=cedi_id,
+                        cedi_nombre=cedi_nombre,
+                        umbral_stock_bajo=umbral_stock,
+                        total_oportunidades=0,
+                        productos=[]
+                    )
+
+                if len(cedis_data[cedi_key].productos) < limit:
+                    # Obtener tiendas de esta región para este producto
+                    tiendas_detalle = tiendas_por_producto.get(prod_id, {}).get(prod_region, [])
+
+                    item = OportunidadCediItem(
+                        producto_id=prod_id,
+                        codigo=row[1],
+                        descripcion=row[2],
+                        categoria=row[3],
+                        stock_cedi_unidades=stock_cedi,
+                        stock_cedi_bultos=round(stock_cedi / unidades_por_bulto, 1) if unidades_por_bulto > 0 else stock_cedi,
+                        unidades_por_bulto=unidades_por_bulto,
+                        clase_abc_predominante=clase_abc,
+                        tiendas=tiendas_detalle
+                    )
+                    cedis_data[cedi_key].productos.append(item)
+                    cedis_data[cedi_key].total_oportunidades += 1
+
+            result = list(cedis_data.values())
+            result.sort(key=lambda x: x.total_oportunidades, reverse=True)
+            return result
+
+    except Exception as e:
+        logger.error(f"Error obteniendo oportunidades CEDI: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+class ExpansionCatalogoItem(BaseModel):
+    """Producto con baja cobertura de tiendas pero buenas ventas"""
+    producto_id: str
+    codigo: str
+    descripcion: str
+    categoria: str
+    tiendas_con_producto: int  # Tiendas donde hay stock o ventas
+    total_tiendas: int
+    cobertura_porcentaje: float
+    venta_promedio_donde_hay: float  # Venta diaria promedio donde sí hay
+    venta_potencial_expansion: float  # Venta estimada si expandimos
+    tiendas_sin_producto: List[str]  # IDs de tiendas donde no hay
+    clase_abc_predominante: str
+
+
+class ExpansionCatalogoResponse(BaseModel):
+    """Respuesta del análisis de expansión de catálogo"""
+    region: str
+    cobertura_minima_filtro: float
+    cobertura_maxima_filtro: float
+    total_oportunidades: int
+    venta_potencial_total: float
+    productos: List[ExpansionCatalogoItem]
+
+
+@app.get("/api/inventario/expansion-catalogo", response_model=List[ExpansionCatalogoResponse], tags=["Análisis Distribución"])
+async def get_expansion_catalogo(
+    region: Optional[str] = None,
+    cobertura_min: float = 10,  # Mínimo % de cobertura (para excluir productos muy nuevos)
+    cobertura_max: float = 50,  # Máximo % de cobertura (objetivo: expandir estos)
+    venta_minima_semanal: float = 5,  # Venta mínima semanal donde sí hay
+    limit: int = 50
+):
+    """
+    Identifica productos con baja cobertura de tiendas pero buenas ventas donde existen.
+    Usa productos_abc_tienda para determinar presencia y ventas.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Query simplificado usando solo productos_abc_tienda
+            query = """
+                SELECT
+                    c.producto_id,
+                    COALESCE(p.codigo, c.producto_id) as codigo,
+                    COALESCE(p.descripcion, 'Sin descripción') as descripcion,
+                    COALESCE(p.categoria, 'Sin categoría') as categoria,
+                    c.region,
+                    c.tiendas_con_producto,
+                    c.total_tiendas,
+                    c.cobertura_pct,
+                    c.venta_semanal_promedio,
+                    c.venta_potencial_semanal,
+                    c.tiendas_presentes,
+                    c.clase_abc
+                FROM (
+                    SELECT
+                        abc.producto_id,
+                        u.region,
+                        COUNT(DISTINCT abc.ubicacion_id) as tiendas_con_producto,
+                        tr.total_tiendas,
+                        (COUNT(DISTINCT abc.ubicacion_id)::float / tr.total_tiendas * 100) as cobertura_pct,
+                        AVG(abc.venta_30d) / 30.0 * 7 as venta_semanal_promedio,
+                        AVG(abc.venta_30d) / 30.0 * (tr.total_tiendas - COUNT(DISTINCT abc.ubicacion_id)) * 7 as venta_potencial_semanal,
+                        ARRAY_AGG(DISTINCT abc.ubicacion_id) as tiendas_presentes,
+                        MODE() WITHIN GROUP (ORDER BY abc.clase_abc) as clase_abc
+                    FROM productos_abc_tienda abc
+                    JOIN ubicaciones u ON abc.ubicacion_id = u.id
+                    JOIN (
+                        SELECT region, COUNT(*) as total_tiendas
+                        FROM ubicaciones WHERE tipo = 'tienda'
+                        GROUP BY region
+                    ) tr ON tr.region = u.region
+                    WHERE u.tipo = 'tienda' AND abc.venta_30d > 0
+                    GROUP BY abc.producto_id, u.region, tr.total_tiendas
+                    HAVING (COUNT(DISTINCT abc.ubicacion_id)::float / tr.total_tiendas * 100) >= %(cobertura_min)s
+                       AND (COUNT(DISTINCT abc.ubicacion_id)::float / tr.total_tiendas * 100) <= %(cobertura_max)s
+                       AND AVG(abc.venta_30d) / 30.0 * 7 >= %(venta_minima_semanal)s
+                ) c
+                LEFT JOIN productos p ON c.producto_id = p.id
+                ORDER BY c.venta_potencial_semanal DESC
+                LIMIT %(query_limit)s
+            """
+
+            cursor.execute(query, {
+                'cobertura_min': cobertura_min,
+                'cobertura_max': cobertura_max,
+                'venta_minima_semanal': venta_minima_semanal,
+                'query_limit': limit * 3
+            })
+            rows = cursor.fetchall()
+
+            # Obtener tiendas por región
+            cursor.execute("""
+                SELECT region, ARRAY_AGG(id ORDER BY id) as tiendas
+                FROM ubicaciones WHERE tipo = 'tienda'
+                GROUP BY region
+            """)
+            tiendas_por_region = {row[0]: set(row[1]) for row in cursor.fetchall()}
+            cursor.close()
+
+            regions_data: Dict[str, ExpansionCatalogoResponse] = {}
+
+            for row in rows:
+                region_key = row[4]
+
+                if region and region_key != region:
+                    continue
+
+                if region_key not in regions_data:
+                    regions_data[region_key] = ExpansionCatalogoResponse(
+                        region=region_key,
+                        cobertura_minima_filtro=cobertura_min,
+                        cobertura_maxima_filtro=cobertura_max,
+                        total_oportunidades=0,
+                        venta_potencial_total=0,
+                        productos=[]
+                    )
+
+                if len(regions_data[region_key].productos) < limit:
+                    tiendas_presentes = set(row[10]) if row[10] else set()
+                    tiendas_region = tiendas_por_region.get(region_key, set())
+                    tiendas_sin = list(tiendas_region - tiendas_presentes)
+
+                    item = ExpansionCatalogoItem(
+                        producto_id=row[0],
+                        codigo=row[1],
+                        descripcion=row[2],
+                        categoria=row[3],
+                        tiendas_con_producto=row[5] or 0,
+                        total_tiendas=row[6] or 0,
+                        cobertura_porcentaje=round(float(row[7] or 0), 1),
+                        venta_promedio_donde_hay=round(float(row[8] or 0), 2),
+                        venta_potencial_expansion=round(float(row[9] or 0), 2),
+                        tiendas_sin_producto=tiendas_sin,
+                        clase_abc_predominante=row[11] or 'C'
+                    )
+                    regions_data[region_key].productos.append(item)
+                    regions_data[region_key].total_oportunidades += 1
+                    regions_data[region_key].venta_potencial_total += item.venta_potencial_expansion
+
+            result = list(regions_data.values())
+            result.sort(key=lambda x: x.venta_potencial_total, reverse=True)
+            return result
+
+    except Exception as e:
+        logger.error(f"Error obteniendo expansión catálogo: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 
 @app.get("/api/ubicaciones/{ubicacion_id}/stock-params", tags=["Ubicaciones"])
 async def get_stock_params(ubicacion_id: str):
@@ -8878,9 +9502,9 @@ async def get_historial_ventas_inventario(
         with get_postgres_connection() as conn:
             cursor = conn.cursor()
 
-            # 1. Obtener información del producto
+            # 1. Obtener información del producto (incluyendo unidades_por_bulto)
             cursor.execute("""
-                SELECT id, codigo, nombre, categoria
+                SELECT id, codigo, nombre, categoria, COALESCE(unidades_por_bulto, 1) as unidades_por_bulto
                 FROM productos
                 WHERE codigo = %s
             """, [codigo_producto])
@@ -8889,7 +9513,8 @@ async def get_historial_ventas_inventario(
             if not prod_row:
                 raise HTTPException(status_code=404, detail=f"Producto {codigo_producto} no encontrado")
 
-            producto_id, codigo, nombre_producto, categoria = prod_row
+            producto_id, codigo, nombre_producto, categoria, unidades_por_bulto = prod_row
+            unidades_por_bulto = float(unidades_por_bulto) if unidades_por_bulto else 1.0
 
             # 2. Obtener nombre de ubicación
             cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", [ubicacion_id])
@@ -9009,12 +9634,15 @@ async def get_historial_ventas_inventario(
                         key = current.strftime('%Y-%m-%dT%H:00:00')
                         ventas = ventas_dict.get(key, 0.0)
                         inventario = inventario_dict.get(key)
+                        # Calcular inventario en bultos
+                        inventario_bultos = inventario / unidades_por_bulto if inventario is not None else None
 
                         datos.append(HistorialDataPoint(
                             fecha=key,
                             timestamp=int(current.timestamp()),
                             ventas=ventas,
                             inventario=inventario,
+                            inventario_bultos=inventario_bultos,
                             es_estimado=False
                         ))
                     current += delta
@@ -9027,12 +9655,15 @@ async def get_historial_ventas_inventario(
                     key = current.strftime('%Y-%m-%d')
                     ventas = ventas_dict.get(key, 0.0)
                     inventario = inventario_dict.get(key)
+                    # Calcular inventario en bultos
+                    inventario_bultos = inventario / unidades_por_bulto if inventario is not None else None
 
                     datos.append(HistorialDataPoint(
                         fecha=key,
                         timestamp=int(current.timestamp()),
                         ventas=ventas,
                         inventario=inventario,
+                        inventario_bultos=inventario_bultos,
                         es_estimado=False
                     ))
                     current += delta
@@ -9112,6 +9743,7 @@ async def get_historial_ventas_inventario(
                 stock_promedio=round(stock_promedio, 1),
                 stock_actual=round(stock_actual, 1),
                 dias_con_stock_cero=dias_stock_cero,
+                unidades_por_bulto=unidades_por_bulto,
                 diagnostico=diagnostico
             )
 

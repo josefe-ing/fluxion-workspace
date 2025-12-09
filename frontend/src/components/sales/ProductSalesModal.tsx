@@ -187,6 +187,7 @@ interface HistorialDataPoint {
   timestamp: number;
   ventas: number;
   inventario: number | null;
+  inventario_bultos: number | null;  // Inventario convertido a bultos
   es_estimado: boolean;
 }
 
@@ -201,6 +202,7 @@ interface HistorialInventarioResponse {
   granularidad: string;
   datos: HistorialDataPoint[];
   stock_actual: number;
+  unidades_por_bulto: number;  // Para conversión de unidades a bultos
 }
 
 // Interfaces para ventas por hora
@@ -297,11 +299,11 @@ export default function ProductSalesModal({
         const fecha = label.split('T')[0];
         let hasZeroStock = false;
 
-        // Verificar si alguna tienda tiene stock cero en esta fecha
+        // Verificar si alguna tienda tiene stock cero en esta fecha (usando bultos)
         Object.entries(historialInventario).forEach(([tiendaId, datos]) => {
           if (selectedTiendas.has(tiendaId)) {
             const punto = datos.find(d => d.fecha.split('T')[0] === fecha);
-            if (punto && punto.inventario === 0) {
+            if (punto && (punto.inventario_bultos === 0 || punto.inventario === 0)) {
               hasZeroStock = true;
             }
           }
@@ -651,13 +653,13 @@ export default function ProductSalesModal({
         });
       }
 
-      // Dataset de inventario (si está activado)
+      // Dataset de inventario (si está activado) - Ahora en bultos para consistencia
       if (showInventario && historialInventario[tiendaId]) {
         const inventarioData = historialInventario[tiendaId];
 
-        // Mapear los datos de inventario a las fechas del gráfico
+        // Mapear los datos de inventario EN BULTOS a las fechas del gráfico
         const inventarioMap = new Map(
-          inventarioData.map(d => [d.fecha.split('T')[0], d.inventario])
+          inventarioData.map(d => [d.fecha.split('T')[0], d.inventario_bultos])
         );
 
         const dataInventario = allFechas.map(fecha => {
@@ -677,7 +679,7 @@ export default function ProductSalesModal({
           borderDash: [3, 3], // Línea punteada para diferenciar
           tension: 0.2,
           fill: true, // Rellenar área bajo la curva
-          yAxisID: 'y1', // Usar eje Y secundario
+          // Usa el mismo eje Y que las ventas (ambos en bultos)
           pointRadius: 2,
           pointHoverRadius: 5,
           order: 10, // Dibujar detrás de las ventas
@@ -829,11 +831,11 @@ export default function ProductSalesModal({
               }
             }
 
-            // Para inventario, mostrar unidades
+            // Para inventario, mostrar bultos (ahora consistente con ventas)
             if (label.includes('Inventario')) {
               const stockValue = value !== null ? value : 0;
               const esStockCero = stockValue === 0;
-              return `${label}: ${stockValue.toFixed(0)} unid${esStockCero ? ' ⚠️ SIN STOCK' : ''}`;
+              return `${label}: ${stockValue.toFixed(2)} bultos${esStockCero ? ' ⚠️ SIN STOCK' : ''}`;
             }
 
             return `${label}: ${value.toFixed(2)} bultos`;
@@ -901,29 +903,10 @@ export default function ProductSalesModal({
         beginAtZero: true,
         title: {
           display: true,
-          text: 'Bultos Vendidos',
+          text: showInventario ? 'Bultos (Ventas e Inventario)' : 'Bultos Vendidos',
         },
       },
-      // Eje Y secundario para inventario (solo si está activo)
-      ...(showInventario && {
-        y1: {
-          type: 'linear' as const,
-          display: true,
-          position: 'right' as const,
-          beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Inventario (unidades)',
-            color: '#9333ea', // Púrpura
-          },
-          grid: {
-            drawOnChartArea: false, // No superponer grid
-          },
-          ticks: {
-            color: '#9333ea',
-          },
-        },
-      }),
+      // Ya no necesitamos eje Y secundario - todo está en bultos ahora
       x: {
         title: {
           display: true,
@@ -1139,7 +1122,7 @@ export default function ProductSalesModal({
                           <>
                             <div className="flex items-center gap-2">
                               <span className="inline-block w-3 h-3 bg-purple-200 border border-purple-400 border-dashed"></span>
-                              <span>Inventario (eje der.)</span>
+                              <span>Inventario (bultos)</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="inline-block w-3 h-3 bg-red-200 border border-red-300"></span>
