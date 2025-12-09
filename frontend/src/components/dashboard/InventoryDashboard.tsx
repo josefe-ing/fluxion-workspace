@@ -4,6 +4,7 @@ import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 import ProductHistoryModal from './ProductHistoryModal';
 import CentroComandoCorreccionModal from './CentroComandoCorreccionModal';
+import * as XLSX from 'xlsx';
 
 interface StockItem {
   ubicacion_id: string;
@@ -11,6 +12,7 @@ interface StockItem {
   ubicacion_tipo: string;
   producto_id: string;
   codigo_producto: string;
+  codigo_barras: string | null;
   descripcion_producto: string;
   categoria: string;
   marca: string | null;
@@ -94,6 +96,9 @@ export default function InventoryDashboard() {
   // Modal Centro de Comando de Corrección
   const [showCorreccionModal, setShowCorreccionModal] = useState(false);
   const [anomaliasCount, setAnomaliasCount] = useState<number>(0);
+
+  // Estado para exportación a Excel
+  const [exporting, setExporting] = useState(false);
 
   // Debounce search term
   useEffect(() => {
@@ -274,6 +279,83 @@ export default function InventoryDashboard() {
     });
   };
 
+  // Exportar a Excel
+  const exportToExcel = async () => {
+    setExporting(true);
+    try {
+      // Obtener todos los datos sin paginación (page_size grande)
+      const params: Record<string, string | number> = {
+        page: 1,
+        page_size: 50000, // Obtener todos los productos
+      };
+
+      if (selectedUbicacion !== 'all') {
+        params.ubicacion_id = selectedUbicacion;
+      }
+
+      if (selectedAlmacen) {
+        params.almacen_codigo = selectedAlmacen;
+      }
+
+      if (selectedCategoria !== 'all') {
+        params.categoria = selectedCategoria;
+      }
+
+      if (debouncedSearchTerm) {
+        params.search = debouncedSearchTerm;
+      }
+
+      // Ordenamiento
+      if (sortByStock) {
+        params.sort_by = 'stock';
+        params.sort_order = sortOrderStock;
+      } else if (sortByPeso) {
+        params.sort_by = 'peso';
+        params.sort_order = sortOrderPeso;
+      }
+
+      const response = await http.get('/api/stock', { params });
+      const { data } = response.data as PaginatedStockResponse;
+
+      // Preparar datos para Excel
+      const excelData = data.map((item) => ({
+        'Código': item.codigo_producto,
+        'Cód.Barra': item.codigo_barras || '',
+        'Artículo': item.descripcion_producto,
+        'NombreAlmacen': item.ubicacion_nombre,
+        'Existencia': item.stock_actual ?? 0,
+      }));
+
+      // Crear libro de Excel
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(excelData);
+
+      // Ajustar anchos de columnas
+      ws['!cols'] = [
+        { wch: 12 },  // Código
+        { wch: 15 },  // Cód.Barra
+        { wch: 50 },  // Artículo
+        { wch: 25 },  // NombreAlmacen
+        { wch: 12 },  // Existencia
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+
+      // Generar nombre de archivo
+      const fecha = new Date().toISOString().split('T')[0];
+      const ubicacionNombre = ubicaciones.find(u => u.id === selectedUbicacion)?.nombre || selectedUbicacion;
+      const almacenSuffix = selectedAlmacen ? `_${selectedAlmacen}` : '';
+      const nombreArchivo = `Inventario_${ubicacionNombre}${almacenSuffix}_${fecha}.xlsx`;
+
+      // Descargar archivo
+      XLSX.writeFile(wb, nombreArchivo);
+    } catch (error) {
+      console.error('Error exportando a Excel:', error);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Botón de regreso */}
@@ -443,8 +525,27 @@ export default function InventoryDashboard() {
 
       {/* Tabla de Productos */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">Productos</h2>
+          <button
+            onClick={exportToExcel}
+            disabled={exporting || loading || stockData.length === 0}
+            className="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {exporting ? (
+              <>
+                <div className="h-4 w-4 mr-2 animate-spin rounded-full border-2 border-white border-r-transparent"></div>
+                Exportando...
+              </>
+            ) : (
+              <>
+                <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Exportar Excel
+              </>
+            )}
+          </button>
         </div>
 
         {loading ? (

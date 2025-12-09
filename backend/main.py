@@ -344,6 +344,7 @@ class StockResponse(BaseModel):
     ubicacion_tipo: str
     producto_id: str
     codigo_producto: str
+    codigo_barras: Optional[str]
     descripcion_producto: str
     categoria: str
     marca: Optional[str]
@@ -3416,8 +3417,8 @@ async def get_stock(
         # Validar parámetros de paginación
         if page < 1:
             raise HTTPException(status_code=400, detail="El número de página debe ser >= 1")
-        if page_size < 1 or page_size > 500:
-            raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 500")
+        if page_size < 1 or page_size > 100000:
+            raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 100000")
 
         # Query simplificado usando inventario_actual
         count_query = """
@@ -3435,6 +3436,7 @@ async def get_stock(
                 'tienda' as tipo_ubicacion,
                 ia.producto_id,
                 COALESCE(p.codigo, '') as codigo_producto,
+                COALESCE(p.codigo_barras, '') as codigo_barras,
                 COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
                 COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
                 COALESCE(p.marca, '') as marca,
@@ -3553,21 +3555,22 @@ async def get_stock(
                 ubicacion_tipo=row[2],
                 producto_id=row[3],
                 codigo_producto=row[4],
-                descripcion_producto=row[5],
-                categoria=row[6],
-                marca=row[7],
-                stock_actual=row[8],
-                stock_minimo=row[9],
-                stock_maximo=row[10],
-                punto_reorden=row[11],
-                precio_venta=row[12],
-                cantidad_bultos=row[13],
-                estado_stock=row[14],
-                dias_cobertura_actual=row[15],
-                es_producto_estrella=row[16],
-                fecha_extraccion=row[17],
-                peso_producto_kg=row[18],
-                peso_total_kg=row[19]
+                codigo_barras=row[5],
+                descripcion_producto=row[6],
+                categoria=row[7],
+                marca=row[8],
+                stock_actual=row[9],
+                stock_minimo=row[10],
+                stock_maximo=row[11],
+                punto_reorden=row[12],
+                precio_venta=row[13],
+                cantidad_bultos=row[14],
+                estado_stock=row[15],
+                dias_cobertura_actual=row[16],
+                es_producto_estrella=row[17],
+                fecha_extraccion=row[18],
+                peso_producto_kg=row[19],
+                peso_total_kg=row[20]
             ))
 
         # Crear metadata de paginación
