@@ -11,6 +11,12 @@ interface StockDiasModalProps {
     cantidad_bultos: number;
     stock_tienda: number;
     stock_en_transito: number;
+    // Valores reales del backend
+    stock_seguridad: number;
+    rop: number;
+    stock_maximo: number;
+    clasificacion_abc: string;
+    dias_stock: number;
   };
   stockParams: {
     stock_min_mult_a: number;
@@ -31,67 +37,25 @@ interface StockDiasModalProps {
   };
 }
 
-const ABC_THRESHOLDS = {
-  A: 20,
-  AB: 5,
-  B: 0.45,
-  BC: 0.20,
-  C: 0.001,
-};
-
-export default function StockDiasModal({ isOpen, onClose, producto, stockParams }: StockDiasModalProps) {
+export default function StockDiasModal({ isOpen, onClose, producto }: StockDiasModalProps) {
   if (!isOpen) return null;
 
-  // Calcular venta diaria en bultos usando P75 (Percentil 75)
-  // P75 es más robusto estadísticamente: considera toda la distribución y es resistente a outliers
-  const ventaDiariaP75 = producto.prom_p75_unid / producto.cantidad_bultos;
-  const ventaDiaria20D = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-  const ventaDiariaBultos = ventaDiariaP75 > 0 ? ventaDiariaP75 : ventaDiaria20D;
-
-  // Determinar clasificación ABC
-  let clasificacion = '-';
-  let multMin = 0;
-  let multSeg = 0;
-  let multMax = 0;
-
-  if (ventaDiariaBultos >= ABC_THRESHOLDS.A) {
-    clasificacion = 'A';
-    multMin = stockParams.stock_min_mult_a;
-    multSeg = stockParams.stock_seg_mult_a;
-    multMax = stockParams.stock_max_mult_a;
-  } else if (ventaDiariaBultos >= ABC_THRESHOLDS.AB) {
-    clasificacion = 'AB';
-    multMin = stockParams.stock_min_mult_ab;
-    multSeg = stockParams.stock_seg_mult_ab;
-    multMax = stockParams.stock_max_mult_ab;
-  } else if (ventaDiariaBultos >= ABC_THRESHOLDS.B) {
-    clasificacion = 'B';
-    multMin = stockParams.stock_min_mult_b;
-    multSeg = stockParams.stock_seg_mult_b;
-    multMax = stockParams.stock_max_mult_b;
-  } else if (ventaDiariaBultos >= ABC_THRESHOLDS.BC) {
-    clasificacion = 'BC';
-    multMin = stockParams.stock_min_mult_bc;
-    multSeg = stockParams.stock_seg_mult_bc;
-    multMax = stockParams.stock_max_mult_bc;
-  } else if (ventaDiariaBultos >= ABC_THRESHOLDS.C) {
-    clasificacion = 'C';
-    multMin = stockParams.stock_min_mult_c;
-    multSeg = stockParams.stock_seg_mult_c;
-    multMax = stockParams.stock_max_mult_c;
-  }
-
-  // Calcular stock actual en días (usando P75)
+  // Usar valores reales del backend
   const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
   const ventaDiariaBase = producto.prom_p75_unid > 0 ? producto.prom_p75_unid : producto.prom_ventas_20dias_unid;
-  const diasStockActual = ventaDiariaBase > 0
-    ? stockTotalUnidades / ventaDiariaBase
-    : Infinity;
 
-  // Calcular puntos de control en días
-  const diasMinimo = multMin;
-  const diasReorden = multMin + multSeg + 1.25;
-  const diasMaximo = multMax;
+  // Días de stock actual (del backend o calculado)
+  const diasStockActual = producto.dias_stock > 0
+    ? producto.dias_stock
+    : (ventaDiariaBase > 0 ? stockTotalUnidades / ventaDiariaBase : Infinity);
+
+  // Convertir SS, ROP, MAX de unidades a días
+  const diasSS = ventaDiariaBase > 0 ? producto.stock_seguridad / ventaDiariaBase : 0;
+  const diasROP = ventaDiariaBase > 0 ? producto.rop / ventaDiariaBase : 0;
+  const diasMaximo = ventaDiariaBase > 0 ? producto.stock_maximo / ventaDiariaBase : 0;
+
+  // Usar clasificación del backend
+  const clasificacion = producto.clasificacion_abc || '-';
 
   // Determinar estado y urgencia
   let estado: 'critico' | 'bajo' | 'normal' | 'alto' | 'exceso';
@@ -101,20 +65,20 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
   let colorText: string;
   let recomendacion: string;
 
-  if (diasStockActual <= diasMinimo) {
+  if (diasStockActual <= diasSS) {
     estado = 'critico';
     urgencia = 'CRÍTICO - Pedir Urgente';
     icon = <AlertTriangle className="h-12 w-12 text-red-600" />;
     colorBg = 'bg-red-50';
     colorText = 'text-red-700';
-    recomendacion = 'El stock está por debajo del mínimo. Es urgente realizar un pedido para evitar quiebres de inventario.';
-  } else if (diasStockActual <= diasReorden) {
+    recomendacion = 'El stock está por debajo del Stock de Seguridad. Es urgente realizar un pedido para evitar quiebres de inventario.';
+  } else if (diasStockActual <= diasROP) {
     estado = 'bajo';
     urgencia = 'BAJO - Pedir Ahora';
     icon = <AlertCircle className="h-12 w-12 text-orange-600" />;
     colorBg = 'bg-orange-50';
     colorText = 'text-orange-700';
-    recomendacion = 'El stock alcanzó el punto de reorden. Se recomienda hacer un pedido para reponer hasta el stock máximo.';
+    recomendacion = 'El stock alcanzó el Punto de Reorden (ROP). Se recomienda hacer un pedido para reponer hasta el stock máximo.';
   } else if (diasStockActual <= diasMaximo) {
     estado = 'normal';
     urgencia = 'NORMAL - No Pedir';
@@ -133,10 +97,10 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
 
   // Calcular porcentajes para la barra visual
   const maxDiasParaBarra = Math.max(diasMaximo * 1.2, diasStockActual);
-  const porcentajeMin = (diasMinimo / maxDiasParaBarra) * 100;
-  const porcentajeReorden = (diasReorden / maxDiasParaBarra) * 100;
+  const porcentajeSS = (diasSS / maxDiasParaBarra) * 100;
+  const porcentajeROP = (diasROP / maxDiasParaBarra) * 100;
   const porcentajeMax = (diasMaximo / maxDiasParaBarra) * 100;
-  const porcentajeActual = (diasStockActual / maxDiasParaBarra) * 100;
+  const porcentajeActual = Math.min((diasStockActual / maxDiasParaBarra) * 100, 100);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -180,53 +144,73 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
             </h3>
 
             {/* Barra de progreso */}
-            <div className="relative h-16 bg-gray-200 rounded-lg overflow-hidden mb-4">
-              {/* Zona Crítica (0 - Mínimo) */}
+            <div className="relative h-20 bg-gray-200 rounded-lg overflow-visible mb-8 mt-10">
+              {/* Zona Crítica (0 - SS) */}
               <div
-                className="absolute left-0 top-0 h-full bg-red-300 opacity-50"
-                style={{ width: `${porcentajeMin}%` }}
+                className="absolute left-0 top-0 h-full bg-red-300 opacity-50 rounded-l-lg"
+                style={{ width: `${porcentajeSS}%` }}
               />
 
-              {/* Zona Bajo (Mínimo - Reorden) */}
+              {/* Zona Bajo (SS - ROP) */}
               <div
                 className="absolute top-0 h-full bg-orange-300 opacity-50"
-                style={{ left: `${porcentajeMin}%`, width: `${porcentajeReorden - porcentajeMin}%` }}
+                style={{ left: `${porcentajeSS}%`, width: `${porcentajeROP - porcentajeSS}%` }}
               />
 
-              {/* Zona Normal (Reorden - Máximo) */}
+              {/* Zona Normal (ROP - Máximo) */}
               <div
                 className="absolute top-0 h-full bg-green-300 opacity-50"
-                style={{ left: `${porcentajeReorden}%`, width: `${porcentajeMax - porcentajeReorden}%` }}
+                style={{ left: `${porcentajeROP}%`, width: `${porcentajeMax - porcentajeROP}%` }}
               />
 
               {/* Zona Exceso (> Máximo) */}
               <div
-                className="absolute top-0 h-full bg-blue-300 opacity-50"
+                className="absolute top-0 h-full bg-blue-300 opacity-50 rounded-r-lg"
                 style={{ left: `${porcentajeMax}%`, width: `${100 - porcentajeMax}%` }}
               />
 
-              {/* Marcadores de líneas */}
+              {/* Marcadores de líneas con etiquetas */}
               <div
-                className="absolute top-0 bottom-0 w-1 bg-red-600"
-                style={{ left: `${porcentajeMin}%` }}
-              />
+                className="absolute top-0 bottom-0 w-0.5 bg-red-600"
+                style={{ left: `${porcentajeSS}%` }}
+              >
+                <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 text-xs font-semibold text-red-700 whitespace-nowrap">
+                  SS: {diasSS.toFixed(1)}d
+                </div>
+              </div>
               <div
-                className="absolute top-0 bottom-0 w-1 bg-indigo-600"
-                style={{ left: `${porcentajeReorden}%` }}
-              />
+                className="absolute top-0 bottom-0 w-0.5 bg-indigo-600"
+                style={{ left: `${porcentajeROP}%` }}
+              >
+                <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 text-xs font-semibold text-indigo-700 whitespace-nowrap">
+                  ROP: {diasROP.toFixed(1)}d
+                </div>
+              </div>
               <div
-                className="absolute top-0 bottom-0 w-1 bg-purple-600"
+                className="absolute top-0 bottom-0 w-0.5 bg-purple-600"
                 style={{ left: `${porcentajeMax}%` }}
-              />
+              >
+                <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 text-xs font-semibold text-purple-700 whitespace-nowrap">
+                  MAX: {diasMaximo.toFixed(1)}d
+                </div>
+              </div>
 
-              {/* Indicador de stock actual */}
+              {/* Indicador de stock actual - MÁS VISIBLE */}
               {diasStockActual !== Infinity && (
                 <div
-                  className="absolute top-0 bottom-0 w-2 bg-black shadow-lg"
-                  style={{ left: `${porcentajeActual}%` }}
+                  className="absolute top-0 bottom-0 flex flex-col items-center"
+                  style={{ left: `${porcentajeActual}%`, transform: 'translateX(-50%)' }}
                 >
-                  <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-black text-white px-2 py-1 rounded text-xs font-bold whitespace-nowrap">
-                    Stock: {diasStockActual.toFixed(1)}d
+                  {/* Etiqueta superior */}
+                  <div className="absolute -top-9 bg-black text-white px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap shadow-lg z-10">
+                    {diasStockActual.toFixed(1)} días
+                    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 rotate-45 w-2 h-2 bg-black"></div>
+                  </div>
+                  {/* Línea vertical gruesa */}
+                  <div className="w-1 h-full bg-black shadow-md"></div>
+                  {/* Triángulo inferior */}
+                  <div className="absolute bottom-0 translate-y-1/2">
+                    <div className="w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-t-[10px] border-t-black"></div>
                   </div>
                 </div>
               )}
@@ -237,17 +221,17 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
               <div className="text-center">
                 <div className="h-3 bg-red-300 rounded mb-1"></div>
                 <p className="font-semibold text-red-800">Crítico</p>
-                <p className="text-gray-600">0 - {diasMinimo.toFixed(1)}d</p>
+                <p className="text-gray-600">0 - {diasSS.toFixed(1)}d</p>
               </div>
               <div className="text-center">
                 <div className="h-3 bg-orange-300 rounded mb-1"></div>
                 <p className="font-semibold text-orange-800">Bajo</p>
-                <p className="text-gray-600">{diasMinimo.toFixed(1)} - {diasReorden.toFixed(1)}d</p>
+                <p className="text-gray-600">{diasSS.toFixed(1)} - {diasROP.toFixed(1)}d</p>
               </div>
               <div className="text-center">
                 <div className="h-3 bg-green-300 rounded mb-1"></div>
                 <p className="font-semibold text-green-800">Normal</p>
-                <p className="text-gray-600">{diasReorden.toFixed(1)} - {diasMaximo.toFixed(1)}d</p>
+                <p className="text-gray-600">{diasROP.toFixed(1)} - {diasMaximo.toFixed(1)}d</p>
               </div>
               <div className="text-center">
                 <div className="h-3 bg-blue-300 rounded mb-1"></div>
@@ -339,29 +323,29 @@ export default function StockDiasModal({ isOpen, onClose, producto, stockParams 
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  <tr className={diasStockActual <= diasMinimo ? 'bg-red-50' : ''}>
-                    <td className="px-3 py-2 font-semibold text-orange-800">Stock Mínimo</td>
-                    <td className="px-3 py-2 text-center text-gray-700">{diasMinimo.toFixed(1)} días</td>
+                  <tr className={diasStockActual <= diasSS ? 'bg-red-50' : ''}>
+                    <td className="px-3 py-2 font-semibold text-red-800">Stock Seguridad (SS)</td>
+                    <td className="px-3 py-2 text-center text-gray-700">{diasSS.toFixed(1)} días</td>
                     <td className="px-3 py-2 text-center">
-                      {diasStockActual <= diasMinimo ? (
+                      {diasStockActual <= diasSS ? (
                         <span className="text-red-700 font-bold">⚠️ Por debajo</span>
                       ) : (
                         <span className="text-green-700">✓ Arriba</span>
                       )}
                     </td>
                   </tr>
-                  <tr className={diasStockActual <= diasReorden && diasStockActual > diasMinimo ? 'bg-orange-50' : ''}>
-                    <td className="px-3 py-2 font-semibold text-indigo-800">Punto de Reorden</td>
-                    <td className="px-3 py-2 text-center text-gray-700">{diasReorden.toFixed(1)} días</td>
+                  <tr className={diasStockActual <= diasROP && diasStockActual > diasSS ? 'bg-orange-50' : ''}>
+                    <td className="px-3 py-2 font-semibold text-indigo-800">Punto de Reorden (ROP)</td>
+                    <td className="px-3 py-2 text-center text-gray-700">{diasROP.toFixed(1)} días</td>
                     <td className="px-3 py-2 text-center">
-                      {diasStockActual <= diasReorden ? (
+                      {diasStockActual <= diasROP ? (
                         <span className="text-orange-700 font-bold">⚠️ Por debajo - Pedir</span>
                       ) : (
                         <span className="text-green-700">✓ Arriba</span>
                       )}
                     </td>
                   </tr>
-                  <tr className={diasStockActual <= diasMaximo && diasStockActual > diasReorden ? 'bg-green-50' : ''}>
+                  <tr className={diasStockActual <= diasMaximo && diasStockActual > diasROP ? 'bg-green-50' : ''}>
                     <td className="px-3 py-2 font-semibold text-purple-800">Stock Máximo</td>
                     <td className="px-3 py-2 text-center text-gray-700">{diasMaximo.toFixed(1)} días</td>
                     <td className="px-3 py-2 text-center">

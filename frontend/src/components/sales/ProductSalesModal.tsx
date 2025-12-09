@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -181,6 +181,51 @@ interface VentaDiaria20D {
   cantidad_vendida: number;
 }
 
+// Interfaces para historial de inventario
+interface HistorialDataPoint {
+  fecha: string;
+  timestamp: number;
+  ventas: number;
+  inventario: number | null;
+  es_estimado: boolean;
+}
+
+interface HistorialInventarioResponse {
+  producto_id: string;
+  codigo_producto: string;
+  descripcion_producto: string;
+  ubicacion_id: string;
+  ubicacion_nombre: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+  granularidad: string;
+  datos: HistorialDataPoint[];
+  stock_actual: number;
+}
+
+// Interfaces para ventas por hora
+interface VentaHoraTienda {
+  tienda: string;
+  bultos: number;
+  unidades: number;
+  venta_total: number;
+  transacciones: number;
+}
+
+interface VentaHoraria {
+  hora: string;
+  hora_display: string;
+  tiendas: { [tiendaId: string]: VentaHoraTienda };
+}
+
+interface VentasHorariasResponse {
+  producto: ProductoInfo;
+  fecha: string;
+  tiendas_disponibles: string[];
+  ventas_horarias: VentaHoraria[];
+  totales_dia: { [tiendaId: string]: VentaHoraTienda };
+}
+
 // Colores para las líneas de cada tienda
 const COLORES_TIENDAS: { [key: string]: string } = {
   'tienda_01': '#3b82f6', // Azul
@@ -213,12 +258,69 @@ export default function ProductSalesModal({
   const [isTransactionsModalOpen, setIsTransactionsModalOpen] = useState(false);
   const [selectedTiendaForTransactions, setSelectedTiendaForTransactions] = useState<{id: string, nombre: string} | null>(null);
 
+  // Estado para vista horaria (drill-down de un día)
+  const [ventasHorarias, setVentasHorarias] = useState<VentasHorariasResponse | null>(null);
+  const [loadingHorario, setLoadingHorario] = useState(false);
+  const [showHourlyView, setShowHourlyView] = useState(false);
+  const hourlyChartRef = useRef<ChartJS<'line'> | null>(null);
+
+  // Estado para historial de inventario (overlay en gráfico)
+  const [historialInventario, setHistorialInventario] = useState<{ [tiendaId: string]: HistorialDataPoint[] }>({});
+  const [showInventario, setShowInventario] = useState(false);
+  const [loadingInventario, setLoadingInventario] = useState(false);
+
   // Referencia al chart para control de zoom
   const chartRef = useRef<ChartJS<'line'> | null>(null);
   const [isZoomed, setIsZoomed] = useState(false);
 
   // Estado para día seleccionado (click en punto)
   const [selectedDay, setSelectedDay] = useState<{ fecha: string; data: VentaDiaria } | null>(null);
+
+  // Plugin para resaltar zonas de stock cero (dinámico basado en historialInventario)
+  const stockZeroPlugin: Plugin<'line'> = useMemo(() => ({
+    id: 'stockZeroHighlight',
+    beforeDraw: (chart) => {
+      if (!showInventario || Object.keys(historialInventario).length === 0) return;
+
+      const ctx = chart.ctx;
+      const chartArea = chart.chartArea;
+      const xScale = chart.scales.x;
+
+      if (!xScale || !chartArea) return;
+
+      ctx.save();
+
+      const labels = chart.data.labels as string[];
+
+      // Encontrar fechas con stock cero en cualquier tienda seleccionada
+      labels.forEach((label, index) => {
+        const fecha = label.split('T')[0];
+        let hasZeroStock = false;
+
+        // Verificar si alguna tienda tiene stock cero en esta fecha
+        Object.entries(historialInventario).forEach(([tiendaId, datos]) => {
+          if (selectedTiendas.has(tiendaId)) {
+            const punto = datos.find(d => d.fecha.split('T')[0] === fecha);
+            if (punto && punto.inventario === 0) {
+              hasZeroStock = true;
+            }
+          }
+        });
+
+        if (hasZeroStock) {
+          const x = xScale.getPixelForValue(index);
+          const nextX = index < labels.length - 1 ? xScale.getPixelForValue(index + 1) : chartArea.right;
+          const width = nextX - x;
+
+          // Fondo rojo semitransparente para días sin stock
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.15)'; // Rojo claro transparente
+          ctx.fillRect(x - width / 2, chartArea.top, width, chartArea.bottom - chartArea.top);
+        }
+      });
+
+      ctx.restore();
+    }
+  }), [showInventario, historialInventario, selectedTiendas]);
 
   // Cargar datos de 20 días para el cálculo educativo
   const fetch20DiasData = useCallback(async () => {
@@ -238,6 +340,110 @@ export default function ProductSalesModal({
       setLoading20D(false);
     }
   }, [codigoProducto, currentUbicacionId]);
+
+  // Cargar historial de inventario para las tiendas seleccionadas
+  const fetchHistorialInventario = useCallback(async () => {
+    if (selectedTiendas.size === 0 || !ventasData) return;
+
+    setLoadingInventario(true);
+    const historial: { [tiendaId: string]: HistorialDataPoint[] } = {};
+
+    try {
+      // Calcular fechas basadas en las semanas seleccionadas
+      const fechaFin = new Date().toISOString().split('T')[0];
+      const fechaInicio = new Date(Date.now() - semanas * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+      // Cargar en paralelo para todas las tiendas seleccionadas
+      const promises = Array.from(selectedTiendas).map(async (tiendaId) => {
+        try {
+          const response = await http.get(
+            `/api/productos/${codigoProducto}/historial-ventas-inventario?ubicacion_id=${tiendaId}&fecha_inicio=${fechaInicio}&fecha_fin=${fechaFin}&granularidad=diario&incluir_diagnostico=false`
+          );
+          historial[tiendaId] = (response.data as HistorialInventarioResponse).datos;
+        } catch (error) {
+          console.error(`Error cargando inventario para tienda ${tiendaId}:`, error);
+          historial[tiendaId] = [];
+        }
+      });
+
+      await Promise.all(promises);
+      setHistorialInventario(historial);
+    } catch (error) {
+      console.error('Error cargando historial de inventario:', error);
+    } finally {
+      setLoadingInventario(false);
+    }
+  }, [selectedTiendas, ventasData, codigoProducto, semanas]);
+
+  // Cargar datos horarios para un día específico (drill-down)
+  const fetchVentasHorarias = useCallback(async (fecha: string) => {
+    try {
+      setLoadingHorario(true);
+      // Obtener las tiendas seleccionadas para el filtro
+      const ubicacionIds = Array.from(selectedTiendas).join(',');
+      const url = `/api/ventas/producto/horario?codigo_producto=${codigoProducto}&fecha=${fecha}${ubicacionIds ? `&ubicacion_ids=${ubicacionIds}` : ''}`;
+
+      const response = await http.get(url);
+      setVentasHorarias(response.data);
+      setShowHourlyView(true);
+    } catch (error) {
+      console.error('Error cargando datos horarios:', error);
+    } finally {
+      setLoadingHorario(false);
+    }
+  }, [codigoProducto, selectedTiendas]);
+
+  // Preparar datos para el gráfico horario
+  const prepareHourlyChartData = useCallback(() => {
+    if (!ventasHorarias) return null;
+
+    const horas = ventasHorarias.ventas_horarias.map(v => v.hora_display);
+    const datasets: {
+      label: string;
+      data: (number | null)[];
+      borderColor: string;
+      backgroundColor: string;
+      borderWidth: number;
+      pointRadius: number;
+      pointHoverRadius: number;
+      tension: number;
+    }[] = [];
+
+    // Crear dataset por cada tienda que tenga datos
+    const tiendasConDatos = new Set<string>();
+    ventasHorarias.ventas_horarias.forEach(vh => {
+      Object.keys(vh.tiendas).forEach(tid => tiendasConDatos.add(tid));
+    });
+
+    tiendasConDatos.forEach(tiendaId => {
+      const color = COLORES_TIENDAS[tiendaId] || '#64748b';
+      const nombreTienda = ventasHorarias.totales_dia[tiendaId]?.tienda || tiendaId;
+
+      const data = ventasHorarias.ventas_horarias.map(vh => {
+        const tiendaData = vh.tiendas[tiendaId];
+        return tiendaData ? tiendaData.bultos : 0;
+      });
+
+      datasets.push({
+        label: nombreTienda,
+        data,
+        borderColor: color,
+        backgroundColor: color + '20',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        tension: 0.3,
+      });
+    });
+
+    return { labels: horas, datasets };
+  }, [ventasHorarias]);
+
+  // Cerrar vista horaria y volver a vista diaria
+  const closeHourlyView = useCallback(() => {
+    setShowHourlyView(false);
+    setVentasHorarias(null);
+  }, []);
 
   // Declarar fetchForecastsData primero (antes de usarla en fetchVentasData)
   const fetchForecastsData = useCallback(async (tiendas: string[]) => {
@@ -444,6 +650,39 @@ export default function ProductSalesModal({
           pointStyle: 'triangle',
         });
       }
+
+      // Dataset de inventario (si está activado)
+      if (showInventario && historialInventario[tiendaId]) {
+        const inventarioData = historialInventario[tiendaId];
+
+        // Mapear los datos de inventario a las fechas del gráfico
+        const inventarioMap = new Map(
+          inventarioData.map(d => [d.fecha.split('T')[0], d.inventario])
+        );
+
+        const dataInventario = allFechas.map(fecha => {
+          const inv = inventarioMap.get(fecha);
+          return inv !== undefined ? inv : null;
+        });
+
+        // Obtener color base de la tienda y hacerlo más claro/diferente para inventario
+        const colorBase = COLORES_TIENDAS[tiendaId] || '#64748b';
+
+        datasets.push({
+          label: `📦 ${nombreTienda} - Inventario`,
+          data: dataInventario,
+          borderColor: colorBase,
+          backgroundColor: colorBase + '20', // 20% opacidad
+          borderWidth: 1.5,
+          borderDash: [3, 3], // Línea punteada para diferenciar
+          tension: 0.2,
+          fill: true, // Rellenar área bajo la curva
+          yAxisID: 'y1', // Usar eje Y secundario
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          order: 10, // Dibujar detrás de las ventas
+        });
+      }
     });
 
     return {
@@ -487,6 +726,9 @@ export default function ProductSalesModal({
       // Buscar datos de ese día
       const ventaDia = ventasData.ventas_diarias.find(v => v.fecha === fecha);
       if (ventaDia) {
+        // Limpiar vista horaria al cambiar de día
+        setShowHourlyView(false);
+        setVentasHorarias(null);
         setSelectedDay({ fecha, data: ventaDia });
       }
     }
@@ -525,6 +767,7 @@ export default function ProductSalesModal({
             backgroundColor: 'rgba(59, 130, 246, 0.2)',
             borderColor: 'rgba(59, 130, 246, 0.8)',
             borderWidth: 1,
+            threshold: 10, // Mínimo 10px de drag para activar zoom, permite clicks
           },
           pinch: {
             enabled: true,
@@ -586,6 +829,13 @@ export default function ProductSalesModal({
               }
             }
 
+            // Para inventario, mostrar unidades
+            if (label.includes('Inventario')) {
+              const stockValue = value !== null ? value : 0;
+              const esStockCero = stockValue === 0;
+              return `${label}: ${stockValue.toFixed(0)} unid${esStockCero ? ' ⚠️ SIN STOCK' : ''}`;
+            }
+
             return `${label}: ${value.toFixed(2)} bultos`;
           },
         },
@@ -595,6 +845,9 @@ export default function ProductSalesModal({
           // NO mostrar en outliers
           const label = context.dataset.label || '';
           if (label.includes('⚠️ Posible falta de stock')) return false;
+
+          // NO mostrar en datasets de inventario
+          if (label.includes('Inventario')) return false;
 
           // Para Proyección PMP: no mostrar etiqueta en el punto de conexión (el primero no-null)
           // El punto de conexión es hoy (dato real), no queremos etiqueta naranja ahí
@@ -642,12 +895,35 @@ export default function ProductSalesModal({
     },
     scales: {
       y: {
+        type: 'linear' as const,
+        display: true,
+        position: 'left' as const,
         beginAtZero: true,
         title: {
           display: true,
           text: 'Bultos Vendidos',
         },
       },
+      // Eje Y secundario para inventario (solo si está activo)
+      ...(showInventario && {
+        y1: {
+          type: 'linear' as const,
+          display: true,
+          position: 'right' as const,
+          beginAtZero: true,
+          title: {
+            display: true,
+            text: 'Inventario (unidades)',
+            color: '#9333ea', // Púrpura
+          },
+          grid: {
+            drawOnChartArea: false, // No superponer grid
+          },
+          ticks: {
+            color: '#9333ea',
+          },
+        },
+      }),
       x: {
         title: {
           display: true,
@@ -760,7 +1036,7 @@ export default function ProductSalesModal({
                           );
                         })}
                       </div>
-                      <div className="mt-2 flex gap-2">
+                      <div className="mt-2 flex gap-2 items-center">
                         <button
                           onClick={() => setSelectedTiendas(new Set(ventasData.tiendas_disponibles))}
                           className="text-xs text-blue-600 hover:text-blue-800"
@@ -774,176 +1050,70 @@ export default function ProductSalesModal({
                         >
                           Deseleccionar todas
                         </button>
+                        <span className="text-gray-300 mx-2">|</span>
+                        {/* Toggle de Inventario */}
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={showInventario}
+                            onChange={(e) => {
+                              setShowInventario(e.target.checked);
+                              if (e.target.checked && Object.keys(historialInventario).length === 0) {
+                                fetchHistorialInventario();
+                              }
+                            }}
+                            className="w-3.5 h-3.5 text-purple-600 rounded focus:ring-purple-500"
+                          />
+                          <span className="text-xs text-purple-700 font-medium">
+                            Mostrar Inventario
+                          </span>
+                          {loadingInventario && (
+                            <svg className="animate-spin h-3 w-3 text-purple-600" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          )}
+                        </label>
                       </div>
                     </div>
-
-                    {/* Sección Educativa: Cálculo del Promedio 20 Días */}
-                    {currentUbicacionId && ventas20Dias.length > 0 && (
-                      <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
-                        <div className="flex items-center gap-2 mb-4">
-                          <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                          </svg>
-                          <h4 className="text-sm font-semibold text-purple-900">
-                            📊 Cálculo del Promedio 20 Días (Tienda Actual)
-                          </h4>
-                        </div>
-
-                        {loading20D ? (
-                          <div className="flex justify-center py-4">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
-                          </div>
-                        ) : (
-                          <>
-                            {/* Estadísticas Principales */}
-                            <div className="grid grid-cols-3 gap-3 mb-4">
-                              <div className="bg-white rounded-lg p-3 text-center border border-purple-100">
-                                <div className="text-xs text-gray-600 mb-1">Total Vendido</div>
-                                <div className="text-2xl font-bold text-purple-700">
-                                  {ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0).toFixed(0)}
-                                </div>
-                                <div className="text-xs text-gray-500">unidades en {ventas20Dias.length} días</div>
-                              </div>
-                              <div className="bg-green-50 rounded-lg p-3 text-center border border-green-200">
-                                <div className="text-xs text-gray-600 mb-1">Día Máximo</div>
-                                <div className="text-2xl font-bold text-green-700">
-                                  {Math.max(...ventas20Dias.map(v => v.cantidad_vendida)).toFixed(0)}
-                                </div>
-                                <div className="text-xs text-gray-500">bultos en un día</div>
-                              </div>
-                              <div className="bg-orange-50 rounded-lg p-3 text-center border border-orange-200">
-                                <div className="text-xs text-gray-600 mb-1">Día Mínimo</div>
-                                <div className="text-2xl font-bold text-orange-700">
-                                  {Math.min(...ventas20Dias.map(v => v.cantidad_vendida)).toFixed(0)}
-                                </div>
-                                <div className="text-xs text-gray-500">bultos en un día</div>
-                              </div>
-                            </div>
-
-                            {/* Fórmula del cálculo */}
-                            <div className="bg-white rounded-lg p-4 border border-purple-200 mb-4">
-                              <h5 className="text-xs font-semibold text-gray-700 mb-3">📐 Cómo se Calcula:</h5>
-                              <div className="space-y-3 text-sm">
-                                <div className="flex items-start gap-3">
-                                  <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">1</div>
-                                  <div>
-                                    <div className="font-medium text-gray-800">Sumar todas las ventas de los últimos 20 días</div>
-                                    <div className="text-xs text-gray-600 mt-1 font-mono bg-gray-50 px-2 py-1 rounded">
-                                      Total = {ventas20Dias.map(v => v.cantidad_vendida.toFixed(0)).join(' + ')}...
-                                    </div>
-                                    <div className="text-xs text-purple-700 font-semibold mt-1">
-                                      Total = {ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0).toFixed(0)} unidades
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="flex items-start gap-3">
-                                  <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">2</div>
-                                  <div>
-                                    <div className="font-medium text-gray-800">Dividir entre el número de días</div>
-                                    <div className="text-xs text-gray-600 mt-1 font-mono bg-gray-50 px-2 py-1 rounded">
-                                      Promedio = {ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0).toFixed(0)} ÷ {ventas20Dias.length}
-                                    </div>
-                                    <div className="text-xs text-purple-700 font-semibold mt-1">
-                                      Promedio = {(ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0) / ventas20Dias.length).toFixed(2)} unidades/día
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Mini tabla de últimos días */}
-                            <details className="bg-white rounded-lg border border-purple-200">
-                              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-purple-900 hover:bg-purple-50 rounded-lg">
-                                📅 Ver Detalle Día por Día (últimos 20 días)
-                              </summary>
-                              <div className="p-4 max-h-64 overflow-y-auto">
-                                <table className="w-full text-xs">
-                                  <thead className="bg-purple-100 sticky top-0">
-                                    <tr>
-                                      <th className="px-2 py-2 text-left">Fecha</th>
-                                      <th className="px-2 py-2 text-left">Día</th>
-                                      <th className="px-2 py-2 text-right">Unidades</th>
-                                      <th className="px-2 py-2 text-left">Visual</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {ventas20Dias.map((venta, idx) => {
-                                      const maxVenta = Math.max(...ventas20Dias.map(v => v.cantidad_vendida));
-                                      const porcentaje = maxVenta > 0 ? (venta.cantidad_vendida / maxVenta) * 100 : 0;
-                                      const esMax = venta.cantidad_vendida === maxVenta;
-                                      const esMin = venta.cantidad_vendida === Math.min(...ventas20Dias.map(v => v.cantidad_vendida));
-
-                                      return (
-                                        <tr key={idx} className={`border-b border-gray-100 ${esMax ? 'bg-green-50' : esMin ? 'bg-orange-50' : ''}`}>
-                                          <td className="px-2 py-1 font-mono">
-                                            {new Date(venta.fecha).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' })}
-                                          </td>
-                                          <td className="px-2 py-1 text-gray-600">{venta.dia_semana}</td>
-                                          <td className="px-2 py-1 text-right font-semibold">{venta.cantidad_vendida.toFixed(0)}</td>
-                                          <td className="px-2 py-1">
-                                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                              <div
-                                                className="bg-purple-600 h-2 rounded-full"
-                                                style={{ width: `${porcentaje}%` }}
-                                              ></div>
-                                            </div>
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                  <tfoot className="bg-purple-100 sticky bottom-0">
-                                    <tr className="font-bold">
-                                      <td colSpan={2} className="px-2 py-2 text-left">PROMEDIO</td>
-                                      <td className="px-2 py-2 text-right text-purple-700">
-                                        {(ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0) / ventas20Dias.length).toFixed(1)}
-                                      </td>
-                                      <td className="px-2 py-2 text-purple-700 text-xs">unidades/día</td>
-                                    </tr>
-                                  </tfoot>
-                                </table>
-                              </div>
-                            </details>
-                          </>
-                        )}
-                      </div>
-                    )}
 
                     {/* Gráfico */}
                     <div className="h-96 relative">
                       {/* Controles de zoom */}
-                      <div className="absolute top-2 left-2 z-10 flex items-center gap-2">
-                        <button
-                          onClick={handleZoomIn}
-                          className="p-1.5 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors shadow-sm"
-                          title="Acercar"
-                        >
-                          <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={handleZoomOut}
-                          className="p-1.5 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors shadow-sm"
-                          title="Alejar"
-                        >
-                          <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
-                          </svg>
-                        </button>
-                        {isZoomed && (
+                      <div className="absolute top-2 left-2 z-10 flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
                           <button
-                            onClick={handleResetZoom}
-                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors flex items-center gap-1"
+                            onClick={handleZoomIn}
+                            className="p-1.5 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors shadow-sm"
+                            title="Acercar"
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
                             </svg>
-                            Ver todo
                           </button>
-                        )}
-                        <span className="text-xs text-gray-500 ml-2">
-                          Arrastra para hacer zoom | Click en punto para ver detalle
+                          <button
+                            onClick={handleZoomOut}
+                            className="p-1.5 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors shadow-sm"
+                            title="Alejar"
+                          >
+                            <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+                            </svg>
+                          </button>
+                          {isZoomed && (
+                            <button
+                              onClick={handleResetZoom}
+                              className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors flex items-center gap-1"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              Ver todo
+                            </button>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-gray-400 bg-white/80 px-1 rounded">
+                          Arrastra: zoom | Click: detalle hora
                         </span>
                       </div>
 
@@ -952,7 +1122,7 @@ export default function ProductSalesModal({
                           ref={chartRef}
                           options={chartOptions}
                           data={prepareChartData()!}
-                          plugins={[forecastZonePlugin, weekendPlugin]}
+                          plugins={[forecastZonePlugin, weekendPlugin, stockZeroPlugin]}
                           onClick={handleChartClick}
                         />
                       )}
@@ -965,6 +1135,18 @@ export default function ProductSalesModal({
                           <span className="inline-block w-3 h-3 bg-amber-100"></span>
                           <span>Proyección PMP (7 días)</span>
                         </div>
+                        {showInventario && (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <span className="inline-block w-3 h-3 bg-purple-200 border border-purple-400 border-dashed"></span>
+                              <span>Inventario (eje der.)</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="inline-block w-3 h-3 bg-red-200 border border-red-300"></span>
+                              <span>Sin stock</span>
+                            </div>
+                          </>
+                        )}
                         {Object.values(forecastData).some(f => f.dias_excluidos && f.dias_excluidos > 0) && (
                           <div className="pt-1 border-t border-gray-200 mt-1">
                             <span className="text-orange-600 font-medium">
@@ -992,14 +1174,31 @@ export default function ProductSalesModal({
                               day: 'numeric'
                             })}
                           </h4>
-                          <button
-                            onClick={() => setSelectedDay(null)}
-                            className="text-indigo-400 hover:text-indigo-600"
-                          >
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            {/* Botón para ver detalle por hora */}
+                            <button
+                              onClick={() => fetchVentasHorarias(selectedDay.fecha)}
+                              disabled={loadingHorario}
+                              className="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {loadingHorario ? (
+                                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                              ) : (
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                              )}
+                              Ver por hora
+                            </button>
+                            <button
+                              onClick={() => setSelectedDay(null)}
+                              className="text-indigo-400 hover:text-indigo-600"
+                            >
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           {Object.entries(selectedDay.data.tiendas).map(([tiendaId, tiendaData]) => (
@@ -1026,6 +1225,144 @@ export default function ProductSalesModal({
                             </div>
                           ))}
                         </div>
+
+                        {/* Gráfico de ventas por hora */}
+                        {showHourlyView && ventasHorarias && (
+                          <div className="mt-4 bg-white rounded-lg p-4 border border-indigo-200">
+                            <div className="flex items-center justify-between mb-3">
+                              <h5 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                                <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                Ventas por Hora - {new Date(ventasHorarias.fecha + 'T00:00:00').toLocaleDateString('es-VE', {
+                                  weekday: 'long',
+                                  day: 'numeric',
+                                  month: 'short'
+                                })}
+                              </h5>
+                              <button
+                                onClick={closeHourlyView}
+                                className="text-gray-400 hover:text-gray-600 text-xs flex items-center gap-1"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                                Cerrar
+                              </button>
+                            </div>
+
+                            {/* Gráfico horario */}
+                            <div className="h-64">
+                              {prepareHourlyChartData() && (
+                                <Line
+                                  ref={hourlyChartRef}
+                                  options={{
+                                    responsive: true,
+                                    maintainAspectRatio: false,
+                                    plugins: {
+                                      legend: {
+                                        position: 'top' as const,
+                                        labels: { usePointStyle: true, padding: 10, font: { size: 11 } },
+                                      },
+                                      title: {
+                                        display: false,
+                                      },
+                                      datalabels: {
+                                        display: false,
+                                      },
+                                      tooltip: {
+                                        mode: 'index',
+                                        intersect: false,
+                                        callbacks: {
+                                          label: (context) => {
+                                            const label = context.dataset.label || '';
+                                            const value = context.parsed.y;
+                                            // Buscar unidades para este punto
+                                            const hora = ventasHorarias.ventas_horarias[context.dataIndex];
+                                            const tiendaId = Object.keys(hora?.tiendas || {}).find(tid => {
+                                              const tiendaNombre = ventasHorarias.totales_dia[tid]?.tienda;
+                                              return tiendaNombre === label || tid === label;
+                                            });
+                                            if (tiendaId && hora?.tiendas[tiendaId]) {
+                                              const unidades = hora.tiendas[tiendaId].unidades;
+                                              const trans = hora.tiendas[tiendaId].transacciones;
+                                              return `${label}: ${value.toFixed(2)} bultos (${unidades.toFixed(0)} unid, ${trans} trans)`;
+                                            }
+                                            return `${label}: ${value.toFixed(2)} bultos`;
+                                          },
+                                        },
+                                      },
+                                    },
+                                    scales: {
+                                      x: {
+                                        title: { display: true, text: 'Hora del día', font: { size: 11 } },
+                                        grid: { display: false },
+                                      },
+                                      y: {
+                                        title: { display: true, text: 'Bultos', font: { size: 11 } },
+                                        beginAtZero: true,
+                                      },
+                                    },
+                                  }}
+                                  data={prepareHourlyChartData()!}
+                                />
+                              )}
+                            </div>
+
+                            {/* Tabla resumen por hora */}
+                            <details className="mt-3">
+                              <summary className="cursor-pointer text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                                Ver tabla detallada por hora
+                              </summary>
+                              <div className="mt-2 overflow-x-auto max-h-48">
+                                <table className="w-full text-xs">
+                                  <thead className="bg-gray-100 sticky top-0">
+                                    <tr>
+                                      <th className="px-2 py-1.5 text-left font-semibold">Hora</th>
+                                      {Object.keys(ventasHorarias.totales_dia).map(tiendaId => (
+                                        <th key={tiendaId} className="px-2 py-1.5 text-center font-semibold" style={{ color: COLORES_TIENDAS[tiendaId] || '#64748b' }}>
+                                          {ventasHorarias.totales_dia[tiendaId]?.tienda || tiendaId}
+                                        </th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {ventasHorarias.ventas_horarias.map((vh) => {
+                                      const tieneData = Object.keys(vh.tiendas).length > 0;
+                                      return (
+                                        <tr key={vh.hora} className={`border-b border-gray-100 ${tieneData ? 'bg-white' : 'bg-gray-50'}`}>
+                                          <td className="px-2 py-1 font-medium text-gray-700">{vh.hora_display}</td>
+                                          {Object.keys(ventasHorarias.totales_dia).map(tiendaId => {
+                                            const data = vh.tiendas[tiendaId];
+                                            return (
+                                              <td key={tiendaId} className="px-2 py-1 text-center">
+                                                {data ? (
+                                                  <span className="font-medium">{data.bultos.toFixed(2)}</span>
+                                                ) : (
+                                                  <span className="text-gray-300">-</span>
+                                                )}
+                                              </td>
+                                            );
+                                          })}
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                  <tfoot className="bg-indigo-50 sticky bottom-0">
+                                    <tr className="font-bold">
+                                      <td className="px-2 py-1.5">TOTAL</td>
+                                      {Object.keys(ventasHorarias.totales_dia).map(tiendaId => (
+                                        <td key={tiendaId} className="px-2 py-1.5 text-center" style={{ color: COLORES_TIENDAS[tiendaId] || '#64748b' }}>
+                                          {ventasHorarias.totales_dia[tiendaId]?.bultos.toFixed(2) || '0'}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+                            </details>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1237,6 +1574,193 @@ export default function ProductSalesModal({
                         );
                       })}
                     </div>
+
+                    {/* Sección Educativa: Cálculo del Percentil 75 (P75) - Al final */}
+                    {currentUbicacionId && ventas20Dias.length > 0 && (
+                      <div className="mt-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                        <div className="flex items-center gap-2 mb-4">
+                          <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          <h4 className="text-sm font-semibold text-purple-900">
+                            Cálculo del Percentil 75 - P75 (Tienda Actual)
+                          </h4>
+                        </div>
+
+                        {loading20D ? (
+                          <div className="flex justify-center py-4">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                          </div>
+                        ) : (
+                          (() => {
+                            // Calcular P75
+                            const valoresOrdenados = [...ventas20Dias]
+                              .map(v => v.cantidad_vendida)
+                              .sort((a, b) => a - b);
+                            const n = valoresOrdenados.length;
+                            const posicionP75 = (n - 1) * 0.75;
+                            const indiceBajo = Math.floor(posicionP75);
+                            const indiceAlto = Math.ceil(posicionP75);
+                            const fraccion = posicionP75 - indiceBajo;
+                            const p75 = indiceBajo === indiceAlto
+                              ? valoresOrdenados[indiceBajo]
+                              : valoresOrdenados[indiceBajo] * (1 - fraccion) + valoresOrdenados[indiceAlto] * fraccion;
+
+                            // Calcular mediana (P50) para comparación
+                            const posicionP50 = (n - 1) * 0.50;
+                            const indiceBajoP50 = Math.floor(posicionP50);
+                            const indiceAltoP50 = Math.ceil(posicionP50);
+                            const fraccionP50 = posicionP50 - indiceBajoP50;
+                            const p50 = indiceBajoP50 === indiceAltoP50
+                              ? valoresOrdenados[indiceBajoP50]
+                              : valoresOrdenados[indiceBajoP50] * (1 - fraccionP50) + valoresOrdenados[indiceAltoP50] * fraccionP50;
+
+                            const promedio = ventas20Dias.reduce((sum, v) => sum + v.cantidad_vendida, 0) / n;
+
+                            return (
+                              <>
+                                {/* Estadísticas Principales */}
+                                <div className="grid grid-cols-4 gap-3 mb-4">
+                                  <div className="bg-purple-100 rounded-lg p-3 text-center border-2 border-purple-400">
+                                    <div className="text-xs text-purple-700 mb-1 font-semibold">P75</div>
+                                    <div className="text-2xl font-bold text-purple-700">
+                                      {p75.toFixed(1)}
+                                    </div>
+                                    <div className="text-xs text-purple-600">unidades/día</div>
+                                  </div>
+                                  <div className="bg-white rounded-lg p-3 text-center border border-gray-200">
+                                    <div className="text-xs text-gray-600 mb-1">Mediana (P50)</div>
+                                    <div className="text-2xl font-bold text-gray-700">
+                                      {p50.toFixed(1)}
+                                    </div>
+                                    <div className="text-xs text-gray-500">unidades/día</div>
+                                  </div>
+                                  <div className="bg-green-50 rounded-lg p-3 text-center border border-green-200">
+                                    <div className="text-xs text-gray-600 mb-1">Máximo</div>
+                                    <div className="text-2xl font-bold text-green-700">
+                                      {Math.max(...valoresOrdenados).toFixed(0)}
+                                    </div>
+                                    <div className="text-xs text-gray-500">unidades</div>
+                                  </div>
+                                  <div className="bg-orange-50 rounded-lg p-3 text-center border border-orange-200">
+                                    <div className="text-xs text-gray-600 mb-1">Mínimo</div>
+                                    <div className="text-2xl font-bold text-orange-700">
+                                      {Math.min(...valoresOrdenados).toFixed(0)}
+                                    </div>
+                                    <div className="text-xs text-gray-500">unidades</div>
+                                  </div>
+                                </div>
+
+                                {/* Explicación del P75 */}
+                                <div className="bg-white rounded-lg p-4 border border-purple-200 mb-4">
+                                  <h5 className="text-xs font-semibold text-gray-700 mb-3">¿Por qué usamos P75?</h5>
+                                  <div className="space-y-3 text-sm">
+                                    <div className="flex items-start gap-3">
+                                      <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">1</div>
+                                      <div>
+                                        <div className="font-medium text-gray-800">Ordenar ventas de menor a mayor</div>
+                                        <div className="text-xs text-gray-600 mt-1 font-mono bg-gray-50 px-2 py-1 rounded overflow-x-auto">
+                                          [{valoresOrdenados.map(v => v.toFixed(0)).join(', ')}]
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-start gap-3">
+                                      <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">2</div>
+                                      <div>
+                                        <div className="font-medium text-gray-800">Tomar el valor en la posición 75%</div>
+                                        <div className="text-xs text-gray-600 mt-1">
+                                          Posición: ({n} - 1) × 0.75 = <span className="font-mono bg-gray-50 px-1 rounded">{posicionP75.toFixed(2)}</span>
+                                        </div>
+                                        <div className="text-xs text-purple-700 font-semibold mt-1">
+                                          P75 = {p75.toFixed(2)} unidades/día
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-start gap-3">
+                                      <div className="flex-shrink-0 w-6 h-6 rounded-full bg-green-600 text-white flex items-center justify-center text-xs font-bold">✓</div>
+                                      <div>
+                                        <div className="font-medium text-gray-800">Ventaja sobre el promedio</div>
+                                        <div className="text-xs text-gray-600 mt-1">
+                                          El P75 es más robusto que el promedio ({promedio.toFixed(1)}) porque <span className="font-semibold text-purple-700">ignora días atípicos con ventas muy bajas</span> (posibles quiebres de stock).
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Mini tabla de últimos días */}
+                                <details className="bg-white rounded-lg border border-purple-200">
+                                  <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-purple-900 hover:bg-purple-50 rounded-lg">
+                                    Ver Detalle Día por Día ({ventas20Dias.length} días)
+                                  </summary>
+                                  <div className="p-4 max-h-64 overflow-y-auto">
+                                    <table className="w-full text-xs">
+                                      <thead className="bg-purple-100 sticky top-0">
+                                        <tr>
+                                          <th className="px-2 py-2 text-left">Fecha</th>
+                                          <th className="px-2 py-2 text-left">Día</th>
+                                          <th className="px-2 py-2 text-right">Unidades</th>
+                                          <th className="px-2 py-2 text-center">vs P75</th>
+                                          <th className="px-2 py-2 text-left">Visual</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {ventas20Dias.map((venta, idx) => {
+                                          const maxVenta = Math.max(...ventas20Dias.map(v => v.cantidad_vendida));
+                                          const porcentaje = maxVenta > 0 ? (venta.cantidad_vendida / maxVenta) * 100 : 0;
+                                          const esMax = venta.cantidad_vendida === maxVenta;
+                                          const esMin = venta.cantidad_vendida === Math.min(...ventas20Dias.map(v => v.cantidad_vendida));
+                                          const sobreP75 = venta.cantidad_vendida >= p75;
+
+                                          return (
+                                            <tr key={idx} className={`border-b border-gray-100 ${esMax ? 'bg-green-50' : esMin ? 'bg-orange-50' : ''}`}>
+                                              <td className="px-2 py-1 font-mono">
+                                                {new Date(venta.fecha).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' })}
+                                              </td>
+                                              <td className="px-2 py-1 text-gray-600">{venta.dia_semana}</td>
+                                              <td className="px-2 py-1 text-right font-semibold">{venta.cantidad_vendida.toFixed(0)}</td>
+                                              <td className="px-2 py-1 text-center">
+                                                {sobreP75 ? (
+                                                  <span className="text-green-600 font-semibold">≥P75</span>
+                                                ) : (
+                                                  <span className="text-gray-400">&lt;P75</span>
+                                                )}
+                                              </td>
+                                              <td className="px-2 py-1">
+                                                <div className="w-full bg-gray-200 rounded-full h-2 relative">
+                                                  <div
+                                                    className={`h-2 rounded-full ${sobreP75 ? 'bg-purple-600' : 'bg-gray-400'}`}
+                                                    style={{ width: `${porcentaje}%` }}
+                                                  ></div>
+                                                  {/* Línea de P75 */}
+                                                  <div
+                                                    className="absolute top-0 h-2 w-0.5 bg-purple-800"
+                                                    style={{ left: `${(p75 / maxVenta) * 100}%` }}
+                                                  ></div>
+                                                </div>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                      <tfoot className="bg-purple-100 sticky bottom-0">
+                                        <tr className="font-bold">
+                                          <td colSpan={2} className="px-2 py-2 text-left">P75</td>
+                                          <td className="px-2 py-2 text-right text-purple-700">
+                                            {p75.toFixed(1)}
+                                          </td>
+                                          <td colSpan={2} className="px-2 py-2 text-purple-700 text-xs">unidades/día</td>
+                                        </tr>
+                                      </tfoot>
+                                    </table>
+                                  </div>
+                                </details>
+                              </>
+                            );
+                          })()
+                        )}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="text-center text-gray-500 py-12">

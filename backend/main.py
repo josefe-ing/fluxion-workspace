@@ -7250,6 +7250,162 @@ async def get_forecast_producto(
     )
 
 
+@app.get("/api/ventas/producto/horario", tags=["Ventas"])
+async def get_ventas_producto_horario(
+    codigo_producto: str,
+    fecha: str,
+    ubicacion_ids: Optional[str] = None
+):
+    """
+    Obtiene ventas por hora de un producto para un día específico, desglosado por tienda.
+
+    Permite hacer drill-down desde la vista diaria para ver el patrón de ventas
+    hora a hora durante el día seleccionado.
+
+    Args:
+        codigo_producto: Código SKU del producto
+        fecha: Fecha del día a consultar (YYYY-MM-DD)
+        ubicacion_ids: IDs de tiendas separados por coma (opcional, si no se especifica retorna todas)
+
+    Returns:
+        producto: Info del producto
+        fecha: Fecha consultada
+        tiendas_disponibles: Lista de tiendas con datos
+        ventas_horarias: Lista de objetos con hora y ventas por tienda
+    """
+    try:
+        if not codigo_producto:
+            raise HTTPException(status_code=400, detail="codigo_producto es requerido")
+        if not fecha:
+            raise HTTPException(status_code=400, detail="fecha es requerida")
+
+        # Parsear ubicaciones si se proporcionan
+        ubicaciones_filtro = None
+        if ubicacion_ids:
+            ubicaciones_filtro = [u.strip() for u in ubicacion_ids.split(',')]
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener información del producto
+            cursor.execute("""
+                SELECT codigo, descripcion, categoria, COALESCE(unidades_por_bulto, 1) as unidades_por_bulto
+                FROM productos
+                WHERE codigo = %s
+            """, [codigo_producto])
+            producto_info = cursor.fetchone()
+
+            if not producto_info:
+                cursor.close()
+                raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+            unidades_por_bulto = float(producto_info[3]) if producto_info[3] else 1.0
+
+            # Query base para ventas por hora
+            query = """
+                SELECT
+                    EXTRACT(HOUR FROM v.fecha_venta)::integer as hora,
+                    v.ubicacion_id,
+                    COALESCE(u.nombre, v.ubicacion_id) as ubicacion_nombre,
+                    SUM(v.cantidad_vendida) / %s as total_bultos,
+                    SUM(v.cantidad_vendida) as total_unidades,
+                    SUM(v.venta_total) as venta_total,
+                    COUNT(*) as num_transacciones
+                FROM ventas v
+                LEFT JOIN ubicaciones u ON v.ubicacion_id = u.id
+                WHERE v.producto_id = %s
+                    AND v.fecha_venta::date = %s
+                    AND v.cantidad_vendida > 0
+            """
+            params = [unidades_por_bulto, codigo_producto, fecha]
+
+            # Agregar filtro de ubicaciones si se especifica
+            if ubicaciones_filtro:
+                placeholders = ', '.join(['%s'] * len(ubicaciones_filtro))
+                query += f" AND v.ubicacion_id IN ({placeholders})"
+                params.extend(ubicaciones_filtro)
+
+            query += """
+                GROUP BY EXTRACT(HOUR FROM v.fecha_venta), v.ubicacion_id, u.nombre
+                ORDER BY hora, v.ubicacion_id
+            """
+
+            cursor.execute(query, params)
+            ventas_result = cursor.fetchall()
+            cursor.close()
+
+            # Organizar datos por hora y tienda
+            ventas_por_hora = {}
+            tiendas_set = set()
+
+            for row in ventas_result:
+                hora, ubicacion_id, ubicacion_nombre, bultos, unidades, venta, num_trans = row
+                hora_int = int(hora) if hora is not None else 0
+                hora_str = f"{hora_int:02d}:00"
+
+                tiendas_set.add(ubicacion_id)
+
+                if hora_str not in ventas_por_hora:
+                    ventas_por_hora[hora_str] = {}
+
+                ventas_por_hora[hora_str][ubicacion_id] = {
+                    "tienda": ubicacion_nombre or ubicacion_id,
+                    "bultos": float(bultos) if bultos else 0,
+                    "unidades": float(unidades) if unidades else 0,
+                    "venta_total": float(venta) if venta else 0,
+                    "transacciones": int(num_trans) if num_trans else 0
+                }
+
+            # Crear lista ordenada por hora (6:00 AM a 22:00 PM típicamente)
+            # Incluir todas las horas del día laborable aunque no haya ventas
+            ventas_horarias = []
+            for h in range(6, 23):  # 6 AM a 10 PM
+                hora_str = f"{h:02d}:00"
+                tiendas_data = ventas_por_hora.get(hora_str, {})
+
+                # Solo agregar hora si tiene datos o está en el rango de operación
+                ventas_horarias.append({
+                    "hora": hora_str,
+                    "hora_display": f"{h:02d}:00",
+                    "tiendas": tiendas_data
+                })
+
+            # Calcular totales por tienda para el día
+            totales_por_tienda = {}
+            for hora_data in ventas_por_hora.values():
+                for tienda_id, tienda_data in hora_data.items():
+                    if tienda_id not in totales_por_tienda:
+                        totales_por_tienda[tienda_id] = {
+                            "tienda": tienda_data["tienda"],
+                            "bultos": 0,
+                            "unidades": 0,
+                            "venta_total": 0,
+                            "transacciones": 0
+                        }
+                    totales_por_tienda[tienda_id]["bultos"] += tienda_data["bultos"]
+                    totales_por_tienda[tienda_id]["unidades"] += tienda_data["unidades"]
+                    totales_por_tienda[tienda_id]["venta_total"] += tienda_data["venta_total"]
+                    totales_por_tienda[tienda_id]["transacciones"] += tienda_data["transacciones"]
+
+            return {
+                "producto": {
+                    "codigo": producto_info[0],
+                    "descripcion": producto_info[1],
+                    "categoria": producto_info[2]
+                },
+                "fecha": fecha,
+                "tiendas_disponibles": sorted(list(tiendas_set)),
+                "ventas_horarias": ventas_horarias,
+                "totales_dia": totales_por_tienda
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo ventas horarias: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/ventas/producto/{codigo_producto}/ultimos-20-dias", tags=["Ventas"])
 async def get_ventas_ultimos_20_dias(
     codigo_producto: str,

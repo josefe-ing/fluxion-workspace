@@ -1181,7 +1181,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   <th colSpan={3} className="sticky left-[64px] z-30 bg-blue-200 px-1 py-1 text-center font-bold text-blue-900 text-xs uppercase border-r border-blue-300">
                     Producto
                   </th>
-                  <th colSpan={4} className="bg-purple-200 px-2 py-1 text-center font-bold text-purple-900 text-xs uppercase border-r border-purple-300">
+                  <th colSpan={3} className="bg-purple-200 px-2 py-1 text-center font-bold text-purple-900 text-xs uppercase border-r border-purple-300">
                     Ventas
                   </th>
                   <th colSpan={5} className="bg-green-200 px-2 py-1 text-center font-bold text-green-900 text-xs uppercase border-r border-green-300">
@@ -1216,7 +1216,6 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                     <span className="text-sm">📈</span>
                   </th>
                   <SortableHeader field="prom_20d" label="20d" bgColor="bg-purple-100" width="50px" />
-                  <SortableHeader field="top3" label="TOP3" bgColor="bg-purple-100" width="50px" />
                   <SortableHeader field="p75" label="P75" bgColor="bg-purple-100" width="50px" />
                   <SortableHeader field="stock" label="Stk" bgColor="bg-green-100" width="50px" />
                   <SortableHeader field="stock_transito" label="Trán" bgColor="bg-green-100" width="45px" />
@@ -1295,21 +1294,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       <span className="font-medium block">{(producto.prom_ventas_20dias_unid / producto.cantidad_bultos).toFixed(1)}</span>
                       <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_ventas_20dias_unid)}u</span>
                     </td>
-                    <td className="bg-purple-50 px-1 py-1.5 text-xs text-purple-800 text-center font-medium" style={{ width: '50px' }}>
-                      <button
-                        onClick={() => handleMetodosPromedioClick(producto)}
-                        className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
-                        title="Click para ver comparativa TOP3 vs P75"
-                      >
-                        <span className="font-medium block">{producto.prom_top3_unid ? (producto.prom_top3_unid / producto.cantidad_bultos).toFixed(1) : '-'}</span>
-                        {producto.prom_top3_unid && <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_top3_unid)}u</span>}
-                      </button>
-                    </td>
                     <td className="bg-purple-50 px-1 py-1.5 text-xs text-purple-800 text-center font-semibold" style={{ width: '50px' }}>
                       <button
                         onClick={() => handleMetodosPromedioClick(producto)}
                         className="hover:text-purple-900 hover:underline cursor-pointer transition-colors"
-                        title="Click para ver comparativa TOP3 vs P75"
+                        title="Click para ver detalle P75"
                       >
                         <span className="font-medium block">{producto.prom_p75_unid ? (producto.prom_p75_unid / producto.cantidad_bultos).toFixed(1) : '-'}</span>
                         {producto.prom_p75_unid && <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_p75_unid)}u</span>}
@@ -1726,6 +1715,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             cantidad_bultos: selectedProductoDias.cantidad_bultos,
             stock_tienda: selectedProductoDias.stock_tienda,
             stock_en_transito: selectedProductoDias.stock_en_transito,
+            // Valores reales calculados por el backend
+            stock_seguridad: selectedProductoDias.stock_seguridad || 0,
+            rop: selectedProductoDias.punto_reorden || 0,
+            stock_maximo: selectedProductoDias.stock_maximo || 0,
+            clasificacion_abc: selectedProductoDias.clasificacion_abc || '-',
+            dias_stock: selectedProductoDias.stock_dias_cobertura || 0,
           }}
           stockParams={{
             stock_min_mult_a: stockParams.stock_min_mult_a,
@@ -1771,7 +1766,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         />
       )}
 
-      {/* Modal de Métodos de Promedio (TOP3 vs P75) */}
+      {/* Modal de Cálculo P75 */}
       {selectedProductoMetodos && (
         <MetodosPromedioModal
           isOpen={metodosPromedioModalOpen}
@@ -1784,6 +1779,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             prom_p75_unid: selectedProductoMetodos.prom_p75_unid,
             cantidad_bultos: selectedProductoMetodos.cantidad_bultos,
           }}
+          ubicacionId={orderData.tienda_destino}
         />
       )}
 

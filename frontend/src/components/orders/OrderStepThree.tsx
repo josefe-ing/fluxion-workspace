@@ -907,6 +907,12 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
             cantidad_bultos: selectedProductoDias.cantidad_bultos,
             stock_tienda: selectedProductoDias.stock_tienda,
             stock_en_transito: selectedProductoDias.stock_en_transito,
+            // Valores reales calculados por el backend
+            stock_seguridad: selectedProductoDias.stock_seguridad || 0,
+            rop: selectedProductoDias.punto_reorden || 0,
+            stock_maximo: selectedProductoDias.stock_maximo || 0,
+            clasificacion_abc: selectedProductoDias.clasificacion_abc || '-',
+            dias_stock: selectedProductoDias.stock_dias_cobertura || 0,
           }}
           stockParams={{
             stock_min_mult_a: stockParams.stock_min_mult_a,
