@@ -28,6 +28,14 @@ interface StockItem {
   fecha_extraccion: string | null;
   peso_producto_kg: number | null;
   peso_total_kg: number | null;
+  // Nuevos campos
+  demanda_p75: number | null;
+  ventas_60d: number | null;
+  estado_criticidad: string | null;
+  clasificacion_producto: string | null;
+  clase_abc: string | null;
+  rank_ventas: number | null;
+  velocidad_venta: string | null;
 }
 
 interface PaginationMetadata {
@@ -39,6 +47,12 @@ interface PaginationMetadata {
   has_previous: boolean;
   stock_cero?: number;
   stock_negativo?: number;
+  criticos?: number;
+  urgentes?: number;
+  fantasmas?: number;
+  anomalias?: number;
+  dormidos?: number;
+  activos?: number;
 }
 
 interface PaginatedStockResponse {
@@ -57,6 +71,12 @@ interface StockStats {
   total_productos: number;
   stock_cero: number;
   stock_negativo: number;
+  criticos: number;
+  urgentes: number;
+  fantasmas: number;
+  anomalias: number;
+  dormidos: number;
+  activos: number;
 }
 
 export default function InventoryDashboard() {
@@ -66,11 +86,14 @@ export default function InventoryDashboard() {
   const almacenParam = searchParams.get('almacen');
 
   const [stockData, setStockData] = useState<StockItem[]>([]);
-  const [stats, setStats] = useState<StockStats>({ total_productos: 0, stock_cero: 0, stock_negativo: 0 });
+  const [stats, setStats] = useState<StockStats>({
+    total_productos: 0, stock_cero: 0, stock_negativo: 0,
+    criticos: 0, urgentes: 0, fantasmas: 0, anomalias: 0, dormidos: 0, activos: 0
+  });
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
 
-  // Filtros
+  // Filtros básicos
   const [selectedUbicacion, setSelectedUbicacion] = useState<string>(ubicacionId || 'tienda_08');
   const [selectedAlmacen, _setSelectedAlmacen] = useState<string | null>(almacenParam);
   const [selectedCategoria, setSelectedCategoria] = useState<string>('all');
@@ -79,15 +102,20 @@ export default function InventoryDashboard() {
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
   const [categorias, setCategorias] = useState<string[]>([]);
 
+  // Nuevos filtros
+  const [selectedEstadoCriticidad, setSelectedEstadoCriticidad] = useState<string>('all');
+  const [selectedClasificacionProducto, setSelectedClasificacionProducto] = useState<string>('all');
+  const [selectedClaseABC, setSelectedClaseABC] = useState<string>('all');
+  const [selectedTopVentas, setSelectedTopVentas] = useState<string>('all');
+  const [selectedVelocidadVenta, setSelectedVelocidadVenta] = useState<string>('all');
+
   // Paginación
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(30);
 
-  // Ordenamiento (por defecto ordenar por stock descendente)
-  const [sortByStock, setSortByStock] = useState(true);
-  const [sortOrderStock, setSortOrderStock] = useState<'asc' | 'desc'>('desc');
-  const [sortByPeso, setSortByPeso] = useState(false);
-  const [sortOrderPeso, setSortOrderPeso] = useState<'asc' | 'desc'>('desc');
+  // Ordenamiento
+  const [sortBy, setSortBy] = useState<string>('rank_ventas');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // Modal de histórico de inventario
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -100,22 +128,22 @@ export default function InventoryDashboard() {
   // Estado para exportación a Excel
   const [exporting, setExporting] = useState(false);
 
+  // Panel de ayuda colapsable
+  const [showHelp, setShowHelp] = useState(false);
+
   // Debounce search term
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
-    }, 500); // Wait 500ms after user stops typing
-
+    }, 500);
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  // Cargar ubicaciones y categorías al inicio
   useEffect(() => {
     loadUbicaciones();
     loadCategorias();
   }, []);
 
-  // Cargar conteo de anomalías cuando cambia la ubicación
   useEffect(() => {
     if (selectedUbicacion && selectedUbicacion !== 'all') {
       loadAnomaliasCount();
@@ -124,16 +152,16 @@ export default function InventoryDashboard() {
     }
   }, [selectedUbicacion, selectedAlmacen]);
 
-  // Cargar stock cuando cambian los filtros o la página
   useEffect(() => {
     loadStock();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedUbicacion, selectedAlmacen, selectedCategoria, currentPage, debouncedSearchTerm, sortByStock, sortOrderStock, sortByPeso, sortOrderPeso]);
+  }, [selectedUbicacion, selectedAlmacen, selectedCategoria, currentPage, debouncedSearchTerm,
+      sortBy, sortOrder, selectedEstadoCriticidad, selectedClasificacionProducto,
+      selectedClaseABC, selectedTopVentas, selectedVelocidadVenta]);
 
-  // Resetear a página 1 cuando cambian filtros (pero no cuando cambia el ordenamiento)
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedUbicacion, selectedCategoria, debouncedSearchTerm]);
+  }, [selectedUbicacion, selectedCategoria, debouncedSearchTerm, selectedEstadoCriticidad,
+      selectedClasificacionProducto, selectedClaseABC, selectedTopVentas, selectedVelocidadVenta]);
 
   const loadUbicaciones = async () => {
     try {
@@ -156,9 +184,7 @@ export default function InventoryDashboard() {
   const loadAnomaliasCount = async () => {
     try {
       const params: Record<string, string> = {};
-      if (selectedAlmacen) {
-        params.almacen_codigo = selectedAlmacen;
-      }
+      if (selectedAlmacen) params.almacen_codigo = selectedAlmacen;
       const response = await http.get(`/api/stock/anomalias/${selectedUbicacion}/count`, { params });
       setAnomaliasCount(response.data.total_anomalias || 0);
     } catch (error) {
@@ -167,34 +193,14 @@ export default function InventoryDashboard() {
     }
   };
 
-  const handleStockSort = () => {
-    // Desactivar ordenamiento por peso
-    setSortByPeso(false);
-
-    if (sortByStock) {
-      // Si ya estamos ordenando por stock, cambiar el orden
-      setSortOrderStock(sortOrderStock === 'desc' ? 'asc' : 'desc');
+  const handleSort = (field: string) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
     } else {
-      // Activar ordenamiento por stock (empezar con mayor a menor)
-      setSortByStock(true);
-      setSortOrderStock('desc');
+      setSortBy(field);
+      setSortOrder(field === 'rank_ventas' ? 'asc' : 'desc');
     }
-    setCurrentPage(1); // Reset a página 1
-  };
-
-  const handlePesoSort = () => {
-    // Desactivar ordenamiento por stock
-    setSortByStock(false);
-
-    if (sortByPeso) {
-      // Si ya estamos ordenando por peso, cambiar el orden
-      setSortOrderPeso(sortOrderPeso === 'desc' ? 'asc' : 'desc');
-    } else {
-      // Activar ordenamiento por peso (empezar con mayor a menor)
-      setSortByPeso(true);
-      setSortOrderPeso('desc');
-    }
-    setCurrentPage(1); // Reset a página 1
+    setCurrentPage(1);
   };
 
   const loadStock = async () => {
@@ -203,46 +209,36 @@ export default function InventoryDashboard() {
       const params: Record<string, string | number> = {
         page: currentPage,
         page_size: itemsPerPage,
+        sort_by: sortBy,
+        sort_order: sortOrder,
       };
 
-      if (selectedUbicacion !== 'all') {
-        params.ubicacion_id = selectedUbicacion;
-      }
-
-      if (selectedAlmacen) {
-        params.almacen_codigo = selectedAlmacen;
-      }
-
-      if (selectedCategoria !== 'all') {
-        params.categoria = selectedCategoria;
-      }
-
-      if (debouncedSearchTerm) {
-        params.search = debouncedSearchTerm;
-      }
-
-      // Ordenamiento
-      if (sortByStock) {
-        params.sort_by = 'stock';
-        params.sort_order = sortOrderStock;
-      } else if (sortByPeso) {
-        params.sort_by = 'peso';
-        params.sort_order = sortOrderPeso;
-      }
+      if (selectedUbicacion !== 'all') params.ubicacion_id = selectedUbicacion;
+      if (selectedAlmacen) params.almacen_codigo = selectedAlmacen;
+      if (selectedCategoria !== 'all') params.categoria = selectedCategoria;
+      if (debouncedSearchTerm) params.search = debouncedSearchTerm;
+      if (selectedEstadoCriticidad !== 'all') params.estado_criticidad = selectedEstadoCriticidad;
+      if (selectedClasificacionProducto !== 'all') params.clasificacion_producto = selectedClasificacionProducto;
+      if (selectedClaseABC !== 'all') params.clase_abc = selectedClaseABC;
+      if (selectedTopVentas !== 'all') params.top_ventas = parseInt(selectedTopVentas);
+      if (selectedVelocidadVenta !== 'all') params.velocidad_venta = selectedVelocidadVenta;
 
       const response = await http.get('/api/stock', { params });
       const { data, pagination: paginationData } = response.data as PaginatedStockResponse;
 
       setStockData(data);
       setPagination(paginationData);
-
-      // Usar estadísticas del backend (calculadas sobre todo el dataset filtrado)
       setStats({
         total_productos: paginationData.total_items,
         stock_cero: paginationData.stock_cero ?? 0,
         stock_negativo: paginationData.stock_negativo ?? 0,
+        criticos: paginationData.criticos ?? 0,
+        urgentes: paginationData.urgentes ?? 0,
+        fantasmas: paginationData.fantasmas ?? 0,
+        anomalias: paginationData.anomalias ?? 0,
+        dormidos: paginationData.dormidos ?? 0,
+        activos: paginationData.activos ?? 0,
       });
-
     } catch (error) {
       console.error('Error cargando stock:', error);
     } finally {
@@ -250,105 +246,60 @@ export default function InventoryDashboard() {
     }
   };
 
-  // Ya no necesitamos ordenamiento ni filtrado client-side
-  // Todo se maneja en el servidor
-
-  // Obtener fecha de última actualización (la más reciente de todos los registros)
   const getUltimaActualizacion = (): string => {
-    if (stockData.length === 0) {
-      return 'No disponible';
-    }
-
-    // Encontrar la fecha más reciente
+    if (stockData.length === 0) return 'No disponible';
     const fechasMasRecientes = stockData
       .map(item => item.fecha_extraccion)
       .filter(fecha => fecha !== null)
       .sort((a, b) => new Date(b!).getTime() - new Date(a!).getTime());
-
-    if (fechasMasRecientes.length === 0) {
-      return 'No disponible';
-    }
-
+    if (fechasMasRecientes.length === 0) return 'No disponible';
     const fecha = new Date(fechasMasRecientes[0]!);
     return fecha.toLocaleString('es-VE', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
     });
   };
 
-  // Exportar a Excel
   const exportToExcel = async () => {
     setExporting(true);
     try {
-      // Obtener todos los datos sin paginación (page_size grande)
-      const params: Record<string, string | number> = {
-        page: 1,
-        page_size: 50000, // Obtener todos los productos
-      };
-
-      if (selectedUbicacion !== 'all') {
-        params.ubicacion_id = selectedUbicacion;
-      }
-
-      if (selectedAlmacen) {
-        params.almacen_codigo = selectedAlmacen;
-      }
-
-      if (selectedCategoria !== 'all') {
-        params.categoria = selectedCategoria;
-      }
-
-      if (debouncedSearchTerm) {
-        params.search = debouncedSearchTerm;
-      }
-
-      // Ordenamiento
-      if (sortByStock) {
-        params.sort_by = 'stock';
-        params.sort_order = sortOrderStock;
-      } else if (sortByPeso) {
-        params.sort_by = 'peso';
-        params.sort_order = sortOrderPeso;
-      }
+      const params: Record<string, string | number> = { page: 1, page_size: 50000 };
+      if (selectedUbicacion !== 'all') params.ubicacion_id = selectedUbicacion;
+      if (selectedAlmacen) params.almacen_codigo = selectedAlmacen;
+      if (selectedCategoria !== 'all') params.categoria = selectedCategoria;
+      if (debouncedSearchTerm) params.search = debouncedSearchTerm;
+      if (selectedEstadoCriticidad !== 'all') params.estado_criticidad = selectedEstadoCriticidad;
+      if (selectedClasificacionProducto !== 'all') params.clasificacion_producto = selectedClasificacionProducto;
+      if (selectedClaseABC !== 'all') params.clase_abc = selectedClaseABC;
+      if (selectedTopVentas !== 'all') params.top_ventas = parseInt(selectedTopVentas);
+      if (selectedVelocidadVenta !== 'all') params.velocidad_venta = selectedVelocidadVenta;
 
       const response = await http.get('/api/stock', { params });
       const { data } = response.data as PaginatedStockResponse;
 
-      // Preparar datos para Excel
       const excelData = data.map((item) => ({
         'Código': item.codigo_producto,
-        'Cód.Barra': item.codigo_barras || '',
         'Artículo': item.descripcion_producto,
-        'NombreAlmacen': item.ubicacion_nombre,
-        'Existencia': item.stock_actual ?? 0,
+        'Categoría': item.categoria,
+        'Stock': item.stock_actual ?? 0,
+        'P75/día': item.demanda_p75 !== null ? Math.round(item.demanda_p75 * 10) / 10 : 0,
+        'Ventas 60d': item.ventas_60d ?? 0,
+        'Días Stock': item.dias_cobertura_actual !== null ? Math.round(item.dias_cobertura_actual * 10) / 10 : '-',
+        'Estado': item.estado_criticidad || '-',
+        'Clasificación': item.clasificacion_producto || '-',
+        'ABC': item.clase_abc || '-',
+        'Top': item.rank_ventas || '-',
       }));
 
-      // Crear libro de Excel
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(excelData);
-
-      // Ajustar anchos de columnas
       ws['!cols'] = [
-        { wch: 12 },  // Código
-        { wch: 15 },  // Cód.Barra
-        { wch: 50 },  // Artículo
-        { wch: 25 },  // NombreAlmacen
-        { wch: 12 },  // Existencia
+        { wch: 12 }, { wch: 45 }, { wch: 18 }, { wch: 10 }, { wch: 10 },
+        { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 8 }
       ];
-
       XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
-
-      // Generar nombre de archivo
       const fecha = new Date().toISOString().split('T')[0];
       const ubicacionNombre = ubicaciones.find(u => u.id === selectedUbicacion)?.nombre || selectedUbicacion;
-      const almacenSuffix = selectedAlmacen ? `_${selectedAlmacen}` : '';
-      const nombreArchivo = `Inventario_${ubicacionNombre}${almacenSuffix}_${fecha}.xlsx`;
-
-      // Descargar archivo
-      XLSX.writeFile(wb, nombreArchivo);
+      XLSX.writeFile(wb, `Inventario_${ubicacionNombre}_${fecha}.xlsx`);
     } catch (error) {
       console.error('Error exportando a Excel:', error);
     } finally {
@@ -356,311 +307,394 @@ export default function InventoryDashboard() {
     }
   };
 
+  const renderEstadoCriticidad = (estado: string | null) => {
+    const estilos: Record<string, string> = {
+      'CRITICO': 'bg-red-100 text-red-800 border-red-200',
+      'URGENTE': 'bg-orange-100 text-orange-800 border-orange-200',
+      'OPTIMO': 'bg-green-100 text-green-800 border-green-200',
+      'EXCESO': 'bg-blue-100 text-blue-800 border-blue-200',
+      'SIN_DEMANDA': 'bg-gray-100 text-gray-600 border-gray-200',
+    };
+    const labels: Record<string, string> = {
+      'CRITICO': 'Crítico', 'URGENTE': 'Urgente', 'OPTIMO': 'Óptimo',
+      'EXCESO': 'Exceso', 'SIN_DEMANDA': 'Sin demanda',
+    };
+    if (!estado) return <span className="text-gray-400">-</span>;
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${estilos[estado] || 'bg-gray-100 text-gray-600'}`}>
+        {labels[estado] || estado}
+      </span>
+    );
+  };
+
+  const renderClasificacionProducto = (clasificacion: string | null) => {
+    const estilos: Record<string, string> = {
+      'FANTASMA': 'bg-purple-100 text-purple-800',
+      'ANOMALIA': 'bg-red-100 text-red-800',
+      'DORMIDO': 'bg-yellow-100 text-yellow-800',
+      'ACTIVO': 'bg-green-100 text-green-800',
+    };
+    const icons: Record<string, string> = { 'FANTASMA': '👻', 'ANOMALIA': '⚠️', 'DORMIDO': '😴', 'ACTIVO': '✓' };
+    if (!clasificacion) return <span className="text-gray-400">-</span>;
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${estilos[clasificacion] || 'bg-gray-100 text-gray-600'}`}>
+        <span className="mr-1">{icons[clasificacion]}</span>
+        {clasificacion.charAt(0) + clasificacion.slice(1).toLowerCase()}
+      </span>
+    );
+  };
+
+  const renderClaseABC = (clase: string | null) => {
+    const estilos: Record<string, string> = {
+      'A': 'bg-green-600 text-white',
+      'B': 'bg-yellow-500 text-white',
+      'C': 'bg-gray-500 text-white',
+      'SIN_VENTAS': 'bg-gray-200 text-gray-600',
+    };
+    if (!clase) return <span className="text-gray-400">-</span>;
+    return (
+      <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${estilos[clase] || 'bg-gray-200 text-gray-600'}`}>
+        {clase === 'SIN_VENTAS' ? '-' : clase}
+      </span>
+    );
+  };
+
+  const ubicacionNombre = ubicaciones.find(u => u.id === selectedUbicacion)?.nombre || selectedUbicacion;
+
   return (
-    <div className="space-y-6">
-      {/* Botón de regreso */}
-      <button
-        onClick={() => navigate('/dashboard')}
-        className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
-      >
-        <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-        </svg>
-        Volver al resumen
-      </button>
-
-      {/* Título */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard de Inventarios</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Visualiza el stock actual de productos por tienda y categoría
-        </p>
-      </div>
-
-      {/* Header con Métricas y Botón de Corrección */}
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-        {/* Métricas Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1">
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Productos</p>
-                <p className="mt-2 text-3xl font-semibold text-gray-900">{formatInteger(stats.total_productos)}</p>
-              </div>
-              <div className="h-12 w-12 bg-gray-100 rounded-lg flex items-center justify-center">
-                <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Stock en Cero</p>
-                <p className="mt-2 text-3xl font-semibold text-yellow-600">{formatInteger(stats.stock_cero)}</p>
-              </div>
-              <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-                <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Stock Negativo</p>
-                <p className="mt-2 text-3xl font-semibold text-red-600">{formatInteger(stats.stock_negativo)}</p>
-              </div>
-              <div className="h-12 w-12 bg-red-100 rounded-lg flex items-center justify-center">
-                <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
+    <div className="space-y-4">
+      {/* Header con título de ubicación */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+          </button>
+          <div>
+            <h1 className="text-3xl font-bold text-indigo-600">{ubicacionNombre}</h1>
+            <p className="text-sm text-gray-500">Análisis de inventario • Actualizado: {getUltimaActualizacion()}</p>
           </div>
         </div>
-
-        {/* Botón Centro de Comando de Corrección */}
-        {selectedUbicacion && selectedUbicacion !== 'all' && (
-          <div className="lg:flex-shrink-0">
+        <div className="flex items-center gap-2">
+          {selectedUbicacion && selectedUbicacion !== 'all' && (
             <button
               onClick={() => setShowCorreccionModal(true)}
-              className="relative w-full lg:w-auto inline-flex items-center justify-center px-5 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors shadow-lg"
+              className="relative inline-flex items-center px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors"
             >
-              <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
               </svg>
-              Centro de Comando de Corrección
-              {/* Badge con conteo de anomalías */}
+              Corrección
               {anomaliasCount > 0 && (
-                <span className="absolute -top-2 -right-2 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white bg-red-600 rounded-full min-w-[24px]">
+                <span className="absolute -top-2 -right-2 inline-flex items-center justify-center px-2 py-1 text-xs font-bold text-white bg-red-600 rounded-full min-w-[20px]">
                   {anomaliasCount > 99 ? '99+' : anomaliasCount}
                 </span>
               )}
             </button>
-          </div>
-        )}
-      </div>
-
-      {/* Filtros */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label htmlFor="ubicacion" className="block text-sm font-medium text-gray-700 mb-2">
-              Filtrar por Ubicación
-            </label>
-            <select
-              id="ubicacion"
-              value={selectedUbicacion}
-              onChange={(e) => setSelectedUbicacion(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-            >
-              <option value="all">Todas las ubicaciones</option>
-              {ubicaciones.map((ubicacion) => (
-                <option key={ubicacion.id} value={ubicacion.id}>
-                  {ubicacion.nombre} ({ubicacion.tipo})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="categoria" className="block text-sm font-medium text-gray-700 mb-2">
-              Filtrar por Categoría
-            </label>
-            <select
-              id="categoria"
-              value={selectedCategoria}
-              onChange={(e) => setSelectedCategoria(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-            >
-              <option value="all">Todas las categorías</option>
-              {categorias.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="buscar" className="block text-sm font-medium text-gray-700 mb-2">
-              Buscar Producto
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                id="buscar"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Código o descripción..."
-                className="w-full px-3 py-2 pl-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-              />
-              <svg
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-          </div>
-        </div>
-
-        {/* Última actualización */}
-        {!loading && stockData.length > 0 && (
-          <div className="mt-3 text-sm text-gray-600 flex items-center">
-            <svg className="h-4 w-4 mr-1.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>Última actualización: <span className="font-medium text-gray-900">{getUltimaActualizacion()}</span></span>
-          </div>
-        )}
-      </div>
-
-      {/* Tabla de Productos */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Productos</h2>
+          )}
           <button
             onClick={exportToExcel}
             disabled={exporting || loading || stockData.length === 0}
             className="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {exporting ? (
-              <>
-                <div className="h-4 w-4 mr-2 animate-spin rounded-full border-2 border-white border-r-transparent"></div>
-                Exportando...
-              </>
+              <><div className="h-4 w-4 mr-2 animate-spin rounded-full border-2 border-white border-r-transparent"></div>Exportando...</>
             ) : (
-              <>
-                <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Exportar Excel
-              </>
+              <><svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>Excel</>
             )}
           </button>
         </div>
+      </div>
 
+      {/* Métricas Cards */}
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <p className="text-xs font-medium text-gray-500">Total</p>
+          <p className="text-xl font-bold text-gray-900">{formatInteger(stats.total_productos)}</p>
+        </div>
+        <div
+          className={`bg-white rounded-lg border p-3 cursor-pointer transition-all ${selectedEstadoCriticidad === 'CRITICO' ? 'border-red-500 ring-2 ring-red-200' : 'border-gray-200 hover:border-red-300'}`}
+          onClick={() => setSelectedEstadoCriticidad(selectedEstadoCriticidad === 'CRITICO' ? 'all' : 'CRITICO')}
+        >
+          <p className="text-xs font-medium text-red-600">Críticos</p>
+          <p className="text-xl font-bold text-red-600">{formatInteger(stats.criticos)}</p>
+        </div>
+        <div
+          className={`bg-white rounded-lg border p-3 cursor-pointer transition-all ${selectedEstadoCriticidad === 'URGENTE' ? 'border-orange-500 ring-2 ring-orange-200' : 'border-gray-200 hover:border-orange-300'}`}
+          onClick={() => setSelectedEstadoCriticidad(selectedEstadoCriticidad === 'URGENTE' ? 'all' : 'URGENTE')}
+        >
+          <p className="text-xs font-medium text-orange-600">Urgentes</p>
+          <p className="text-xl font-bold text-orange-600">{formatInteger(stats.urgentes)}</p>
+        </div>
+        <div
+          className={`bg-white rounded-lg border p-3 cursor-pointer transition-all ${selectedClasificacionProducto === 'FANTASMA' ? 'border-purple-500 ring-2 ring-purple-200' : 'border-gray-200 hover:border-purple-300'}`}
+          onClick={() => setSelectedClasificacionProducto(selectedClasificacionProducto === 'FANTASMA' ? 'all' : 'FANTASMA')}
+        >
+          <p className="text-xs font-medium text-purple-600">Fantasmas</p>
+          <p className="text-xl font-bold text-purple-600">{formatInteger(stats.fantasmas)}</p>
+        </div>
+        <div
+          className={`bg-white rounded-lg border p-3 cursor-pointer transition-all ${selectedClasificacionProducto === 'DORMIDO' ? 'border-yellow-500 ring-2 ring-yellow-200' : 'border-gray-200 hover:border-yellow-300'}`}
+          onClick={() => setSelectedClasificacionProducto(selectedClasificacionProducto === 'DORMIDO' ? 'all' : 'DORMIDO')}
+        >
+          <p className="text-xs font-medium text-yellow-600">Dormidos</p>
+          <p className="text-xl font-bold text-yellow-600">{formatInteger(stats.dormidos)}</p>
+        </div>
+        <div
+          className={`bg-white rounded-lg border p-3 cursor-pointer transition-all ${selectedClasificacionProducto === 'ACTIVO' ? 'border-green-500 ring-2 ring-green-200' : 'border-gray-200 hover:border-green-300'}`}
+          onClick={() => setSelectedClasificacionProducto(selectedClasificacionProducto === 'ACTIVO' ? 'all' : 'ACTIVO')}
+        >
+          <p className="text-xs font-medium text-green-600">Activos</p>
+          <p className="text-xl font-bold text-green-600">{formatInteger(stats.activos)}</p>
+        </div>
+      </div>
+
+      {/* Filtros compactos */}
+      <div className="bg-white rounded-lg border border-gray-200 p-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Ubicación</label>
+            <select
+              value={selectedUbicacion}
+              onChange={(e) => setSelectedUbicacion(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todas</option>
+              {ubicaciones.map((u) => (
+                <option key={u.id} value={u.id}>{u.nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Categoría</label>
+            <select
+              value={selectedCategoria}
+              onChange={(e) => setSelectedCategoria(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todas</option>
+              {categorias.map((cat) => (<option key={cat} value={cat}>{cat}</option>))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Estado</label>
+            <select
+              value={selectedEstadoCriticidad}
+              onChange={(e) => setSelectedEstadoCriticidad(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todos</option>
+              <option value="CRITICO">Crítico</option>
+              <option value="URGENTE">Urgente</option>
+              <option value="OPTIMO">Óptimo</option>
+              <option value="EXCESO">Exceso</option>
+              <option value="SIN_DEMANDA">Sin demanda</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Clasificación</label>
+            <select
+              value={selectedClasificacionProducto}
+              onChange={(e) => setSelectedClasificacionProducto(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todas</option>
+              <option value="ACTIVO">Activo</option>
+              <option value="DORMIDO">Dormido</option>
+              <option value="ANOMALIA">Anomalía</option>
+              <option value="FANTASMA">Fantasma</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">ABC</label>
+            <select
+              value={selectedClaseABC}
+              onChange={(e) => setSelectedClaseABC(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todas</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="SIN_VENTAS">Sin ventas</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Top</label>
+            <select
+              value={selectedTopVentas}
+              onChange={(e) => setSelectedTopVentas(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todos</option>
+              <option value="50">Top 50</option>
+              <option value="100">Top 100</option>
+              <option value="200">Top 200</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Velocidad</label>
+            <select
+              value={selectedVelocidadVenta}
+              onChange={(e) => setSelectedVelocidadVenta(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todas</option>
+              <option value="SIN_VENTAS">Sin ventas</option>
+              <option value="BAJA">Baja (1-5/mes)</option>
+              <option value="MEDIA">Media (6-15/mes)</option>
+              <option value="ALTA">Alta (16-30/mes)</option>
+              <option value="MUY_ALTA">Muy alta (+30/mes)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Buscar</label>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Código o descripción..."
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Total prominente + botón de ayuda */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2">
+            <span className="text-sm text-indigo-600 font-medium">Mostrando </span>
+            <span className="text-2xl font-bold text-indigo-700">{formatInteger(stats.total_productos)}</span>
+            <span className="text-sm text-indigo-600 font-medium"> productos</span>
+          </div>
+          {(selectedEstadoCriticidad !== 'all' || selectedClasificacionProducto !== 'all' ||
+            selectedClaseABC !== 'all' || selectedTopVentas !== 'all' || selectedVelocidadVenta !== 'all' ||
+            selectedCategoria !== 'all' || debouncedSearchTerm) && (
+            <span className="text-xs text-gray-500 italic">(filtrado)</span>
+          )}
+        </div>
+        <button
+          onClick={() => setShowHelp(!showHelp)}
+          className="flex items-center gap-1 text-sm text-gray-500 hover:text-indigo-600 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {showHelp ? 'Ocultar ayuda' : '¿Qué significa cada campo?'}
+        </button>
+      </div>
+
+      {/* Panel de ayuda colapsable */}
+      {showHelp && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <h4 className="font-semibold text-gray-700 mb-2">Clasificación del Producto</h4>
+              <ul className="space-y-1 text-gray-600">
+                <li><span className="inline-block w-20 font-medium text-green-600">Activo</span> Con stock y ventas recientes (últimos 14 días)</li>
+                <li><span className="inline-block w-20 font-medium text-yellow-600">Dormido</span> Con stock pero sin ventas en 2 semanas</li>
+                <li><span className="inline-block w-20 font-medium text-blue-600">Anomalía</span> Sin stock pero con ventas registradas (posible error)</li>
+                <li><span className="inline-block w-20 font-medium text-purple-600">Fantasma</span> Sin stock y sin ventas en 30 días</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-gray-700 mb-2">Estado de Criticidad (Stock)</h4>
+              <ul className="space-y-1 text-gray-600">
+                <li><span className="inline-block w-20 font-medium text-red-600">Crítico</span> Stock por debajo del stock de seguridad</li>
+                <li><span className="inline-block w-20 font-medium text-orange-600">Urgente</span> Stock por debajo del punto de reorden</li>
+                <li><span className="inline-block w-20 font-medium text-green-600">Óptimo</span> Stock dentro del rango ideal</li>
+                <li><span className="inline-block w-20 font-medium text-blue-600">Exceso</span> Stock por encima del máximo recomendado</li>
+                <li><span className="inline-block w-20 font-medium text-gray-500">Sin demanda</span> Sin ventas recientes para calcular</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-gray-700 mb-2">Otras Métricas</h4>
+              <ul className="space-y-1 text-gray-600">
+                <li><span className="inline-block w-20 font-medium">ABC</span> Clasificación por volumen de venta (A=top 80%, B=siguiente 15%, C=resto)</li>
+                <li><span className="inline-block w-20 font-medium">Top #</span> Ranking por ventas en esta tienda</li>
+                <li><span className="inline-block w-20 font-medium">P75/día</span> Demanda diaria (percentil 75, últimos 20 días)</li>
+                <li><span className="inline-block w-20 font-medium">Días</span> Días de cobertura con stock actual</li>
+                <li><span className="inline-block w-20 font-medium">Velocidad</span> Ritmo de venta mensual del producto</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tabla */}
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         {loading ? (
           <div className="p-12 text-center">
-            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-gray-900 border-r-transparent"></div>
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-600 border-r-transparent"></div>
             <p className="mt-4 text-sm text-gray-500">Cargando inventario...</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Código
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('stock')}>
+                    Stock {sortBy === 'stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Descripción
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">P75/día</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Vtas 60d</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('dias_stock')}>
+                    Días {sortBy === 'dias_stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Categoría
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Estado</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Clasif.</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">ABC</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('rank_ventas')}>
+                    Top {sortBy === 'rank_ventas' && <span>{sortOrder === 'asc' ? '↑' : '↓'}</span>}
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                      onClick={() => handleStockSort()}>
-                    <div className="flex items-center justify-center space-x-1">
-                      <span>Stock Actual</span>
-                      {sortByStock && (
-                        <span className="text-gray-900">
-                          {sortOrderStock === 'desc' ? '↓' : '↑'}
-                        </span>
-                      )}
-                    </div>
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                      onClick={() => handlePesoSort()}>
-                    <div className="flex items-center justify-center space-x-1">
-                      <span>Peso Total</span>
-                      {sortByPeso && (
-                        <span className="text-gray-900">
-                          {sortOrderPeso === 'desc' ? '↓' : '↑'}
-                        </span>
-                      )}
-                    </div>
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Histórico
-                  </th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">His.</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {stockData.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-500">
-                      No se encontraron productos con los filtros seleccionados
-                    </td>
-                  </tr>
+                  <tr><td colSpan={11} className="px-6 py-12 text-center text-gray-500">No se encontraron productos</td></tr>
                 ) : (
                   stockData.map((item) => (
                     <tr key={`${item.producto_id}-${item.ubicacion_id}`} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-center">
-                        {item.codigo_producto}
+                      <td className="px-3 py-2 font-medium text-gray-900">{item.codigo_producto}</td>
+                      <td className="px-3 py-2 text-gray-900 max-w-[200px] truncate" title={item.descripcion_producto}>{item.descripcion_producto}</td>
+                      <td className="px-3 py-2 text-center">
+                        <span className={`font-semibold ${(item.stock_actual ?? 0) <= 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                          {formatInteger(item.stock_actual)}
+                        </span>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-900 text-center">
-                        {item.descripcion_producto}
+                      <td className="px-3 py-2 text-center text-gray-600">
+                        {item.demanda_p75 !== null && item.demanda_p75 > 0 ? formatNumber(item.demanda_p75, 1) : '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
-                        {item.categoria}
+                      <td className="px-3 py-2 text-center text-gray-600">
+                        {item.ventas_60d !== null && item.ventas_60d > 0 ? formatInteger(item.ventas_60d) : '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <div className="flex flex-col items-center">
-                          <div className="text-lg font-semibold text-gray-900">
-                            {(() => {
-                              const stockActual = item.stock_actual ?? 0;
-                              const bultos = item.cantidad_bultos ?? 0;
-
-                              if (bultos === 0 || bultos === null) {
-                                return formatInteger(stockActual);
-                              }
-
-                              const stockBultos = stockActual / bultos;
-                              return formatNumber(stockBultos, 2);
-                            })()}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            ({formatInteger(item.stock_actual)} unid)
-                          </div>
-                        </div>
+                      <td className="px-3 py-2 text-center">
+                        <span className={`font-medium ${
+                          item.dias_cobertura_actual === null ? 'text-gray-400' :
+                          item.dias_cobertura_actual < 3 ? 'text-red-600' :
+                          item.dias_cobertura_actual < 7 ? 'text-orange-600' :
+                          item.dias_cobertura_actual > 30 ? 'text-blue-600' : 'text-gray-900'
+                        }`}>
+                          {item.dias_cobertura_actual !== null ? (item.dias_cobertura_actual > 999 ? '999+' : formatNumber(item.dias_cobertura_actual, 1)) : '-'}
+                        </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        {item.peso_total_kg !== null && item.peso_total_kg !== undefined ? (
-                          <div className="flex flex-col items-center">
-                            <div className="text-lg font-semibold text-gray-900">
-                              {formatNumber(item.peso_total_kg, 2)} kg
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              ({formatNumber(item.peso_total_kg / 1000, 2)} ton)
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-lg font-semibold text-gray-500">-</div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <td className="px-3 py-2 text-center">{renderEstadoCriticidad(item.estado_criticidad)}</td>
+                      <td className="px-3 py-2 text-center">{renderClasificacionProducto(item.clasificacion_producto)}</td>
+                      <td className="px-3 py-2 text-center">{renderClaseABC(item.clase_abc)}</td>
+                      <td className="px-3 py-2 text-center text-gray-600">{item.rank_ventas ? `#${item.rank_ventas}` : '-'}</td>
+                      <td className="px-3 py-2 text-center">
                         <button
-                          onClick={() => {
-                            setSelectedProduct({
-                              codigo: item.codigo_producto,
-                              descripcion: item.descripcion_producto
-                            });
-                            setShowHistoryModal(true);
-                          }}
-                          className="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                          onClick={() => { setSelectedProduct({ codigo: item.codigo_producto, descripcion: item.descripcion_producto }); setShowHistoryModal(true); }}
+                          className="text-indigo-600 hover:text-indigo-800 text-xs font-medium"
                         >
-                          <svg className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                          </svg>
                           Ver
                         </button>
                       </td>
@@ -674,27 +708,23 @@ export default function InventoryDashboard() {
 
         {/* Paginación */}
         {!loading && pagination && stockData.length > 0 && (
-          <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-            <div className="text-sm text-gray-700">
-              Mostrando <span className="font-medium">{((currentPage - 1) * itemsPerPage) + 1}</span> a{' '}
-              <span className="font-medium">{Math.min(currentPage * itemsPerPage, pagination.total_items)}</span> de{' '}
-              <span className="font-medium">{formatInteger(pagination.total_items)}</span> productos
-            </div>
-            <div className="flex items-center space-x-2">
+          <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between text-sm">
+            <span className="text-gray-600">
+              {((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, pagination.total_items)} de {formatInteger(pagination.total_items)}
+            </span>
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 disabled={!pagination.has_previous}
-                className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 border rounded text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Anterior
               </button>
-              <span className="text-sm text-gray-700">
-                Página {pagination.current_page} de {formatInteger(pagination.total_pages)}
-              </span>
+              <span className="text-gray-600">Pág {pagination.current_page}/{formatInteger(pagination.total_pages)}</span>
               <button
-                onClick={() => setCurrentPage(prev => prev + 1)}
+                onClick={() => setCurrentPage(p => p + 1)}
                 disabled={!pagination.has_next}
-                className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 border rounded text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Siguiente
               </button>
@@ -703,33 +733,24 @@ export default function InventoryDashboard() {
         )}
       </div>
 
-      {/* Modal de Histórico de Inventario */}
+      {/* Modales */}
       {selectedProduct && (
         <ProductHistoryModal
           isOpen={showHistoryModal}
-          onClose={() => {
-            setShowHistoryModal(false);
-            setSelectedProduct(null);
-          }}
+          onClose={() => { setShowHistoryModal(false); setSelectedProduct(null); }}
           codigoProducto={selectedProduct.codigo}
           descripcionProducto={selectedProduct.descripcion}
           ubicacionId={selectedUbicacion}
           almacenCodigo={selectedAlmacen || undefined}
         />
       )}
-
-      {/* Modal Centro de Comando de Corrección */}
       <CentroComandoCorreccionModal
         isOpen={showCorreccionModal}
         onClose={() => setShowCorreccionModal(false)}
         ubicacionId={selectedUbicacion}
-        ubicacionNombre={ubicaciones.find(u => u.id === selectedUbicacion)?.nombre || selectedUbicacion}
+        ubicacionNombre={ubicacionNombre}
         almacenCodigo={selectedAlmacen}
-        onAjustesAplicados={() => {
-          // Recargar datos después de aplicar ajustes
-          loadStock();
-          loadAnomaliasCount();
-        }}
+        onAjustesAplicados={() => { loadStock(); loadAnomaliasCount(); }}
       />
     </div>
   );

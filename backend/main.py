@@ -362,6 +362,14 @@ class StockResponse(BaseModel):
     fecha_extraccion: Optional[str]  # Fecha de última actualización
     peso_producto_kg: Optional[float]  # Peso unitario en kilogramos
     peso_total_kg: Optional[float]  # Peso total del stock en kilogramos
+    # Nuevos campos para análisis de inventario
+    demanda_p75: Optional[float] = None  # Demanda diaria P75 (últimos 20 días)
+    ventas_60d: Optional[float] = None  # Ventas acumuladas últimos 60 días
+    estado_criticidad: Optional[str] = None  # CRITICO, URGENTE, OPTIMO, EXCESO, SIN_DEMANDA
+    clasificacion_producto: Optional[str] = None  # FANTASMA, ANOMALIA, DORMIDO, ACTIVO
+    clase_abc: Optional[str] = None  # A, B, C, SIN_VENTAS
+    rank_ventas: Optional[int] = None  # Posición por ventas en la tienda
+    velocidad_venta: Optional[str] = None  # SIN_VENTAS, BAJA, MEDIA, ALTA, MUY_ALTA
 
 class PaginationMetadata(BaseModel):
     total_items: int
@@ -372,6 +380,14 @@ class PaginationMetadata(BaseModel):
     has_previous: bool
     stock_cero: Optional[int] = 0  # Productos con stock en cero
     stock_negativo: Optional[int] = 0  # Productos con stock negativo
+    # Estadísticas de criticidad
+    criticos: Optional[int] = 0  # Productos con estado CRITICO
+    urgentes: Optional[int] = 0  # Productos con estado URGENTE
+    # Estadísticas de clasificación producto
+    fantasmas: Optional[int] = 0  # Sin stock y sin ventas 30d
+    anomalias: Optional[int] = 0  # Sin stock pero con ventas
+    dormidos: Optional[int] = 0  # Con stock pero sin ventas 14d
+    activos: Optional[int] = 0  # Con stock y ventas
 
 class PaginatedStockResponse(BaseModel):
     data: List[StockResponse]
@@ -3392,7 +3408,11 @@ async def get_stock(
     ubicacion_id: Optional[str] = None,
     almacen_codigo: Optional[str] = None,
     categoria: Optional[str] = None,
-    estado: Optional[str] = None,
+    estado_criticidad: Optional[str] = None,
+    clasificacion_producto: Optional[str] = None,
+    clase_abc: Optional[str] = None,
+    top_ventas: Optional[int] = None,
+    velocidad_venta: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
     search: Optional[str] = None,
@@ -3400,182 +3420,358 @@ async def get_stock(
     sort_order: Optional[str] = 'desc'
 ):
     """
-    Obtiene el estado del stock actual con paginación server-side
+    Obtiene el estado del stock actual con paginación server-side y métricas avanzadas.
 
-    PostgreSQL: usa inventario_actual con JOINs a productos y ubicaciones
+    Incluye:
+    - Demanda P75 (últimos 20 días)
+    - Días de cobertura de stock
+    - Estado de criticidad (CRITICO, URGENTE, OPTIMO, EXCESO, SIN_DEMANDA)
+    - Clasificación de producto (FANTASMA, ANOMALIA, DORMIDO, ACTIVO)
+    - Clasificación ABC (A, B, C, SIN_VENTAS)
+    - Ranking por ventas en la tienda
 
     Args:
-        ubicacion_id: Filtrar por ID de ubicación
-        almacen_codigo: Filtrar por código de almacén (ej: APP-TPF, APP-PPF)
+        ubicacion_id: Filtrar por ID de ubicación (requerido para métricas avanzadas)
+        almacen_codigo: Filtrar por código de almacén
         categoria: Filtrar por categoría
-        estado: Filtrar por estado de stock
-        page: Número de página (inicia en 1)
-        page_size: Cantidad de items por página (máx 500)
-        search: Buscar por código o descripción de producto
-        sort_by: Campo por el cual ordenar (stock, peso)
-        sort_order: Orden ascendente (asc) o descendente (desc)
+        estado_criticidad: CRITICO, URGENTE, OPTIMO, EXCESO, SIN_DEMANDA
+        clasificacion_producto: FANTASMA, ANOMALIA, DORMIDO, ACTIVO
+        clase_abc: A, B, C, SIN_VENTAS
+        top_ventas: Top N productos por ventas (50, 100, 200)
+        velocidad_venta: SIN_VENTAS, BAJA (1-5/mes), MEDIA (6-15/mes), ALTA (16-30/mes), MUY_ALTA (>30/mes)
+        page: Número de página
+        page_size: Items por página
+        search: Buscar por código o descripción
+        sort_by: stock, peso, dias_stock, rank_ventas
+        sort_order: asc o desc
     """
     try:
-        # Validar parámetros de paginación
         if page < 1:
             raise HTTPException(status_code=400, detail="El número de página debe ser >= 1")
         if page_size < 1 or page_size > 100000:
             raise HTTPException(status_code=400, detail="page_size debe estar entre 1 y 100000")
 
-        # Query simplificado usando inventario_actual
-        count_query = """
-            SELECT COUNT(*)
-            FROM inventario_actual ia
-            INNER JOIN productos p ON ia.producto_id = p.id
-            INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
-            WHERE p.activo = true AND u.activo = true
-        """
-
-        query = """
-            SELECT DISTINCT ON (ia.producto_id, ia.ubicacion_id)
-                ia.ubicacion_id,
-                u.nombre as ubicacion_nombre,
-                'tienda' as tipo_ubicacion,
-                ia.producto_id,
-                COALESCE(p.codigo, '') as codigo_producto,
-                COALESCE(p.codigo_barras, '') as codigo_barras,
-                COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
-                COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
-                COALESCE(p.marca, '') as marca,
-                ia.cantidad as stock_actual,
-                NULL as stock_minimo,
-                NULL as stock_maximo,
-                NULL as punto_reorden,
-                NULL as precio_venta,
-                NULL as cantidad_bultos,
-                CASE
-                    WHEN ia.cantidad = 0 THEN 'sin_stock'
-                    WHEN ia.cantidad < 0 THEN 'stock_negativo'
-                    ELSE 'normal'
-                END as estado_stock,
-                NULL as dias_cobertura_actual,
-                false as es_producto_estrella,
-                TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion,
-                NULL as peso_producto_kg,
-                NULL as peso_total_kg
-            FROM inventario_actual ia
-            INNER JOIN productos p ON ia.producto_id = p.id
-            INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
-            WHERE p.activo = true AND u.activo = true
-        """
-
-        stats_query = """
-            SELECT
-                SUM(CASE WHEN ia.cantidad = 0 THEN 1 ELSE 0 END) as stock_cero,
-                SUM(CASE WHEN ia.cantidad < 0 THEN 1 ELSE 0 END) as stock_negativo
-            FROM inventario_actual ia
-            INNER JOIN productos p ON ia.producto_id = p.id
-            INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
-            WHERE p.activo = true AND u.activo = true
-        """
-
-        params = []
-
-        # Aplicar filtros
-        if ubicacion_id:
-            query += " AND ia.ubicacion_id = %s"
-            count_query += " AND ia.ubicacion_id = %s"
-            stats_query += " AND ia.ubicacion_id = %s"
-            params.append(ubicacion_id)
-
-        if almacen_codigo:
-            query += " AND ia.almacen_codigo = %s"
-            count_query += " AND ia.almacen_codigo = %s"
-            stats_query += " AND ia.almacen_codigo = %s"
-            params.append(almacen_codigo)
-
-        if categoria:
-            query += " AND p.categoria = %s"
-            count_query += " AND p.categoria = %s"
-            stats_query += " AND p.categoria = %s"
-            params.append(categoria)
-
-        if search:
-            search_term = f"%{search}%"
-            query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
-            count_query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
-            stats_query += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
-            params.extend([search_term, search_term])
-
-        # Ejecutar queries
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Count
-            cursor.execute(count_query, tuple(params))
+            # Base params para filtros
+            base_params = []
+            base_where = "p.activo = true AND u.activo = true"
+
+            if ubicacion_id:
+                base_where += " AND ia.ubicacion_id = %s"
+                base_params.append(ubicacion_id)
+
+            if almacen_codigo:
+                base_where += " AND ia.almacen_codigo = %s"
+                base_params.append(almacen_codigo)
+
+            if categoria:
+                base_where += " AND p.categoria = %s"
+                base_params.append(categoria)
+
+            if search:
+                search_term = f"%{search}%"
+                base_where += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
+                base_params.extend([search_term, search_term])
+
+            # Query principal con CTEs para calcular métricas
+            # Lead time default: 1.5 días
+            main_query = f"""
+            WITH ventas_20d AS (
+                -- Ventas diarias por producto en la ubicación (últimos 20 días)
+                SELECT
+                    producto_id,
+                    DATE(fecha_venta) as fecha,
+                    SUM(cantidad_vendida) as total_dia
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
+                  AND fecha_venta < CURRENT_DATE
+                GROUP BY producto_id, DATE(fecha_venta)
+            ),
+            demanda_p75 AS (
+                -- P75 de ventas diarias (más conservador que promedio)
+                SELECT
+                    producto_id,
+                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75,
+                    STDDEV(total_dia) as sigma_demanda,
+                    COUNT(DISTINCT fecha) as dias_con_venta
+                FROM ventas_20d
+                GROUP BY producto_id
+            ),
+            ventas_30d AS (
+                -- Total ventas 30 días para clasificación producto
+                SELECT
+                    producto_id,
+                    SUM(cantidad_vendida) as total_30d
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY producto_id
+            ),
+            ventas_14d AS (
+                -- Total ventas 14 días para detectar dormidos
+                SELECT
+                    producto_id,
+                    SUM(cantidad_vendida) as total_14d
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND fecha_venta >= CURRENT_DATE - INTERVAL '14 days'
+                GROUP BY producto_id
+            ),
+            ventas_60d AS (
+                -- Total ventas 60 días (2 meses)
+                SELECT
+                    producto_id,
+                    SUM(cantidad_vendida) as total_60d
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND fecha_venta >= CURRENT_DATE - INTERVAL '60 days'
+                GROUP BY producto_id
+            ),
+            abc_tienda AS (
+                -- Clasificación ABC de la tienda
+                SELECT
+                    producto_id,
+                    clase_abc,
+                    rank_venta
+                FROM productos_abc_tienda
+                WHERE ubicacion_id = %s
+            ),
+            config_abc AS (
+                -- Configuración de multiplicadores por clase ABC
+                SELECT
+                    clasificacion_abc,
+                    stock_min_multiplicador,
+                    stock_seg_multiplicador,
+                    stock_max_multiplicador,
+                    lead_time_dias
+                FROM config_inventario_tienda
+                WHERE tienda_id = %s AND activo = true
+            ),
+            stock_data AS (
+                SELECT
+                    ia.ubicacion_id,
+                    u.nombre as ubicacion_nombre,
+                    'tienda' as tipo_ubicacion,
+                    ia.producto_id,
+                    COALESCE(p.codigo, '') as codigo_producto,
+                    COALESCE(p.codigo_barras, '') as codigo_barras,
+                    COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
+                    COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
+                    COALESCE(p.marca, '') as marca,
+                    ia.cantidad as stock_actual,
+                    -- Demanda P75
+                    COALESCE(dp.p75, 0) as demanda_p75,
+                    COALESCE(dp.sigma_demanda, 0) as sigma_demanda,
+                    -- Clase ABC y ranking
+                    COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
+                    abc.rank_venta as rank_ventas,
+                    -- Configuración ABC (usar defaults si no hay config específica)
+                    COALESCE(cfg.stock_min_multiplicador, 1.5) as stock_min_mult,
+                    COALESCE(cfg.stock_seg_multiplicador, 1.0) as stock_seg_mult,
+                    COALESCE(cfg.stock_max_multiplicador,
+                        CASE COALESCE(abc.clase_abc, 'C')
+                            WHEN 'A' THEN 5
+                            WHEN 'B' THEN 10
+                            ELSE 20
+                        END
+                    ) as stock_max_mult,
+                    COALESCE(cfg.lead_time_dias, 1.5) as lead_time,
+                    -- Ventas para clasificación producto
+                    COALESCE(v30.total_30d, 0) as ventas_30d,
+                    COALESCE(v14.total_14d, 0) as ventas_14d,
+                    COALESCE(v60.total_60d, 0) as ventas_60d,
+                    -- Metadata
+                    TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id
+                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                LEFT JOIN demanda_p75 dp ON dp.producto_id = ia.producto_id
+                LEFT JOIN abc_tienda abc ON abc.producto_id = ia.producto_id
+                LEFT JOIN ventas_60d v60 ON v60.producto_id = ia.producto_id
+                LEFT JOIN config_abc cfg ON cfg.clasificacion_abc = abc.clase_abc
+                LEFT JOIN ventas_30d v30 ON v30.producto_id = ia.producto_id
+                LEFT JOIN ventas_14d v14 ON v14.producto_id = ia.producto_id
+                WHERE {base_where}
+            ),
+            calculated AS (
+                SELECT
+                    *,
+                    -- Calcular parámetros de inventario
+                    CASE WHEN demanda_p75 > 0 THEN
+                        demanda_p75 * lead_time + (1.65 * sigma_demanda * SQRT(lead_time))
+                    ELSE 0 END as stock_seguridad,
+                    CASE WHEN demanda_p75 > 0 THEN
+                        demanda_p75 * lead_time * stock_min_mult + (1.65 * sigma_demanda * SQRT(lead_time))
+                    ELSE 0 END as punto_reorden,
+                    CASE WHEN demanda_p75 > 0 THEN
+                        demanda_p75 * stock_max_mult
+                    ELSE 0 END as stock_maximo,
+                    -- Días de cobertura
+                    CASE WHEN demanda_p75 > 0 THEN
+                        stock_actual / demanda_p75
+                    ELSE NULL END as dias_cobertura_actual,
+                    -- Clasificación de producto
+                    CASE
+                        WHEN stock_actual <= 0 AND ventas_30d = 0 THEN 'FANTASMA'
+                        WHEN stock_actual <= 0 AND ventas_30d > 0 THEN 'ANOMALIA'
+                        WHEN stock_actual > 0 AND ventas_14d = 0 THEN 'DORMIDO'
+                        ELSE 'ACTIVO'
+                    END as clasificacion_producto,
+                    -- Velocidad de venta (basado en ventas_30d)
+                    CASE
+                        WHEN ventas_30d = 0 THEN 'SIN_VENTAS'
+                        WHEN ventas_30d BETWEEN 1 AND 5 THEN 'BAJA'
+                        WHEN ventas_30d BETWEEN 6 AND 15 THEN 'MEDIA'
+                        WHEN ventas_30d BETWEEN 16 AND 30 THEN 'ALTA'
+                        ELSE 'MUY_ALTA'
+                    END as velocidad_venta
+                FROM stock_data
+            ),
+            final AS (
+                SELECT
+                    *,
+                    -- Estado de criticidad basado en SS, ROP, MAX
+                    CASE
+                        WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
+                        WHEN dias_cobertura_actual IS NULL THEN 'SIN_DEMANDA'
+                        WHEN stock_actual <= stock_seguridad THEN 'CRITICO'
+                        WHEN stock_actual <= punto_reorden THEN 'URGENTE'
+                        WHEN stock_actual <= stock_maximo THEN 'OPTIMO'
+                        ELSE 'EXCESO'
+                    END as estado_criticidad,
+                    -- Estado stock legacy
+                    CASE
+                        WHEN stock_actual = 0 THEN 'sin_stock'
+                        WHEN stock_actual < 0 THEN 'stock_negativo'
+                        ELSE 'normal'
+                    END as estado_stock
+                FROM calculated
+            )
+            SELECT * FROM final
+            WHERE 1=1
+            """
+
+            # Params para los CTEs (ubicacion_id se usa 6 veces en CTEs)
+            # Luego base_params puede agregar más (ubicacion_id, almacen, categoria, search)
+            query_params = []
+            if ubicacion_id:
+                # 6 veces para los CTEs: ventas_20d, ventas_30d, ventas_14d, ventas_60d, abc_tienda, config_abc
+                query_params = [ubicacion_id] * 6 + base_params
+            else:
+                # Sin ubicacion_id, los CTEs de ventas no funcionan bien
+                # Usamos un valor que no matchea nada para evitar errores SQL
+                query_params = ['__none__'] * 6 + base_params
+
+            # Filtros adicionales sobre campos calculados
+            filter_params = []
+            if estado_criticidad:
+                main_query += " AND estado_criticidad = %s"
+                filter_params.append(estado_criticidad)
+
+            if clasificacion_producto:
+                main_query += " AND clasificacion_producto = %s"
+                filter_params.append(clasificacion_producto)
+
+            if clase_abc:
+                main_query += " AND clase_abc = %s"
+                filter_params.append(clase_abc)
+
+            if top_ventas:
+                main_query += " AND rank_ventas <= %s"
+                filter_params.append(top_ventas)
+
+            if velocidad_venta:
+                main_query += " AND velocidad_venta = %s"
+                filter_params.append(velocidad_venta)
+
+            # Count query
+            count_query = f"SELECT COUNT(*) FROM ({main_query}) as counted"
+            cursor.execute(count_query, tuple(query_params + filter_params))
             total_items = cursor.fetchone()[0]
 
-            # Stats
-            cursor.execute(stats_query, tuple(params))
-            stats_result = cursor.fetchone()
-            stock_cero = stats_result[0] if stats_result[0] is not None else 0
-            stock_negativo = stats_result[1] if stats_result[1] is not None else 0
+            # Stats query
+            stats_query = f"""
+            SELECT
+                SUM(CASE WHEN stock_actual = 0 THEN 1 ELSE 0 END) as stock_cero,
+                SUM(CASE WHEN stock_actual < 0 THEN 1 ELSE 0 END) as stock_negativo,
+                SUM(CASE WHEN estado_criticidad = 'CRITICO' THEN 1 ELSE 0 END) as criticos,
+                SUM(CASE WHEN estado_criticidad = 'URGENTE' THEN 1 ELSE 0 END) as urgentes,
+                SUM(CASE WHEN clasificacion_producto = 'FANTASMA' THEN 1 ELSE 0 END) as fantasmas,
+                SUM(CASE WHEN clasificacion_producto = 'ANOMALIA' THEN 1 ELSE 0 END) as anomalias,
+                SUM(CASE WHEN clasificacion_producto = 'DORMIDO' THEN 1 ELSE 0 END) as dormidos,
+                SUM(CASE WHEN clasificacion_producto = 'ACTIVO' THEN 1 ELSE 0 END) as activos
+            FROM ({main_query}) as stats
+            """
+            cursor.execute(stats_query, tuple(query_params + filter_params))
+            stats = cursor.fetchone()
 
             # Paginación
-            total_pages = (total_items + page_size - 1) // page_size
+            total_pages = max(1, (total_items + page_size - 1) // page_size)
             offset = (page - 1) * page_size
 
-            # Ordenamiento - DISTINCT ON columns must appear first, but then sorted by user-requested field
-            if sort_by == 'stock':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                # DISTINCT ON requires these fields first, but we can sub-sort by cantidad
-                query += f" ORDER BY ia.producto_id, ia.ubicacion_id"
-                # Now add pagination query with proper sort by cantidad
-                paginated_query = f"""
-                    SELECT * FROM ({query}) AS distinct_rows
-                    ORDER BY stock_actual {order_direction}
-                """
-                query = paginated_query
+            # Ordenamiento
+            order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
+            order_field = 'stock_actual'
+            if sort_by == 'dias_stock':
+                order_field = 'dias_cobertura_actual'
+            elif sort_by == 'rank_ventas':
+                order_field = 'rank_ventas'
+                order_direction = 'ASC' if sort_order == 'asc' else 'ASC'  # Default ASC for rank
             elif sort_by == 'peso':
-                order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-                query += f" ORDER BY ia.producto_id, ia.ubicacion_id"
-                paginated_query = f"""
-                    SELECT * FROM ({query}) AS distinct_rows
-                    ORDER BY peso_total_kg {order_direction} NULLS LAST
-                """
-                query = paginated_query
-            else:
-                query += " ORDER BY ia.producto_id, ia.ubicacion_id, ia.fecha_actualizacion DESC"
+                order_field = 'stock_actual'  # No tenemos peso, usar stock
+            elif sort_by == 'stock':
+                order_field = 'stock_actual'
 
-            query += f" LIMIT {page_size} OFFSET {offset}"
+            final_query = f"""
+            {main_query}
+            ORDER BY {order_field} {order_direction} NULLS LAST
+            LIMIT %s OFFSET %s
+            """
 
-            cursor.execute(query, tuple(params))
+            cursor.execute(final_query, tuple(query_params + filter_params + [page_size, offset]))
             result = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
             cursor.close()
 
-        # Construir respuesta (común para ambos modos)
+        # Construir respuesta
         stock_data = []
         for row in result:
+            row_dict = dict(zip(columns, row))
             stock_data.append(StockResponse(
-                ubicacion_id=row[0],
-                ubicacion_nombre=row[1],
-                ubicacion_tipo=row[2],
-                producto_id=row[3],
-                codigo_producto=row[4],
-                codigo_barras=row[5],
-                descripcion_producto=row[6],
-                categoria=row[7],
-                marca=row[8],
-                stock_actual=row[9],
-                stock_minimo=row[10],
-                stock_maximo=row[11],
-                punto_reorden=row[12],
-                precio_venta=row[13],
-                cantidad_bultos=row[14],
-                estado_stock=row[15],
-                dias_cobertura_actual=row[16],
-                es_producto_estrella=row[17],
-                fecha_extraccion=row[18],
-                peso_producto_kg=row[19],
-                peso_total_kg=row[20]
+                ubicacion_id=row_dict['ubicacion_id'],
+                ubicacion_nombre=row_dict['ubicacion_nombre'],
+                ubicacion_tipo=row_dict['tipo_ubicacion'],
+                producto_id=row_dict['producto_id'],
+                codigo_producto=row_dict['codigo_producto'],
+                codigo_barras=row_dict['codigo_barras'],
+                descripcion_producto=row_dict['descripcion_producto'],
+                categoria=row_dict['categoria'],
+                marca=row_dict['marca'],
+                stock_actual=row_dict['stock_actual'],
+                stock_minimo=row_dict.get('stock_seguridad'),
+                stock_maximo=row_dict.get('stock_maximo'),
+                punto_reorden=row_dict.get('punto_reorden'),
+                precio_venta=None,
+                cantidad_bultos=None,
+                estado_stock=row_dict['estado_stock'],
+                dias_cobertura_actual=row_dict.get('dias_cobertura_actual'),
+                es_producto_estrella=False,
+                fecha_extraccion=row_dict['fecha_extraccion'],
+                peso_producto_kg=None,
+                peso_total_kg=None,
+                # Nuevos campos
+                demanda_p75=row_dict.get('demanda_p75'),
+                ventas_60d=row_dict.get('ventas_60d'),
+                estado_criticidad=row_dict.get('estado_criticidad'),
+                clasificacion_producto=row_dict.get('clasificacion_producto'),
+                clase_abc=row_dict.get('clase_abc'),
+                rank_ventas=row_dict.get('rank_ventas'),
+                velocidad_venta=row_dict.get('velocidad_venta')
             ))
 
-        # Crear metadata de paginación
         pagination = PaginationMetadata(
             total_items=total_items,
             total_pages=total_pages,
@@ -3583,8 +3779,14 @@ async def get_stock(
             page_size=page_size,
             has_next=page < total_pages,
             has_previous=page > 1,
-            stock_cero=stock_cero,
-            stock_negativo=stock_negativo
+            stock_cero=stats[0] or 0,
+            stock_negativo=stats[1] or 0,
+            criticos=stats[2] or 0,
+            urgentes=stats[3] or 0,
+            fantasmas=stats[4] or 0,
+            anomalias=stats[5] or 0,
+            dormidos=stats[6] or 0,
+            activos=stats[7] or 0
         )
 
         return PaginatedStockResponse(
@@ -3596,6 +3798,8 @@ async def get_stock(
         raise
     except Exception as e:
         logger.error(f"Error obteniendo stock: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
