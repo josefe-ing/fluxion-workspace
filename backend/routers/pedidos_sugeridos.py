@@ -1007,6 +1007,7 @@ async def calcular_productos_sugeridos(
             WITH ventas_diarias_disponibles AS (
                 -- Todas las ventas diarias disponibles (sin limite de dias)
                 -- IMPORTANTE: Excluir día actual (incompleto) para no sesgar promedios
+                -- NOTA: Para tienda_18 (PARAISO) se excluye 2025-12-06 (inauguración con ventas atípicas)
                 SELECT
                     producto_id,
                     fecha_venta::date as fecha,
@@ -1014,6 +1015,7 @@ async def calcular_productos_sugeridos(
                 FROM ventas
                 WHERE ubicacion_id = %s
                   AND fecha_venta::date < CURRENT_DATE  -- Excluir hoy (día incompleto)
+                  AND NOT (ubicacion_id = 'tienda_18' AND fecha_venta::date = '2025-12-06')  -- Excluir inauguración Paraíso
                 GROUP BY producto_id, fecha_venta::date
             ),
             ventas_20dias AS (

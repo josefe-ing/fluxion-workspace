@@ -1222,6 +1222,7 @@ async def get_ubicaciones_summary_regional():
                     GROUP BY u.id, u.nombre, u.tipo, u.region, ia.almacen_codigo
                 ),
                 -- Ventas diarias últimos 20 días para calcular P75
+                -- NOTA: Para tienda_18 (PARAÍSO) se excluye 2025-12-06 (inauguración con ventas atípicas)
                 ventas_20d AS (
                     SELECT
                         ubicacion_id,
@@ -1231,6 +1232,7 @@ async def get_ubicaciones_summary_regional():
                     FROM ventas
                     WHERE fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
                       AND fecha_venta < CURRENT_DATE
+                      AND NOT (ubicacion_id = 'tienda_18' AND DATE(fecha_venta) = '2025-12-06')
                     GROUP BY ubicacion_id, producto_id, DATE(fecha_venta)
                 ),
                 demanda_p75 AS (
@@ -2672,6 +2674,7 @@ async def get_productos_por_matriz(
 
         else:
             # Calcular ABC y XYZ dinámicamente para la tienda + Velocidad P75
+            # NOTA: Para tienda_18 (PARAÍSO) se excluye 2025-12-06 (inauguración con ventas atípicas)
             query = """
             WITH ventas_diarias_tienda AS (
                 SELECT
@@ -2683,6 +2686,7 @@ async def get_productos_por_matriz(
                 WHERE ubicacion_id = %s
                   AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
                   AND producto_id != '003760'
+                  AND NOT (ubicacion_id = 'tienda_18' AND fecha_venta::date = '2025-12-06')
                 GROUP BY producto_id, fecha_venta::date
             ),
             ventas_tienda AS (
@@ -4101,6 +4105,7 @@ async def get_stock(
 
             # Query principal con CTEs para calcular métricas
             # Lead time default: 1.5 días
+            # NOTA: Para tienda_18 (PARAÍSO) se excluye 2025-12-06 (inauguración con ventas atípicas)
             main_query = f"""
             WITH ventas_20d AS (
                 -- Ventas diarias por producto en la ubicación (últimos 20 días)
@@ -4112,6 +4117,7 @@ async def get_stock(
                 WHERE ubicacion_id = %s
                   AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
                   AND fecha_venta < CURRENT_DATE
+                  AND NOT (ubicacion_id = 'tienda_18' AND DATE(fecha_venta) = '2025-12-06')
                 GROUP BY producto_id, DATE(fecha_venta)
             ),
             demanda_p75 AS (
@@ -7719,6 +7725,9 @@ async def get_ventas_detail(
             if ubicacion_id:
                 where_clauses.append("ubicacion_id = %s")
                 params.append(ubicacion_id)
+                # Excluir día de inauguración atípico para PARAÍSO (tienda_18)
+                if ubicacion_id == 'tienda_18':
+                    where_clauses.append("fecha_venta::date != '2025-12-06'")
 
             if search:
                 # Buscar en código de producto y descripción (JOIN con productos)
