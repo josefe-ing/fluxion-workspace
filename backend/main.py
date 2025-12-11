@@ -75,58 +75,18 @@ app = FastAPI(
 )
 
 # ============================================================================
-# CACHE REFRESH SCHEDULER
+# CACHE REFRESH (Manual/Post-ETL)
 # ============================================================================
-# Configuración del scheduler para refrescar productos_analisis_cache
-CACHE_REFRESH_INTERVAL_MINUTES = 5  # Cada 5 minutos
-_cache_refresh_task: Optional[asyncio.Task] = None
-
-
-async def _refresh_productos_cache():
-    """Ejecuta el refresh de la tabla productos_analisis_cache."""
-    try:
-        logger.info("🔄 [Cache Scheduler] Refrescando productos_analisis_cache...")
-        start_time = time.time()
-
-        with get_db_connection_write() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT refresh_productos_analisis_cache()")
-            conn.commit()
-            cursor.close()
-
-        elapsed = time.time() - start_time
-        logger.info(f"✅ [Cache Scheduler] Cache refrescada en {elapsed:.2f}s")
-
-    except Exception as e:
-        error_msg = str(e)
-        if "does not exist" in error_msg or "no existe" in error_msg:
-            logger.warning("⚠️  [Cache Scheduler] Tabla productos_analisis_cache no existe. Ejecute la migración 001_performance_optimization.sql")
-        else:
-            logger.error(f"❌ [Cache Scheduler] Error refrescando cache: {e}")
-
-
-async def _cache_refresh_scheduler():
-    """Background task que ejecuta refresh de cache periódicamente."""
-    logger.info(f"🕐 [Cache Scheduler] Iniciado - Refresh cada {CACHE_REFRESH_INTERVAL_MINUTES} minutos")
-
-    # Esperar 60 segundos antes del primer refresh (dar tiempo a que el sistema se estabilice)
-    await asyncio.sleep(60)
-
-    while True:
-        try:
-            await _refresh_productos_cache()
-        except Exception as e:
-            logger.error(f"❌ [Cache Scheduler] Error en ciclo: {e}")
-
-        # Esperar hasta el próximo ciclo
-        await asyncio.sleep(CACHE_REFRESH_INTERVAL_MINUTES * 60)
+# Cache refresh is now triggered by ETL processes after inventory sync
+# instead of running on a fixed schedule. This ensures cache is only
+# refreshed when there's new data (after each ETL run).
 
 
 # Auto-bootstrap admin user on startup
 @app.on_event("startup")
 async def startup_event():
     """Execute startup tasks"""
-    global ventas_scheduler, _cache_refresh_task
+    global ventas_scheduler
 
     logger.info("🚀 Starting Fluxion AI Backend...")
 
@@ -139,29 +99,8 @@ async def startup_event():
     except Exception as e:
         logger.error(f"⚠️  Auto-bootstrap failed: {e}")
 
-    # Iniciar scheduler de cache refresh
-    try:
-        _cache_refresh_task = asyncio.create_task(_cache_refresh_scheduler())
-        logger.info(f"✅ Cache Refresh Scheduler iniciado - Cada {CACHE_REFRESH_INTERVAL_MINUTES} min")
-    except Exception as e:
-        logger.error(f"⚠️  Error iniciando cache refresh scheduler: {e}")
-
     logger.info("⚠️  VentasETLScheduler DISABLED - Use manual ETL sync endpoints or increase RAM to 8GB")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    global _cache_refresh_task
-
-    if _cache_refresh_task:
-        logger.info("🛑 Deteniendo Cache Refresh Scheduler...")
-        _cache_refresh_task.cancel()
-        try:
-            await _cache_refresh_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("✅ Cache Refresh Scheduler detenido")
+    logger.info("ℹ️  Cache refresh triggered by ETL processes after inventory sync")
 
 # Configurar CORS para el frontend
 app.add_middleware(
@@ -8035,17 +7974,165 @@ async def get_ventas_producto_diario(
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
-@app.get("/api/ventas/producto/forecast", tags=["Ventas"], deprecated=True)
+@app.get("/api/ventas/producto/forecast", tags=["Ventas"])
 async def get_forecast_producto(
     ubicacion_id: str,
     codigo_producto: str,
     dias_adelante: int = 7
 ):
-    """[DEPRECADO] Este endpoint usaba DuckDB ventas_raw y ha sido deprecado."""
-    raise HTTPException(
-        status_code=501,
-        detail="Endpoint deprecado. Usaba tabla DuckDB ventas_raw que ya no existe."
-    )
+    """
+    Genera forecast de ventas usando Promedio Móvil Ponderado (PMP).
+
+    Usa los últimos 20 días de ventas, excluyendo días con ventas anormalmente bajas
+    (posibles quiebres de stock), y aplica pesos que dan más importancia a días recientes.
+
+    Args:
+        ubicacion_id: ID de la tienda
+        codigo_producto: Código SKU del producto
+        dias_adelante: Número de días a proyectar (default: 7)
+
+    Returns:
+        forecasts: Lista de proyecciones diarias con fecha, día de semana, y valores en unidades/bultos
+    """
+    try:
+        from datetime import datetime, timedelta
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener unidades por bulto del producto
+            cursor.execute("""
+                SELECT COALESCE(unidades_por_bulto, 1) as unidades_por_bulto
+                FROM productos
+                WHERE codigo = %s
+            """, [codigo_producto])
+            producto_row = cursor.fetchone()
+
+            if not producto_row:
+                cursor.close()
+                raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+            unidades_por_bulto = float(producto_row[0]) if producto_row[0] else 1.0
+
+            # Obtener ventas de las últimas 6 semanas (42 días) para tener suficiente data por día de semana
+            cursor.execute("""
+                SELECT
+                    fecha_venta::date as fecha,
+                    EXTRACT(DOW FROM fecha_venta::date) as dia_semana,
+                    SUM(cantidad_vendida) as total_unidades
+                FROM ventas
+                WHERE producto_id = %s
+                    AND ubicacion_id = %s
+                    AND fecha_venta >= CURRENT_DATE - INTERVAL '42 days'
+                    AND fecha_venta < CURRENT_DATE
+                GROUP BY fecha_venta::date
+                ORDER BY fecha_venta::date
+            """, [codigo_producto, ubicacion_id])
+
+            ventas_rows = cursor.fetchall()
+            cursor.close()
+
+            # Construir lista de ventas diarias
+            ventas_diarias = []
+            for row in ventas_rows:
+                ventas_diarias.append({
+                    'fecha': row[0],
+                    'dia_semana': int(row[1]),  # 0=domingo, 6=sábado (PostgreSQL DOW)
+                    'unidades': float(row[2]) if row[2] else 0
+                })
+
+            # Si no hay datos históricos, retornar forecast vacío
+            if len(ventas_diarias) == 0:
+                return {
+                    "ubicacion_id": ubicacion_id,
+                    "codigo_producto": codigo_producto,
+                    "dias_adelante": dias_adelante,
+                    "forecasts": [],
+                    "dias_excluidos": 0,
+                    "metodo": "PMP_DIA_SEMANA"
+                }
+
+            # Calcular mediana global para detectar quiebres
+            valores_ordenados = sorted([v['unidades'] for v in ventas_diarias])
+            n = len(valores_ordenados)
+            p50_idx = int(n * 0.5)
+            mediana_global = valores_ordenados[p50_idx] if p50_idx < n else 0
+
+            # Umbral: si un día tiene ventas < 30% de la mediana, considerarlo quiebre
+            umbral_quiebre = mediana_global * 0.3
+
+            # Filtrar días válidos (excluir posibles quiebres)
+            dias_validos = [v for v in ventas_diarias if v['unidades'] >= umbral_quiebre or mediana_global == 0]
+            dias_excluidos = len(ventas_diarias) - len(dias_validos)
+
+            # Agrupar ventas por día de semana (0=Dom, 1=Lun, ..., 6=Sáb)
+            ventas_por_dia_semana = {i: [] for i in range(7)}
+            for venta in dias_validos:
+                ventas_por_dia_semana[venta['dia_semana']].append(venta['unidades'])
+
+            # Calcular promedio ponderado por día de semana
+            # Pesos: más reciente = más peso
+            promedios_dia_semana = {}
+            for dia_sem, ventas_lista in ventas_por_dia_semana.items():
+                if len(ventas_lista) == 0:
+                    promedios_dia_semana[dia_sem] = None
+                else:
+                    # Aplicar pesos: más reciente = más peso
+                    total_peso = 0
+                    suma_ponderada = 0
+                    for i, unidades in enumerate(ventas_lista):
+                        peso = i + 1
+                        suma_ponderada += unidades * peso
+                        total_peso += peso
+                    promedios_dia_semana[dia_sem] = suma_ponderada / total_peso if total_peso > 0 else 0
+
+            # Calcular promedio general como fallback
+            promedio_general = sum(v['unidades'] for v in dias_validos) / len(dias_validos) if dias_validos else 0
+
+            # Generar forecasts para los próximos días
+            dias_semana_nombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+            forecasts = []
+
+            # Fecha base: hoy
+            fecha_base = datetime.now().date()
+
+            for i in range(1, dias_adelante + 1):
+                fecha_forecast = fecha_base + timedelta(days=i)
+                # Python weekday: 0=Lunes, 6=Domingo
+                # PostgreSQL DOW: 0=Domingo, 6=Sábado
+                python_weekday = fecha_forecast.weekday()
+                dia_semana_dow = (python_weekday + 1) % 7  # Convertir a formato DOW
+
+                # Usar promedio del día de semana específico, o fallback al general
+                forecast_unidades = promedios_dia_semana.get(dia_semana_dow)
+                if forecast_unidades is None:
+                    forecast_unidades = promedio_general
+
+                forecast_bultos = forecast_unidades / unidades_por_bulto
+
+                forecasts.append({
+                    "dia": i,
+                    "fecha": fecha_forecast.strftime('%Y-%m-%d'),
+                    "fecha_display": fecha_forecast.strftime('%d/%m'),
+                    "dia_semana": dias_semana_nombres[dia_semana_dow],
+                    "forecast_unidades": round(forecast_unidades, 2),
+                    "forecast_bultos": round(forecast_bultos, 2)
+                })
+
+            return {
+                "ubicacion_id": ubicacion_id,
+                "codigo_producto": codigo_producto,
+                "dias_adelante": dias_adelante,
+                "forecasts": forecasts,
+                "dias_excluidos": dias_excluidos,
+                "metodo": "PMP_DIA_SEMANA"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando forecast: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
 @app.get("/api/ventas/producto/horario", tags=["Ventas"])
@@ -8240,6 +8327,7 @@ async def get_ventas_ultimos_20_dias(
                 return {"ventas": []}
 
             # Obtener ventas de los últimos 20 días
+            # NOTA: Excluir 2025-12-06 para tienda_18 (PARAISO) por ser día de inauguración con ventas atípicas
             cursor.execute("""
                 SELECT
                     fecha_venta::date as fecha,
@@ -8250,6 +8338,7 @@ async def get_ventas_ultimos_20_dias(
                     AND ubicacion_id = %s
                     AND fecha_venta::date > %s - INTERVAL '20 days'
                     AND fecha_venta::date <= %s
+                    AND NOT (ubicacion_id = 'tienda_18' AND fecha_venta::date = '2025-12-06')
                 GROUP BY fecha_venta::date
                 ORDER BY fecha_venta::date ASC
             """, [codigo_producto, ubicacion_id, fecha_max, fecha_max])

@@ -10,7 +10,7 @@
 
 import { useState, useEffect } from 'react';
 import http from '../../services/http';
-import { Settings, Store, TrendingUp, Shield, Package, Info, Save, RefreshCw } from 'lucide-react';
+import { Settings, Store, TrendingUp, Shield, Package, Info, Save, RefreshCw, Leaf, Plus, Trash2 } from 'lucide-react';
 
 // Tipos
 interface ParametrosGlobales {
@@ -48,7 +48,20 @@ interface Tienda {
   nombre: string;
 }
 
-type TabType = 'global' | 'umbrales' | 'niveles' | 'tiendas';
+interface CoberturaCategoria {
+  id: string;
+  categoria: string;
+  categoria_normalizada: string;
+  dias_cobertura_a: number;
+  dias_cobertura_b: number;
+  dias_cobertura_c: number;
+  dias_cobertura_d: number;
+  es_perecedero: boolean;
+  descripcion: string;
+  activo: boolean;
+}
+
+type TabType = 'global' | 'umbrales' | 'niveles' | 'tiendas' | 'categorias';
 
 // Valores por defecto (los mismos del backend)
 const DEFAULTS = {
@@ -143,6 +156,9 @@ export default function ConfiguracionABC() {
   const [umbrales, setUmbrales] = useState<UmbralesABC>(DEFAULTS.umbrales);
   const [configTiendas, setConfigTiendas] = useState<ConfigTienda[]>([]);
   const [tiendas, setTiendas] = useState<Tienda[]>([]);
+  const [coberturaCategorias, setCoberturaCategorias] = useState<CoberturaCategoria[]>([]);
+  const [categoriasDisponibles, setCategoriasDisponibles] = useState<{ categoria: string; categoria_normalizada: string; productos: number }[]>([]);
+  const [nuevaCategoria, setNuevaCategoria] = useState<string>('');
 
   // Cargar datos al montar
   useEffect(() => {
@@ -155,9 +171,11 @@ export default function ConfiguracionABC() {
       setError(null);
 
       // Cargar configuración actual
-      const [configResponse, tiendasResponse] = await Promise.all([
+      const [configResponse, tiendasResponse, categoriasResponse, categoriasDispResponse] = await Promise.all([
         http.get('/api/config-inventario/parametros-abc'),
         http.get('/api/ubicaciones'),
+        http.get('/api/config-inventario/cobertura-categoria'),
+        http.get('/api/config-inventario/categorias-disponibles'),
       ]);
 
       if (configResponse.data) {
@@ -197,6 +215,16 @@ export default function ConfiguracionABC() {
           id: t.codigo,
           nombre: t.nombre,
         })));
+      }
+
+      // Cobertura por categoría
+      if (categoriasResponse.data) {
+        setCoberturaCategorias(categoriasResponse.data);
+      }
+
+      // Categorías disponibles
+      if (categoriasDispResponse.data) {
+        setCategoriasDisponibles(categoriasDispResponse.data);
       }
 
     } catch (err) {
@@ -333,11 +361,102 @@ export default function ConfiguracionABC() {
     ));
   };
 
+  // Handlers para cobertura por categoría
+  const handleAddCategoria = async () => {
+    if (!nuevaCategoria) {
+      setError('Selecciona una categoría');
+      return;
+    }
+
+    // Verificar que no exista ya
+    if (coberturaCategorias.some(c => c.categoria_normalizada === nuevaCategoria.toUpperCase())) {
+      setError('Esta categoría ya tiene configuración personalizada');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      await http.post('/api/config-inventario/cobertura-categoria', {
+        categoria: nuevaCategoria,
+        dias_cobertura_a: 7,
+        dias_cobertura_b: 14,
+        dias_cobertura_c: 21,
+        dias_cobertura_d: 30,
+        es_perecedero: false,
+        descripcion: '',
+      });
+
+      setSuccessMessage(`Categoría ${nuevaCategoria} agregada`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+      setNuevaCategoria('');
+      await loadData();
+    } catch (err) {
+      console.error('Error agregando categoría:', err);
+      setError('Error al agregar la categoría');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdateCategoria = (categoriaId: string, field: keyof CoberturaCategoria, value: number | boolean | string) => {
+    setCoberturaCategorias(prev => prev.map(c =>
+      c.id === categoriaId ? { ...c, [field]: value } : c
+    ));
+  };
+
+  const handleSaveCategoria = async (config: CoberturaCategoria) => {
+    try {
+      setSaving(true);
+      setError(null);
+
+      await http.put(`/api/config-inventario/cobertura-categoria/${config.id}`, {
+        categoria: config.categoria,
+        dias_cobertura_a: config.dias_cobertura_a,
+        dias_cobertura_b: config.dias_cobertura_b,
+        dias_cobertura_c: config.dias_cobertura_c,
+        dias_cobertura_d: config.dias_cobertura_d,
+        es_perecedero: config.es_perecedero,
+        descripcion: config.descripcion,
+      });
+
+      setSuccessMessage(`Configuración de ${config.categoria} guardada`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      console.error('Error guardando:', err);
+      setError('Error al guardar la configuración de categoría');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteCategoria = async (config: CoberturaCategoria) => {
+    if (!confirm(`¿Eliminar configuración de ${config.categoria}?`)) return;
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      await http.delete(`/api/config-inventario/cobertura-categoria/${config.id}`);
+
+      setSuccessMessage(`Configuración de ${config.categoria} eliminada`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+      await loadData();
+    } catch (err) {
+      console.error('Error eliminando:', err);
+      setError('Error al eliminar la configuración');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const tabs = [
     { id: 'global' as TabType, label: 'Parámetros Globales', icon: Settings },
     { id: 'umbrales' as TabType, label: 'Umbrales ABC', icon: Package },
     { id: 'niveles' as TabType, label: 'Niveles de Servicio', icon: TrendingUp },
     { id: 'tiendas' as TabType, label: 'Por Tienda', icon: Store },
+    { id: 'categorias' as TabType, label: 'Por Categoría', icon: Leaf },
   ];
 
   if (loading) {
@@ -918,6 +1037,217 @@ export default function ConfiguracionABC() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB: Por Categoría */}
+        {activeTab === 'categorias' && (
+          <div className="space-y-6">
+            {/* Info Banner */}
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <Leaf className="w-5 h-5 text-green-600 mt-0.5" />
+                <div>
+                  <p className="text-sm text-green-700">
+                    <strong>Cobertura por Categoría:</strong> Define días de cobertura específicos para categorías de productos.
+                    Útil para productos perecederos que requieren menor cobertura (FRUVER, Carnicería, etc.).
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Agregar Categoría */}
+            <div className="bg-white rounded-lg border border-gray-200 p-4">
+              <div className="flex items-center gap-4">
+                <label className="text-sm font-medium text-gray-700">Agregar configuración para categoría:</label>
+                <select
+                  value={nuevaCategoria}
+                  onChange={(e) => setNuevaCategoria(e.target.value)}
+                  className="flex-1 max-w-xs px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Seleccionar categoría...</option>
+                  {categoriasDisponibles
+                    .filter(cat => !coberturaCategorias.some(c => c.categoria_normalizada === cat.categoria_normalizada))
+                    .map((cat, index) => (
+                      <option key={`${cat.categoria_normalizada}-${index}`} value={cat.categoria}>
+                        {cat.categoria} ({cat.productos} productos)
+                      </option>
+                    ))
+                  }
+                </select>
+                <button
+                  onClick={handleAddCategoria}
+                  disabled={saving || !nuevaCategoria}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  <Plus size={18} />
+                  Agregar
+                </button>
+              </div>
+            </div>
+
+            {/* Lista de Categorías Configuradas */}
+            {coberturaCategorias.length === 0 ? (
+              <div className="bg-gray-50 rounded-lg border border-gray-200 p-8 text-center">
+                <Leaf className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-600">No hay configuraciones personalizadas por categoría.</p>
+                <p className="text-sm text-gray-500 mt-1">Todas las categorías usan los días de cobertura globales por clase ABC.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {coberturaCategorias.map((config) => (
+                  <div key={config.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                          <Leaf size={18} className={config.es_perecedero ? 'text-green-600' : 'text-gray-400'} />
+                          {config.categoria}
+                        </h4>
+                        {config.es_perecedero && (
+                          <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-full">
+                            Perecedero
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={config.activo}
+                            onChange={(e) => handleUpdateCategoria(config.id, 'activo', e.target.checked)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-gray-600">Activo</span>
+                        </label>
+                        <button
+                          onClick={() => handleDeleteCategoria(config)}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Eliminar configuración"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="p-6">
+                      <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Días Clase A</label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="30"
+                            value={config.dias_cobertura_a}
+                            onChange={(e) => handleUpdateCategoria(
+                              config.id,
+                              'dias_cobertura_a',
+                              parseInt(e.target.value) || 7
+                            )}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Días Clase B</label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="30"
+                            value={config.dias_cobertura_b}
+                            onChange={(e) => handleUpdateCategoria(
+                              config.id,
+                              'dias_cobertura_b',
+                              parseInt(e.target.value) || 14
+                            )}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Días Clase C</label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="60"
+                            value={config.dias_cobertura_c}
+                            onChange={(e) => handleUpdateCategoria(
+                              config.id,
+                              'dias_cobertura_c',
+                              parseInt(e.target.value) || 21
+                            )}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Días Clase D</label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="90"
+                            value={config.dias_cobertura_d}
+                            onChange={(e) => handleUpdateCategoria(
+                              config.id,
+                              'dias_cobertura_d',
+                              parseInt(e.target.value) || 30
+                            )}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Perecedero</label>
+                          <select
+                            value={config.es_perecedero ? 'si' : 'no'}
+                            onChange={(e) => handleUpdateCategoria(config.id, 'es_perecedero', e.target.value === 'si')}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="no">No</option>
+                            <option value="si">Sí</option>
+                          </select>
+                        </div>
+                        <div className="flex items-end">
+                          <button
+                            onClick={() => handleSaveCategoria(config)}
+                            disabled={saving}
+                            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                          >
+                            <Save size={14} />
+                            Guardar
+                          </button>
+                        </div>
+                      </div>
+                      {/* Descripción */}
+                      <div className="mt-4">
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Descripción (opcional)</label>
+                        <input
+                          type="text"
+                          value={config.descripcion || ''}
+                          onChange={(e) => handleUpdateCategoria(config.id, 'descripcion', e.target.value)}
+                          placeholder="Ej: Productos frescos con vida útil corta"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Nota explicativa */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <Info className="w-5 h-5 text-blue-600 mt-0.5" />
+                <div className="text-sm text-blue-700">
+                  <p className="font-medium mb-1">¿Cómo funciona?</p>
+                  <ul className="list-disc list-inside space-y-1 text-blue-600">
+                    <li>Los días de cobertura por categoría tienen prioridad sobre los valores globales</li>
+                    <li>Si un producto pertenece a FRUVER y tiene clase C, usará los días configurados aquí para FRUVER clase C</li>
+                    <li>Las categorías no configuradas usarán los valores globales de la pestaña "Niveles de Servicio"</li>
+                    <li>Marcar como "Perecedero" es solo informativo, no afecta el cálculo</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>

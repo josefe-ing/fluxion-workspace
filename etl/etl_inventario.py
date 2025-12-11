@@ -484,6 +484,14 @@ def main():
             except Exception as e:
                 logger.error(f"Error sending email notification: {e}")
 
+        # Refresh cache after ETL completes (for scheduled runs via EventBridge)
+        logger.info("🔄 Refreshing productos_analisis_cache after ETL...")
+        cache_result = etl.loader.refresh_productos_analisis_cache()
+        if cache_result["success"]:
+            logger.info(f"✅ Cache refresh: {cache_result['message']}")
+        else:
+            logger.warning(f"⚠️  Cache refresh failed: {cache_result['message']}")
+
     elif args.tienda:
         # Ejecutar una tienda específica
         resultado = etl.ejecutar_etl_tienda(args.tienda)
@@ -493,6 +501,14 @@ def main():
         # Ejecutar todas las tiendas activas
         resultados = etl.ejecutar_todas_las_tiendas(paralelo=args.paralelo)
         etl.generar_resumen(resultados)
+
+        # Refresh cache after ETL completes
+        logger.info("🔄 Refreshing productos_analisis_cache after ETL...")
+        cache_result = etl.loader.refresh_productos_analisis_cache()
+        if cache_result["success"]:
+            logger.info(f"✅ Cache refresh: {cache_result['message']}")
+        else:
+            logger.warning(f"⚠️  Cache refresh failed: {cache_result['message']}")
 
     else:
         print("❌ Debe especificar --tienda ID, --tiendas IDs o --todas")

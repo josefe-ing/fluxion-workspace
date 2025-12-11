@@ -400,12 +400,17 @@ def calcular_padre_prudente(input_data: InputCalculo, params: ParametrosABC,
     )
 
 
-def calcular_inventario(input_data: InputCalculo) -> ResultadoCalculo:
+def calcular_inventario(input_data: InputCalculo, dias_cobertura_override: Optional[int] = None) -> ResultadoCalculo:
     """
     Funcion principal: calcula parametros de inventario segun clase ABC.
 
     IMPORTANTE: Los Generadores de Trafico siempre se tratan como Clase A,
     independientemente de su clasificacion ABC real.
+
+    Args:
+        input_data: Datos de entrada para el cálculo
+        dias_cobertura_override: Si se especifica, sobrescribe los días de cobertura
+                                  de la clase ABC. Útil para categorías perecederas.
     """
     # Determinar clase efectiva
     if input_data.es_generador_trafico:
@@ -414,6 +419,14 @@ def calcular_inventario(input_data: InputCalculo) -> ResultadoCalculo:
         clase_efectiva = input_data.clase_abc
 
     params = PARAMS_ABC.get(clase_efectiva, PARAMS_ABC['B'])
+
+    # Si hay override de días de cobertura (por categoría perecedera), crear nuevos params
+    if dias_cobertura_override is not None:
+        params = ParametrosABC(
+            nivel_servicio_z=params.nivel_servicio_z,
+            dias_cobertura=dias_cobertura_override,
+            metodo=params.metodo
+        )
 
     if params.metodo == MetodoCalculo.PADRE_PRUDENTE:
         return calcular_padre_prudente(input_data, params, clase_efectiva)
@@ -429,12 +442,18 @@ def calcular_inventario_simple(
     stock_actual: float,
     stock_cedi: float,
     clase_abc: str,
-    es_generador_trafico: bool = False
+    es_generador_trafico: bool = False,
+    dias_cobertura_override: Optional[int] = None
 ) -> ResultadoCalculo:
     """
     Wrapper simple para calcular inventario sin crear InputCalculo manualmente.
 
     Util para integracion con el endpoint existente.
+
+    Args:
+        dias_cobertura_override: Si se especifica, usa este valor de días de cobertura
+                                  en lugar del configurado para la clase ABC.
+                                  Útil para categorías perecederas (FRUVER, CARNICERIA, etc.)
     """
     input_data = InputCalculo(
         demanda_p75=demanda_p75,
@@ -446,4 +465,4 @@ def calcular_inventario_simple(
         clase_abc=clase_abc,
         es_generador_trafico=es_generador_trafico
     )
-    return calcular_inventario(input_data)
+    return calcular_inventario(input_data, dias_cobertura_override=dias_cobertura_override)

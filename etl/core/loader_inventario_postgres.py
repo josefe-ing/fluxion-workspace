@@ -506,3 +506,50 @@ class PostgreSQLInventarioLoader:
         Obtiene conexión a PostgreSQL (para compatibilidad)
         """
         return self._get_connection()
+
+    def refresh_productos_analisis_cache(self) -> Dict[str, Any]:
+        """
+        Refresca la tabla productos_analisis_cache después del ETL.
+        Esta tabla materializa cálculos de ABC, estados, etc. para consultas rápidas.
+
+        Returns:
+            Dict con success, message y tiempo de ejecución
+        """
+        import time
+        start_time = time.time()
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            self.logger.info("🔄 Refrescando productos_analisis_cache...")
+            cursor.execute("SELECT refresh_productos_analisis_cache()")
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            elapsed = time.time() - start_time
+            self.logger.info(f"✅ Cache refrescada en {elapsed:.2f}s")
+
+            return {
+                "success": True,
+                "message": f"Cache refrescada en {elapsed:.2f}s",
+                "elapsed_seconds": elapsed
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            if "does not exist" in error_msg or "no existe" in error_msg:
+                self.logger.warning("⚠️  productos_analisis_cache no existe - saltando refresh")
+                return {
+                    "success": True,
+                    "message": "Cache table does not exist (skipped)",
+                    "elapsed_seconds": 0
+                }
+            else:
+                self.logger.error(f"❌ Error refrescando cache: {e}")
+                return {
+                    "success": False,
+                    "message": str(e),
+                    "elapsed_seconds": time.time() - start_time
+                }

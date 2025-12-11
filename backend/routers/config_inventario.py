@@ -500,12 +500,13 @@ async def guardar_config_tienda(
         cursor = conn.cursor()
 
         # Upsert configuración de tienda
+        # Nota: id = tienda_id (usamos tienda_id como identificador único)
         cursor.execute("""
             INSERT INTO config_parametros_abc_tienda (
-                tienda_id, lead_time_override,
+                id, tienda_id, lead_time_override,
                 dias_cobertura_a, dias_cobertura_b, dias_cobertura_c, clase_d_dias_cobertura,
                 activo, fecha_creacion, fecha_modificacion
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (tienda_id)
             DO UPDATE SET
                 lead_time_override = EXCLUDED.lead_time_override,
@@ -516,6 +517,7 @@ async def guardar_config_tienda(
                 activo = EXCLUDED.activo,
                 fecha_modificacion = CURRENT_TIMESTAMP
         """, [
+            tienda_id,  # id = tienda_id
             tienda_id,
             config.lead_time_override,
             config.dias_cobertura_a,
@@ -585,3 +587,255 @@ async def eliminar_config_tienda(
         conn.rollback()
         logger.error(f"Error eliminando configuración de tienda: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error eliminando configuración: {str(e)}")
+
+
+# =====================================================================================
+# CONFIGURACIÓN DE COBERTURA POR CATEGORÍA (PERECEDEROS)
+# =====================================================================================
+
+class ConfigCoberturaCategoria(BaseModel):
+    id: str
+    categoria: str
+    dias_cobertura_a: int = 7
+    dias_cobertura_b: int = 14
+    dias_cobertura_c: int = 21
+    dias_cobertura_d: int = 30
+    es_perecedero: bool = False
+    descripcion: Optional[str] = None
+    activo: bool = True
+
+
+class ConfigCoberturaCategoriaCreate(BaseModel):
+    categoria: str
+    dias_cobertura_a: int = 7
+    dias_cobertura_b: int = 14
+    dias_cobertura_c: int = 21
+    dias_cobertura_d: int = 30
+    es_perecedero: bool = False
+    descripcion: Optional[str] = None
+
+
+@router.get("/cobertura-categoria", response_model=List[ConfigCoberturaCategoria])
+async def obtener_coberturas_categoria(conn: Any = Depends(get_db)):
+    """
+    Obtiene todas las configuraciones de cobertura por categoría.
+    Las categorías perecederas (FRUVER, CARNICERIA, etc.) tienen coberturas más cortas.
+    """
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, categoria, dias_cobertura_a, dias_cobertura_b,
+                   dias_cobertura_c, dias_cobertura_d, es_perecedero,
+                   descripcion, activo
+            FROM config_cobertura_categoria
+            WHERE activo = true
+            ORDER BY es_perecedero DESC, categoria
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+
+        return [
+            ConfigCoberturaCategoria(
+                id=row[0],
+                categoria=row[1],
+                dias_cobertura_a=row[2] or 7,
+                dias_cobertura_b=row[3] or 14,
+                dias_cobertura_c=row[4] or 21,
+                dias_cobertura_d=row[5] or 30,
+                es_perecedero=row[6] or False,
+                descripcion=row[7],
+                activo=row[8] if row[8] is not None else True
+            )
+            for row in rows
+        ]
+
+    except Exception as e:
+        logger.error(f"Error obteniendo coberturas por categoría: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/categorias-disponibles")
+async def obtener_categorias_disponibles(conn: Any = Depends(get_db)):
+    """
+    Obtiene todas las categorías de productos disponibles para configurar.
+    """
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT
+                UPPER(categoria) as categoria_normalizada,
+                categoria as categoria_original,
+                COUNT(*) as productos
+            FROM productos
+            WHERE activo = true AND categoria IS NOT NULL AND categoria != ''
+            GROUP BY UPPER(categoria), categoria
+            ORDER BY productos DESC
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+
+        return [
+            {
+                "categoria": row[1],
+                "categoria_normalizada": row[0],
+                "productos": row[2]
+            }
+            for row in rows
+        ]
+
+    except Exception as e:
+        logger.error(f"Error obteniendo categorías: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/cobertura-categoria")
+async def crear_cobertura_categoria(
+    config: ConfigCoberturaCategoriaCreate,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Crea una nueva configuración de cobertura para una categoría.
+    """
+    try:
+        cursor = conn.cursor()
+
+        # Generar ID desde la categoría normalizada
+        categoria_id = config.categoria.lower().replace(' ', '_').replace('.', '')
+        categoria_normalizada = config.categoria.upper()
+
+        cursor.execute("""
+            INSERT INTO config_cobertura_categoria (
+                id, categoria, categoria_normalizada,
+                dias_cobertura_a, dias_cobertura_b, dias_cobertura_c, dias_cobertura_d,
+                es_perecedero, descripcion, activo, fecha_creacion, fecha_modificacion
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+                dias_cobertura_a = EXCLUDED.dias_cobertura_a,
+                dias_cobertura_b = EXCLUDED.dias_cobertura_b,
+                dias_cobertura_c = EXCLUDED.dias_cobertura_c,
+                dias_cobertura_d = EXCLUDED.dias_cobertura_d,
+                es_perecedero = EXCLUDED.es_perecedero,
+                descripcion = EXCLUDED.descripcion,
+                fecha_modificacion = CURRENT_TIMESTAMP
+        """, [
+            categoria_id,
+            config.categoria,
+            categoria_normalizada,
+            config.dias_cobertura_a,
+            config.dias_cobertura_b,
+            config.dias_cobertura_c,
+            config.dias_cobertura_d,
+            config.es_perecedero,
+            config.descripcion
+        ])
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"✅ Configuración de categoría '{config.categoria}' guardada")
+
+        return {
+            "success": True,
+            "mensaje": f"Configuración de categoría '{config.categoria}' guardada correctamente",
+            "id": categoria_id
+        }
+
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error guardando configuración de categoría: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/cobertura-categoria/{categoria_id}")
+async def actualizar_cobertura_categoria(
+    categoria_id: str,
+    config: ConfigCoberturaCategoriaCreate,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Actualiza la configuración de cobertura de una categoría existente.
+    """
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE config_cobertura_categoria
+            SET dias_cobertura_a = %s,
+                dias_cobertura_b = %s,
+                dias_cobertura_c = %s,
+                dias_cobertura_d = %s,
+                es_perecedero = %s,
+                descripcion = %s,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, [
+            config.dias_cobertura_a,
+            config.dias_cobertura_b,
+            config.dias_cobertura_c,
+            config.dias_cobertura_d,
+            config.es_perecedero,
+            config.descripcion,
+            categoria_id
+        ])
+
+        if cursor.rowcount == 0:
+            cursor.close()
+            raise HTTPException(status_code=404, detail="Configuración de categoría no encontrada")
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"✅ Configuración de categoría '{categoria_id}' actualizada")
+
+        return {
+            "success": True,
+            "mensaje": f"Configuración de categoría actualizada correctamente",
+            "id": categoria_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error actualizando configuración de categoría: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/cobertura-categoria/{categoria_id}")
+async def eliminar_cobertura_categoria(
+    categoria_id: str,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Elimina (desactiva) la configuración de cobertura de una categoría.
+    La categoría usará los valores globales por defecto.
+    """
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE config_cobertura_categoria
+            SET activo = false, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, [categoria_id])
+
+        if cursor.rowcount == 0:
+            cursor.close()
+            raise HTTPException(status_code=404, detail="Configuración de categoría no encontrada")
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"✅ Configuración de categoría '{categoria_id}' eliminada")
+
+        return {
+            "success": True,
+            "mensaje": "Configuración eliminada. La categoría usará valores globales."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error eliminando configuración de categoría: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -998,6 +998,28 @@ async def calcular_productos_sugeridos(
         except Exception as e:
             logger.warning(f"No se pudieron cargar umbrales ABC: {e}. Usando defaults.")
 
+        # 1.6. Cargar configuración de cobertura por categoría (desde BD, no hardcodeado)
+        config_cobertura_categoria = {}
+        try:
+            cursor.execute("""
+                SELECT categoria_normalizada, dias_cobertura_a, dias_cobertura_b,
+                       dias_cobertura_c, dias_cobertura_d
+                FROM config_cobertura_categoria
+                WHERE activo = true
+            """)
+            for row in cursor.fetchall():
+                cat_norm = row[0].upper() if row[0] else ''
+                config_cobertura_categoria[cat_norm] = {
+                    'A': row[1] or 7,
+                    'B': row[2] or 14,
+                    'C': row[3] or 21,
+                    'D': row[4] or 30
+                }
+            if config_cobertura_categoria:
+                logger.info(f"🥬 Coberturas por categoría cargadas: {list(config_cobertura_categoria.keys())}")
+        except Exception as e:
+            logger.warning(f"No se pudo cargar config cobertura por categoría: {e}")
+
         # 2. Obtener la región de la tienda destino y tiendas de referencia
         cursor.execute("""
             SELECT region FROM ubicaciones WHERE id = %s
@@ -1252,6 +1274,7 @@ async def calcular_productos_sugeridos(
         productos_sin_venta_con_ref = 0  # Contador para log
         for row in rows:
             codigo = row[0]
+            categoria_producto = (row[3] or '').upper()  # Categoría normalizada para buscar config
             cantidad_bultos = float(row[8]) if row[8] and row[8] > 0 else 1.0
             unidades_por_bulto = int(cantidad_bultos) if cantidad_bultos > 0 else 1
             prom_20d = float(row[11]) if row[11] else 0.0
@@ -1326,6 +1349,14 @@ async def calcular_productos_sugeridos(
                 if (es_envio_prueba or usa_referencia_regional) and sigma_demanda == 0:
                     sigma_usada = p75_usado * 0.3  # Estimar 30% de variabilidad
 
+                # Determinar si hay override de días por categoría (perecederos)
+                dias_override = None
+                if categoria_producto in config_cobertura_categoria:
+                    config_cat = config_cobertura_categoria[categoria_producto]
+                    dias_override = config_cat.get(clasificacion, None)
+                    if dias_override:
+                        logger.info(f"🥬 {codigo} ({categoria_producto}): Clase {clasificacion} -> {dias_override} días cobertura")
+
                 resultado = calcular_inventario_simple(
                     demanda_p75=p75_usado,  # Usar P75 local o de referencia
                     sigma_demanda=sigma_usada,
@@ -1334,14 +1365,9 @@ async def calcular_productos_sugeridos(
                     stock_actual=stock_tienda,
                     stock_cedi=stock_cedi,
                     clase_abc=clasificacion,
-                    es_generador_trafico=es_generador_trafico
+                    es_generador_trafico=es_generador_trafico,
+                    dias_cobertura_override=dias_override
                 )
-
-                # DEBUG: Log detallado para productos con déficit pequeño que resultan en 0 bultos
-                if codigo == '002595' or (resultado.cantidad_sugerida_bultos == 0 and resultado.stock_maximo_unid > stock_tienda):
-                    logger.warning(f"🔍 DEBUG {codigo}: P75={p75_usado}, Stock={stock_tienda}, U/B={unidades_por_bulto}, ABC={clasificacion}")
-                    logger.warning(f"🔍 DEBUG {codigo}: SS={resultado.stock_seguridad_unid:.2f}, ROP={resultado.punto_reorden_unid:.2f}, MAX={resultado.stock_maximo_unid:.2f}")
-                    logger.warning(f"🔍 DEBUG {codigo}: Déficit={resultado.stock_maximo_unid - stock_tienda:.2f}, SUG_UNID={resultado.cantidad_sugerida_unid:.2f}, SUG_BULTOS={resultado.cantidad_sugerida_bultos}")
 
                 # ENVÍO PRUEBA: Garantizar mínimo 1 bulto
                 # Si es envío de prueba y la sugerencia es 0, forzar a 1 bulto
