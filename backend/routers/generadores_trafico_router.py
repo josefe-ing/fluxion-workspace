@@ -207,7 +207,7 @@ async def listar_productos(
                 COALESCE(c.venta_30d, 0) as venta_30d,
                 COALESCE(c.tickets_30d, 0) as tickets_30d,
                 COALESCE(c.penetracion_pct, 0) as penetracion_pct,
-                COALESCE(c.rank_venta, 9999) as rank_venta,
+                COALESCE(c.rank_cantidad, 9999) as rank_venta,
                 COALESCE(c.rank_penetracion, 9999) as rank_penetracion,
                 COALESCE(c.gap, 0) as gap,
                 COALESCE(c.clase_abc, 'C') as clase_abc,

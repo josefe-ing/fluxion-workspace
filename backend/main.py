@@ -2815,7 +2815,7 @@ async def get_productos_analisis_maestro(
             COALESCE(abc.clase_abc, 'SIN_VENTAS') as clasificacion_abc,
             pac.stock_cedi_seco, pac.stock_cedi_caracas, pac.stock_tiendas, pac.num_tiendas_con_stock,
             pac.ventas_2m, pac.num_tiendas_con_ventas, pac.ultima_venta, pac.dias_sin_venta,
-            pac.rank_cantidad, COALESCE(abc.rank_venta, pac.rank_valor) as rank_valor,
+            pac.rank_cantidad, COALESCE(abc.rank_cantidad, pac.rank_valor) as rank_valor,
             pac.stock_total, pac.estado
         FROM productos_analisis_cache pac
         LEFT JOIN productos_abc_cache abc ON abc.producto_id = pac.codigo
@@ -2829,7 +2829,7 @@ async def get_productos_analisis_maestro(
                 WHEN 'AGOTANDOSE' THEN 5
                 WHEN 'ACTIVO' THEN 6
             END,
-            COALESCE(abc.rank_venta, pac.rank_valor) ASC
+            COALESCE(abc.rank_cantidad, pac.rank_valor) ASC
         LIMIT %s OFFSET %s
         """
 
@@ -3251,7 +3251,7 @@ async def get_producto_detalle_completo(codigo: str):
                     p.marca,
                     c.clase_abc,
                     c.venta_30d,
-                    c.rank_venta,
+                    c.rank_cantidad,
                     c.penetracion_pct,
                     c.gap
                 FROM productos p
@@ -4121,7 +4121,7 @@ async def get_stock(
                 SELECT
                     producto_id,
                     clase_abc,
-                    rank_venta
+                    rank_cantidad
                 FROM productos_abc_tienda
                 WHERE ubicacion_id = %s
             ),
@@ -4153,7 +4153,7 @@ async def get_stock(
                     COALESCE(dp.sigma_demanda, 0) as sigma_demanda,
                     -- Clase ABC y ranking
                     COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
-                    abc.rank_venta as rank_ventas,
+                    abc.rank_cantidad as rank_ventas,
                     -- Configuración ABC (usar defaults si no hay config específica)
                     COALESCE(cfg.stock_min_multiplicador, 1.5) as stock_min_mult,
                     COALESCE(cfg.stock_seg_multiplicador, 1.0) as stock_seg_mult,
