@@ -2095,12 +2095,13 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
     """
     Retorna clasificación ABC-XYZ.
 
-    ABC: Pareto 80/15/5 por valor
-        - A: Productos que acumulan 80% del valor
-        - B: Productos que acumulan 80-95% del valor
-        - C: Productos que acumulan 95-100% del valor
+    ABC: Por ranking de cantidad vendida (30 días)
+        - A: Top 1-50 (productos más vendidos por cantidad)
+        - B: Top 51-200
+        - C: Top 201-800
+        - D: Top 801+ (productos menos vendidos)
 
-    XYZ: Clasificación por variabilidad de demanda (Coeficiente de Variación semanal)
+    XYZ: Clasificación por variabilidad de demanda (Coeficiente de Variación diario)
         - X: CV < 0.5 (demanda estable/predecible)
         - Y: 0.5 ≤ CV < 1.0 (demanda variable)
         - Z: CV ≥ 1.0 (demanda errática)
@@ -2114,18 +2115,52 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
             "total_productos": 2766,
             "total_valor": 34983191.36,
             "ubicacion_id": "tienda_01" | "todas",
-            "resumen_abc": { "A": {...}, "B": {...}, "C": {...} },
+            "resumen_abc": { "A": {...}, "B": {...}, "C": {...}, "D": {...} },
             "resumen_xyz": { "X": {...}, "Y": {...}, "Z": {...} },
-            "matriz": { "AX": {...}, "AY": {...}, ... }
+            "matriz": { "AX": {...}, "AY": {...}, ... "DX": {...}, "DY": {...}, "DZ": {...} }
         }
     """
     try:
         # Si ubicacion_id es "todas" o vacío, usar análisis global
         usar_global = ubicacion_id is None or ubicacion_id == "" or ubicacion_id.lower() == "todas"
-        logger.info(f"📊 Calculando clasificación ABC-XYZ (ubicacion_id={ubicacion_id}, global={usar_global})")
+
+        # Resolver ubicacion_id si se envía el nombre en lugar del ID
+        ubicacion_id_resuelto = ubicacion_id
+        if not usar_global and ubicacion_id and not ubicacion_id.startswith('tienda_'):
+            try:
+                resolve_query = "SELECT id FROM ubicaciones WHERE nombre = %s OR id = %s LIMIT 1"
+                result = execute_query_dict(resolve_query, (ubicacion_id, ubicacion_id))
+                if result:
+                    ubicacion_id_resuelto = result[0]['id']
+                    logger.info(f"📍 Ubicación resuelta: {ubicacion_id} -> {ubicacion_id_resuelto}")
+            except Exception as e:
+                logger.warning(f"No se pudo resolver ubicacion_id: {e}")
+
+        logger.info(f"📊 Calculando clasificación ABC-XYZ (ubicacion_id={ubicacion_id_resuelto}, global={usar_global})")
 
         # =====================================================================
-        # 1. Obtener ABC (Pareto 80/15/5 por valor)
+        # 0. Cargar umbrales ABC desde config_inventario_global
+        # =====================================================================
+        umbral_a, umbral_b, umbral_c = 50, 200, 800  # Defaults
+        try:
+            umbrales_query = """
+                SELECT id, valor_numerico
+                FROM config_inventario_global
+                WHERE categoria = 'abc_umbrales_ranking' AND activo = true
+            """
+            umbrales_results = execute_query_dict(umbrales_query)
+            for row in umbrales_results:
+                if row['id'] == 'abc_umbral_a' and row['valor_numerico']:
+                    umbral_a = int(row['valor_numerico'])
+                elif row['id'] == 'abc_umbral_b' and row['valor_numerico']:
+                    umbral_b = int(row['valor_numerico'])
+                elif row['id'] == 'abc_umbral_c' and row['valor_numerico']:
+                    umbral_c = int(row['valor_numerico'])
+        except Exception as e:
+            logger.warning(f"No se pudieron cargar umbrales ABC: {e}. Usando defaults.")
+
+        # =====================================================================
+        # 1. Obtener ABC (por ranking de cantidad vendida)
         # =====================================================================
         if usar_global:
             # Usar cache global pre-calculada
@@ -2133,64 +2168,43 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
             SELECT
                 clase_abc,
                 COUNT(*) as count,
-                SUM(venta_30d) as total_valor
+                SUM(venta_30d) as total_valor,
+                SUM(cantidad_30d) as total_cantidad
             FROM productos_abc_cache
-            WHERE clase_abc IN ('A', 'B', 'C')
+            WHERE clase_abc IN ('A', 'B', 'C', 'D')
             GROUP BY clase_abc
             ORDER BY clase_abc
             """
             abc_results = execute_query_dict(abc_query)
         else:
-            # Calcular ABC dinámicamente para la tienda específica
+            # Usar cache de tienda (productos_abc_tienda) - MUCHO más rápido
             abc_query = """
-            WITH ventas_tienda AS (
-                SELECT
-                    producto_id,
-                    SUM(venta_total) as venta_total
-                FROM ventas
-                WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                  AND producto_id != '003760'
-                GROUP BY producto_id
-            ),
-            con_acumulado AS (
-                SELECT
-                    producto_id,
-                    venta_total,
-                    SUM(venta_total) OVER (ORDER BY venta_total DESC) as venta_acum,
-                    SUM(venta_total) OVER () as venta_total_periodo
-                FROM ventas_tienda
-            ),
-            clasificado AS (
-                SELECT
-                    producto_id,
-                    venta_total,
-                    CASE
-                        WHEN venta_acum <= venta_total_periodo * 0.80 THEN 'A'
-                        WHEN venta_acum <= venta_total_periodo * 0.95 THEN 'B'
-                        ELSE 'C'
-                    END as clase_abc
-                FROM con_acumulado
-            )
             SELECT
                 clase_abc,
                 COUNT(*) as count,
-                SUM(venta_total) as total_valor
-            FROM clasificado
+                SUM(venta_30d) as total_valor,
+                SUM(cantidad_30d) as total_cantidad
+            FROM productos_abc_tienda
+            WHERE ubicacion_id = %s
+              AND clase_abc IN ('A', 'B', 'C', 'D')
             GROUP BY clase_abc
             ORDER BY clase_abc
             """
-            abc_results = execute_query_dict(abc_query, (ubicacion_id,))
+            abc_results = execute_query_dict(abc_query, (ubicacion_id_resuelto,))
 
         # Calcular totales ABC
         total_productos_abc = sum(int(r['count']) for r in abc_results) if abc_results else 0
         total_valor = sum(float(r['total_valor'] or 0) for r in abc_results) if abc_results else 0
 
-        # Construir resumen ABC
+        # Calcular totales para porcentajes
+        total_cantidad = sum(float(r['total_cantidad'] or 0) for r in abc_results) if abc_results else 0
+
+        # Construir resumen ABC (ahora con 4 clases: A, B, C, D)
         resumen_abc = {
-            'A': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0},
-            'B': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0},
-            'C': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0}
+            'A': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0, 'total_cantidad': 0, 'descripcion': f'Top 1-{umbral_a}'},
+            'B': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0, 'total_cantidad': 0, 'descripcion': f'Ranking {umbral_a+1}-{umbral_b}'},
+            'C': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0, 'total_cantidad': 0, 'descripcion': f'Ranking {umbral_b+1}-{umbral_c}'},
+            'D': {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0, 'total_cantidad': 0, 'descripcion': f'Ranking {umbral_c+1}+'}
         }
 
         for row in abc_results:
@@ -2198,8 +2212,10 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
             if abc in resumen_abc:
                 count = int(row['count'])
                 valor = float(row['total_valor']) if row['total_valor'] else 0.0
+                cantidad = float(row['total_cantidad']) if row['total_cantidad'] else 0.0
 
                 resumen_abc[abc]['count'] = count
+                resumen_abc[abc]['total_cantidad'] = int(cantidad)
                 resumen_abc[abc]['porcentaje_productos'] = round(
                     float(count) * 100.0 / float(total_productos_abc), 2
                 ) if total_productos_abc > 0 else 0
@@ -2207,40 +2223,8 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
                     valor * 100.0 / float(total_valor), 2
                 ) if total_valor > 0 else 0
 
-        # =====================================================================
-        # 1.5 Obtener Top50 (productos estrella)
-        # =====================================================================
-        if usar_global:
-            top50_query = """
-            SELECT
-                COUNT(*) as count,
-                SUM(venta_30d) as total_valor
-            FROM productos_abc_cache
-            WHERE is_top50 = TRUE
-            """
-            top50_results = execute_query_dict(top50_query)
-        else:
-            # Top50 por tienda desde productos_abc_tienda
-            top50_query = """
-            SELECT
-                COUNT(*) as count,
-                SUM(venta_30d) as total_valor
-            FROM productos_abc_tienda
-            WHERE ubicacion_id = %s AND is_top50 = TRUE
-            """
-            top50_results = execute_query_dict(top50_query, (ubicacion_id,))
-
-        # Construir resumen Top50
-        resumen_top50 = {'count': 0, 'porcentaje_productos': 0, 'porcentaje_valor': 0}
-        if top50_results and len(top50_results) > 0:
-            row = top50_results[0]
-            count = int(row['count']) if row['count'] else 0
-            valor = float(row['total_valor']) if row['total_valor'] else 0.0
-            resumen_top50 = {
-                'count': count,
-                'porcentaje_productos': round(float(count) * 100.0 / float(total_productos_abc), 2) if total_productos_abc > 0 else 0,
-                'porcentaje_valor': round(valor * 100.0 / float(total_valor), 2) if total_valor > 0 else 0
-            }
+        # NOTA: Top50 ya no se usa (es redundante con clase A = Top 50)
+        # Se mantiene solo por compatibilidad pero no se calcula
 
         # =====================================================================
         # 2. Calcular XYZ desde ventas DIARIAS (CV diario para reposición diaria)
@@ -2296,38 +2280,41 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
             """
             xyz_results = execute_query_dict(xyz_query)
         else:
-            # XYZ por tienda específica - CV DIARIO
+            # XYZ por tienda - usar subquery optimizada con índices
+            # Limitamos a productos que están en el cache ABC de la tienda
             xyz_query = """
-            WITH ventas_diarias AS (
-                SELECT
-                    producto_id,
-                    fecha_venta::date as dia,
-                    SUM(cantidad_vendida) as unidades,
-                    SUM(venta_total) as venta
-                FROM ventas
+            WITH productos_tienda AS (
+                SELECT producto_id, venta_30d
+                FROM productos_abc_tienda
                 WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                GROUP BY producto_id, fecha_venta::date
+            ),
+            ventas_diarias AS (
+                SELECT
+                    v.producto_id,
+                    v.fecha_venta::date as dia,
+                    SUM(v.cantidad_vendida) as unidades
+                FROM ventas v
+                INNER JOIN productos_tienda pt ON v.producto_id = pt.producto_id
+                WHERE v.ubicacion_id = %s
+                  AND v.fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY v.producto_id, v.fecha_venta::date
             ),
             metricas_cv AS (
                 SELECT
-                    producto_id,
-                    COUNT(*) as dias,
-                    AVG(unidades) as promedio,
-                    STDDEV_POP(unidades) as desviacion,
-                    SUM(venta) as venta_total,
+                    vd.producto_id,
+                    pt.venta_30d as venta_total,
                     CASE
-                        WHEN AVG(unidades) > 0 THEN STDDEV_POP(unidades) / AVG(unidades)
+                        WHEN AVG(vd.unidades) > 0 THEN STDDEV_POP(vd.unidades) / AVG(vd.unidades)
                         ELSE 0
                     END as cv
-                FROM ventas_diarias
-                GROUP BY producto_id
-                HAVING COUNT(*) >= 15  -- Al menos 15 días de venta en el mes
+                FROM ventas_diarias vd
+                JOIN productos_tienda pt ON vd.producto_id = pt.producto_id
+                GROUP BY vd.producto_id, pt.venta_30d
+                HAVING COUNT(*) >= 15
             ),
             clasificacion_xyz AS (
                 SELECT
                     producto_id,
-                    cv,
                     venta_total,
                     CASE
                         WHEN cv < 0.5 THEN 'X'
@@ -2344,7 +2331,7 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
             GROUP BY clase_xyz
             ORDER BY clase_xyz
             """
-            xyz_results = execute_query_dict(xyz_query, (ubicacion_id,))
+            xyz_results = execute_query_dict(xyz_query, (ubicacion_id_resuelto, ubicacion_id_resuelto))
 
         # Calcular totales XYZ
         total_productos_xyz = sum(int(r['count']) for r in xyz_results) if xyz_results else 0
@@ -2414,7 +2401,7 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
                     abc.venta_30d as venta_total
                 FROM productos_abc_cache abc
                 LEFT JOIN xyz_clasificado xyz ON abc.producto_id = xyz.producto_id
-                WHERE abc.clase_abc IN ('A', 'B', 'C')
+                WHERE abc.clase_abc IN ('A', 'B', 'C', 'D')
             )
             SELECT
                 clase_abc || clase_xyz as celda,
@@ -2426,59 +2413,35 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
             """
             matriz_results = execute_query_dict(matriz_query)
         else:
-            # Calcular ABC y XYZ dinámicamente para la tienda específica (CV DIARIO)
+            # Usar cache ABC de tienda + calcular XYZ optimizado
             matriz_query = """
-            WITH ventas_tienda AS (
-                SELECT
-                    producto_id,
-                    SUM(venta_total) as venta_total
-                FROM ventas
+            WITH abc_tienda AS (
+                SELECT producto_id, clase_abc, venta_30d
+                FROM productos_abc_tienda
                 WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                  AND producto_id != '003760'
-                GROUP BY producto_id
+                  AND clase_abc IN ('A', 'B', 'C', 'D')
             ),
-            -- Calcular ABC para la tienda
-            abc_con_acumulado AS (
+            ventas_diarias AS (
                 SELECT
-                    producto_id,
-                    venta_total,
-                    SUM(venta_total) OVER (ORDER BY venta_total DESC) as venta_acum,
-                    SUM(venta_total) OVER () as venta_total_periodo
-                FROM ventas_tienda
+                    v.producto_id,
+                    v.fecha_venta::date as dia,
+                    SUM(v.cantidad_vendida) as unidades
+                FROM ventas v
+                INNER JOIN abc_tienda abc ON v.producto_id = abc.producto_id
+                WHERE v.ubicacion_id = %s
+                  AND v.fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY v.producto_id, v.fecha_venta::date
             ),
-            abc_clasificado AS (
-                SELECT
-                    producto_id,
-                    venta_total,
-                    CASE
-                        WHEN venta_acum <= venta_total_periodo * 0.80 THEN 'A'
-                        WHEN venta_acum <= venta_total_periodo * 0.95 THEN 'B'
-                        ELSE 'C'
-                    END as clase_abc
-                FROM abc_con_acumulado
-            ),
-            -- Calcular XYZ para la tienda (CV DIARIO - últimos 30 días)
-            ventas_diarias_tienda AS (
-                SELECT
-                    producto_id,
-                    fecha_venta::date as dia,
-                    SUM(cantidad_vendida) as unidades
-                FROM ventas
-                WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                GROUP BY producto_id, fecha_venta::date
-            ),
-            xyz_tienda AS (
+            xyz_calc AS (
                 SELECT
                     producto_id,
                     CASE
                         WHEN AVG(unidades) > 0 THEN STDDEV_POP(unidades) / AVG(unidades)
                         ELSE 0
                     END as cv
-                FROM ventas_diarias_tienda
+                FROM ventas_diarias
                 GROUP BY producto_id
-                HAVING COUNT(*) >= 15  -- Al menos 15 días de venta
+                HAVING COUNT(*) >= 15
             ),
             xyz_clasificado AS (
                 SELECT
@@ -2488,16 +2451,15 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
                         WHEN cv < 1.0 THEN 'Y'
                         ELSE 'Z'
                     END as clase_xyz
-                FROM xyz_tienda
+                FROM xyz_calc
             ),
-            -- Combinar ABC + XYZ
             combinada AS (
                 SELECT
                     abc.producto_id,
                     abc.clase_abc,
                     COALESCE(xyz.clase_xyz, 'Y') as clase_xyz,
-                    abc.venta_total
-                FROM abc_clasificado abc
+                    abc.venta_30d as venta_total
+                FROM abc_tienda abc
                 LEFT JOIN xyz_clasificado xyz ON abc.producto_id = xyz.producto_id
             )
             SELECT
@@ -2508,7 +2470,7 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
             GROUP BY clase_abc, clase_xyz
             ORDER BY clase_abc, clase_xyz
             """
-            matriz_results = execute_query_dict(matriz_query, (ubicacion_id, ubicacion_id))
+            matriz_results = execute_query_dict(matriz_query, (ubicacion_id_resuelto, ubicacion_id_resuelto))
 
         # Construir matriz
         matriz = {}
@@ -2535,11 +2497,15 @@ async def get_matriz_abc_xyz(ubicacion_id: Optional[str] = None):
         return {
             'total_productos': int(total_productos_abc),
             'total_valor': round(float(total_valor), 2),
-            'ubicacion_id': ubicacion_id if not usar_global else 'todas',
+            'ubicacion_id': ubicacion_id_resuelto if not usar_global else 'todas',
             'resumen_abc': resumen_abc,
-            'resumen_top50': resumen_top50,
             'resumen_xyz': resumen_xyz,
-            'matriz': matriz
+            'matriz': matriz,
+            'umbrales': {
+                'umbral_a': umbral_a,
+                'umbral_b': umbral_b,
+                'umbral_c': umbral_c
+            }
         }
 
     except Exception as e:
@@ -2584,17 +2550,53 @@ async def get_productos_por_matriz(
         # Determinar si usar cache global o calcular por tienda
         usar_global = ubicacion_id is None or ubicacion_id == "" or ubicacion_id.lower() == "todas"
 
+        # Resolver ubicacion_id si es nombre de tienda
+        ubicacion_id_resuelto = ubicacion_id
+        if not usar_global and ubicacion_id and not ubicacion_id.startswith('tienda_'):
+            try:
+                resolve_query = "SELECT id FROM ubicaciones WHERE nombre = %s OR id = %s LIMIT 1"
+                result = execute_query_dict(resolve_query, (ubicacion_id, ubicacion_id))
+                if result:
+                    ubicacion_id_resuelto = result[0]['id']
+                    logger.info(f"lista-por-matriz: Resuelto '{ubicacion_id}' -> '{ubicacion_id_resuelto}'")
+            except Exception as e:
+                logger.warning(f"No se pudo resolver ubicacion_id: {e}")
+
         if usar_global:
-            # Query usando cache global + cálculo XYZ DIARIO + Velocidad P75
+            # OPTIMIZADO: Usar cache global productos_abc_cache + cálculo XYZ solo para productos filtrados
+            # Primero filtramos por ABC (rápido), luego calculamos XYZ solo para esos productos
             query = """
-            WITH ventas_diarias AS (
+            WITH productos_filtrados AS (
                 SELECT
-                    producto_id,
-                    fecha_venta::date as dia,
-                    SUM(cantidad_vendida) as unidades
-                FROM ventas
-                WHERE fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                GROUP BY producto_id, fecha_venta::date
+                    c.producto_id,
+                    c.clase_abc,
+                    c.rank_cantidad,
+                    c.venta_30d,
+                    c.cantidad_30d,
+                    c.porcentaje_venta
+                FROM productos_abc_cache c
+                WHERE c.clase_abc IN ('A', 'B', 'C', 'D')
+            """
+            params = []
+
+            # Filtro ABC dentro del CTE para optimización
+            if clase_abc_filtro:
+                query += " AND c.clase_abc = %s"
+                params.append(clase_abc_filtro)
+            if filtro_top50:
+                query += " AND c.rank_cantidad <= 50"
+
+            query += """
+            ),
+            ventas_diarias AS (
+                SELECT
+                    v.producto_id,
+                    v.fecha_venta::date as dia,
+                    SUM(v.cantidad_vendida) as unidades
+                FROM ventas v
+                INNER JOIN productos_filtrados pf ON v.producto_id = pf.producto_id
+                WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY v.producto_id, v.fecha_venta::date
             ),
             xyz_calc AS (
                 SELECT
@@ -2606,118 +2608,89 @@ async def get_productos_por_matriz(
                 FROM ventas_diarias
                 GROUP BY producto_id
                 HAVING COUNT(*) >= 15
-            ),
-            velocidad_p75 AS (
-                SELECT
-                    producto_id,
-                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY unidades) as demanda_p75
-                FROM ventas_diarias
-                GROUP BY producto_id
-            ),
-            productos_con_xyz AS (
-                SELECT
-                    c.producto_id,
-                    c.clase_abc,
-                    c.is_top50,
-                    c.venta_30d,
-                    c.porcentaje_venta,
-                    c.rank_venta,
-                    xyz.cv,
-                    vp.demanda_p75,
-                    CASE
-                        WHEN xyz.cv IS NULL THEN 'Y'
-                        WHEN xyz.cv < 0.5 THEN 'X'
-                        WHEN xyz.cv < 1.0 THEN 'Y'
-                        ELSE 'Z'
-                    END as clase_xyz
-                FROM productos_abc_cache c
-                LEFT JOIN xyz_calc xyz ON c.producto_id = xyz.producto_id
-                LEFT JOIN velocidad_p75 vp ON c.producto_id = vp.producto_id
-                WHERE c.clase_abc IN ('A', 'B', 'C')
             )
             SELECT
                 p.id as codigo_producto,
                 p.descripcion as descripcion,
                 p.categoria,
-                COALESCE(px.clase_abc, 'SIN_VENTAS') as clasificacion_abc,
-                COALESCE(px.clase_xyz, 'Y') as clasificacion_xyz,
-                COALESCE(px.is_top50, FALSE) as is_top50,
-                COALESCE(px.venta_30d, 0) as valor_consumo_total,
-                COALESCE(px.porcentaje_venta, 0) as porcentaje_valor,
-                COALESCE(px.rank_venta, 999999) as ranking_valor,
+                pf.clase_abc as clasificacion_abc,
+                CASE
+                    WHEN xyz.cv IS NULL THEN 'Y'
+                    WHEN xyz.cv < 0.5 THEN 'X'
+                    WHEN xyz.cv < 1.0 THEN 'Y'
+                    ELSE 'Z'
+                END as clasificacion_xyz,
+                (pf.rank_cantidad <= 50) as is_top50,
+                COALESCE(pf.venta_30d, 0) as valor_consumo_total,
+                COALESCE(pf.cantidad_30d, 0) as cantidad_30d,
+                COALESCE(pf.porcentaje_venta, 0) as porcentaje_valor,
+                pf.rank_cantidad as ranking_valor,
                 COALESCE(i.stock_total, 0) as stock_actual,
-                px.cv as coeficiente_variacion,
-                COALESCE(px.demanda_p75, 0) as demanda_p75
-            FROM productos p
-            LEFT JOIN productos_con_xyz px ON px.producto_id = p.id
+                xyz.cv as coeficiente_variacion,
+                0 as demanda_p75
+            FROM productos_filtrados pf
+            JOIN productos p ON p.id = pf.producto_id
+            LEFT JOIN xyz_calc xyz ON xyz.producto_id = pf.producto_id
             LEFT JOIN (
                 SELECT producto_id, SUM(cantidad) as stock_total
                 FROM inventario_actual
                 GROUP BY producto_id
-            ) i ON i.producto_id = p.id
-            WHERE px.clase_abc IS NOT NULL
+            ) i ON i.producto_id = pf.producto_id
+            WHERE 1=1
             """
-            params = []
 
-            # Aplicar filtros
-            if filtro_top50:
-                query += " AND px.is_top50 = TRUE"
-            if clase_abc_filtro:
-                query += " AND px.clase_abc = %s"
-                params.append(clase_abc_filtro)
+            # Filtro XYZ después del cálculo
             if clase_xyz_filtro:
-                query += " AND px.clase_xyz = %s"
+                query += """
+                AND CASE
+                    WHEN xyz.cv IS NULL THEN 'Y'
+                    WHEN xyz.cv < 0.5 THEN 'X'
+                    WHEN xyz.cv < 1.0 THEN 'Y'
+                    ELSE 'Z'
+                END = %s
+                """
                 params.append(clase_xyz_filtro)
 
-            query += " ORDER BY px.venta_30d DESC, p.descripcion ASC LIMIT %s OFFSET %s"
+            query += " ORDER BY pf.rank_cantidad ASC, p.descripcion ASC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
 
         else:
-            # Calcular ABC y XYZ dinámicamente para la tienda + Velocidad P75
-            # NOTA: Para tienda_18 (PARAÍSO) se excluye 2025-12-06 (inauguración con ventas atípicas)
+            # OPTIMIZADO: Usar cache de tienda productos_abc_tienda + cálculo XYZ
             query = """
-            WITH ventas_diarias_tienda AS (
+            WITH productos_filtrados AS (
                 SELECT
-                    producto_id,
-                    fecha_venta::date as dia,
-                    SUM(cantidad_vendida) as unidades,
-                    SUM(venta_total) as venta_dia
-                FROM ventas
-                WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                  AND producto_id != '003760'
-                  AND NOT (ubicacion_id = 'tienda_18' AND fecha_venta::date = '2025-12-06')
-                GROUP BY producto_id, fecha_venta::date
+                    c.producto_id,
+                    c.clase_abc,
+                    c.rank_cantidad,
+                    c.venta_30d,
+                    c.cantidad_30d,
+                    c.porcentaje_venta
+                FROM productos_abc_tienda c
+                WHERE c.ubicacion_id = %s
+                  AND c.clase_abc IN ('A', 'B', 'C', 'D')
+            """
+            params = [ubicacion_id_resuelto]
+
+            # Filtro ABC dentro del CTE para optimización
+            if clase_abc_filtro:
+                query += " AND c.clase_abc = %s"
+                params.append(clase_abc_filtro)
+            if filtro_top50:
+                query += " AND c.rank_cantidad <= 50"
+
+            query += """
             ),
-            ventas_tienda AS (
+            ventas_diarias AS (
                 SELECT
-                    producto_id,
-                    SUM(venta_dia) as venta_total
-                FROM ventas_diarias_tienda
-                GROUP BY producto_id
-            ),
-            abc_calc AS (
-                SELECT
-                    producto_id,
-                    venta_total,
-                    SUM(venta_total) OVER (ORDER BY venta_total DESC) as venta_acum,
-                    SUM(venta_total) OVER () as venta_total_periodo,
-                    ROW_NUMBER() OVER (ORDER BY venta_total DESC) as rank_venta
-                FROM ventas_tienda
-            ),
-            abc_clasificado AS (
-                SELECT
-                    producto_id,
-                    venta_total,
-                    rank_venta,
-                    venta_total * 100.0 / NULLIF(venta_total_periodo, 0) as porcentaje_venta,
-                    CASE
-                        WHEN venta_acum <= venta_total_periodo * 0.80 THEN 'A'
-                        WHEN venta_acum <= venta_total_periodo * 0.95 THEN 'B'
-                        ELSE 'C'
-                    END as clase_abc,
-                    (rank_venta <= 50) as is_top50
-                FROM abc_calc
+                    v.producto_id,
+                    v.fecha_venta::date as dia,
+                    SUM(v.cantidad_vendida) as unidades
+                FROM ventas v
+                INNER JOIN productos_filtrados pf ON v.producto_id = pf.producto_id
+                WHERE v.ubicacion_id = %s
+                  AND v.fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                  AND NOT (v.ubicacion_id = 'tienda_18' AND v.fecha_venta::date = '2025-12-06')
+                GROUP BY v.producto_id, v.fecha_venta::date
             ),
             xyz_calc AS (
                 SELECT
@@ -2726,73 +2699,56 @@ async def get_productos_por_matriz(
                         WHEN AVG(unidades) > 0 THEN STDDEV_POP(unidades) / AVG(unidades)
                         ELSE 0
                     END as cv
-                FROM ventas_diarias_tienda
+                FROM ventas_diarias
                 GROUP BY producto_id
                 HAVING COUNT(*) >= 15
-            ),
-            velocidad_p75 AS (
-                SELECT
-                    producto_id,
-                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY unidades) as demanda_p75
-                FROM ventas_diarias_tienda
-                GROUP BY producto_id
-            ),
-            productos_clasificados AS (
-                SELECT
-                    abc.producto_id,
-                    abc.clase_abc,
-                    abc.is_top50,
-                    abc.venta_total,
-                    abc.porcentaje_venta,
-                    abc.rank_venta,
-                    xyz.cv,
-                    vp.demanda_p75,
-                    CASE
-                        WHEN xyz.cv IS NULL THEN 'Y'
-                        WHEN xyz.cv < 0.5 THEN 'X'
-                        WHEN xyz.cv < 1.0 THEN 'Y'
-                        ELSE 'Z'
-                    END as clase_xyz
-                FROM abc_clasificado abc
-                LEFT JOIN xyz_calc xyz ON abc.producto_id = xyz.producto_id
-                LEFT JOIN velocidad_p75 vp ON abc.producto_id = vp.producto_id
             )
             SELECT
                 p.id as codigo_producto,
                 p.descripcion as descripcion,
                 p.categoria,
-                COALESCE(pc.clase_abc, 'SIN_VENTAS') as clasificacion_abc,
-                COALESCE(pc.clase_xyz, 'Y') as clasificacion_xyz,
-                COALESCE(pc.is_top50, FALSE) as is_top50,
-                COALESCE(pc.venta_total, 0) as valor_consumo_total,
-                COALESCE(pc.porcentaje_venta, 0) as porcentaje_valor,
-                COALESCE(pc.rank_venta, 999999) as ranking_valor,
+                pf.clase_abc as clasificacion_abc,
+                CASE
+                    WHEN xyz.cv IS NULL THEN 'Y'
+                    WHEN xyz.cv < 0.5 THEN 'X'
+                    WHEN xyz.cv < 1.0 THEN 'Y'
+                    ELSE 'Z'
+                END as clasificacion_xyz,
+                (pf.rank_cantidad <= 50) as is_top50,
+                COALESCE(pf.venta_30d, 0) as valor_consumo_total,
+                COALESCE(pf.cantidad_30d, 0) as cantidad_30d,
+                COALESCE(pf.porcentaje_venta, 0) as porcentaje_valor,
+                pf.rank_cantidad as ranking_valor,
                 COALESCE(i.stock_tienda, 0) as stock_actual,
-                pc.cv as coeficiente_variacion,
-                COALESCE(pc.demanda_p75, 0) as demanda_p75
-            FROM productos p
-            JOIN productos_clasificados pc ON pc.producto_id = p.id
+                xyz.cv as coeficiente_variacion,
+                0 as demanda_p75
+            FROM productos_filtrados pf
+            JOIN productos p ON p.id = pf.producto_id
+            LEFT JOIN xyz_calc xyz ON xyz.producto_id = pf.producto_id
             LEFT JOIN (
                 SELECT producto_id, SUM(cantidad) as stock_tienda
                 FROM inventario_actual
                 WHERE ubicacion_id = %s
                 GROUP BY producto_id
-            ) i ON i.producto_id = p.id
+            ) i ON i.producto_id = pf.producto_id
             WHERE 1=1
             """
-            params = [ubicacion_id, ubicacion_id]
+            params.append(ubicacion_id_resuelto)  # for ventas_diarias
+            params.append(ubicacion_id_resuelto)  # for inventario_actual
 
-            # Aplicar filtros
-            if filtro_top50:
-                query += " AND pc.is_top50 = TRUE"
-            if clase_abc_filtro:
-                query += " AND pc.clase_abc = %s"
-                params.append(clase_abc_filtro)
+            # Filtro XYZ después del cálculo
             if clase_xyz_filtro:
-                query += " AND pc.clase_xyz = %s"
+                query += """
+                AND CASE
+                    WHEN xyz.cv IS NULL THEN 'Y'
+                    WHEN xyz.cv < 0.5 THEN 'X'
+                    WHEN xyz.cv < 1.0 THEN 'Y'
+                    ELSE 'Z'
+                END = %s
+                """
                 params.append(clase_xyz_filtro)
 
-            query += " ORDER BY pc.venta_total DESC, p.descripcion ASC LIMIT %s OFFSET %s"
+            query += " ORDER BY pf.rank_cantidad ASC, p.descripcion ASC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
 
         results = execute_query_dict(query, tuple(params))

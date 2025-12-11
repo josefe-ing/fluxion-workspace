@@ -6,16 +6,18 @@ interface ABCDistributionChartProps {
   resumenABC: Record<string, MatrizCell>;
 }
 
-const COLORS = {
-  A: '#10b981', // green-500
-  B: '#3b82f6', // blue-500
-  C: '#6b7280', // gray-500
+const COLORS: Record<string, string> = {
+  A: '#22c55e', // green-500
+  B: '#eab308', // yellow-500
+  C: '#f97316', // orange-500
+  D: '#a855f7', // purple-500
 };
 
-const DESCRIPCIONES = {
-  A: 'Alta Rotación (70-80% del valor)',
-  B: 'Rotación Media (15-25% del valor)',
-  C: 'Baja Rotación (5-10% del valor)',
+const DESCRIPCIONES: Record<string, string> = {
+  A: 'Top 1-50 (Más vendidos)',
+  B: 'Ranking 51-200 (Venta media)',
+  C: 'Ranking 201-800 (Venta baja)',
+  D: 'Ranking 801+ (Cola larga)',
 };
 
 export default function ABCDistributionChart({ resumenABC }: ABCDistributionChartProps) {
@@ -84,7 +86,7 @@ export default function ABCDistributionChart({ resumenABC }: ABCDistributionChar
             dataKey="value"
           >
             {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[entry.name as keyof typeof COLORS]} />
+              <Cell key={`cell-${index}`} fill={COLORS[entry.name] || '#6b7280'} />
             ))}
           </Pie>
           <Tooltip content={<CustomTooltip />} />

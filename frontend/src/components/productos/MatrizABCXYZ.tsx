@@ -12,22 +12,45 @@ interface MatrizABCXYZProps {
 }
 
 const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selectedCell }) => {
-  const abc = ['A', 'B', 'C'];
+  const abc = ['A', 'B', 'C', 'D'];
   const xyz = ['X', 'Y', 'Z'];
 
   const getCellColor = (matriz: string) => {
     const colors: Record<string, string> = {
       'AX': 'bg-green-50 hover:bg-green-100 border-green-200',
-      'AY': 'bg-yellow-50 hover:bg-yellow-100 border-yellow-200',
-      'AZ': 'bg-red-50 hover:bg-red-100 border-red-200',
-      'BX': 'bg-blue-50 hover:bg-blue-100 border-blue-200',
-      'BY': 'bg-gray-50 hover:bg-gray-100 border-gray-200',
+      'AY': 'bg-green-50 hover:bg-green-100 border-green-200',
+      'AZ': 'bg-yellow-50 hover:bg-yellow-100 border-yellow-200',
+      'BX': 'bg-yellow-50 hover:bg-yellow-100 border-yellow-200',
+      'BY': 'bg-yellow-50 hover:bg-yellow-100 border-yellow-200',
       'BZ': 'bg-orange-50 hover:bg-orange-100 border-orange-200',
-      'CX': 'bg-gray-50 hover:bg-gray-100 border-gray-200',
-      'CY': 'bg-gray-50 hover:bg-gray-100 border-gray-200',
-      'CZ': 'bg-gray-50 hover:bg-gray-100 border-gray-200',
+      'CX': 'bg-orange-50 hover:bg-orange-100 border-orange-200',
+      'CY': 'bg-orange-50 hover:bg-orange-100 border-orange-200',
+      'CZ': 'bg-orange-50 hover:bg-orange-100 border-orange-200',
+      'DX': 'bg-purple-50 hover:bg-purple-100 border-purple-200',
+      'DY': 'bg-purple-50 hover:bg-purple-100 border-purple-200',
+      'DZ': 'bg-purple-50 hover:bg-purple-100 border-purple-200',
     };
     return colors[matriz] || 'bg-gray-50 hover:bg-gray-100 border-gray-200';
+  };
+
+  const getRowColor = (clase: string) => {
+    const colors: Record<string, string> = {
+      'A': 'bg-green-100',
+      'B': 'bg-yellow-100',
+      'C': 'bg-orange-100',
+      'D': 'bg-purple-100',
+    };
+    return colors[clase] || 'bg-gray-100';
+  };
+
+  const getRowDescription = (clase: string) => {
+    const descriptions: Record<string, string> = {
+      'A': 'Top 50',
+      'B': '51-200',
+      'C': '201-800',
+      'D': '801+',
+    };
+    return descriptions[clase] || '';
   };
 
   return (
@@ -53,8 +76,9 @@ const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selected
         <tbody>
           {abc.map((a) => (
             <tr key={a}>
-              <td className="border border-gray-300 bg-gray-100 p-4 text-center font-bold">
-                {a}
+              <td className={`border border-gray-300 ${getRowColor(a)} p-4 text-center`}>
+                <div className="font-bold">{a}</div>
+                <div className="text-xs text-gray-600">{getRowDescription(a)}</div>
               </td>
               {xyz.map((x) => {
                 const matriz = `${a}${x}`;
@@ -93,53 +117,73 @@ const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selected
 
       {/* Leyenda */}
       <div className="mt-6 bg-gray-50 border border-gray-200 rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Guía de Clasificación:</h3>
-        <div className="grid grid-cols-3 gap-4 text-xs">
-          {/* Columna 1: Alto Valor (A) */}
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Guía de Clasificación (Ranking por Cantidad Vendida):</h3>
+        <div className="grid grid-cols-4 gap-4 text-xs">
+          {/* Columna 1: Alta rotación (A) */}
           <div className="space-y-2">
+            <div className="font-semibold text-green-700 mb-1">A - Top 50</div>
             <div className="flex items-center gap-2">
               <span className="text-xl">⭐</span>
-              <span className="text-gray-700"><strong>ORO:</strong> Productos estrella estables</span>
+              <span className="text-gray-700"><strong>AX:</strong> Máxima prioridad</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xl">⚠️</span>
-              <span className="text-gray-700"><strong>VIGILAR:</strong> Alto valor, variable</span>
+              <span className="text-gray-700"><strong>AY:</strong> Vigilar de cerca</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xl">🚨</span>
-              <span className="text-gray-700"><strong>RIESGO:</strong> Alto valor, caótico</span>
+              <span className="text-gray-700"><strong>AZ:</strong> Riesgo de faltante</span>
             </div>
           </div>
 
-          {/* Columna 2: Valor Medio (B) */}
+          {/* Columna 2: Rotación media (B) */}
           <div className="space-y-2">
+            <div className="font-semibold text-yellow-700 mb-1">B - Ranking 51-200</div>
             <div className="flex items-center gap-2">
               <span className="text-xl">🔷</span>
-              <span className="text-gray-700"><strong>CONFIABLE:</strong> Medio estable</span>
+              <span className="text-gray-700"><strong>BX:</strong> Confiable</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xl">⚪</span>
-              <span className="text-gray-700"><strong>REVISAR:</strong> Medio variable</span>
+              <span className="text-gray-700"><strong>BY:</strong> Revisar stock</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xl">🟠</span>
-              <span className="text-gray-700"><strong>EVALUAR:</strong> Medio errático</span>
+              <span className="text-gray-700"><strong>BZ:</strong> Evaluar</span>
             </div>
           </div>
 
-          {/* Columna 3: Bajo Valor (C) */}
+          {/* Columna 3: Baja rotación (C) */}
           <div className="space-y-2">
+            <div className="font-semibold text-orange-700 mb-1">C - Ranking 201-800</div>
             <div className="flex items-center gap-2">
               <span className="text-xl">💤</span>
-              <span className="text-gray-700"><strong>ESTABLE:</strong> Bajo pero constante</span>
+              <span className="text-gray-700"><strong>CX:</strong> Stock mínimo</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xl">⚫</span>
-              <span className="text-gray-700"><strong>MARGINAL:</strong> Bajo valor variable</span>
+              <span className="text-gray-700"><strong>CY:</strong> Marginal</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xl">📉</span>
-              <span className="text-gray-700"><strong>MINIMIZAR:</strong> Reducir al mínimo</span>
+              <span className="text-gray-700"><strong>CZ:</strong> Minimizar</span>
+            </div>
+          </div>
+
+          {/* Columna 4: Cola larga (D) */}
+          <div className="space-y-2">
+            <div className="font-semibold text-purple-700 mb-1">D - Ranking 801+</div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🟣</span>
+              <span className="text-gray-700"><strong>DX:</strong> Cola larga estable</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🟣</span>
+              <span className="text-gray-700"><strong>DY:</strong> Cola larga variable</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🟣</span>
+              <span className="text-gray-700"><strong>DZ:</strong> Padre Prudente</span>
             </div>
           </div>
         </div>

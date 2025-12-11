@@ -8,6 +8,14 @@ export interface MatrizCell {
   count: number;
   porcentaje_productos: number;
   porcentaje_valor: number;
+  total_cantidad?: number; // Unidades vendidas en 30 días
+  descripcion?: string; // Descripción del rango (ej: "Top 1-50")
+}
+
+export interface UmbralesABC {
+  umbral_a: number;
+  umbral_b: number;
+  umbral_c: number;
 }
 
 export interface MatrizABCXYZ {
@@ -16,8 +24,8 @@ export interface MatrizABCXYZ {
   ubicacion_id?: string;
   matriz: Record<string, MatrizCell>;
   resumen_abc: Record<string, MatrizCell>;
-  resumen_top50?: MatrizCell;
   resumen_xyz: Record<string, MatrizCell>;
+  umbrales?: UmbralesABC;
 }
 
 export interface ProductoEnriquecido {
@@ -32,8 +40,8 @@ export interface ProductoEnriquecido {
   ranking_valor: number;
   coeficiente_variacion: number | null;
   stock_actual: number;
-  is_top50?: boolean;
-  demanda_p75?: number;  // Velocidad de venta (percentil 75 de unidades/día)
+  cantidad_30d?: number;  // Cantidad vendida en 30 días (nueva métrica)
+  demanda_p75?: number;   // Velocidad de venta (percentil 75 de unidades/día)
   // Campos adicionales para vista global (sin ubicacion_id)
   tiendas_con_clasificacion?: number;
   total_tiendas?: number;

@@ -336,13 +336,12 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   // Obtener categorías únicas de los productos
   const categoriasDisponibles = ['Todas', ...Array.from(new Set(productos.map(p => p.categoria).filter((c): c is string => c !== null && c !== '')))].sort();
 
-  // Filtros ABC simplificados: Top50, A, B, C
-  const filtrosABC = ['Todos', 'Top50', 'A', 'B', 'C'];
+  // Filtros ABC: A (Top 50), B (51-200), C (201-800), D (801+)
+  const filtrosABC = ['Todos', 'A', 'B', 'C', 'D'];
 
   // Función auxiliar para obtener clasificación ABC del producto
-  // Usa el valor que viene del backend (Pareto por valor: A, B, C)
+  // Usa el valor que viene del backend (ranking por cantidad: A=Top50, B=51-200, C=201-800, D=801+)
   const getClasificacionABC = (producto: ProductoPedido): string => {
-    // Usar clasificacion_abc del backend (Pareto 80/15/5)
     if (producto.clasificacion_abc && producto.clasificacion_abc !== '-') {
       return producto.clasificacion_abc;
     }
@@ -350,16 +349,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     return '-';
   };
 
-  // Calcular Top50: primeros 50 productos clase A ordenados por demanda P75 (mayor velocidad de venta)
-  const top50Ids = useMemo(() => {
-    const productosClaseA = productos
-      .filter(p => p.clasificacion_abc === 'A')
-      .sort((a, b) => (b.prom_p75_unid || 0) - (a.prom_p75_unid || 0))
-      .slice(0, 50);
-    return new Set(productosClaseA.map(p => p.codigo_producto));
-  }, [productos]);
-
-  const esTop50 = (codigoProducto: string) => top50Ids.has(codigoProducto);
+  // Clase A = Top 50 (ya no necesitamos cálculo separado)
+  const esTop50 = (codigoProducto: string) => {
+    const producto = productos.find(p => p.codigo_producto === codigoProducto);
+    return producto?.clasificacion_abc === 'A';
+  };
 
   // Filtrar productos por vista, búsqueda, categoría y clasificación ABC
   const productosFiltrados = productos.filter(p => {
@@ -376,25 +370,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       return false;
     }
 
-    // Filtro por clasificación ABC (Top50, A, B, C)
+    // Filtro por clasificación ABC (A=Top50, B, C, D)
     if (cuadranteActivo !== 'Todos') {
-      if (cuadranteActivo === 'Top50') {
-        // Solo mostrar productos Top50
-        if (!esTop50(p.codigo_producto)) {
-          return false;
-        }
-      } else if (cuadranteActivo === 'A') {
-        // Clase A pero excluyendo Top50 (productos A del puesto 51+)
-        const abc = getClasificacionABC(p);
-        if (abc !== 'A' || esTop50(p.codigo_producto)) {
-          return false;
-        }
-      } else {
-        // Filtrar por clase ABC (B, C)
-        const abc = getClasificacionABC(p);
-        if (abc !== cuadranteActivo) {
-          return false;
-        }
+      const abc = getClasificacionABC(p);
+      if (abc !== cuadranteActivo) {
+        return false;
       }
     }
 
@@ -549,80 +529,18 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     return velocidadP75 * multiplicador;
   };
 
-  const calcularStockSeguridad = (producto: ProductoPedido): number => {
-    // Usar valor del backend si esta disponible
-    if (producto.stock_seguridad > 0) {
-      return getStockSeguridadBultos(producto);
-    }
-    // Fallback a calculo legacy
-    if (!stockParams) return 0;
-    const ventaDiariaABC = getVelocidadPromBultos(producto);
-    const velocidadP75 = getVelocidadP75Bultos(producto);
-    let multiplicador = 0;
-    if (ventaDiariaABC >= 20) multiplicador = stockParams.stock_seg_mult_a;
-    else if (ventaDiariaABC >= 5) multiplicador = stockParams.stock_seg_mult_ab;
-    else if (ventaDiariaABC >= 0.45) multiplicador = stockParams.stock_seg_mult_b;
-    else if (ventaDiariaABC >= 0.20) multiplicador = stockParams.stock_seg_mult_bc;
-    else if (ventaDiariaABC >= 0.001) multiplicador = stockParams.stock_seg_mult_c;
-    else return 0;
-    return velocidadP75 * multiplicador;
-  };
-
-  const calcularPuntoReorden = (producto: ProductoPedido): number => {
-    // Usar valor del backend si esta disponible
-    if (producto.punto_reorden > 0) {
-      return getPuntoReordenBultos(producto);
-    }
-    // Fallback a calculo legacy
-    if (!stockParams) return 0;
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    const stockMin = calcularStockMinimo(producto);
-    const stockSeg = calcularStockSeguridad(producto);
-    return stockMin + stockSeg + (1.25 * ventaDiariaBultos);
-  };
-
-  const calcularStockMaximo = (producto: ProductoPedido): number => {
-    // Usar valor del backend si esta disponible
-    if (producto.stock_maximo > 0) {
-      return getStockMaximoBultos(producto);
-    }
-    // Fallback a calculo legacy
-    if (!stockParams) return 0;
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    let multiplicador = 0;
-    if (ventaDiariaBultos >= 20) multiplicador = stockParams.stock_max_mult_a;
-    else if (ventaDiariaBultos >= 5) multiplicador = stockParams.stock_max_mult_ab;
-    else if (ventaDiariaBultos >= 0.45) multiplicador = stockParams.stock_max_mult_b;
-    else if (ventaDiariaBultos >= 0.20) multiplicador = stockParams.stock_max_mult_bc;
-    else if (ventaDiariaBultos >= 0.001) multiplicador = stockParams.stock_max_mult_c;
-    else return 0;
-    return ventaDiariaBultos * multiplicador;
-  };
+  // NOTA: Las funciones calcularStockSeguridad, calcularPuntoReorden y calcularStockMaximo fueron eliminadas.
+  // Toda la lógica de negocio está centralizada en el backend.
+  // El frontend usa los valores pre-calculados: producto.punto_reorden, producto.stock_maximo, etc.
 
   const calcularPedidoSugerido = (producto: ProductoPedido): number => {
-    if (!stockParams || producto.prom_ventas_20dias_unid <= 0) return 0;
-
-    const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
-    const stockTotalUnidades = producto.stock_tienda + producto.stock_en_transito;
-    const stockTotalBultos = stockTotalUnidades / producto.cantidad_bultos;
-    const stockTotalDias = stockTotalUnidades / producto.prom_ventas_20dias_unid;
-
-    // Calcular punto de reorden en días
-    const puntoReordenBultos = calcularPuntoReorden(producto);
-    const puntoReordenDias = puntoReordenBultos / ventaDiariaBultos;
-
-    // Calcular stock máximo en bultos
-    const stockMaximoBultos = calcularStockMaximo(producto);
-
-    // Si Stock Total (días) <= Punto de Reorden (días), necesitamos pedir
-    if (stockTotalDias <= puntoReordenDias) {
-      // Sugerido = Stock Máximo - Stock Total (en bultos)
-      // NOTA: No limitamos por stock CEDI porque su inventario no es confiable actualmente
-      const sugerido = stockMaximoBultos - stockTotalBultos;
-
-      return Math.max(0, Math.round(sugerido)); // No sugerir valores negativos
+    // Usar valor calculado por el backend (cantidad_ajustada_bultos)
+    // La lógica de negocio debe estar centralizada en el backend
+    if (producto.cantidad_ajustada_bultos !== undefined && producto.cantidad_ajustada_bultos >= 0) {
+      return Math.round(producto.cantidad_ajustada_bultos);
     }
 
+    // Fallback: si el backend no envió el valor, no sugerir nada
     return 0;
   };
 
@@ -1059,14 +977,19 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
               {filtrosABC.map((filtro) => {
                 const count = productos.filter(p => {
                   if (filtro === 'Todos') return true;
-                  if (filtro === 'Top50') return esTop50(p.codigo_producto);
-                  if (filtro === 'A') return getClasificacionABC(p) === 'A' && !esTop50(p.codigo_producto);
                   return getClasificacionABC(p) === filtro;
                 }).length;
-                const label = filtro === 'Top50' ? '🏆 Top 50' : filtro;
+                // Etiquetas descriptivas para cada clase
+                const labels: Record<string, string> = {
+                  'Todos': 'Todos',
+                  'A': '🏆 A (Top 50)',
+                  'B': 'B (51-200)',
+                  'C': 'C (201-800)',
+                  'D': 'D (801+)'
+                };
                 return (
                   <option key={filtro} value={filtro}>
-                    {label} ({count})
+                    {labels[filtro] || filtro} ({count})
                   </option>
                 );
               })}
@@ -1384,6 +1307,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           if (clasif === 'A') return 'text-red-700 hover:text-red-900';
                           if (clasif === 'B') return 'text-yellow-700 hover:text-yellow-900';
                           if (clasif === 'C') return 'text-green-700 hover:text-green-900';
+                          if (clasif === 'D') return 'text-purple-700 hover:text-purple-900';
                           return 'text-gray-600 hover:text-gray-800';
                         })()}`}
                         title={esTop50(producto.codigo_producto) ? 'Top 50 - Click para ver clasificación ABC' : 'Click para ver clasificación ABC'}

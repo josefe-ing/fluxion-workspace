@@ -31,11 +31,17 @@ class ParametrosGlobales(BaseModel):
 
 
 class NivelServicioClase(BaseModel):
-    clase: str  # A, B, C
+    clase: str  # A, B, C, D
     z_score: float
     nivel_servicio_pct: int
     dias_cobertura_max: int
     metodo: str  # 'estadistico' o 'padre_prudente'
+
+
+class UmbralesABC(BaseModel):
+    umbral_a: int = 50    # Top 1-50 = A
+    umbral_b: int = 200   # Top 51-200 = B
+    umbral_c: int = 800   # Top 201-800 = C, 801+ = D
 
 
 class NivelesServicioRequest(BaseModel):
@@ -49,6 +55,7 @@ class ConfigTienda(BaseModel):
     dias_cobertura_a: Optional[int] = None
     dias_cobertura_b: Optional[int] = None
     dias_cobertura_c: Optional[int] = None
+    dias_cobertura_d: Optional[int] = None
     activo: bool = True
 
 
@@ -56,6 +63,7 @@ class ConfiguracionABCCompleta(BaseModel):
     globales: ParametrosGlobales
     niveles_servicio: List[NivelServicioClase]
     config_tiendas: List[ConfigTienda]
+    umbrales: UmbralesABC
 
 
 # =====================================================================================
@@ -84,12 +92,25 @@ DEFAULTS_NIVELES = [
     ),
     NivelServicioClase(
         clase='C',
+        z_score=1.28,
+        nivel_servicio_pct=90,
+        dias_cobertura_max=21,
+        metodo='estadistico'
+    ),
+    NivelServicioClase(
+        clase='D',
         z_score=0,
         nivel_servicio_pct=0,
         dias_cobertura_max=30,
         metodo='padre_prudente'
     ),
 ]
+
+DEFAULTS_UMBRALES = UmbralesABC(
+    umbral_a=50,
+    umbral_b=200,
+    umbral_c=800
+)
 
 
 def get_db():
@@ -113,12 +134,14 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
     """
     Obtiene la configuración completa del modelo ABC:
     - Parámetros globales (Lead Time, Ventana σD)
-    - Niveles de servicio por clase (A, B, C)
+    - Niveles de servicio por clase (A, B, C, D)
+    - Umbrales de ranking para clasificación
     - Configuración override por tienda
     """
     globales = DEFAULTS_GLOBALES.model_copy()
     niveles_servicio = list(DEFAULTS_NIVELES)
     config_tiendas = []
+    umbrales = DEFAULTS_UMBRALES.model_copy()
 
     # 1. Obtener parámetros globales
     try:
@@ -157,7 +180,7 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
             niveles_dict = {}
             for row in rows:
                 clase = row[0]
-                if clase in ('A', 'B', 'C'):
+                if clase in ('A', 'B', 'C', 'D'):
                     dias_max = int(row[2]) if row[2] else 30
 
                     # Determinar nivel de servicio y método según clase
@@ -169,7 +192,11 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
                         nivel_pct = 97
                         z = 1.88
                         metodo = 'estadistico'
-                    else:  # C
+                    elif clase == 'C':
+                        nivel_pct = 90
+                        z = 1.28
+                        metodo = 'estadistico'
+                    else:  # D
                         nivel_pct = 0
                         z = 0
                         metodo = 'padre_prudente'
@@ -187,10 +214,32 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
                     niveles_dict.get('A', DEFAULTS_NIVELES[0]),
                     niveles_dict.get('B', DEFAULTS_NIVELES[1]),
                     niveles_dict.get('C', DEFAULTS_NIVELES[2]),
+                    niveles_dict.get('D', DEFAULTS_NIVELES[3]),
                 ]
     except Exception as e:
         logger.warning(f"Error cargando parametros_clasificacion: {e}")
         conn.rollback()  # Limpiar transacción abortada
+
+    # 2.5. Obtener umbrales de ranking desde config_inventario_global
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, valor_numerico
+            FROM config_inventario_global
+            WHERE categoria = 'abc_umbrales_ranking' AND activo = true
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        for row in rows:
+            if row[0] == 'abc_umbral_a' and row[1]:
+                umbrales.umbral_a = int(row[1])
+            elif row[0] == 'abc_umbral_b' and row[1]:
+                umbrales.umbral_b = int(row[1])
+            elif row[0] == 'abc_umbral_c' and row[1]:
+                umbrales.umbral_c = int(row[1])
+    except Exception as e:
+        logger.warning(f"Error cargando umbrales ABC: {e}")
+        conn.rollback()
 
     # 3. Obtener configuración por tienda
     try:
@@ -203,6 +252,7 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
                 ct.dias_cobertura_a,
                 ct.dias_cobertura_b,
                 ct.dias_cobertura_c,
+                ct.clase_d_dias_cobertura,
                 ct.activo
             FROM config_parametros_abc_tienda ct
             LEFT JOIN ubicaciones u ON ct.tienda_id = u.id
@@ -219,7 +269,8 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
                 dias_cobertura_a=int(row[3]) if row[3] else None,
                 dias_cobertura_b=int(row[4]) if row[4] else None,
                 dias_cobertura_c=int(row[5]) if row[5] else None,
-                activo=bool(row[6]) if row[6] is not None else True
+                dias_cobertura_d=int(row[6]) if row[6] else None,
+                activo=bool(row[7]) if row[7] is not None else True
             ))
     except Exception as e:
         logger.error(f"Error cargando config_parametros_abc_tienda: {e}")
@@ -227,7 +278,8 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
     return ConfiguracionABCCompleta(
         globales=globales,
         niveles_servicio=niveles_servicio,
-        config_tiendas=config_tiendas
+        config_tiendas=config_tiendas,
+        umbrales=umbrales
     )
 
 
@@ -359,6 +411,77 @@ async def guardar_niveles_servicio(
 
 
 # =====================================================================================
+# PUT - Guardar umbrales de clasificación ABC
+# =====================================================================================
+
+@router.put("/parametros-abc/umbrales")
+async def guardar_umbrales_abc(
+    umbrales: UmbralesABC,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Guarda los umbrales de ranking para clasificación ABC:
+    - umbral_a: Top N productos para clase A (ej: 50 = ranking 1-50)
+    - umbral_b: Top N productos para clase B (ej: 200 = ranking 51-200)
+    - umbral_c: Top N productos para clase C (ej: 800 = ranking 201-800)
+    - Clase D: todos los productos con ranking > umbral_c
+    """
+    try:
+        cursor = conn.cursor()
+
+        # Validar que los umbrales sean coherentes
+        if not (umbrales.umbral_a < umbrales.umbral_b < umbrales.umbral_c):
+            raise HTTPException(
+                status_code=400,
+                detail="Los umbrales deben ser: umbral_a < umbral_b < umbral_c"
+            )
+
+        # Actualizar umbrales en config_inventario_global
+        for umbral_id, valor in [
+            ('abc_umbral_a', umbrales.umbral_a),
+            ('abc_umbral_b', umbrales.umbral_b),
+            ('abc_umbral_c', umbrales.umbral_c),
+        ]:
+            cursor.execute("""
+                INSERT INTO config_inventario_global (id, categoria, parametro, valor_numerico, descripcion, unidad, activo, fecha_modificacion)
+                VALUES (%s, 'abc_umbrales_ranking', %s, %s, %s, 'ranking', true, CURRENT_TIMESTAMP)
+                ON CONFLICT (id)
+                DO UPDATE SET
+                    valor_numerico = EXCLUDED.valor_numerico,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+            """, [
+                umbral_id,
+                umbral_id.replace('abc_', ''),  # parametro: umbral_a, umbral_b, umbral_c
+                valor,
+                f'Top {valor} productos' if umbral_id == 'abc_umbral_a' else f'Ranking hasta {valor}'
+            ])
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"✅ Umbrales ABC guardados: A≤{umbrales.umbral_a}, B≤{umbrales.umbral_b}, C≤{umbrales.umbral_c}")
+
+        return {
+            "success": True,
+            "mensaje": "Umbrales de clasificación guardados correctamente",
+            "umbrales": umbrales.model_dump(),
+            "descripcion": {
+                "A": f"Ranking 1-{umbrales.umbral_a}",
+                "B": f"Ranking {umbrales.umbral_a + 1}-{umbrales.umbral_b}",
+                "C": f"Ranking {umbrales.umbral_b + 1}-{umbrales.umbral_c}",
+                "D": f"Ranking {umbrales.umbral_c + 1}+"
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error guardando umbrales ABC: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error guardando umbrales: {str(e)}")
+
+
+# =====================================================================================
 # PUT - Guardar configuración por tienda
 # =====================================================================================
 
@@ -371,41 +494,16 @@ async def guardar_config_tienda(
     """
     Guarda la configuración override para una tienda específica:
     - Lead Time override
-    - Días de cobertura por clase (A, B, C)
+    - Días de cobertura por clase (A, B, C, D)
     """
     try:
         cursor = conn.cursor()
 
-        # Verificar si existe la tabla
-        cursor.execute("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables
-                WHERE table_name = 'config_parametros_abc_tienda'
-            )
-        """)
-        table_exists = cursor.fetchone()[0]
-
-        if not table_exists:
-            # Crear tabla si no existe
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS config_parametros_abc_tienda (
-                    id SERIAL PRIMARY KEY,
-                    tienda_id VARCHAR(50) NOT NULL UNIQUE,
-                    lead_time_override DECIMAL(5,2),
-                    dias_cobertura_a INTEGER,
-                    dias_cobertura_b INTEGER,
-                    dias_cobertura_c INTEGER,
-                    activo BOOLEAN DEFAULT TRUE,
-                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-        # Upsert configuración de tienda (id = tienda_id para simplicidad)
+        # Upsert configuración de tienda
         cursor.execute("""
             INSERT INTO config_parametros_abc_tienda (
-                id, tienda_id, lead_time_override,
-                dias_cobertura_a, dias_cobertura_b, dias_cobertura_c,
+                tienda_id, lead_time_override,
+                dias_cobertura_a, dias_cobertura_b, dias_cobertura_c, clase_d_dias_cobertura,
                 activo, fecha_creacion, fecha_modificacion
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (tienda_id)
@@ -414,15 +512,16 @@ async def guardar_config_tienda(
                 dias_cobertura_a = EXCLUDED.dias_cobertura_a,
                 dias_cobertura_b = EXCLUDED.dias_cobertura_b,
                 dias_cobertura_c = EXCLUDED.dias_cobertura_c,
+                clase_d_dias_cobertura = EXCLUDED.clase_d_dias_cobertura,
                 activo = EXCLUDED.activo,
                 fecha_modificacion = CURRENT_TIMESTAMP
         """, [
-            tienda_id,  # usar tienda_id como id
             tienda_id,
             config.lead_time_override,
             config.dias_cobertura_a,
             config.dias_cobertura_b,
             config.dias_cobertura_c,
+            config.dias_cobertura_d,
             config.activo
         ])
 

@@ -955,7 +955,8 @@ async def calcular_productos_sugeridos(
         # 1. Cargar configuración ABC de la tienda (si existe)
         try:
             cursor.execute("""
-                SELECT lead_time_override, dias_cobertura_a, dias_cobertura_b, dias_cobertura_c
+                SELECT lead_time_override, dias_cobertura_a, dias_cobertura_b,
+                       dias_cobertura_c, clase_d_dias_cobertura
                 FROM config_parametros_abc_tienda
                 WHERE tienda_id = %s AND activo = true
             """, [request.tienda_destino])
@@ -966,16 +967,36 @@ async def calcular_productos_sugeridos(
                     lead_time=float(config_row[0]) if config_row[0] else LEAD_TIME_DEFAULT,
                     dias_cobertura_a=int(config_row[1]) if config_row[1] else 7,
                     dias_cobertura_b=int(config_row[2]) if config_row[2] else 14,
-                    dias_cobertura_c=int(config_row[3]) if config_row[3] else 30
+                    dias_cobertura_c=int(config_row[3]) if config_row[3] else 21,
+                    dias_cobertura_d=int(config_row[4]) if config_row[4] else 30
                 )
                 set_config_tienda(config_tienda)
-                logger.info(f"📋 Config tienda aplicada: LT={config_tienda.lead_time}, A={config_tienda.dias_cobertura_a}d, B={config_tienda.dias_cobertura_b}d, C={config_tienda.dias_cobertura_c}d")
+                logger.info(f"📋 Config tienda aplicada: LT={config_tienda.lead_time}, A={config_tienda.dias_cobertura_a}d, B={config_tienda.dias_cobertura_b}d, C={config_tienda.dias_cobertura_c}d, D={config_tienda.dias_cobertura_d}d")
             else:
                 set_config_tienda(None)  # Usar defaults
                 logger.info(f"📋 Usando configuración ABC por defecto para {request.tienda_destino}")
         except Exception as e:
             logger.warning(f"No se pudo cargar config tienda: {e}. Usando defaults.")
             set_config_tienda(None)
+
+        # 1.5. Cargar umbrales ABC desde config_inventario_global
+        umbral_a, umbral_b, umbral_c = 50, 200, 800  # Defaults
+        try:
+            cursor.execute("""
+                SELECT id, valor_numerico
+                FROM config_inventario_global
+                WHERE categoria = 'abc_umbrales_ranking' AND activo = true
+            """)
+            for row in cursor.fetchall():
+                if row[0] == 'abc_umbral_a' and row[1]:
+                    umbral_a = int(row[1])
+                elif row[0] == 'abc_umbral_b' and row[1]:
+                    umbral_b = int(row[1])
+                elif row[0] == 'abc_umbral_c' and row[1]:
+                    umbral_c = int(row[1])
+            logger.info(f"📋 Umbrales ABC: A≤{umbral_a}, B≤{umbral_b}, C≤{umbral_c}, D>{umbral_c}")
+        except Exception as e:
+            logger.warning(f"No se pudieron cargar umbrales ABC: {e}. Usando defaults.")
 
         # 2. Obtener la región de la tienda destino y tiendas de referencia
         cursor.execute("""
@@ -1079,11 +1100,12 @@ async def calcular_productos_sugeridos(
                 WHERE fecha >= CURRENT_DATE - INTERVAL '30 days'
                 GROUP BY producto_id
             ),
-            -- ABC por valor (Pareto 80/15/5) - Calculado para la tienda específica (30 días)
+            -- ABC por ranking de CANTIDAD vendida (30 días)
             ventas_30d_tienda AS (
                 SELECT
                     producto_id,
-                    SUM(venta_total) as venta_total
+                    SUM(cantidad_vendida) as cantidad_total,  -- Por cantidad, no valor
+                    SUM(venta_total) as venta_total           -- Mantener para referencia
                 FROM ventas
                 WHERE ubicacion_id = %s
                   AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
@@ -1091,24 +1113,27 @@ async def calcular_productos_sugeridos(
                   AND producto_id != '003760'
                 GROUP BY producto_id
             ),
-            abc_con_acumulado AS (
+            abc_con_ranking AS (
                 SELECT
                     producto_id,
+                    cantidad_total,
                     venta_total,
-                    SUM(venta_total) OVER (ORDER BY venta_total DESC) as venta_acum,
-                    SUM(venta_total) OVER () as venta_total_periodo
+                    ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) as rank_cantidad
                 FROM ventas_30d_tienda
             ),
             abc_clasificado AS (
                 SELECT
                     producto_id,
                     venta_total,
+                    cantidad_total,
+                    rank_cantidad,
                     CASE
-                        WHEN venta_acum <= venta_total_periodo * 0.80 THEN 'A'
-                        WHEN venta_acum <= venta_total_periodo * 0.95 THEN 'B'
-                        ELSE 'C'
+                        WHEN rank_cantidad <= {umbral_a} THEN 'A'
+                        WHEN rank_cantidad <= {umbral_b} THEN 'B'
+                        WHEN rank_cantidad <= {umbral_c} THEN 'C'
+                        ELSE 'D'
                     END as clase_abc_valor
-                FROM abc_con_acumulado
+                FROM abc_con_ranking
             ),
             inv_tienda AS (
                 SELECT
@@ -1203,9 +1228,16 @@ async def calcular_productos_sugeridos(
             ORDER BY COALESCE(v20.total_vendido, 0) DESC
         """
 
-        cursor.execute(query, [
+        # Insertar los umbrales ABC en el query (son enteros, no parámetros de usuario)
+        query_formatted = query.format(
+            umbral_a=umbral_a,
+            umbral_b=umbral_b,
+            umbral_c=umbral_c
+        )
+
+        cursor.execute(query_formatted, [
             request.tienda_destino,  # ventas_diarias_disponibles
-            request.tienda_destino,  # ventas_30d_tienda (ABC por valor)
+            request.tienda_destino,  # ventas_30d_tienda (ABC por cantidad)
             request.tienda_destino,  # inv_tienda
             request.cedi_origen,     # inv_cedi
             tiendas_ref_ids if tiendas_ref_ids else ['__NONE__']  # tiendas referencia (evitar error si vacío)
@@ -1227,20 +1259,20 @@ async def calcular_productos_sugeridos(
             stock_cedi = float(row[15]) if row[15] else 0.0
             prom_top3 = float(row[16]) if row[16] else 0.0
             prom_p75 = float(row[17]) if row[17] else 0.0
-            clase_abc_valor = row[18]  # ABC por valor (Pareto) de SQL
+            clase_abc_valor = row[18]  # ABC por ranking de cantidad de SQL
             sigma_demanda = float(row[19]) if row[19] else 0.0
             demanda_maxima = float(row[20]) if row[20] else 0.0
             es_generador_trafico = bool(row[21]) if row[21] else False
-            # NUEVO: P75 de tiendas de referencia
+            # P75 de tiendas de referencia
             p75_referencia = float(row[22]) if row[22] else 0.0
             tiendas_referencia_str = row[23]  # String con IDs de tiendas separados por coma
 
-            # Clasificacion ABC: usar ABC por valor (Pareto) del SQL si esta disponible
+            # Clasificacion ABC: usar ABC por ranking del SQL si esta disponible
             venta_diaria_bultos = prom_20d / cantidad_bultos if cantidad_bultos > 0 else 0
             if clase_abc_valor:
                 clasificacion = clase_abc_valor
             elif venta_diaria_bultos > 0:
-                clasificacion = 'C'  # Default para productos sin clasificacion ABC pero con ventas
+                clasificacion = 'D'  # Default para productos sin clasificacion ABC pero con ventas
             else:
                 clasificacion = '-'
 
@@ -1276,7 +1308,7 @@ async def calcular_productos_sugeridos(
             if sin_ventas_locales and p75_referencia > 0 and stock_cedi > 0:
                 es_envio_prueba = True
                 p75_usado = p75_referencia  # Usar referencia para el cálculo base
-                clasificacion = 'C'  # Conservador
+                clasificacion = 'D'  # Conservador (clase D para productos nuevos/prueba)
                 productos_sin_venta_con_ref += 1
 
             # Caso 2: POCAS ventas locales pero P75 regional mucho mayor -> REFERENCIA REGIONAL

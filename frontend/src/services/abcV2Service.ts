@@ -109,19 +109,25 @@ export async function getClasificacionesPorCodigos(
 
 /**
  * Obtener color de la clasificación ABC v2
+ * A: Top 50 (verde)
+ * B: Ranking 51-200 (amarillo)
+ * C: Ranking 201-800 (naranja)
+ * D: Ranking 801+ (púrpura)
  */
 export function getColorClasificacionABCv2(clasificacion: string): string {
   switch (clasificacion) {
     case 'A':
-      return 'text-red-700 bg-red-50 border-red-300';
+      return 'text-green-700 bg-green-50 border-green-300';
     case 'B':
       return 'text-yellow-700 bg-yellow-50 border-yellow-300';
     case 'C':
-      return 'text-gray-700 bg-gray-50 border-gray-300';
+      return 'text-orange-700 bg-orange-50 border-orange-300';
+    case 'D':
+      return 'text-purple-700 bg-purple-50 border-purple-300';
     case 'NUEVO':
       return 'text-blue-700 bg-blue-50 border-blue-300';
     case 'ERROR_COSTO':
-      return 'text-orange-700 bg-orange-50 border-orange-300';
+      return 'text-red-700 bg-red-50 border-red-300';
     default:
       return 'text-gray-500 bg-gray-50 border-gray-300';
   }
@@ -166,29 +172,34 @@ export function getColorClasificacionXYZ(clasificacion: string): string {
  * Obtener color de la matriz ABC-XYZ
  */
 export function getColorMatrizABCXYZ(matriz: string): string {
-  // Productos críticos (alto valor + errático)
+  // Productos críticos (alta rotación + errático)
   if (matriz === 'AZ') {
     return 'text-red-900 bg-red-100 border-red-400 font-bold';
   }
 
-  // Productos ideales (alto valor + estable)
+  // Productos ideales (alta rotación + estable)
   if (matriz === 'AX') {
     return 'text-green-800 bg-green-100 border-green-400 font-semibold';
   }
 
-  // Combinaciones A (alto valor)
+  // Combinaciones A (Top 50 - alta rotación)
   if (matriz?.startsWith('A')) {
-    return 'text-red-700 bg-red-50 border-red-300';
+    return 'text-green-700 bg-green-50 border-green-300';
   }
 
-  // Combinaciones B (medio valor)
+  // Combinaciones B (Ranking 51-200 - rotación media)
   if (matriz?.startsWith('B')) {
     return 'text-yellow-700 bg-yellow-50 border-yellow-300';
   }
 
-  // Combinaciones C (bajo valor)
+  // Combinaciones C (Ranking 201-800 - baja rotación)
   if (matriz?.startsWith('C')) {
-    return 'text-gray-700 bg-gray-50 border-gray-300';
+    return 'text-orange-700 bg-orange-50 border-orange-300';
+  }
+
+  // Combinaciones D (Ranking 801+ - cola larga)
+  if (matriz?.startsWith('D')) {
+    return 'text-purple-700 bg-purple-50 border-purple-300';
   }
 
   return 'text-gray-500 bg-gray-50 border-gray-300';

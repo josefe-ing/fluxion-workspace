@@ -83,10 +83,16 @@ class ResultadoCalculo:
 
 
 # Parametros por clase (niveles de servicio ajustados) - VALORES POR DEFECTO
+# Clasificacion ABC por ranking de cantidad vendida:
+#   A: Top 1-50       (Estadistico, 99% servicio)
+#   B: Top 51-200     (Estadistico, 97% servicio)
+#   C: Top 201-800    (Estadistico, 90% servicio)
+#   D: Top 801+       (Padre Prudente)
 PARAMS_ABC_DEFAULT = {
     'A': ParametrosABC(nivel_servicio_z=2.33, dias_cobertura=7, metodo=MetodoCalculo.ESTADISTICO),   # 99%
     'B': ParametrosABC(nivel_servicio_z=1.88, dias_cobertura=14, metodo=MetodoCalculo.ESTADISTICO),  # 97%
-    'C': ParametrosABC(nivel_servicio_z=0.0, dias_cobertura=30, metodo=MetodoCalculo.PADRE_PRUDENTE),
+    'C': ParametrosABC(nivel_servicio_z=1.28, dias_cobertura=21, metodo=MetodoCalculo.ESTADISTICO),  # 90%
+    'D': ParametrosABC(nivel_servicio_z=0.0, dias_cobertura=30, metodo=MetodoCalculo.PADRE_PRUDENTE),
 }
 
 # Parametros activos (pueden ser sobrescritos por config de tienda)
@@ -99,7 +105,8 @@ class ConfigTiendaABC:
     lead_time: float = LEAD_TIME_DEFAULT
     dias_cobertura_a: int = 7
     dias_cobertura_b: int = 14
-    dias_cobertura_c: int = 30
+    dias_cobertura_c: int = 21
+    dias_cobertura_d: int = 30
 
 
 def set_config_tienda(config: Optional[ConfigTiendaABC] = None):
@@ -128,8 +135,13 @@ def set_config_tienda(config: Optional[ConfigTiendaABC] = None):
                 metodo=MetodoCalculo.ESTADISTICO
             ),
             'C': ParametrosABC(
-                nivel_servicio_z=0.0,
+                nivel_servicio_z=1.28,
                 dias_cobertura=config.dias_cobertura_c,
+                metodo=MetodoCalculo.ESTADISTICO
+            ),
+            'D': ParametrosABC(
+                nivel_servicio_z=0.0,
+                dias_cobertura=config.dias_cobertura_d,
                 metodo=MetodoCalculo.PADRE_PRUDENTE
             ),
         }
@@ -202,7 +214,7 @@ def _ejecutar_sanity_checks(resultado: 'ResultadoCalculo', input_data: InputCalc
     # 5. Validar rangos por clase
     if demanda_p75 > 0:
         dias_max = resultado.stock_maximo_unid / demanda_p75
-        limites = {'A': 15, 'B': 30, 'C': 60}
+        limites = {'A': 15, 'B': 30, 'C': 45, 'D': 60}
         limite = limites.get(resultado.clase_efectiva, 30)
         if dias_max > limite:
             warnings.append(f"WARN: Clase {resultado.clase_efectiva} con {dias_max:.0f} dias cobertura (limite: {limite})")
@@ -273,7 +285,7 @@ def _crear_resultado(stock_minimo_unid: float, stock_seguridad_unid: float,
 def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
                          clase_efectiva: str) -> ResultadoCalculo:
     """
-    Clase A y B: Formula estadistica simplificada (sin sigmaL porque L es fijo).
+    Clases A, B y C: Formula estadistica simplificada (sin sigmaL porque L es fijo).
 
     SS = Z * sigmaD * sqrt(L)
     ROP = (D_P75 * L) + SS
@@ -305,10 +317,14 @@ def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
     # Maximo
     stock_maximo = punto_reorden + (D * params.dias_cobertura)
 
-    # Cantidad a pedir
-    deficit = max(0, stock_maximo - input_data.stock_actual)
-    # NO limitar por stock CEDI (datos no confiables actualmente)
-    cantidad_sugerida = deficit
+    # Cantidad a pedir: SOLO si stock_actual <= ROP (punto de reorden)
+    # Si stock está entre ROP y MAX (nivel óptimo), NO sugerir pedido
+    if input_data.stock_actual <= punto_reorden:
+        # Pedir hasta llegar al máximo
+        cantidad_sugerida = max(0, stock_maximo - input_data.stock_actual)
+    else:
+        # Stock en nivel óptimo o exceso - no pedir
+        cantidad_sugerida = 0
 
     return _crear_resultado(
         stock_minimo_unid=punto_reorden,
@@ -328,7 +344,7 @@ def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
 def calcular_padre_prudente(input_data: InputCalculo, params: ParametrosABC,
                             clase_efectiva: str) -> ResultadoCalculo:
     """
-    Clase C: Metodo heuristico "Padre Prudente".
+    Clase D: Metodo heuristico "Padre Prudente".
 
     Min = D_max * L (peor escenario)
     Max = Min + (D_P75 * dias_cobertura)
@@ -360,10 +376,14 @@ def calcular_padre_prudente(input_data: InputCalculo, params: ParametrosABC,
     # Maximo
     stock_maximo = punto_reorden + (D * params.dias_cobertura)
 
-    # Cantidad a pedir
-    deficit = max(0, stock_maximo - input_data.stock_actual)
-    # NO limitar por stock CEDI (datos no confiables actualmente)
-    cantidad_sugerida = deficit
+    # Cantidad a pedir: SOLO si stock_actual <= ROP (punto de reorden)
+    # Si stock está entre ROP y MAX (nivel óptimo), NO sugerir pedido
+    if input_data.stock_actual <= punto_reorden:
+        # Pedir hasta llegar al máximo
+        cantidad_sugerida = max(0, stock_maximo - input_data.stock_actual)
+    else:
+        # Stock en nivel óptimo o exceso - no pedir
+        cantidad_sugerida = 0
 
     return _crear_resultado(
         stock_minimo_unid=punto_reorden,

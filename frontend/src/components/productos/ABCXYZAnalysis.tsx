@@ -4,7 +4,6 @@ import {
   getProductosPorMatriz,
   MatrizABCXYZ as MatrizData,
   ProductoEnriquecido,
-  formatPercentageValue,
   formatNumber,
 } from '../../services/productosService';
 import { getUbicaciones, Ubicacion } from '../../services/ubicacionesService';
@@ -18,7 +17,7 @@ const ABCXYZAnalysis: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [matrizData, setMatrizData] = useState<MatrizData | null>(null);
   const [selectedMatriz, setSelectedMatriz] = useState<string>('');
-  const [selectedABC, setSelectedABC] = useState<string>(''); // Filtro por clase ABC (A, B, C, Top50)
+  const [selectedABC, setSelectedABC] = useState<string>(''); // Filtro por clase ABC (A, B, C, D)
   const [productos, setProductos] = useState<ProductoEnriquecido[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [selectedProducto, setSelectedProducto] = useState<string | null>(null);
@@ -131,7 +130,7 @@ const ABCXYZAnalysis: React.FC = () => {
     }
   };
 
-  // Handler para click en clase ABC o Top50
+  // Handler para click en clase ABC (A, B, C, D)
   const handleABCClick = async (clase: string) => {
     if (selectedABC === clase) {
       setSelectedABC('');
@@ -150,7 +149,7 @@ const ABCXYZAnalysis: React.FC = () => {
     } else {
       setSelectedABC(clase);
       setSelectedMatriz('');
-      // Cargar productos filtrados por clase (incluye Top50)
+      // Cargar productos filtrados por clase
       setLoadingProductos(true);
       try {
         const ubicacionParam = selectedUbicacion === 'todas' ? undefined : selectedUbicacion;
@@ -254,58 +253,28 @@ const ABCXYZAnalysis: React.FC = () => {
         </div>
       </div>
 
-      {/* Resumen ABC + Top50 (y XYZ si está habilitado) */}
+      {/* Resumen ABC (y XYZ si está habilitado) */}
       {matrizData && (
         <div className={`grid grid-cols-1 ${isXYZEnabled() ? 'md:grid-cols-2' : ''} gap-6`}>
-          {/* Resumen ABC (Tabla Pareto) + Top50 */}
+          {/* Resumen ABC (Ranking por Cantidad) */}
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Resumen ABC (Pareto)</h2>
-              <p className="text-xs text-gray-500 mt-1">Análisis por valor</p>
+              <h2 className="text-lg font-semibold text-gray-900">Clasificación ABC</h2>
+              <p className="text-xs text-gray-500 mt-1">Ranking por cantidad vendida (30 días)</p>
             </div>
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Clase</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Productos</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">% Productos</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">% Valor</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Clase</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ranking</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Productos</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">% Productos</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">% Valor</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Unidades Vendidas</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {/* Top50 - Nueva categoría especial */}
-                {matrizData.resumen_top50 && (
-                  <tr
-                    onClick={() => handleABCClick('Top50')}
-                    className={`cursor-pointer transition-all hover:bg-amber-50 ${
-                      selectedABC === 'Top50' ? 'ring-2 ring-inset ring-amber-500 bg-amber-50' : ''
-                    }`}
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="px-3 py-1 rounded-full text-sm font-bold bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-sm">
-                        Top 50
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-amber-700">
-                      {matrizData.resumen_top50.count}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-amber-700">
-                      {matrizData.resumen_top50.porcentaje_productos.toFixed(1)}%
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-amber-700">
-                      {matrizData.resumen_top50.porcentaje_valor.toFixed(1)}%
-                    </td>
-                  </tr>
-                )}
-
-                {/* Separador visual */}
-                <tr className="bg-gray-100">
-                  <td colSpan={4} className="px-6 py-1 text-xs text-gray-500 uppercase tracking-wide">
-                    Clasificación Pareto
-                  </td>
-                </tr>
-
-                {/* Clases A, B, C */}
+                {/* Clases A, B, C, D */}
                 {Object.entries(matrizData.resumen_abc).map(([clase, data]) => (
                   <tr
                     key={clase}
@@ -314,42 +283,39 @@ const ABCXYZAnalysis: React.FC = () => {
                       selectedABC === clase ? 'ring-2 ring-inset ring-blue-500 bg-blue-50' : ''
                     }`}
                   >
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-4 whitespace-nowrap">
                       <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                        clase === 'A' ? 'bg-red-100 text-red-800' :
+                        clase === 'A' ? 'bg-green-100 text-green-800' :
                         clase === 'B' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-gray-100 text-gray-800'
+                        clase === 'C' ? 'bg-orange-100 text-orange-800' :
+                        'bg-purple-100 text-purple-800'
                       }`}>
                         {clase}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {data.count}
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {data.descripcion || '-'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                      {formatNumber(data.count)}
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
                       {data.porcentaje_productos.toFixed(1)}%
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
                       {data.porcentaje_valor.toFixed(1)}%
-                      {clase === 'A' && data.porcentaje_valor >= 70 && ' ✓'}
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                      {formatNumber(data.total_cantidad || 0)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
-            {/* Insight Top50 */}
-            {matrizData.resumen_top50 && matrizData.resumen_top50.count > 0 && (
-              <div className="px-6 py-4 bg-amber-50 border-t border-amber-100">
-                <p className="text-sm text-amber-800 flex items-center gap-2">
-                  🏆 Los <strong>Top 50</strong> productos generan el <strong>{matrizData.resumen_top50.porcentaje_valor.toFixed(1)}%</strong> del valor total
-                </p>
-              </div>
-            )}
-
             <div className="px-6 py-4 bg-blue-50 border-t border-blue-100">
               <p className="text-sm text-blue-800 flex items-center gap-2">
-                💡 Solo el {matrizData.resumen_abc.A?.porcentaje_productos.toFixed(1)}% de tus productos generan el {matrizData.resumen_abc.A?.porcentaje_valor.toFixed(1)}% del valor
+                💡 Los productos Clase A (Top {matrizData.umbrales?.umbral_a || 50}) son los de mayor rotación
               </p>
             </div>
 
@@ -435,13 +401,11 @@ const ABCXYZAnalysis: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">
-                  {selectedABC === 'Top50'
-                    ? 'Top 50 Productos'
-                    : selectedABC
-                      ? `Productos Clase ${selectedABC}`
-                      : selectedMatriz
-                        ? `Productos en clasificación: ${selectedMatriz}`
-                        : 'Todos los productos'}
+                  {selectedABC
+                    ? `Productos Clase ${selectedABC}`
+                    : selectedMatriz
+                      ? `Productos en clasificación: ${selectedMatriz}`
+                      : 'Todos los productos'}
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">
                   Mostrando {filteredAndSortedProductos.length} de {productos.length} productos
@@ -561,8 +525,8 @@ const ABCXYZAnalysis: React.FC = () => {
                         )}
                       </div>
                     </th>
-                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase" title="Velocidad de venta: Percentil 75 de unidades vendidas por día">
-                      Venta P75
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase" title="Unidades vendidas en los últimos 30 días">
+                      Cant. 30d
                     </th>
                     <th
                       className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
@@ -593,9 +557,6 @@ const ABCXYZAnalysis: React.FC = () => {
                         {producto.codigo_producto}
                       </td>
                       <td className="px-3 py-3 text-sm text-gray-900 max-w-xs truncate">
-                        {producto.is_top50 && (
-                          <span className="inline-block mr-1 text-amber-500" title="Top 50">🏆</span>
-                        )}
                         {producto.descripcion}
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-500">
@@ -603,12 +564,13 @@ const ABCXYZAnalysis: React.FC = () => {
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap text-sm">
                         <span className={`px-2 py-1 rounded text-xs font-medium ${
-                          producto.clasificacion_abc === 'A' ? 'bg-red-100 text-red-800' :
+                          producto.clasificacion_abc === 'A' ? 'bg-green-100 text-green-800' :
                           producto.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-800' :
-                          producto.clasificacion_abc === 'C' ? 'bg-gray-100 text-gray-800' :
-                          'bg-purple-100 text-purple-800'
+                          producto.clasificacion_abc === 'C' ? 'bg-orange-100 text-orange-800' :
+                          producto.clasificacion_abc === 'D' ? 'bg-purple-100 text-purple-800' :
+                          'bg-gray-100 text-gray-800'
                         }`}>
-                          {producto.clasificacion_abc === 'SIN_VENTAS' ? 'Sin ventas' : producto.clasificacion_abc} {producto.clasificacion_abc !== 'SIN_VENTAS' && `(${formatPercentageValue(producto.porcentaje_valor)})`}
+                          {producto.clasificacion_abc === 'SIN_VENTAS' ? 'Sin ventas' : producto.clasificacion_abc}
                         </span>
                       </td>
                       {isXYZEnabled() && (
@@ -645,9 +607,9 @@ const ABCXYZAnalysis: React.FC = () => {
                       <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-500">
                         #{producto.ranking_valor}
                       </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900" title="Unidades/día (P75)">
-                        {producto.demanda_p75 !== undefined && producto.demanda_p75 > 0
-                          ? formatNumber(Math.round(producto.demanda_p75))
+                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900" title="Unidades vendidas en 30 días">
+                        {producto.cantidad_30d !== undefined && producto.cantidad_30d > 0
+                          ? formatNumber(Math.round(producto.cantidad_30d))
                           : '-'}
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900">

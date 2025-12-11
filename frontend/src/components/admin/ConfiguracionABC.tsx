@@ -33,7 +33,14 @@ interface ConfigTienda {
   dias_cobertura_a: number | null;
   dias_cobertura_b: number | null;
   dias_cobertura_c: number | null;
+  dias_cobertura_d: number | null;
   activo: boolean;
+}
+
+interface UmbralesABC {
+  umbral_a: number;
+  umbral_b: number;
+  umbral_c: number;
 }
 
 interface Tienda {
@@ -41,7 +48,7 @@ interface Tienda {
   nombre: string;
 }
 
-type TabType = 'global' | 'niveles' | 'tiendas';
+type TabType = 'global' | 'umbrales' | 'niveles' | 'tiendas';
 
 // Valores por defecto (los mismos del backend)
 const DEFAULTS = {
@@ -50,8 +57,14 @@ const DEFAULTS = {
   clases: [
     { clase: 'A', z_score: 2.33, nivel_servicio_pct: 99, dias_cobertura_max: 7, metodo: 'estadistico' as const },
     { clase: 'B', z_score: 1.88, nivel_servicio_pct: 97, dias_cobertura_max: 14, metodo: 'estadistico' as const },
-    { clase: 'C', z_score: 0, nivel_servicio_pct: 0, dias_cobertura_max: 30, metodo: 'padre_prudente' as const },
-  ]
+    { clase: 'C', z_score: 1.28, nivel_servicio_pct: 90, dias_cobertura_max: 21, metodo: 'estadistico' as const },
+    { clase: 'D', z_score: 0, nivel_servicio_pct: 0, dias_cobertura_max: 30, metodo: 'padre_prudente' as const },
+  ],
+  umbrales: {
+    umbral_a: 50,
+    umbral_b: 200,
+    umbral_c: 800,
+  }
 };
 
 // Tabla de conversión: Nivel de Servicio (%) -> Z-score
@@ -127,6 +140,7 @@ export default function ConfiguracionABC() {
     ventana_sigma_d: DEFAULTS.ventana_sigma_d,
   });
   const [nivelesServicio, setNivelesServicio] = useState<NivelServicioClase[]>(DEFAULTS.clases);
+  const [umbrales, setUmbrales] = useState<UmbralesABC>(DEFAULTS.umbrales);
   const [configTiendas, setConfigTiendas] = useState<ConfigTienda[]>([]);
   const [tiendas, setTiendas] = useState<Tienda[]>([]);
 
@@ -160,6 +174,15 @@ export default function ConfiguracionABC() {
         // Niveles de servicio
         if (data.niveles_servicio && data.niveles_servicio.length > 0) {
           setNivelesServicio(data.niveles_servicio);
+        }
+
+        // Umbrales de ranking
+        if (data.umbrales) {
+          setUmbrales({
+            umbral_a: data.umbrales.umbral_a ?? DEFAULTS.umbrales.umbral_a,
+            umbral_b: data.umbrales.umbral_b ?? DEFAULTS.umbrales.umbral_b,
+            umbral_c: data.umbrales.umbral_c ?? DEFAULTS.umbrales.umbral_c,
+          });
         }
 
         // Config por tienda
@@ -218,6 +241,29 @@ export default function ConfiguracionABC() {
     }
   };
 
+  const handleSaveUmbrales = async () => {
+    try {
+      setSaving(true);
+      setError(null);
+
+      // Validar umbrales: A < B < C
+      if (umbrales.umbral_a >= umbrales.umbral_b || umbrales.umbral_b >= umbrales.umbral_c) {
+        setError('Los umbrales deben ser secuenciales: A < B < C');
+        return;
+      }
+
+      await http.put('/api/config-inventario/parametros-abc/umbrales', umbrales);
+
+      setSuccessMessage('Umbrales de clasificación guardados correctamente');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      console.error('Error guardando:', err);
+      setError('Error al guardar los umbrales');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSaveConfigTienda = async (config: ConfigTienda) => {
     try {
       setSaving(true);
@@ -255,6 +301,7 @@ export default function ConfiguracionABC() {
       dias_cobertura_a: null,
       dias_cobertura_b: null,
       dias_cobertura_c: null,
+      dias_cobertura_d: null,
       activo: true,
     };
 
@@ -288,6 +335,7 @@ export default function ConfiguracionABC() {
 
   const tabs = [
     { id: 'global' as TabType, label: 'Parámetros Globales', icon: Settings },
+    { id: 'umbrales' as TabType, label: 'Umbrales ABC', icon: Package },
     { id: 'niveles' as TabType, label: 'Niveles de Servicio', icon: TrendingUp },
     { id: 'tiendas' as TabType, label: 'Por Tienda', icon: Store },
   ];
@@ -442,6 +490,143 @@ export default function ConfiguracionABC() {
           </div>
         )}
 
+        {/* TAB: Umbrales ABC */}
+        {activeTab === 'umbrales' && (
+          <div className="space-y-6">
+            {/* Info Banner */}
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <Package className="w-5 h-5 text-indigo-600 mt-0.5" />
+                <div>
+                  <p className="text-sm text-indigo-700">
+                    <strong>Umbrales de Clasificación ABC:</strong> Define los rangos de ranking por cantidad vendida
+                    para clasificar los productos. Los productos se ordenan por unidades vendidas en 30 días.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Umbrales */}
+            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <Package size={20} />
+                  Ranking por Cantidad Vendida
+                </h3>
+              </div>
+              <div className="p-6 space-y-6">
+                {/* Diagrama visual */}
+                <div className="grid grid-cols-4 gap-4 text-center">
+                  <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4">
+                    <div className="text-2xl font-bold text-green-700">A</div>
+                    <div className="text-sm text-green-600 mt-1">Top 1 - {umbrales.umbral_a}</div>
+                    <div className="text-xs text-green-500 mt-1">Más vendidos</div>
+                  </div>
+                  <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
+                    <div className="text-2xl font-bold text-yellow-700">B</div>
+                    <div className="text-sm text-yellow-600 mt-1">{umbrales.umbral_a + 1} - {umbrales.umbral_b}</div>
+                    <div className="text-xs text-yellow-500 mt-1">Venta media</div>
+                  </div>
+                  <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
+                    <div className="text-2xl font-bold text-orange-700">C</div>
+                    <div className="text-sm text-orange-600 mt-1">{umbrales.umbral_b + 1} - {umbrales.umbral_c}</div>
+                    <div className="text-xs text-orange-500 mt-1">Venta baja</div>
+                  </div>
+                  <div className="bg-purple-50 border-2 border-purple-300 rounded-lg p-4">
+                    <div className="text-2xl font-bold text-purple-700">D</div>
+                    <div className="text-sm text-purple-600 mt-1">{umbrales.umbral_c + 1}+</div>
+                    <div className="text-xs text-purple-500 mt-1">Cola larga</div>
+                  </div>
+                </div>
+
+                {/* Inputs */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-gray-200">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Umbral Clase A (Top N)
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="10"
+                      max="500"
+                      value={umbrales.umbral_a}
+                      onChange={(e) => setUmbrales(prev => ({
+                        ...prev,
+                        umbral_a: parseInt(e.target.value) || DEFAULTS.umbrales.umbral_a
+                      }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Productos del ranking 1 al N serán clase A. Default: 50
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Umbral Clase B (Top N)
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="50"
+                      max="1000"
+                      value={umbrales.umbral_b}
+                      onChange={(e) => setUmbrales(prev => ({
+                        ...prev,
+                        umbral_b: parseInt(e.target.value) || DEFAULTS.umbrales.umbral_b
+                      }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Productos del ranking {umbrales.umbral_a + 1} al N serán clase B. Default: 200
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Umbral Clase C (Top N)
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="100"
+                      max="2000"
+                      value={umbrales.umbral_c}
+                      onChange={(e) => setUmbrales(prev => ({
+                        ...prev,
+                        umbral_c: parseInt(e.target.value) || DEFAULTS.umbrales.umbral_c
+                      }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Productos del ranking {umbrales.umbral_b + 1} al N serán clase C. Default: 800
+                    </p>
+                  </div>
+                </div>
+
+                {/* Nota */}
+                <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+                  <strong>Nota:</strong> Los productos con ranking mayor a {umbrales.umbral_c} serán clasificados como <strong>Clase D</strong> (cola larga).
+                  Estos productos usarán el método "Padre Prudente" para el cálculo de inventario sugerido.
+                </div>
+
+                {/* Botón Guardar */}
+                <div className="flex justify-end pt-4 border-t border-gray-200">
+                  <button
+                    onClick={handleSaveUmbrales}
+                    disabled={saving}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    <Save size={18} />
+                    {saving ? 'Guardando...' : 'Guardar Umbrales'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* TAB: Niveles de Servicio */}
         {activeTab === 'niveles' && (
           <div className="space-y-6">
@@ -484,7 +669,8 @@ export default function ConfiguracionABC() {
                           <span className={`px-3 py-1 rounded-full text-sm font-bold ${
                             nivel.clase === 'A' ? 'bg-green-100 text-green-800' :
                             nivel.clase === 'B' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-red-100 text-red-800'
+                            nivel.clase === 'C' ? 'bg-orange-100 text-orange-800' :
+                            'bg-purple-100 text-purple-800'
                           }`}>
                             Clase {nivel.clase}
                           </span>
@@ -545,7 +731,7 @@ export default function ConfiguracionABC() {
               </div>
               <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-between items-center">
                 <p className="text-xs text-gray-500">
-                  * Clase C usa método "Padre Prudente" (heurístico), no requiere nivel de servicio estadístico
+                  * Clase D usa método "Padre Prudente" (heurístico), no requiere nivel de servicio estadístico
                 </p>
                 <button
                   onClick={handleSaveNiveles}
@@ -630,7 +816,7 @@ export default function ConfiguracionABC() {
                       </label>
                     </div>
                     <div className="p-6">
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                         <div>
                           <label className="block text-xs font-medium text-gray-500 mb-1">Lead Time Override</label>
                           <input
@@ -695,7 +881,24 @@ export default function ConfiguracionABC() {
                               'dias_cobertura_c',
                               e.target.value ? parseInt(e.target.value) : null
                             )}
-                            placeholder={`Global: ${nivelesServicio.find(n => n.clase === 'C')?.dias_cobertura_max || 30}`}
+                            placeholder={`Global: ${nivelesServicio.find(n => n.clase === 'C')?.dias_cobertura_max || 21}`}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Días Cobertura D</label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="90"
+                            value={config.dias_cobertura_d ?? ''}
+                            onChange={(e) => handleUpdateConfigTienda(
+                              config.tienda_id,
+                              'dias_cobertura_d',
+                              e.target.value ? parseInt(e.target.value) : null
+                            )}
+                            placeholder={`Global: ${nivelesServicio.find(n => n.clase === 'D')?.dias_cobertura_max || 30}`}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                           />
                         </div>
