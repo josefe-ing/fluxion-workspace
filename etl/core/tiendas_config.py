@@ -88,14 +88,21 @@ class AlmacenKLK:
 
 
 # Configuraciones de almacenes por sucursal KLK
-# SIMPLIFICADO: Solo PERIFERICO usa ambos almacenes, las demás solo piso de venta
+# Todas las tiendas usan solo el almacén de piso de venta
 ALMACENES_KLK: Dict[str, List[AlmacenKLK]] = {
-    # SUC001 - PERIFERICO (única tienda que usa ambos almacenes)
+    # SUC001 - PERIFERICO: Solo piso de venta
     "tienda_01": [
         AlmacenKLK(codigo="APP-TPF", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
-        AlmacenKLK(codigo="APP-PPF", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True, activo=True),
     ],
-    # SUC002 - EL BOSQUE: Solo piso de venta
+    # SUC002 - AV. BOLIVAR: Solo piso de venta
+    "tienda_02": [
+        AlmacenKLK(codigo="TAVBOL", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    # SUC003 - MAÑONGO: Solo piso de venta
+    "tienda_03": [
+        AlmacenKLK(codigo="TTMAN", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    # SUC004 - EL BOSQUE: Solo piso de venta
     "tienda_08": [
         AlmacenKLK(codigo="APP-TBQ", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
     ],
@@ -199,7 +206,10 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         password=get_sql_pass(),
         port=14348,
         activo=True,
-        codigo_deposito="0202"
+        codigo_deposito="0202",
+        visible_pedidos=True,  # ✅ Visible en Pedidos Sugeridos
+        sistema_pos="klk",  # 🆕 Migrado a KLK
+        codigo_almacen_klk="TAVBOL"  # Código de almacén en KLK: AV. BOLIVAR PV
     ),
 
     "tienda_03": TiendaConfig(
@@ -212,7 +222,9 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
         port=14348,
         activo=True,
         codigo_deposito="0302",
-        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
+        visible_pedidos=True,  # ✅ Visible en Pedidos Sugeridos
+        sistema_pos="klk",  # 🆕 Migrado a KLK
+        codigo_almacen_klk="TTMAN"  # Código de almacén en KLK: MAÑONGO PV
     ),
 
     "tienda_04": TiendaConfig(
