@@ -28,6 +28,7 @@ import ABCXYZAnalysis from './components/productos/ABCXYZAnalysis';
 import ABCXYZFullAnalysis from './components/productos/ABCXYZFullAnalysis';
 import AnalisisMaestro from './components/productos/AnalisisMaestro';
 import ProductosLayout from './components/productos/ProductosLayout';
+import EmergenciasDashboard from './components/emergencias/EmergenciasDashboard';
 
 // Protected Routes Component
 function ProtectedRoutes() {
@@ -53,6 +54,8 @@ function ProtectedRoutes() {
         <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
         {/* Pedidos Inter-CEDI */}
         <Route path="pedidos-inter-cedi/nuevo" element={<PedidoInterCediWizard />} />
+        {/* Emergencias de Inventario */}
+        <Route path="emergencias" element={<EmergenciasDashboard />} />
         <Route path="administrador" element={<ETLControlCenter />} />
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="administrador/parametros-abc" element={<ConfiguracionABC />} />

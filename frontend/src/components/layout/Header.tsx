@@ -10,6 +10,7 @@ export default function Header() {
     { path: '/inventarios', label: 'Inventarios' },
     { path: '/ventas', label: 'Ventas' },
     { path: '/productos', label: 'Productos' },
+    { path: '/emergencias', label: 'Emergencias' },
   ];
 
   const isActive = (path: string) => {
@@ -24,6 +25,9 @@ export default function Header() {
     }
     if (path === '/productos') {
       return location.pathname === path || location.pathname.startsWith('/productos/');
+    }
+    if (path === '/emergencias') {
+      return location.pathname === path || location.pathname.startsWith('/emergencias/');
     }
     return location.pathname === path;
   };
