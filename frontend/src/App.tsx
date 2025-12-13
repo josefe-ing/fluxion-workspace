@@ -12,6 +12,7 @@ import SalesDashboard from './components/sales/SalesDashboard';
 // Pedidos Sugeridos
 import SuggestedOrder from './components/orders/SuggestedOrder';
 import OrderWizard from './components/orders/OrderWizard';
+import PedidoInterCediWizard from './components/orders/PedidoInterCediWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
 import ETLControlCenter from './components/settings/ETLControlCenter';
@@ -50,6 +51,8 @@ function ProtectedRoutes() {
         <Route path="pedidos-sugeridos" element={<SuggestedOrder />} />
         <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} />
         <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
+        {/* Pedidos Inter-CEDI */}
+        <Route path="pedidos-inter-cedi/nuevo" element={<PedidoInterCediWizard />} />
         <Route path="administrador" element={<ETLControlCenter />} />
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="administrador/parametros-abc" element={<ConfiguracionABC />} />

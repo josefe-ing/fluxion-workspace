@@ -51,12 +51,22 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'category',
-          label: 'Pedidos Sugeridos',
+          label: 'Pedidos CEDI→Tienda',
           items: [
             'modulos/pedidos-sugeridos/index',
             'modulos/pedidos-sugeridos/crear-pedido',
             'modulos/pedidos-sugeridos/punto-reorden',
             'modulos/pedidos-sugeridos/aprobacion',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Pedidos Inter-CEDI',
+          items: [
+            'modulos/pedidos-inter-cedi/index',
+            'modulos/pedidos-inter-cedi/crear-pedido',
+            'modulos/pedidos-inter-cedi/formulas',
+            'modulos/pedidos-inter-cedi/columnas',
           ],
         },
         {

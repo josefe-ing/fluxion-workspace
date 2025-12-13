@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 import { formatInteger } from '../../utils/formatNumber';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, ReferenceArea } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, ReferenceArea, ReferenceLine } from 'recharts';
 
 interface HistorySnapshot {
   fecha_snapshot: string;
@@ -217,16 +217,28 @@ export default function ProductHistoryModal({
     const maxValue = Math.max(...cantidades);
     const rango = maxValue - minValue;
 
+    // Si hay valores negativos, ajustar el dominio para mostrarlos correctamente
+    const tieneNegativos = minValue < 0;
+
     // Siempre ajustar para ver mejor la variación cuando hay zoom
     if (zoomLeft && zoomRight) {
-      const margen = Math.max(rango * 0.2, maxValue * 0.02, 5);
+      const margen = Math.max(rango * 0.2, Math.abs(maxValue) * 0.02, 5);
       return [
-        Math.max(0, Math.floor(minValue - margen)),
+        Math.floor(minValue - margen),
         Math.ceil(maxValue + margen)
       ];
     }
 
-    // Sin zoom: comportamiento original
+    // Si hay valores negativos, mostrar el rango completo con margen
+    if (tieneNegativos) {
+      const margen = Math.max(rango * 0.1, 5);
+      return [
+        Math.floor(minValue - margen),
+        Math.ceil(maxValue + margen)
+      ];
+    }
+
+    // Sin zoom y sin negativos: comportamiento original
     if (rango < maxValue * 0.1 && rango > 0) {
       const margen = rango * 0.5;
       return [
@@ -236,8 +248,8 @@ export default function ProductHistoryModal({
     }
 
     if (rango === 0) {
-      const margen = maxValue * 0.05 || 10;
-      return [Math.max(0, Math.floor(minValue - margen)), Math.ceil(maxValue + margen)];
+      const margen = Math.abs(maxValue) * 0.05 || 10;
+      return [Math.floor(minValue - margen), Math.ceil(maxValue + margen)];
     }
 
     return [0, Math.ceil(maxValue * 1.05)];
@@ -317,6 +329,11 @@ export default function ProductHistoryModal({
   const dominioY = calcularDominioYZoom();
   const cambioStats = calcularCambio();
   const isZoomed = zoomLeft !== null && zoomRight !== null;
+
+  // Detectar si hay valores mixtos (positivos y negativos) para mostrar línea en Y=0
+  const tieneValoresMixtos = chartDataZoomed.length > 0 &&
+    Math.min(...chartDataZoomed.map(d => d.cantidad)) < 0 &&
+    Math.max(...chartDataZoomed.map(d => d.cantidad)) > 0;
 
   // Renderizar etiqueta personalizada para cada punto
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -544,6 +561,14 @@ export default function ProductHistoryModal({
                     >
                       <LabelList dataKey="cantidad" content={renderCustomLabel} />
                     </Line>
+                    {tieneValoresMixtos && (
+                      <ReferenceLine
+                        y={0}
+                        stroke="#9ca3af"
+                        strokeDasharray="3 3"
+                        label={{ value: '0', position: 'left', fill: '#9ca3af', fontSize: 10 }}
+                      />
+                    )}
                     {refAreaLeft && refAreaRight && (
                       <ReferenceArea
                         x1={refAreaLeft}
