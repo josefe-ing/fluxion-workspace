@@ -699,13 +699,13 @@ def detectar_emergencias(
             # demanda_restante = (demanda_diaria * factor_intensidad * pct_dia_restante)
             demanda_restante = demanda_diaria * factor_intensidad * pct_dia_restante
 
-            # Evitar división por cero
-            if demanda_restante > 0:
-                cobertura = stock_actual / demanda_restante
-            elif stock_actual > 0:
-                cobertura = Decimal("999")  # Stock pero sin demanda esperada
-            else:
-                cobertura = Decimal("0")  # Sin stock y sin demanda
+            # FILTRO: Si no hay demanda restante esperada, no es emergencia
+            # (ya sea porque es tarde en el día o porque el factor de intensidad es bajo)
+            if demanda_restante <= Decimal("0.1"):
+                continue  # Sin demanda restante significativa = no es emergencia hoy
+
+            # Calcular cobertura
+            cobertura = stock_actual / demanda_restante
 
             # Clasificar emergencia
             tipo_emergencia = clasificar_emergencia(
