@@ -71,6 +71,16 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'category',
+          label: 'Emergencias',
+          items: [
+            'modulos/emergencias/index',
+            'modulos/emergencias/dashboard',
+            'modulos/emergencias/configuracion',
+            'modulos/emergencias/formulas',
+          ],
+        },
+        {
+          type: 'category',
           label: 'Administrador',
           items: [
             'modulos/administrador/index',

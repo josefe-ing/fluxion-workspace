@@ -1050,7 +1050,7 @@ def obtener_detalle_producto_emergencia(
             WHERE ubicacion_id = %s AND producto_id = %s
         """, (ubicacion_id, producto_id))
         stock_row = cursor.fetchone()
-        stock_actual = Decimal(str(stock_row['stock']))
+        stock_actual = Decimal(str(stock_row['stock'] or 0))
 
         # 4. Ventas de hoy por hora
         cursor.execute("""
@@ -1145,11 +1145,11 @@ def obtener_detalle_producto_emergencia(
 
         cursor.close()
 
-    # Convertir a diccionarios por hora
-    ventas_hoy_dict = {int(r['hora']): Decimal(str(r['cantidad'])) for r in ventas_hoy_rows}
-    ventas_ayer_dict = {int(r['hora']): Decimal(str(r['cantidad'])) for r in ventas_ayer_rows}
-    ventas_semana_dict = {int(r['hora']): Decimal(str(r['cantidad'])) for r in ventas_semana_rows}
-    promedio_dict = {int(r['hora']): Decimal(str(r['cantidad'])) for r in promedio_rows}
+    # Convertir a diccionarios por hora (con manejo de None)
+    ventas_hoy_dict = {int(r['hora']): Decimal(str(r['cantidad'] or 0)) for r in ventas_hoy_rows}
+    ventas_ayer_dict = {int(r['hora']): Decimal(str(r['cantidad'] or 0)) for r in ventas_ayer_rows}
+    ventas_semana_dict = {int(r['hora']): Decimal(str(r['cantidad'] or 0)) for r in ventas_semana_rows}
+    promedio_dict = {int(r['hora']): Decimal(str(r['cantidad'] or 0)) for r in promedio_rows}
 
     # Calcular factor de intensidad
     factor, ventas_esperadas_total, ventas_reales_total = calcular_factor_intensidad(ubicacion_id, fecha_hoy)
@@ -1199,14 +1199,16 @@ def obtener_detalle_producto_emergencia(
                     hora_agotamiento = h['hora']
                     break
 
-    ventas_hoy_total = Decimal(str(totales['ventas_hoy']))
-    ventas_ayer_total = Decimal(str(totales['ventas_ayer']))
-    ventas_semana_total = Decimal(str(totales['ventas_semana']))
-    promedio_30 = Decimal(str(prom_row['promedio']))
+    ventas_hoy_total = Decimal(str(totales['ventas_hoy'] or 0))
+    ventas_ayer_total = Decimal(str(totales['ventas_ayer'] or 0))
+    ventas_semana_total = Decimal(str(totales['ventas_semana'] or 0))
+    promedio_30 = Decimal(str(prom_row['promedio'] or 0))
 
     # Calcular demanda restante
     pct_dia_restante = Decimal("1") - Decimal(str(calcular_porcentaje_dia_transcurrido(hora_actual)))
-    demanda_restante = promedio_30 * factor * pct_dia_restante
+    # Asegurar que factor es Decimal
+    factor_decimal = Decimal(str(factor)) if not isinstance(factor, Decimal) else factor
+    demanda_restante = promedio_30 * factor_decimal * pct_dia_restante
 
     # Cobertura
     if demanda_restante > 0:
