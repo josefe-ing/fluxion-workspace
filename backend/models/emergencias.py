@@ -358,3 +358,57 @@ class OperacionExitosaResponse(BaseModel):
     mensaje: str
     ubicacion_id: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
+
+
+# =====================================================================================
+# MODELOS PARA DETALLE DE PRODUCTO EN EMERGENCIA
+# =====================================================================================
+
+class VentaHoraria(BaseModel):
+    """Venta por hora del día"""
+    hora: int
+    cantidad: Decimal
+    acumulado: Decimal
+    es_proyeccion: bool = False
+
+
+class ComparativoVentas(BaseModel):
+    """Comparativo de ventas de un producto"""
+    hoy: List[VentaHoraria]
+    ayer: List[VentaHoraria]
+    semana_pasada: List[VentaHoraria]  # Mismo día de la semana anterior
+    promedio_historico: List[VentaHoraria]  # Promedio de los últimos 30 días
+
+
+class DetalleProductoEmergencia(BaseModel):
+    """Detalle completo de un producto en emergencia"""
+    # Identificación
+    ubicacion_id: str
+    nombre_tienda: str
+    producto_id: str
+    nombre_producto: str
+    categoria: Optional[str] = None
+    clase_abc: Optional[str] = None
+
+    # Stock y ventas
+    stock_actual: Decimal
+    stock_inicio_dia: Decimal
+    ventas_hoy: Decimal
+    demanda_restante: Decimal
+    cobertura: Decimal
+
+    # Comparativos
+    ventas_ayer: Decimal
+    ventas_semana_pasada: Decimal
+    promedio_30_dias: Decimal
+
+    # Factor de intensidad
+    factor_intensidad: Decimal
+    intensidad: str
+
+    # Proyecciones
+    proyeccion_venta_dia: Decimal
+    hora_agotamiento_estimada: Optional[int] = None
+
+    # Datos para gráficos
+    comparativo_ventas: ComparativoVentas

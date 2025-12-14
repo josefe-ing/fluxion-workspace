@@ -55,6 +55,7 @@ from services.detector_emergencias import (
     calcular_factor_intensidad,
     clasificar_intensidad,
     calcular_porcentaje_dia_transcurrido,
+    obtener_detalle_producto_emergencia,
 )
 from db_manager import get_db_connection
 
@@ -517,4 +518,42 @@ async def actualizar_config_tienda(
         raise
     except Exception as e:
         logger.error(f"Error actualizando config: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+# =====================================================================================
+# DETALLE DE PRODUCTO PARA GRÁFICOS
+# =====================================================================================
+
+@router.get(
+    "/detalle/{ubicacion_id}/{producto_id}",
+    summary="Detalle de producto con comparativos de venta"
+)
+async def obtener_detalle_producto(ubicacion_id: str, producto_id: str):
+    """
+    Obtiene datos detallados de un producto en emergencia para mostrar gráficos.
+
+    Incluye:
+    - Ventas por hora de hoy (con proyección para horas futuras)
+    - Ventas por hora de ayer
+    - Ventas por hora del mismo día de la semana pasada
+    - Promedio histórico por hora (últimos 30 días)
+    - Proyección de venta total del día
+    - Hora estimada de agotamiento (si aplica)
+    """
+    try:
+        detalle = obtener_detalle_producto_emergencia(ubicacion_id, producto_id)
+
+        if not detalle:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Producto {producto_id} no encontrado en tienda {ubicacion_id}"
+            )
+
+        return detalle
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo detalle producto: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")

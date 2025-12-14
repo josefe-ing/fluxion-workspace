@@ -988,3 +988,257 @@ def obtener_factor_intensidad_todas_tiendas() -> List[FactorIntensidad]:
         ))
 
     return factores
+
+
+# =============================================================================
+# DETALLE DE PRODUCTO PARA MODAL DE EMERGENCIA
+# =============================================================================
+
+def obtener_detalle_producto_emergencia(
+    ubicacion_id: str,
+    producto_id: str
+) -> Dict[str, Any]:
+    """
+    Obtiene datos detallados de un producto para el modal de emergencia,
+    incluyendo comparativos de ventas por hora y proyecciones.
+
+    Args:
+        ubicacion_id: ID de la tienda
+        producto_id: ID del producto
+
+    Returns:
+        Diccionario con:
+        - info_producto: nombre, categoria, clase_abc
+        - stock_actual, ventas_hoy
+        - comparativo: ventas hoy vs ayer vs semana pasada por hora
+        - proyeccion: estimación de venta para el resto del día
+    """
+    fecha_hoy = date.today()
+    fecha_ayer = fecha_hoy - timedelta(days=1)
+    fecha_semana_pasada = fecha_hoy - timedelta(days=7)
+    hora_actual = datetime.now().hour
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # 1. Info del producto
+        cursor.execute("""
+            SELECT
+                p.id AS producto_id,
+                p.nombre AS nombre_producto,
+                p.categoria,
+                abc.clasificacion AS clase_abc
+            FROM productos p
+            LEFT JOIN clasificacion_abc abc ON p.id = abc.producto_id AND abc.ubicacion_id = %s
+            WHERE p.id = %s
+        """, (ubicacion_id, producto_id))
+        producto = cursor.fetchone()
+
+        if not producto:
+            cursor.close()
+            return None
+
+        # 2. Info de la tienda
+        cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", (ubicacion_id,))
+        tienda = cursor.fetchone()
+        nombre_tienda = tienda['nombre'] if tienda else ubicacion_id
+
+        # 3. Stock actual
+        cursor.execute("""
+            SELECT COALESCE(SUM(cantidad), 0) AS stock
+            FROM inventario_actual
+            WHERE ubicacion_id = %s AND producto_id = %s
+        """, (ubicacion_id, producto_id))
+        stock_row = cursor.fetchone()
+        stock_actual = Decimal(str(stock_row['stock']))
+
+        # 4. Ventas de hoy por hora
+        cursor.execute("""
+            SELECT
+                EXTRACT(HOUR FROM fecha_venta)::int AS hora,
+                COALESCE(SUM(cantidad), 0) AS cantidad
+            FROM ventas
+            WHERE ubicacion_id = %s
+              AND producto_id = %s
+              AND DATE(fecha_venta) = %s
+            GROUP BY EXTRACT(HOUR FROM fecha_venta)
+            ORDER BY hora
+        """, (ubicacion_id, producto_id, fecha_hoy))
+        ventas_hoy_rows = cursor.fetchall()
+
+        # 5. Ventas de ayer por hora
+        cursor.execute("""
+            SELECT
+                EXTRACT(HOUR FROM fecha_venta)::int AS hora,
+                COALESCE(SUM(cantidad), 0) AS cantidad
+            FROM ventas
+            WHERE ubicacion_id = %s
+              AND producto_id = %s
+              AND DATE(fecha_venta) = %s
+            GROUP BY EXTRACT(HOUR FROM fecha_venta)
+            ORDER BY hora
+        """, (ubicacion_id, producto_id, fecha_ayer))
+        ventas_ayer_rows = cursor.fetchall()
+
+        # 6. Ventas del mismo día de la semana pasada por hora
+        cursor.execute("""
+            SELECT
+                EXTRACT(HOUR FROM fecha_venta)::int AS hora,
+                COALESCE(SUM(cantidad), 0) AS cantidad
+            FROM ventas
+            WHERE ubicacion_id = %s
+              AND producto_id = %s
+              AND DATE(fecha_venta) = %s
+            GROUP BY EXTRACT(HOUR FROM fecha_venta)
+            ORDER BY hora
+        """, (ubicacion_id, producto_id, fecha_semana_pasada))
+        ventas_semana_rows = cursor.fetchall()
+
+        # 7. Promedio histórico por hora (últimos 30 días, mismo día de la semana)
+        cursor.execute("""
+            SELECT
+                EXTRACT(HOUR FROM fecha_venta)::int AS hora,
+                COALESCE(AVG(cantidad_diaria), 0) AS cantidad
+            FROM (
+                SELECT
+                    DATE(fecha_venta) AS fecha,
+                    EXTRACT(HOUR FROM fecha_venta)::int AS hora,
+                    SUM(cantidad) AS cantidad_diaria
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND producto_id = %s
+                  AND fecha_venta >= %s - INTERVAL '30 days'
+                  AND fecha_venta < %s
+                  AND EXTRACT(DOW FROM fecha_venta) = EXTRACT(DOW FROM %s::date)
+                GROUP BY DATE(fecha_venta), EXTRACT(HOUR FROM fecha_venta)
+            ) subq
+            GROUP BY hora
+            ORDER BY hora
+        """, (ubicacion_id, producto_id, fecha_hoy, fecha_hoy, fecha_hoy))
+        promedio_rows = cursor.fetchall()
+
+        # 8. Totales de ventas para comparar
+        cursor.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN DATE(fecha_venta) = %s THEN cantidad ELSE 0 END), 0) AS ventas_hoy,
+                COALESCE(SUM(CASE WHEN DATE(fecha_venta) = %s THEN cantidad ELSE 0 END), 0) AS ventas_ayer,
+                COALESCE(SUM(CASE WHEN DATE(fecha_venta) = %s THEN cantidad ELSE 0 END), 0) AS ventas_semana
+            FROM ventas
+            WHERE ubicacion_id = %s AND producto_id = %s
+        """, (fecha_hoy, fecha_ayer, fecha_semana_pasada, ubicacion_id, producto_id))
+        totales = cursor.fetchone()
+
+        # 9. Promedio 30 días
+        cursor.execute("""
+            SELECT COALESCE(AVG(cantidad_diaria), 0) AS promedio
+            FROM (
+                SELECT DATE(fecha_venta), SUM(cantidad) AS cantidad_diaria
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND producto_id = %s
+                  AND fecha_venta >= %s - INTERVAL '30 days'
+                  AND fecha_venta < %s
+                GROUP BY DATE(fecha_venta)
+            ) subq
+        """, (ubicacion_id, producto_id, fecha_hoy, fecha_hoy))
+        prom_row = cursor.fetchone()
+
+        cursor.close()
+
+    # Convertir a diccionarios por hora
+    ventas_hoy_dict = {int(r['hora']): Decimal(str(r['cantidad'])) for r in ventas_hoy_rows}
+    ventas_ayer_dict = {int(r['hora']): Decimal(str(r['cantidad'])) for r in ventas_ayer_rows}
+    ventas_semana_dict = {int(r['hora']): Decimal(str(r['cantidad'])) for r in ventas_semana_rows}
+    promedio_dict = {int(r['hora']): Decimal(str(r['cantidad'])) for r in promedio_rows}
+
+    # Calcular factor de intensidad
+    factor, ventas_esperadas_total, ventas_reales_total = calcular_factor_intensidad(ubicacion_id, fecha_hoy)
+
+    # Construir arrays horarios (9am - 7pm)
+    horas_operacion = list(range(9, 20))  # 9am a 7pm
+
+    def construir_ventas_horarias(ventas_dict: Dict[int, Decimal], proyectar: bool = False) -> List[Dict]:
+        resultado = []
+        acumulado = Decimal("0")
+        for hora in horas_operacion:
+            cantidad = ventas_dict.get(hora, Decimal("0"))
+
+            # Para hoy, proyectar horas futuras
+            es_proyeccion = False
+            if proyectar and hora > hora_actual:
+                # Usar promedio histórico para proyectar
+                cantidad = promedio_dict.get(hora, Decimal("0")) * factor
+                es_proyeccion = True
+
+            acumulado += cantidad
+            resultado.append({
+                'hora': hora,
+                'cantidad': float(round(cantidad, 1)),
+                'acumulado': float(round(acumulado, 1)),
+                'es_proyeccion': es_proyeccion
+            })
+        return resultado
+
+    # Construir ventas horarias
+    hoy_con_proyeccion = construir_ventas_horarias(ventas_hoy_dict, proyectar=True)
+    ayer_horario = construir_ventas_horarias(ventas_ayer_dict)
+    semana_horario = construir_ventas_horarias(ventas_semana_dict)
+    promedio_horario = construir_ventas_horarias(promedio_dict)
+
+    # Calcular proyección total del día
+    proyeccion_total = sum(h['cantidad'] for h in hoy_con_proyeccion)
+
+    # Estimar hora de agotamiento (si aplica)
+    hora_agotamiento = None
+    if stock_actual > 0:
+        stock_simulado = float(stock_actual)
+        for h in hoy_con_proyeccion:
+            if h['hora'] > hora_actual:
+                stock_simulado -= h['cantidad']
+                if stock_simulado <= 0:
+                    hora_agotamiento = h['hora']
+                    break
+
+    ventas_hoy_total = Decimal(str(totales['ventas_hoy']))
+    ventas_ayer_total = Decimal(str(totales['ventas_ayer']))
+    ventas_semana_total = Decimal(str(totales['ventas_semana']))
+    promedio_30 = Decimal(str(prom_row['promedio']))
+
+    # Calcular demanda restante
+    pct_dia_restante = Decimal("1") - Decimal(str(calcular_porcentaje_dia_transcurrido(hora_actual)))
+    demanda_restante = promedio_30 * factor * pct_dia_restante
+
+    # Cobertura
+    if demanda_restante > 0:
+        cobertura = stock_actual / demanda_restante
+    elif stock_actual > 0:
+        cobertura = Decimal("999")
+    else:
+        cobertura = Decimal("0")
+
+    return {
+        'ubicacion_id': ubicacion_id,
+        'nombre_tienda': nombre_tienda,
+        'producto_id': producto_id,
+        'nombre_producto': producto['nombre_producto'],
+        'categoria': producto['categoria'],
+        'clase_abc': producto['clase_abc'],
+        'stock_actual': float(stock_actual),
+        'ventas_hoy': float(ventas_hoy_total),
+        'ventas_ayer': float(ventas_ayer_total),
+        'ventas_semana_pasada': float(ventas_semana_total),
+        'promedio_30_dias': float(round(promedio_30, 1)),
+        'demanda_restante': float(round(demanda_restante, 1)),
+        'cobertura': float(round(cobertura, 4)),
+        'factor_intensidad': float(round(factor, 2)),
+        'intensidad': clasificar_intensidad(factor),
+        'proyeccion_venta_dia': float(round(proyeccion_total, 1)),
+        'hora_agotamiento_estimada': hora_agotamiento,
+        'hora_actual': hora_actual,
+        'comparativo_ventas': {
+            'hoy': hoy_con_proyeccion,
+            'ayer': ayer_horario,
+            'semana_pasada': semana_horario,
+            'promedio_historico': promedio_horario
+        }
+    }

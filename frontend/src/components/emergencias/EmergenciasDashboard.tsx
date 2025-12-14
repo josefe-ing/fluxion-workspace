@@ -1,13 +1,28 @@
 import { useState, useEffect } from 'react';
 import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  ReferenceLine,
+  Area,
+  ComposedChart,
+} from 'recharts';
+import {
   ejecutarScan,
   getConfigTiendas,
   habilitarTienda,
   deshabilitarTienda,
+  getDetalleProducto,
   ScanResponse,
   ConfigTiendasListResponse,
   EmergenciaDetectada,
   TipoEmergencia,
+  DetalleProductoEmergencia,
 } from '../../services/emergenciasService';
 
 // ============================================================================
@@ -773,11 +788,34 @@ function EmergenciaDetalleModal({
   emergencia: EmergenciaDetectada;
   onClose: () => void;
 }) {
-  const stockActual = Number(emergencia.stock_actual);
-  const demandaRestante = Number(emergencia.demanda_restante);
-  const cobertura = Number(emergencia.cobertura);
-  const factorIntensidad = Number(emergencia.factor_intensidad);
-  const ventasHoy = Number(emergencia.ventas_hoy);
+  const [detalle, setDetalle] = useState<DetalleProductoEmergencia | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Cargar datos detallados al abrir el modal
+  useEffect(() => {
+    const cargarDetalle = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const data = await getDetalleProducto(emergencia.ubicacion_id, emergencia.producto_id);
+        setDetalle(data);
+      } catch (err) {
+        console.error('Error cargando detalle:', err);
+        setError('Error al cargar datos detallados');
+      } finally {
+        setLoading(false);
+      }
+    };
+    cargarDetalle();
+  }, [emergencia.ubicacion_id, emergencia.producto_id]);
+
+  // Valores del emergencia (fallback mientras carga)
+  const stockActual = detalle ? detalle.stock_actual : Number(emergencia.stock_actual);
+  const demandaRestante = detalle ? detalle.demanda_restante : Number(emergencia.demanda_restante);
+  const cobertura = detalle ? detalle.cobertura : Number(emergencia.cobertura);
+  const factorIntensidad = detalle ? detalle.factor_intensidad : Number(emergencia.factor_intensidad);
+  const ventasHoy = detalle ? detalle.ventas_hoy : Number(emergencia.ventas_hoy);
 
   // Calcular explicaciones
   const getCoberturaExplicacion = () => {
@@ -825,16 +863,59 @@ function EmergenciaDetalleModal({
     return 'Nivel de stock bajo pero manejable. Incluir en el proximo pedido regular.';
   };
 
+  // Preparar datos para graficos
+  const prepararDatosGrafico = () => {
+    if (!detalle?.comparativo_ventas) return [];
+
+    const { hoy, ayer, semana_pasada, promedio_historico } = detalle.comparativo_ventas;
+
+    return hoy.map((h, idx) => ({
+      hora: `${h.hora}:00`,
+      horaNum: h.hora,
+      hoy: h.cantidad,
+      hoyAcum: h.acumulado,
+      esProyeccion: h.es_proyeccion,
+      ayer: ayer[idx]?.cantidad || 0,
+      ayerAcum: ayer[idx]?.acumulado || 0,
+      semanaPasada: semana_pasada[idx]?.cantidad || 0,
+      semanaPasadaAcum: semana_pasada[idx]?.acumulado || 0,
+      promedio: promedio_historico[idx]?.cantidad || 0,
+      promedioAcum: promedio_historico[idx]?.acumulado || 0,
+    }));
+  };
+
+  const chartData = prepararDatosGrafico();
+
+  // Custom tooltip para el grafico
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const esProyeccion = payload[0]?.payload?.esProyeccion;
+      return (
+        <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
+          <p className="font-medium text-gray-900 mb-2">
+            {label} {esProyeccion && <span className="text-xs text-orange-500">(proyectado)</span>}
+          </p>
+          {payload.map((entry: any, idx: number) => (
+            <p key={idx} className="text-sm" style={{ color: entry.color }}>
+              {entry.name}: {formatNumber(entry.value, 1)} uds
+            </p>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
         {/* Backdrop */}
         <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={onClose}></div>
 
-        {/* Modal */}
-        <div className="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-2xl">
+        {/* Modal - mas grande para graficos */}
+        <div className="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-4xl max-h-[90vh] overflow-y-auto">
           {/* Header */}
-          <div className={`px-6 py-4 ${getTipoEmergenciaColor(emergencia.tipo_emergencia)} border-b`}>
+          <div className={`px-6 py-4 ${getTipoEmergenciaColor(emergencia.tipo_emergencia)} border-b sticky top-0 z-10`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <span className={`w-4 h-4 rounded-full ${getTipoEmergenciaDot(emergencia.tipo_emergencia)}`}></span>
@@ -870,7 +951,7 @@ function EmergenciaDetalleModal({
               </div>
             </div>
 
-            {/* Metricas */}
+            {/* Metricas principales */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-gray-50 rounded-lg p-3">
                 <div className="text-xs text-gray-500">Stock Actual</div>
@@ -896,6 +977,172 @@ function EmergenciaDetalleModal({
               </div>
             </div>
 
+            {/* Comparativos de ventas */}
+            {detalle && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
+                  <div className="text-xs text-blue-600">Ventas Hoy</div>
+                  <div className="text-lg font-bold text-blue-700">{formatNumber(detalle.ventas_hoy)}</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <div className="text-xs text-gray-500">Ventas Ayer</div>
+                  <div className="text-lg font-bold text-gray-700">{formatNumber(detalle.ventas_ayer)}</div>
+                </div>
+                <div className="bg-purple-50 rounded-lg p-3 border border-purple-100">
+                  <div className="text-xs text-purple-600">Mismo Dia Sem. Pasada</div>
+                  <div className="text-lg font-bold text-purple-700">{formatNumber(detalle.ventas_semana_pasada)}</div>
+                </div>
+                <div className="bg-green-50 rounded-lg p-3 border border-green-100">
+                  <div className="text-xs text-green-600">Prom. 30 Dias</div>
+                  <div className="text-lg font-bold text-green-700">{formatNumber(detalle.promedio_30_dias, 1)}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Proyeccion y hora agotamiento */}
+            {detalle && (
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs text-orange-600 font-medium">Proyeccion Venta Hoy</div>
+                      <div className="text-2xl font-bold text-orange-700">{formatNumber(detalle.proyeccion_venta_dia, 1)}</div>
+                      <div className="text-xs text-orange-500">unidades estimadas al cierre</div>
+                    </div>
+                    <svg className="h-10 w-10 text-orange-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                    </svg>
+                  </div>
+                </div>
+                <div className={`rounded-lg p-4 border ${detalle.hora_agotamiento_estimada ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className={`text-xs font-medium ${detalle.hora_agotamiento_estimada ? 'text-red-600' : 'text-green-600'}`}>
+                        Hora Agotamiento Estimada
+                      </div>
+                      <div className={`text-2xl font-bold ${detalle.hora_agotamiento_estimada ? 'text-red-700' : 'text-green-700'}`}>
+                        {detalle.hora_agotamiento_estimada ? `${detalle.hora_agotamiento_estimada}:00` : 'No aplica'}
+                      </div>
+                      <div className={`text-xs ${detalle.hora_agotamiento_estimada ? 'text-red-500' : 'text-green-500'}`}>
+                        {detalle.hora_agotamiento_estimada ? 'Se agotara antes de este horario' : 'Stock suficiente para el dia'}
+                      </div>
+                    </div>
+                    <svg className={`h-10 w-10 ${detalle.hora_agotamiento_estimada ? 'text-red-300' : 'text-green-300'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Grafico de ventas por hora */}
+            {loading ? (
+              <div className="bg-gray-50 rounded-lg p-8 text-center mb-6">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto mb-2"></div>
+                <p className="text-sm text-gray-500">Cargando datos de comparativo...</p>
+              </div>
+            ) : error ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+                <p className="text-sm text-red-600">{error}</p>
+              </div>
+            ) : chartData.length > 0 && (
+              <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
+                <h5 className="text-sm font-medium text-gray-700 mb-4">Ventas Acumuladas por Hora</h5>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="hora" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      {/* Area sombreada para promedio */}
+                      <Area
+                        type="monotone"
+                        dataKey="promedioAcum"
+                        name="Promedio 30d"
+                        fill="#d1fae5"
+                        stroke="#10b981"
+                        strokeWidth={1}
+                        fillOpacity={0.3}
+                      />
+                      {/* Linea de hoy (con proyeccion) */}
+                      <Line
+                        type="monotone"
+                        dataKey="hoyAcum"
+                        name="Hoy"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                      {/* Linea de ayer */}
+                      <Line
+                        type="monotone"
+                        dataKey="ayerAcum"
+                        name="Ayer"
+                        stroke="#6b7280"
+                        strokeWidth={1.5}
+                        strokeDasharray="3 3"
+                        dot={false}
+                      />
+                      {/* Linea de semana pasada */}
+                      <Line
+                        type="monotone"
+                        dataKey="semanaPasadaAcum"
+                        name="Sem. Pasada"
+                        stroke="#8b5cf6"
+                        strokeWidth={1.5}
+                        strokeDasharray="5 5"
+                        dot={false}
+                      />
+                      {/* Linea de hora actual */}
+                      {detalle && (
+                        <ReferenceLine
+                          x={`${detalle.hora_actual}:00`}
+                          stroke="#ef4444"
+                          strokeWidth={2}
+                          strokeDasharray="3 3"
+                          label={{ value: 'Ahora', fill: '#ef4444', fontSize: 10 }}
+                        />
+                      )}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="text-xs text-gray-500 mt-2 text-center">
+                  La linea azul despues de la hora actual es proyeccion basada en el factor de intensidad del dia
+                </p>
+              </div>
+            )}
+
+            {/* Grafico de ventas por hora (barras) */}
+            {!loading && !error && chartData.length > 0 && (
+              <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
+                <h5 className="text-sm font-medium text-gray-700 mb-4">Comparativo por Hora (Ventas)</h5>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="hora" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Line type="monotone" dataKey="hoy" name="Hoy" stroke="#3b82f6" strokeWidth={2} dot={{ r: 2 }} />
+                      <Line type="monotone" dataKey="ayer" name="Ayer" stroke="#6b7280" strokeWidth={1} dot={false} />
+                      <Line type="monotone" dataKey="semanaPasada" name="Sem. Pasada" stroke="#8b5cf6" strokeWidth={1} dot={false} />
+                      <Line type="monotone" dataKey="promedio" name="Promedio" stroke="#10b981" strokeWidth={1} dot={false} />
+                      {detalle && (
+                        <ReferenceLine
+                          x={`${detalle.hora_actual}:00`}
+                          stroke="#ef4444"
+                          strokeDasharray="3 3"
+                        />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
             {/* Explicaciones */}
             <div className="space-y-4">
               <div className="bg-red-50 border border-red-100 rounded-lg p-4">
@@ -916,7 +1163,7 @@ function EmergenciaDetalleModal({
           </div>
 
           {/* Footer */}
-          <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3">
+          <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 sticky bottom-0">
             <button
               onClick={onClose}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"

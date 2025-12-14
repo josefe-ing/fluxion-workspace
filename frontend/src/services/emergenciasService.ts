@@ -129,6 +129,43 @@ export interface OperacionExitosaResponse {
   timestamp: string;
 }
 
+// Types para detalle de producto con graficos
+export interface VentaHoraria {
+  hora: number;
+  cantidad: number;
+  acumulado: number;
+  es_proyeccion: boolean;
+}
+
+export interface ComparativoVentas {
+  hoy: VentaHoraria[];
+  ayer: VentaHoraria[];
+  semana_pasada: VentaHoraria[];
+  promedio_historico: VentaHoraria[];
+}
+
+export interface DetalleProductoEmergencia {
+  ubicacion_id: string;
+  nombre_tienda: string;
+  producto_id: string;
+  nombre_producto: string;
+  categoria: string | null;
+  clase_abc: string | null;
+  stock_actual: number;
+  ventas_hoy: number;
+  ventas_ayer: number;
+  ventas_semana_pasada: number;
+  promedio_30_dias: number;
+  demanda_restante: number;
+  cobertura: number;
+  factor_intensidad: number;
+  intensidad: string;
+  proyeccion_venta_dia: number;
+  hora_agotamiento_estimada: number | null;
+  hora_actual: number;
+  comparativo_ventas: ComparativoVentas;
+}
+
 // ============================================================================
 // API FUNCTIONS
 // ============================================================================
@@ -202,5 +239,16 @@ export async function habilitarTienda(
  */
 export async function deshabilitarTienda(ubicacionId: string): Promise<OperacionExitosaResponse> {
   const response = await http.post(`/api/emergencias/config/tiendas/${ubicacionId}/deshabilitar`, {});
+  return response.data;
+}
+
+/**
+ * Obtener detalle de producto con comparativos de venta para graficos
+ */
+export async function getDetalleProducto(
+  ubicacionId: string,
+  productoId: string
+): Promise<DetalleProductoEmergencia> {
+  const response = await http.get(`/api/emergencias/detalle/${ubicacionId}/${productoId}`);
   return response.data;
 }
