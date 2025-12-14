@@ -1027,9 +1027,9 @@ def obtener_detalle_producto_emergencia(
                 p.id AS producto_id,
                 p.nombre AS nombre_producto,
                 p.categoria,
-                abc.clasificacion AS clase_abc
+                abc.clase_abc
             FROM productos p
-            LEFT JOIN clasificacion_abc abc ON p.id = abc.producto_id AND abc.ubicacion_id = %s
+            LEFT JOIN productos_abc_tienda abc ON p.id = abc.producto_id AND abc.ubicacion_id = %s
             WHERE p.id = %s
         """, (ubicacion_id, producto_id))
         producto = cursor.fetchone()
