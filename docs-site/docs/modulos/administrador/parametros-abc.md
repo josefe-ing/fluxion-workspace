@@ -90,8 +90,8 @@ Productos con ranking mayor a `umbral_c` se clasifican como **Clase D**.
 
 | Escenario | Ajuste Sugerido |
 |-----------|-----------------|
-| Catalogo pequeno (<500 SKUs) | Reducir (30, 100, 300) |
-| Catalogo grande (>2000 SKUs) | Aumentar (100, 400, 1500) |
+| Catalogo pequeno (menos de 500 SKUs) | Reducir (30, 100, 300) |
+| Catalogo grande (mas de 2000 SKUs) | Aumentar (100, 400, 1500) |
 | Foco en top performers | Reducir umbral_a (25-30) |
 
 ---
