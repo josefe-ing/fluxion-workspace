@@ -77,11 +77,12 @@ Si el proveedor es inconsistente, necesitas más colchón.
 
 ### 4. Importancia del Producto (ABC)
 
-| Clase ABC | Nivel de Servicio Típico |
-|-----------|-------------------------|
-| A | 95-99% (nunca puede faltar) |
-| B | 90-95% |
-| C | 85-90% |
+| Clase ABC | Ranking | Z-Score | Nivel de Servicio |
+|-----------|---------|---------|-------------------|
+| A | Top 50 | 2.33 | 99% (nunca puede faltar) |
+| B | 51-200 | 1.88 | 97% |
+| C | 201-800 | 1.28 | 90% |
+| D | 801+ | Padre Prudente | ~85% |
 
 ## Métodos de Cálculo
 
@@ -115,15 +116,26 @@ Donde:
 - LT = 9 días
 - **SS = 1.65 × 5 × √9 = 1.65 × 5 × 3 = 24.75 ≈ 25 unidades**
 
-## Configuración en Fluxion AI
+## Configuracion en Fluxion AI
 
 ### Por Clase ABC
 
-| Clase | Días de Cobertura (default) |
-|-------|----------------------------|
-| A | 14 días |
-| B | 10 días |
-| C | 7 días |
+| Clase | Ranking | Z-Score | Dias de Cobertura |
+|-------|---------|---------|-------------------|
+| A | Top 50 | 2.33 | 7 dias |
+| B | 51-200 | 1.88 | 14 dias |
+| C | 201-800 | 1.28 | 21 dias |
+| D | 801+ | Padre Prudente | 30 dias |
+
+### Metodo Padre Prudente (Clase D)
+
+Para productos de baja rotacion (ranking 801+):
+
+```
+SS = 0.30 × Demanda_Diaria × Lead_Time
+```
+
+Este metodo conservador garantiza un 30% de la demanda durante el ciclo como colchon.
 
 ### Multiplicador por XYZ
 
@@ -135,13 +147,21 @@ Donde:
 
 ### Ejemplo Combinado
 
-Producto clasificado como **AY**:
-- Demanda: 10 unidades/día
-- Cobertura base (A): 14 días
+Producto clasificado como **AY** (Clase A, variabilidad Y):
+- P75: 630 unidades/dia
+- σ: 166 unidades
+- Lead Time: 1.5 dias
+- Z (Clase A): 2.33
 - Multiplicador (Y): 1.3x
 
 ```
-Stock de Seguridad = 10 × 14 × 1.3 = 182 unidades
+Stock de Seguridad Base = Z × σ × √L
+                       = 2.33 × 166 × √1.5
+                       = 2.33 × 166 × 1.22
+                       = 472 unidades
+
+Con multiplicador Y (1.3x):
+Stock de Seguridad Final = 472 × 1.3 = 614 unidades
 ```
 
 ## Costo del Stock de Seguridad

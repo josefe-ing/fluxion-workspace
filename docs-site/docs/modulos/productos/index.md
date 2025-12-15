@@ -26,23 +26,25 @@ Vista integral de tu catálogo con:
 - Niveles de stock por tienda
 - Clasificaciones actuales
 
-### Clasificación ABC
+### Clasificacion ABC
 
-Segmentación de productos por impacto económico:
+Segmentacion de productos por ranking de cantidad vendida:
 
-- **Clase A** - Alto valor, requieren máxima atención
-- **Clase B** - Valor medio, atención moderada
-- **Clase C** - Bajo valor, gestión simplificada
+- **Clase A** (Top 50) - Productos estrella, maxima atencion
+- **Clase B** (51-200) - Productos importantes, atencion frecuente
+- **Clase C** (201-800) - Productos regulares, gestion estandar
+- **Clase D** (801+) - Baja rotacion, revision periodica
 
 ### Matriz ABC-XYZ
 
-Combina valor (ABC) con variabilidad de demanda (XYZ):
+Combina rotacion (ABC) con variabilidad de demanda (XYZ):
 
 |   | X (Estable) | Y (Variable) | Z (Muy Variable) |
 |---|-------------|--------------|------------------|
-| **A** | AX - Fácil de gestionar, alto impacto | AY - Requiere atención | AZ - Crítico, difícil predecir |
+| **A** | AX - Facil de gestionar, alto impacto | AY - Requiere atencion | AZ - Critico, dificil predecir |
 | **B** | BX - Estable, medio impacto | BY - Moderado | BZ - Variable, medio impacto |
-| **C** | CX - Bajo impacto, predecible | CY - Bajo impacto | CZ - Candidatos a descontinuar |
+| **C** | CX - Impacto moderado, predecible | CY - Impacto moderado | CZ - Revisar estrategia |
+| **D** | DX - Bajo impacto, predecible | DY - Bajo impacto | DZ - Candidatos a descontinuar |
 
 ## Navegación
 

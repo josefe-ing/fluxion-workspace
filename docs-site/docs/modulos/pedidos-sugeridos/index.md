@@ -28,15 +28,16 @@ El sistema usa **P75** (Percentil 75) en lugar de promedio simple:
 | **Promedio 20d** | Venta promedio últimos 20 días | Referencia |
 | **TOP3** | Promedio de los 3 mejores días | Picos de demanda |
 
-### Clasificación ABC (Pareto)
+### Clasificacion ABC (Ranking por Cantidad)
 
-Los productos se clasifican por su contribución al valor de ventas:
+Los productos se clasifican por su ranking de unidades vendidas:
 
-| Clase | % del Valor | Método de Cálculo | Nivel Servicio |
-|-------|-------------|-------------------|----------------|
-| **A** | 80% | Estadístico | 99% |
-| **B** | 15% | Estadístico | 95% |
-| **C** | 5% | Padre Prudente | 90% |
+| Clase | Ranking | Metodo de Calculo | Nivel Servicio |
+|-------|---------|-------------------|----------------|
+| **A** | Top 50 | Estadistico (Z=2.33) | 99% |
+| **B** | 51-200 | Estadistico (Z=1.88) | 97% |
+| **C** | 201-800 | Estadistico (Z=1.28) | 90% |
+| **D** | 801+ | Padre Prudente | ~85% |
 
 ### Niveles de Inventario
 

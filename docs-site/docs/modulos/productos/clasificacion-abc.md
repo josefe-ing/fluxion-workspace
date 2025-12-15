@@ -1,87 +1,166 @@
 ---
 sidebar_position: 3
-title: Clasificación ABC
+title: Clasificacion ABC
 ---
 
-# Clasificación ABC
+# Clasificacion ABC
 
-Análisis de productos basado en su contribución al valor total de ventas.
+Visualiza y analiza la clasificacion ABC de tu catalogo de productos.
 
-## ¿Qué es la Clasificación ABC?
+## Que es la Clasificacion ABC?
 
-La clasificación ABC es un método de categorización basado en el **Principio de Pareto** (80/20):
+La clasificacion ABC es un metodo de categorizacion basado en el **ranking de unidades vendidas**:
 
-- **~20% de productos** generan **~80% del valor**
-- Permite priorizar esfuerzos de gestión
+- Productos de **mayor rotacion** reciben mayor atencion
+- Permite priorizar esfuerzos de gestion de inventario
 
-## Las Tres Clases
+## Las 4 Clases
 
-### Clase A - Alto Valor
-- **Proporción típica:** 10-20% de SKUs
-- **Contribución:** ~80% del valor de ventas
-- **Gestión:** Máxima atención, control estricto de stock
+| Clase | Ranking | Color | Descripcion |
+|-------|---------|-------|-------------|
+| **A** | Top 50 | Verde | Productos estrella, maxima rotacion |
+| **B** | 51-200 | Azul | Productos importantes, alta rotacion |
+| **C** | 201-800 | Amarillo | Productos regulares, rotacion media |
+| **D** | 801+ | Gris | Productos de baja rotacion |
 
-### Clase B - Valor Medio
-- **Proporción típica:** 20-30% de SKUs
-- **Contribución:** ~15% del valor de ventas
-- **Gestión:** Atención moderada, revisión periódica
+### Caracteristicas por Clase
 
-### Clase C - Bajo Valor
-- **Proporción típica:** 50-70% de SKUs
-- **Contribución:** ~5% del valor de ventas
-- **Gestión:** Simplificada, menor frecuencia de revisión
+| Clase | Gestion | Stock Seguridad | Monitoreo |
+|-------|---------|-----------------|-----------|
+| **A** | Maxima atencion | Alto (Z=2.33) | Diario |
+| **B** | Atencion frecuente | Medio (Z=1.88) | 2-3 dias |
+| **C** | Gestion estandar | Bajo (Z=1.28) | Semanal |
+| **D** | Revision periodica | Padre Prudente | Mensual |
 
 ## Vista en Fluxion AI
 
-### Gráfico de Distribución
+### Resumen por Clase
 
-Visualiza la distribución de productos por clase:
-- Gráfico de barras por cantidad de SKUs
-- Gráfico de pie por valor de ventas
+Tarjetas mostrando:
+- Cantidad de productos por clase
+- Porcentaje del total de ventas (unidades)
+- Tendencia vs periodo anterior
+
+### Grafico de Distribucion
+
+Visualiza la distribucion de productos por clase:
+- Grafico de barras por cantidad de SKUs
+- Grafico de pie por volumen de ventas
 
 ### Tabla de Productos
 
-Lista de productos con su clasificación, ordenable por:
-- Valor de ventas
-- Cantidad vendida
-- Clasificación
+Lista de productos con su clasificacion:
 
-### Análisis de Pareto
+| Columna | Descripcion |
+|---------|-------------|
+| **Ranking** | Posicion por ventas (1 = mas vendido) |
+| **Codigo** | SKU del producto |
+| **Producto** | Nombre/descripcion |
+| **Clase** | Badge de color (A, B, C, D) |
+| **Ventas 90d** | Unidades vendidas ultimos 90 dias |
+| **Tendencia** | Cambio en ranking |
 
-Gráfico de Pareto mostrando:
-- Eje X: Productos ordenados por valor
-- Eje Y izquierdo: Valor individual
-- Eje Y derecho: Porcentaje acumulado
+## Filtros
 
-## Configuración
+### Por Clase
+- Todas
+- Solo Clase A
+- Solo Clase B
+- Solo Clase C
+- Solo Clase D
 
-Los umbrales de clasificación se configuran en **Administrador > Parámetros ABC**:
+### Por Tienda
+- **Global**: Ranking de todas las tiendas
+- **Tienda especifica**: Ranking local
 
-| Parámetro | Default | Descripción |
+### Busqueda
+Por nombre o codigo de producto.
+
+## Detalle de Producto
+
+Al hacer click en un producto:
+
+### Informacion de Clasificacion
+
+- Ranking actual (#3 de 1,500)
+- Clase (A, B, C, D)
+- Tendencia (subiendo/bajando)
+
+### Parametros Asociados
+
+| Parametro | Clase A | Clase B | Clase C | Clase D |
+|-----------|---------|---------|---------|---------|
+| **Z-Score** | 2.33 | 1.88 | 1.28 | N/A |
+| **Dias Cobertura** | 7 | 14 | 21 | 30 |
+| **Nivel Servicio** | 99% | 97% | 90% | ~85% |
+
+### Historial
+
+Evolucion del ranking en el tiempo.
+
+## Configuracion
+
+Los umbrales de clasificacion se configuran en **Administrador > Parametros ABC**:
+
+| Parametro | Default | Descripcion |
 |-----------|---------|-------------|
-| **Umbral A** | 80% | Productos que acumulan hasta este % son A |
-| **Umbral B** | 95% | Productos entre A y este % son B |
-| **Clase C** | Resto | Productos restantes |
+| **umbral_a** | 50 | Top N productos para Clase A |
+| **umbral_b** | 200 | Top N productos para Clase B |
+| **umbral_c** | 800 | Top N productos para Clase C |
+| **Resto** | - | Productos con ranking > 800 son Clase D |
+
+## Metodo Padre Prudente (Clase D)
+
+Para productos Clase D, el stock de seguridad se calcula:
+
+```
+SS = 0.30 × Demanda_Diaria × Lead_Time
+```
+
+Esto garantiza un 30% de colchon durante el ciclo de reposicion.
 
 ## Estrategias por Clase
 
-### Productos A
+### Productos A (Top 50)
 - Monitoreo diario de stock
-- Stock de seguridad alto
-- Pronósticos detallados
-- Negociación activa con proveedores
+- Stock de seguridad alto (Z=2.33)
+- Nunca deben faltar
+- Pronosticos detallados (P75)
 
-### Productos B
+### Productos B (51-200)
+- Monitoreo cada 2-3 dias
+- Stock de seguridad medio (Z=1.88)
+- Atencion frecuente
+
+### Productos C (201-800)
 - Monitoreo semanal
-- Stock de seguridad moderado
-- Pronósticos estándar
+- Stock de seguridad bajo (Z=1.28)
+- Gestion estandar
 
-### Productos C
+### Productos D (801+)
 - Monitoreo mensual
-- Stock mínimo
-- Considerar eliminación de SKUs de muy bajo movimiento
+- Stock minimo (Padre Prudente)
+- Evaluar si justifica mantener
 
-## Aprende Más
+## Casos de Uso
 
-- [Concepto de Clasificación ABC](/conceptos/clasificacion-abc)
+### Revisar Top 50
+1. Filtrar por Clase A
+2. Verificar disponibilidad de stock
+3. Priorizar en pedidos
+
+### Identificar Candidatos a Descontinuar
+1. Filtrar por Clase D
+2. Ordenar por ventas ascendente
+3. Evaluar productos sin movimiento
+
+## Exportacion
+
+- **Excel**: Listado completo con metricas
+- **PDF**: Reporte ejecutivo
+
+## Aprende Mas
+
+- [Concepto de Clasificacion ABC](/conceptos/clasificacion-abc)
 - [Matriz ABC-XYZ](/modulos/productos/matriz-abc-xyz)
+- [Parametros ABC](/modulos/administrador/parametros-abc)

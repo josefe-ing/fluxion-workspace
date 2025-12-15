@@ -1,143 +1,202 @@
 ---
 sidebar_position: 1
-title: Clasificación ABC
+title: Clasificacion ABC
 ---
 
-# Clasificación ABC
+# Clasificacion ABC
 
-La clasificación ABC es un método de categorización de inventario basado en el principio de Pareto.
+La Clasificacion ABC es un metodo de categorizacion de productos basado en su **volumen de ventas** (cantidad de unidades vendidas), que permite priorizar la gestion de inventario segun la importancia de cada producto.
 
-## El Principio de Pareto (80/20)
+## Metodo de Clasificacion: Ranking por Cantidad
 
-El economista Vilfredo Pareto observó que el 80% de la riqueza estaba en manos del 20% de la población. Este principio se aplica en muchos contextos:
+En Fluxion AI, la clasificacion ABC se basa en el **ranking de unidades vendidas** en la region, no en el valor monetario. Esto permite identificar los productos de mayor rotacion independientemente de su precio.
 
-- **80%** de las ventas vienen del **20%** de los productos
-- **80%** de los problemas vienen del **20%** de las causas
-- **80%** del valor del inventario está en el **20%** de los SKUs
+### Las 4 Clases
 
-## Aplicación en Inventario
+| Clase | Ranking | Descripcion | Caracteristicas |
+|-------|---------|-------------|-----------------|
+| **A** | Top 50 | Productos estrella | Maxima rotacion, nunca deben faltar |
+| **B** | 51-200 | Productos importantes | Alta rotacion, atencion frecuente |
+| **C** | 201-800 | Productos regulares | Rotacion media, gestion estandar |
+| **D** | 801+ | Productos de baja rotacion | Baja rotacion, revision periodica |
 
-La clasificación ABC divide los productos en tres categorías según su contribución al valor total:
-
-### Clase A - Los Vitales
-
-- **Proporción**: ~10-20% de los productos
-- **Contribución**: ~80% del valor
-- **Características**:
-  - Productos de alto valor o alta rotación
-  - Críticos para el negocio
-  - Pequeños errores tienen gran impacto
-
-**Estrategia de gestión:**
-- Monitoreo frecuente (diario)
-- Pronósticos detallados
-- Stock de seguridad adecuado
-- Negociación activa con proveedores
-- Control estricto de inventario
-
-### Clase B - Los Intermedios
-
-- **Proporción**: ~20-30% de los productos
-- **Contribución**: ~15% del valor
-- **Características**:
-  - Valor medio
-  - Importancia moderada
-  - Balance entre atención y eficiencia
-
-**Estrategia de gestión:**
-- Monitoreo semanal
-- Pronósticos estándar
-- Stock de seguridad moderado
-- Revisión periódica de parámetros
-
-### Clase C - Los Triviales
-
-- **Proporción**: ~50-70% de los productos
-- **Contribución**: ~5% del valor
-- **Características**:
-  - Bajo valor individual
-  - Gran cantidad de SKUs
-  - Bajo impacto de errores individuales
-
-**Estrategia de gestión:**
-- Monitoreo mensual o por excepción
-- Reglas simples de reorden
-- Stock mínimo necesario
-- Considerar consolidación o eliminación
-
-## Cálculo de la Clasificación
-
-### Paso 1: Calcular valor de cada producto
+### Visualizacion
 
 ```
-Valor = Cantidad Vendida × Precio Unitario
+Ranking de Productos por Cantidad Vendida
+─────────────────────────────────────────
+
+    │ Clase A │   Clase B   │      Clase C       │    Clase D
+    │ Top 50  │   51-200    │      201-800       │     801+
+────┼─────────┼─────────────┼────────────────────┼──────────────
+    │ ████████│ ████████    │ ████████           │ ████████
+    │ ████████│ ████████    │ ████████           │ ████████
+    │ ████████│ ████████    │ ████████           │
+    │         │             │                    │
+────┴─────────┴─────────────┴────────────────────┴──────────────
+        Alta         Media          Moderada          Baja
+       Rotacion     Rotacion        Rotacion        Rotacion
 ```
 
-### Paso 2: Ordenar de mayor a menor
+## Por que Ranking por Cantidad (no por Valor)
 
-Ordenar todos los productos por su valor, de mayor a menor.
+El metodo tradicional de Pareto (80/20 por valor) tiene limitaciones para la operacion de inventario:
 
-### Paso 3: Calcular porcentaje acumulado
+| Aspecto | Pareto por Valor | Ranking por Cantidad |
+|---------|------------------|---------------------|
+| **Enfoque** | Productos caros | Productos de alta rotacion |
+| **Problema** | Un producto caro con pocas ventas puede ser "A" | Prioriza lo que realmente se mueve |
+| **Resultado** | Puede ignorar productos de alto volumen/bajo precio | Asegura disponibilidad de productos populares |
 
-Para cada producto, calcular el porcentaje que representa del total acumulado.
+### Ejemplo Practico
 
-### Paso 4: Asignar clase
+| Producto | Precio | Ventas/mes | Valor | Clase Pareto | Clase Ranking |
+|----------|--------|------------|-------|--------------|---------------|
+| Harina PAN 1kg | $2 | 10,000 u | $20,000 | B | **A** (Top 10) |
+| Whisky Premium | $50 | 100 u | $5,000 | A | **D** (bajo volumen) |
 
-- **A**: Productos hasta el umbral A (ej: 80%)
-- **B**: Productos entre umbral A y B (ej: 80%-95%)
-- **C**: Productos restantes (ej: 95%-100%)
+Con el metodo de ranking, la Harina PAN (alta rotacion, producto basico) tiene prioridad sobre el Whisky Premium (bajo volumen, producto de nicho).
 
-## Ejemplo Práctico
+## Parametros de Clasificacion
 
-| Producto | Ventas ($) | % del Total | % Acumulado | Clase |
-|----------|-----------|-------------|-------------|-------|
-| Prod 1 | 50,000 | 50% | 50% | A |
-| Prod 2 | 20,000 | 20% | 70% | A |
-| Prod 3 | 10,000 | 10% | 80% | A |
-| Prod 4 | 7,000 | 7% | 87% | B |
-| Prod 5 | 5,000 | 5% | 92% | B |
-| Prod 6 | 3,000 | 3% | 95% | B |
-| Prod 7 | 2,000 | 2% | 97% | C |
-| Prod 8 | 1,500 | 1.5% | 98.5% | C |
-| Prod 9 | 1,000 | 1% | 99.5% | C |
-| Prod 10 | 500 | 0.5% | 100% | C |
+### Umbrales de Ranking
 
-En este ejemplo:
-- **3 productos (30%)** son clase A y suman **80%** del valor
-- **3 productos (30%)** son clase B y suman **15%** del valor
-- **4 productos (40%)** son clase C y suman **5%** del valor
+Los umbrales son configurables en el sistema:
 
-## Beneficios
+| Parametro | Valor Default | Descripcion |
+|-----------|---------------|-------------|
+| `umbral_a` | 50 | Top N productos para Clase A |
+| `umbral_b` | 200 | Top N productos para Clase B |
+| `umbral_c` | 800 | Top N productos para Clase C |
 
-1. **Priorización de esfuerzos** - Enfócate en lo que importa
-2. **Optimización de inventario** - Stock adecuado según importancia
-3. **Reducción de costos** - Menos inversión en productos C
-4. **Mejor servicio** - Nunca falta un producto A
+Productos con ranking mayor a `umbral_c` se clasifican como **Clase D**.
 
-## Consideraciones
+### Niveles de Servicio por Clase
 
-### Limitaciones
+Cada clase tiene un nivel de servicio objetivo diferente:
 
-- No considera variabilidad de demanda (usa ABC-XYZ para esto)
-- Puede cambiar con el tiempo
-- No aplica igual a todos los productos (ej: generadores de tráfico)
+| Clase | Z-Score | Nivel Servicio | Significado |
+|-------|---------|----------------|-------------|
+| **A** | 2.33 | 99% | 1 quiebre cada 100 ciclos |
+| **B** | 1.88 | 97% | 3 quiebres cada 100 ciclos |
+| **C** | 1.28 | 90% | 10 quiebres cada 100 ciclos |
+| **D** | N/A | ~85% | Metodo Padre Prudente |
 
-### Frecuencia de Recálculo
+### Dias de Cobertura por Clase
 
-Se recomienda recalcular:
-- **Mensualmente** para operación normal
-- **Trimestralmente** para decisiones estratégicas
-- **Después de cambios significativos** (nuevos productos, temporadas)
+| Clase | Dias Cobertura | Razon |
+|-------|----------------|-------|
+| **A** | 7 dias | Alta rotacion, pedidos frecuentes |
+| **B** | 14 dias | Rotacion media |
+| **C** | 21 dias | Baja rotacion, menos pedidos |
+| **D** | 30 dias | Muy baja rotacion |
 
-## En Fluxion AI
+## Estrategias de Gestion por Clase
 
-Fluxion AI calcula y actualiza automáticamente la clasificación ABC:
+### Clase A - Los Vitales (Top 50)
 
-- Configura umbrales en [Parámetros ABC](/modulos/administrador/parametros-abc)
-- Visualiza en [Módulo de Productos](/modulos/productos/clasificacion-abc)
-- Afecta cálculos de [Pedidos Sugeridos](/modulos/pedidos-sugeridos)
+- **Monitoreo**: Diario
+- **Stock de seguridad**: Alto (Z=2.33)
+- **Accion ante quiebre**: Pedido urgente inmediato
+- **Pronostico**: Detallado, P75
 
-## Aprende Más
+### Clase B - Los Importantes (51-200)
 
-- [Análisis XYZ](/conceptos/analisis-xyz) - Complemento por variabilidad
-- [Matriz ABC-XYZ](/modulos/productos/matriz-abc-xyz) - Análisis combinado
+- **Monitoreo**: Cada 2-3 dias
+- **Stock de seguridad**: Medio (Z=1.88)
+- **Accion ante quiebre**: Incluir en proximo pedido
+- **Pronostico**: Estandar
+
+### Clase C - Los Regulares (201-800)
+
+- **Monitoreo**: Semanal
+- **Stock de seguridad**: Bajo (Z=1.28)
+- **Accion ante quiebre**: Planificar para la semana
+- **Pronostico**: Simplificado
+
+### Clase D - Los de Baja Rotacion (801+)
+
+- **Monitoreo**: Mensual
+- **Stock de seguridad**: Metodo Padre Prudente
+- **Accion ante quiebre**: Evaluar si justifica pedido
+- **Pronostico**: Minimo
+
+## Clasificacion por Tienda vs Global
+
+Fluxion AI soporta dos niveles de clasificacion:
+
+### ABC Global (productos_abc_cache)
+
+- Ranking basado en ventas **totales de todas las tiendas**
+- Usado para decisiones a nivel empresa
+- Actualizado periodicamente
+
+### ABC por Tienda (productos_abc_tienda)
+
+- Ranking basado en ventas **de cada tienda individual**
+- Un producto puede ser A en una tienda y C en otra
+- Usado para pedidos CEDI → Tienda
+
+### Ejemplo
+
+| Producto | ABC Global | ABC Artigas | ABC Paraiso |
+|----------|------------|-------------|-------------|
+| Harina PAN | A | A | A |
+| Queso Regional | B | A | C |
+| Producto Local | D | D | A |
+
+## Metodo Padre Prudente (Clase D)
+
+Para productos Clase D, en lugar del metodo estadistico tradicional, se usa el **Metodo Padre Prudente**:
+
+```
+Stock_Seguridad_D = 0.30 × Demanda_Diaria × Lead_Time
+```
+
+Este metodo:
+- Es mas conservador que el estadistico
+- Garantiza un minimo de 30% de demanda como colchon
+- Evita calculos complejos para productos de bajo impacto
+
+## Impacto en el Sistema
+
+La clasificacion ABC afecta multiples modulos:
+
+| Modulo | Uso de ABC |
+|--------|------------|
+| **Pedidos Sugeridos** | Prioriza productos A, ajusta stock de seguridad |
+| **Pedidos Inter-CEDI** | Calcula dias de cobertura por clase |
+| **Alertas** | Prioriza alertas de productos A |
+| **Emergencias** | Recomendaciones diferenciadas por clase |
+| **Stock de Seguridad** | Z-score y dias cobertura por clase |
+
+## Recalculo de Clasificacion
+
+La clasificacion ABC se recalcula:
+
+- **Automaticamente**: Cada semana (configurable)
+- **Manualmente**: Desde Administrador > Parametros ABC
+
+### Proceso de Recalculo
+
+1. Extrae ventas de los ultimos 90 dias por tienda/region
+2. Suma cantidad vendida por producto
+3. Ordena de mayor a menor (ranking)
+4. Asigna clase segun umbrales configurados
+5. Actualiza tablas de cache
+
+## Configuracion
+
+Los parametros ABC se configuran en:
+
+- **Administrador > Parametros ABC** (UI)
+- **Tabla `config_inventario_global`** (DB)
+
+Ver [Parametros ABC](/modulos/administrador/parametros-abc) para detalles de configuracion.
+
+## Aprende Mas
+
+- [Analisis XYZ](/conceptos/analisis-xyz) - Clasificacion por variabilidad
+- [Matriz ABC-XYZ](/modulos/productos/matriz-abc-xyz) - Combinacion de ambas
+- [Stock de Seguridad](/conceptos/stock-seguridad) - Calculo por clase
+- [Punto de Reorden](/conceptos/punto-reorden) - Formulas por clase

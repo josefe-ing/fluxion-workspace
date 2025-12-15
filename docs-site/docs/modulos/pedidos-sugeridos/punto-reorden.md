@@ -24,13 +24,22 @@ Donde:
 - **Lead Time** = 1.5 días por defecto
 - **Stock de Seguridad** = Z × σ × √L
 
-### Clase C (Método Padre Prudente)
+### Clase C (Metodo Estadistico)
 
 ```
-ROP = (Demanda Máxima × Lead Time) + Stock de Seguridad
+ROP = (P75 × Lead Time) + Stock de Seguridad
 ```
 
-Usa la demanda máxima histórica para ser más conservador.
+Donde Z = 1.28 (90% nivel servicio).
+
+### Clase D (Metodo Padre Prudente)
+
+```
+ROP = (Demanda Maxima × Lead Time) + Stock de Seguridad
+SS = 0.30 × P75 × Lead Time
+```
+
+Usa un enfoque conservador para productos de baja rotacion.
 
 ## ¿Por qué usamos P75 en lugar de Promedio?
 
@@ -82,26 +91,26 @@ El P75 significa: "El 75% de los días, la venta fue igual o menor a este valor"
 **Datos reales:**
 | Campo | Valor |
 |-------|-------|
-| Código | 002237 |
-| P75 | 21.50 unid/día |
+| Codigo | 002237 |
+| P75 | 21.50 unid/dia |
 | σ | ~8.8 unid |
-| Lead Time | 1.5 días |
-| Z (Clase B, 95%) | 1.65 |
+| Lead Time | 1.5 dias |
+| Z (Clase B, 97%) | 1.88 |
 
-**Cálculo:**
+**Calculo:**
 ```
 1. Stock de Seguridad
-   SS = 1.65 × 8.8 × √1.5
-   SS = 1.65 × 8.8 × 1.22
-   SS = 17.78 unidades
+   SS = 1.88 × 8.8 × √1.5
+   SS = 1.88 × 8.8 × 1.22
+   SS = 20.18 unidades
 
 2. Punto de Reorden
-   ROP = (21.50 × 1.5) + 17.78
-   ROP = 32.25 + 17.78
-   ROP = 50.03 unidades
+   ROP = (21.50 × 1.5) + 20.18
+   ROP = 32.25 + 20.18
+   ROP = 52.43 unidades
 ```
 
-**Resultado:** Pedir cuando stock llegue a **50 unidades**.
+**Resultado:** Pedir cuando stock llegue a **52 unidades**.
 
 ---
 
@@ -131,13 +140,14 @@ El P75 significa: "El 75% de los días, la venta fue igual o menor a este valor"
 
 **Resultado:** Pedir cuando stock llegue a **52 unidades**.
 
-## Stock de Seguridad por Clasificación
+## Stock de Seguridad por Clasificacion
 
-| Clase | Factor Z | Nivel Servicio | Días Cobertura |
-|-------|----------|----------------|----------------|
-| **A** | 2.33 | 99% | 5 días |
-| **B** | 1.65 | 95% | 7 días |
-| **C** | N/A (Padre Prudente) | 90% | 30 días |
+| Clase | Ranking | Factor Z | Nivel Servicio | Dias Cobertura |
+|-------|---------|----------|----------------|----------------|
+| **A** | Top 50 | 2.33 | 99% | 7 dias |
+| **B** | 51-200 | 1.88 | 97% | 14 dias |
+| **C** | 201-800 | 1.28 | 90% | 21 dias |
+| **D** | 801+ | Padre Prudente | ~85% | 30 dias |
 
 ## Visualización en la UI
 
@@ -160,12 +170,14 @@ En el módulo de Pedidos Sugeridos puedes ver:
 | 🟢 Verde | ROP < Stock ≤ MAX | **Óptimo** - No requiere pedido |
 | 🟣 Morado | Stock > MAX | **Exceso** - Posible sobrestock |
 
-## Configuración
+## Configuracion
 
-Ajusta los parámetros en **Administrador > Parámetros ABC**:
+Ajusta los parametros en **Administrador > Parametros ABC**:
 
-- Lead time por defecto (1.5 días)
-- Días de cobertura por clase A, B, C
+- Lead time por defecto (1.5 dias)
+- Umbrales de ranking (50, 200, 800)
+- Z-scores por clase (2.33, 1.88, 1.28)
+- Dias de cobertura por clase A, B, C, D
 - Niveles de servicio objetivo
 
 ## Aprende Más

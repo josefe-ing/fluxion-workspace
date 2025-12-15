@@ -17,19 +17,20 @@ En Fluxion AI, una **ubicación** o **tienda** representa un punto físico donde
 
 Cada ubicación tiene su propio inventario y métricas de ventas.
 
-## Clasificación ABC
+## Clasificacion ABC
 
-La **Clasificación ABC** es un método de categorización de productos basado en su impacto económico:
+La **Clasificacion ABC** es un metodo de categorizacion de productos basado en su **volumen de ventas** (cantidad vendida):
 
-| Clase | Descripción | Típicamente |
-|-------|-------------|-------------|
-| **A** | Productos de alto valor | ~20% de SKUs, ~80% del valor |
-| **B** | Productos de valor medio | ~30% de SKUs, ~15% del valor |
-| **C** | Productos de bajo valor | ~50% de SKUs, ~5% del valor |
+| Clase | Ranking | Descripcion |
+|-------|---------|-------------|
+| **A** | Top 50 | Productos estrella, maxima rotacion |
+| **B** | 51-200 | Productos importantes, alta rotacion |
+| **C** | 201-800 | Productos regulares, rotacion media |
+| **D** | 801+ | Productos de baja rotacion |
 
-Esta clasificación te ayuda a priorizar qué productos requieren mayor atención.
+Esta clasificacion te ayuda a priorizar que productos requieren mayor atencion.
 
-[Aprende más sobre Clasificación ABC →](/conceptos/clasificacion-abc)
+[Aprende mas sobre Clasificacion ABC →](/conceptos/clasificacion-abc)
 
 ## Análisis XYZ
 

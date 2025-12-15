@@ -51,8 +51,8 @@ Cobertura = Stock Actual ÷ Venta Promedio Diaria
 ## Filtros
 
 - **Estado** - Filtra por estado del stock
-- **Clasificación ABC** - Solo productos A, B o C
-- **Búsqueda** - Por nombre o código
+- **Clasificacion ABC** - Solo productos A, B, C o D
+- **Busqueda** - Por nombre o codigo
 
 ## Acciones
 

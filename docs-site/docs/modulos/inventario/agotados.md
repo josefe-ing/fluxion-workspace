@@ -57,13 +57,14 @@ El sistema rastrea:
 
 ## Impacto de los Agotados
 
-### Por Clasificación ABC
+### Por Clasificacion ABC
 
-| Clase | Impacto de Agotado |
-|-------|-------------------|
-| **A** | Crítico - Afecta ~80% del valor |
-| **B** | Alto - Afecta ~15% del valor |
-| **C** | Moderado - Afecta ~5% del valor |
+| Clase | Ranking | Impacto de Agotado |
+|-------|---------|-------------------|
+| **A** | Top 50 | Critico - Productos de maxima rotacion |
+| **B** | 51-200 | Alto - Productos importantes |
+| **C** | 201-800 | Moderado - Rotacion media |
+| **D** | 801+ | Bajo - Baja rotacion |
 
 ### Cálculo de Pérdida
 

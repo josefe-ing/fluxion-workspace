@@ -136,13 +136,14 @@ En la práctica, el ROP no es estático:
 
 **Fluxion AI** recalcula el ROP regularmente considerando estos factores.
 
-## ROP por Clasificación ABC
+## ROP por Clasificacion ABC
 
-| Clase | Enfoque ROP |
-|-------|-------------|
-| **A** | Preciso, revisión frecuente, stock de seguridad adecuado |
-| **B** | Estándar, revisión periódica |
-| **C** | Simple, puede ser menos preciso |
+| Clase | Ranking | Z-Score | Dias Cobertura | Enfoque ROP |
+|-------|---------|---------|----------------|-------------|
+| **A** | Top 50 | 2.33 | 7 dias | Preciso, revision diaria |
+| **B** | 51-200 | 1.88 | 14 dias | Estandar, revision cada 2-3 dias |
+| **C** | 201-800 | 1.28 | 21 dias | Simple, revision semanal |
+| **D** | 801+ | Padre Prudente | 30 dias | Basico, revision mensual |
 
 ## Errores Comunes
 
