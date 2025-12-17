@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, date
 from decimal import Decimal
 import logging
+import math
 
 from models.pedidos_sugeridos import (
     # Request/Response models
@@ -930,6 +931,15 @@ class ProductoCalculado(BaseModel):
     exceso_unidades: float = 0.0
     exceso_bultos: int = 0
     dias_exceso: float = 0.0
+    # Límites de inventario (capacidad máxima y mínimo exhibición)
+    capacidad_maxima_configurada: Optional[float] = None  # Límite superior configurado en unidades
+    cantidad_antes_ajuste_capacidad: Optional[float] = None  # Cantidad original antes de ajustar por capacidad
+    ajustado_por_capacidad: bool = False  # True si se ajustó por límite de capacidad máxima
+    tipo_restriccion_capacidad: Optional[str] = None  # congelador, refrigerador, etc.
+    notas_capacidad: Optional[str] = None  # Notas de la configuración de capacidad
+    # Mínimo de exhibición
+    minimo_exhibicion_configurado: Optional[float] = None  # Mínimo para que producto se vea bien
+    ajustado_por_minimo_exhibicion: bool = False  # True si se elevó por mínimo de exhibición
     # Warnings de sanity checks
     warnings_calculo: List[str] = []
 
@@ -1019,6 +1029,29 @@ async def calcular_productos_sugeridos(
                 logger.info(f"🥬 Coberturas por categoría cargadas: {list(config_cobertura_categoria.keys())}")
         except Exception as e:
             logger.warning(f"No se pudo cargar config cobertura por categoría: {e}")
+
+        # 1.7. Cargar límites de inventario (capacidad máxima y mínimo exhibición) para la tienda destino
+        limites_inventario = {}  # {producto_codigo: {capacidad_maxima, minimo_exhibicion, tipo, notas}}
+        try:
+            cursor.execute("""
+                SELECT producto_codigo, capacidad_maxima_unidades, minimo_exhibicion_unidades,
+                       tipo_restriccion, notas
+                FROM capacidad_almacenamiento_producto
+                WHERE tienda_id = %s AND activo = true
+            """, [request.tienda_destino])
+            for row in cursor.fetchall():
+                limites_inventario[row[0]] = {
+                    'capacidad_maxima': float(row[1]) if row[1] else None,
+                    'minimo_exhibicion': float(row[2]) if row[2] else None,
+                    'tipo_restriccion': row[3] or 'espacio_fisico',
+                    'notas': row[4]
+                }
+            if limites_inventario:
+                n_max = sum(1 for v in limites_inventario.values() if v['capacidad_maxima'])
+                n_min = sum(1 for v in limites_inventario.values() if v['minimo_exhibicion'])
+                logger.info(f"📦 Límites de inventario cargados: {n_max} con capacidad máx, {n_min} con mínimo exhibición")
+        except Exception as e:
+            logger.warning(f"No se pudo cargar límites de inventario: {e}")
 
         # 2. Obtener la región de la tienda destino y tiendas de referencia
         cursor.execute("""
@@ -1378,6 +1411,71 @@ async def calcular_productos_sugeridos(
                     cantidad_sugerida_unid_final = float(unidades_por_bulto)
                     logger.info(f"📦 {codigo}: Envío prueba forzado a 1 bulto ({unidades_por_bulto} unid)")
 
+                # ====================================================================
+                # LÍMITES DE INVENTARIO: MÍNIMO EXHIBICIÓN Y CAPACIDAD MÁXIMA
+                # ====================================================================
+                # 1. Mínimo de exhibición: Si el producto necesita una cantidad mínima
+                #    para "verse bien" en el mostrador, elevar la sugerencia si es menor.
+                # 2. Capacidad máxima: Si tiene límite de capacidad (congelador, etc.),
+                #    no exceder el espacio disponible.
+                limite_info = limites_inventario.get(codigo)
+                cantidad_antes_capacidad = None
+                ajustado_por_capacidad = False
+                tipo_restriccion_cap = None
+                notas_capacidad = None
+                minimo_exhibicion_aplicado = None
+
+                if limite_info:
+                    tipo_restriccion_cap = limite_info['tipo_restriccion']
+                    notas_capacidad = limite_info['notas']
+
+                    # MÍNIMO DE EXHIBICIÓN: elevar cantidad si es necesario para exhibición
+                    minimo_exhibicion = limite_info.get('minimo_exhibicion')
+                    if minimo_exhibicion and minimo_exhibicion > 0:
+                        # Calcular cuántas unidades necesitamos para alcanzar el mínimo de exhibición
+                        unidades_necesarias_exhibicion = max(0, minimo_exhibicion - stock_tienda)
+
+                        if unidades_necesarias_exhibicion > cantidad_sugerida_unid_final:
+                            cantidad_antes_minimo = cantidad_sugerida_unid_final
+                            cantidad_sugerida_unid_final = unidades_necesarias_exhibicion
+                            cantidad_sugerida_bultos_final = math.ceil(unidades_necesarias_exhibicion / unidades_por_bulto) if unidades_por_bulto > 0 else 0
+                            minimo_exhibicion_aplicado = minimo_exhibicion
+
+                            logger.info(
+                                f"📊 {codigo}: Elevado por mínimo exhibición. "
+                                f"Original: {cantidad_antes_minimo:.0f} → Elevado: {cantidad_sugerida_unid_final:.0f} unid "
+                                f"(Mín exhibición: {minimo_exhibicion:.0f}, Stock: {stock_tienda:.0f})"
+                            )
+
+                    # CAPACIDAD MÁXIMA: no exceder el espacio disponible
+                    capacidad_maxima = limite_info.get('capacidad_maxima')
+                    if capacidad_maxima and capacidad_maxima > 0:
+                        # Espacio disponible = capacidad máxima - stock actual
+                        espacio_disponible = max(0, capacidad_maxima - stock_tienda)
+
+                        # Si la cantidad sugerida excede el espacio disponible, ajustar
+                        if cantidad_sugerida_unid_final > espacio_disponible:
+                            cantidad_antes_capacidad = cantidad_sugerida_unid_final
+                            cantidad_sugerida_unid_final = espacio_disponible
+                            cantidad_sugerida_bultos_final = math.ceil(espacio_disponible / unidades_por_bulto) if unidades_por_bulto > 0 else 0
+                            ajustado_por_capacidad = True
+
+                            # Nombre legible del tipo de restricción
+                            tipo_legible = {
+                                'congelador': 'congelador',
+                                'refrigerador': 'refrigerador',
+                                'anaquel': 'anaquel',
+                                'piso': 'espacio en piso',
+                                'exhibidor': 'exhibidor',
+                                'espacio_fisico': 'espacio físico'
+                            }.get(tipo_restriccion_cap, tipo_restriccion_cap)
+
+                            logger.info(
+                                f"⚠️ {codigo}: Ajustado por capacidad de {tipo_legible}. "
+                                f"Original: {cantidad_antes_capacidad:.0f} → Ajustado: {cantidad_sugerida_unid_final:.0f} unid "
+                                f"(Cap. máx: {capacidad_maxima:.0f}, Stock: {stock_tienda:.0f}, Disponible: {espacio_disponible:.0f})"
+                            )
+
                 # Determinar razon del pedido y método de cálculo
                 if resultado.tiene_sobrestock:
                     razon = "Sobrestock - No pedir"
@@ -1409,6 +1507,34 @@ async def calcular_productos_sugeridos(
                     warnings.append(f"Sin ventas locales. P75 de {nombre_tienda_ref or 'región'}: {p75_usado:.1f} unid/día")
                 elif usa_referencia_regional:
                     warnings.append(f"Ventas locales bajas. Usando P75 de {nombre_tienda_ref or 'región'}: {p75_usado:.1f} unid/día")
+
+                # Warning de mínimo de exhibición (importante para visibilidad)
+                if minimo_exhibicion_aplicado:
+                    warnings.append(
+                        f"📊 MÍNIMO EXHIBICIÓN: Elevado para alcanzar {minimo_exhibicion_aplicado:.0f} unidades "
+                        f"(mínimo para que el producto se vea bien en exhibición). "
+                        f"Stock actual: {stock_tienda:.0f}"
+                    )
+
+                # Warning de capacidad limitada (muy importante para visibilidad)
+                if ajustado_por_capacidad and cantidad_antes_capacidad is not None:
+                    tipo_legible = {
+                        'congelador': 'congelador',
+                        'refrigerador': 'refrigerador',
+                        'anaquel': 'anaquel',
+                        'piso': 'espacio en piso',
+                        'exhibidor': 'exhibidor',
+                        'espacio_fisico': 'espacio físico'
+                    }.get(tipo_restriccion_cap, tipo_restriccion_cap)
+
+                    cap_maxima = limite_info['capacidad_maxima']
+                    espacio_disp = max(0, cap_maxima - stock_tienda)
+
+                    warnings.append(
+                        f"⚠️ CAPACIDAD LIMITADA: Ajustado de {cantidad_antes_capacidad:.0f} a {cantidad_sugerida_unid_final:.0f} unidades "
+                        f"por capacidad máxima de {tipo_legible} ({cap_maxima:.0f} unid). "
+                        f"Stock actual: {stock_tienda:.0f} | Espacio disponible: {espacio_disp:.0f}"
+                    )
 
                 productos.append(ProductoCalculado(
                     codigo_producto=codigo,
@@ -1449,6 +1575,14 @@ async def calcular_productos_sugeridos(
                     exceso_unidades=resultado.exceso_unidades,
                     exceso_bultos=resultado.exceso_bultos,
                     dias_exceso=resultado.dias_exceso,
+                    # Límites de inventario
+                    capacidad_maxima_configurada=limite_info['capacidad_maxima'] if limite_info else None,
+                    cantidad_antes_ajuste_capacidad=cantidad_antes_capacidad,
+                    ajustado_por_capacidad=ajustado_por_capacidad,
+                    tipo_restriccion_capacidad=tipo_restriccion_cap,
+                    notas_capacidad=notas_capacidad,
+                    minimo_exhibicion_configurado=limite_info['minimo_exhibicion'] if limite_info else None,
+                    ajustado_por_minimo_exhibicion=minimo_exhibicion_aplicado is not None,
                     warnings_calculo=warnings
                 ))
             else:

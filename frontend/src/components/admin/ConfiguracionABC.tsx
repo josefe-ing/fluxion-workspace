@@ -10,7 +10,7 @@
 
 import { useState, useEffect } from 'react';
 import http from '../../services/http';
-import { Settings, Store, TrendingUp, Shield, Package, Info, Save, RefreshCw, Leaf, Plus, Trash2 } from 'lucide-react';
+import { Settings, Store, TrendingUp, Shield, Package, Info, Save, RefreshCw, Leaf, Plus, Trash2, Warehouse, Search } from 'lucide-react';
 
 // Tipos
 interface ParametrosGlobales {
@@ -61,7 +61,26 @@ interface CoberturaCategoria {
   activo: boolean;
 }
 
-type TabType = 'global' | 'umbrales' | 'niveles' | 'tiendas' | 'categorias';
+interface CapacidadAlmacenamiento {
+  id: string;
+  tienda_id: string;
+  producto_codigo: string;
+  capacidad_maxima_unidades: number | null;
+  minimo_exhibicion_unidades: number | null;
+  tipo_restriccion: string;
+  notas: string | null;
+  activo: boolean;
+  tienda_nombre?: string;
+  producto_descripcion?: string;
+}
+
+interface ProductoBusqueda {
+  codigo: string;
+  descripcion: string;
+  categoria: string;
+}
+
+type TabType = 'global' | 'umbrales' | 'niveles' | 'tiendas' | 'categorias' | 'capacidad';
 
 // Valores por defecto (los mismos del backend)
 const DEFAULTS = {
@@ -160,6 +179,20 @@ export default function ConfiguracionABC() {
   const [categoriasDisponibles, setCategoriasDisponibles] = useState<{ categoria: string; categoria_normalizada: string; productos: number }[]>([]);
   const [nuevaCategoria, setNuevaCategoria] = useState<string>('');
 
+  // Estado para capacidad de almacenamiento
+  const [capacidadesAlmacenamiento, setCapacidadesAlmacenamiento] = useState<CapacidadAlmacenamiento[]>([]);
+  const [capacidadTiendaSeleccionada, setCapacidadTiendaSeleccionada] = useState<string>('');
+  const [capacidadBusquedaProducto, setCapacidadBusquedaProducto] = useState<string>('');
+  const [productosEncontrados, setProductosEncontrados] = useState<ProductoBusqueda[]>([]);
+  const [productoSeleccionado, setProductoSeleccionado] = useState<ProductoBusqueda | null>(null);
+  const [nuevaCapacidad, setNuevaCapacidad] = useState({
+    capacidad_maxima_unidades: null as number | null,
+    minimo_exhibicion_unidades: null as number | null,
+    tipo_restriccion: 'congelador',
+    notas: ''
+  });
+  const [buscandoProductos, setBuscandoProductos] = useState(false);
+
   // Cargar datos al montar
   useEffect(() => {
     loadData();
@@ -171,11 +204,12 @@ export default function ConfiguracionABC() {
       setError(null);
 
       // Cargar configuración actual
-      const [configResponse, tiendasResponse, categoriasResponse, categoriasDispResponse] = await Promise.all([
+      const [configResponse, tiendasResponse, categoriasResponse, categoriasDispResponse, capacidadesResponse] = await Promise.all([
         http.get('/api/config-inventario/parametros-abc'),
         http.get('/api/ubicaciones'),
         http.get('/api/config-inventario/cobertura-categoria'),
         http.get('/api/config-inventario/categorias-disponibles'),
+        http.get('/api/config-inventario/capacidad-almacenamiento').catch(() => ({ data: [] })),
       ]);
 
       if (configResponse.data) {
@@ -225,6 +259,11 @@ export default function ConfiguracionABC() {
       // Categorías disponibles
       if (categoriasDispResponse.data) {
         setCategoriasDisponibles(categoriasDispResponse.data);
+      }
+
+      // Capacidades de almacenamiento
+      if (capacidadesResponse.data) {
+        setCapacidadesAlmacenamiento(capacidadesResponse.data);
       }
 
     } catch (err) {
@@ -451,12 +490,111 @@ export default function ConfiguracionABC() {
     }
   };
 
+  // =====================================================================================
+  // FUNCIONES PARA CAPACIDAD DE ALMACENAMIENTO
+  // =====================================================================================
+
+  const buscarProductos = async (termino: string) => {
+    if (termino.length < 2) {
+      setProductosEncontrados([]);
+      return;
+    }
+
+    try {
+      setBuscandoProductos(true);
+      const response = await http.get(`/api/config-inventario/productos/buscar?q=${encodeURIComponent(termino)}&limite=10`);
+      if (response.data) {
+        setProductosEncontrados(response.data.map((p: { codigo: string; descripcion: string; categoria: string }) => ({
+          codigo: p.codigo,
+          descripcion: p.descripcion,
+          categoria: p.categoria
+        })));
+      }
+    } catch (err) {
+      console.error('Error buscando productos:', err);
+      setProductosEncontrados([]);
+    } finally {
+      setBuscandoProductos(false);
+    }
+  };
+
+  const handleCrearCapacidad = async () => {
+    // Validar que al menos uno de los límites esté configurado
+    const tieneCapacidadMaxima = nuevaCapacidad.capacidad_maxima_unidades !== null && nuevaCapacidad.capacidad_maxima_unidades > 0;
+    const tieneMinimoExhibicion = nuevaCapacidad.minimo_exhibicion_unidades !== null && nuevaCapacidad.minimo_exhibicion_unidades > 0;
+
+    if (!capacidadTiendaSeleccionada || !productoSeleccionado || (!tieneCapacidadMaxima && !tieneMinimoExhibicion)) {
+      setError('Selecciona una tienda, un producto, y configura al menos una capacidad máxima o mínimo de exhibición');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      await http.post('/api/config-inventario/capacidad-almacenamiento', {
+        tienda_id: capacidadTiendaSeleccionada,
+        producto_codigo: productoSeleccionado.codigo,
+        capacidad_maxima_unidades: tieneCapacidadMaxima ? nuevaCapacidad.capacidad_maxima_unidades : null,
+        minimo_exhibicion_unidades: tieneMinimoExhibicion ? nuevaCapacidad.minimo_exhibicion_unidades : null,
+        tipo_restriccion: nuevaCapacidad.tipo_restriccion,
+        notas: nuevaCapacidad.notas || null
+      });
+
+      setSuccessMessage(`Límites configurados para ${productoSeleccionado.descripcion}`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+
+      // Limpiar formulario
+      setProductoSeleccionado(null);
+      setCapacidadBusquedaProducto('');
+      setProductosEncontrados([]);
+      setNuevaCapacidad({ capacidad_maxima_unidades: null, minimo_exhibicion_unidades: null, tipo_restriccion: 'congelador', notas: '' });
+
+      await loadData();
+    } catch (err) {
+      console.error('Error creando capacidad:', err);
+      setError('Error al crear la configuración de límites');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteCapacidad = async (config: CapacidadAlmacenamiento) => {
+    if (!confirm(`¿Eliminar límite de capacidad para ${config.producto_descripcion || config.producto_codigo}?`)) return;
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      await http.delete(`/api/config-inventario/capacidad-almacenamiento/${config.id}`);
+
+      setSuccessMessage('Configuración de capacidad eliminada');
+      setTimeout(() => setSuccessMessage(null), 3000);
+      await loadData();
+    } catch (err) {
+      console.error('Error eliminando capacidad:', err);
+      setError('Error al eliminar la configuración');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const TIPOS_RESTRICCION = [
+    { value: 'congelador', label: 'Congelador', emoji: '❄️' },
+    { value: 'refrigerador', label: 'Refrigerador', emoji: '🧊' },
+    { value: 'anaquel', label: 'Anaquel/Estante', emoji: '📦' },
+    { value: 'piso', label: 'Piso/Paletas', emoji: '🏗️' },
+    { value: 'exhibidor', label: 'Exhibidor', emoji: '🪟' },
+    { value: 'espacio_fisico', label: 'Espacio Físico', emoji: '📐' },
+  ];
+
   const tabs = [
     { id: 'global' as TabType, label: 'Parámetros Globales', icon: Settings },
     { id: 'umbrales' as TabType, label: 'Umbrales ABC', icon: Package },
     { id: 'niveles' as TabType, label: 'Niveles de Servicio', icon: TrendingUp },
     { id: 'tiendas' as TabType, label: 'Por Tienda', icon: Store },
     { id: 'categorias' as TabType, label: 'Por Categoría', icon: Leaf },
+    { id: 'capacidad' as TabType, label: 'Límites Inventario', icon: Warehouse },
   ];
 
   if (loading) {
@@ -1244,6 +1382,257 @@ export default function ConfiguracionABC() {
                     <li>Si un producto pertenece a FRUVER y tiene clase C, usará los días configurados aquí para FRUVER clase C</li>
                     <li>Las categorías no configuradas usarán los valores globales de la pestaña "Niveles de Servicio"</li>
                     <li>Marcar como "Perecedero" es solo informativo, no afecta el cálculo</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: Capacidad de Almacenamiento */}
+        {activeTab === 'capacidad' && (
+          <div className="space-y-6">
+            {/* Info Banner */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <Warehouse className="w-5 h-5 text-amber-600 mt-0.5" />
+                <div>
+                  <p className="text-sm text-amber-700">
+                    <strong>Límites de Inventario:</strong> Configura límites por producto y tienda para controlar las sugerencias de pedido.
+                  </p>
+                  <ul className="text-sm text-amber-600 mt-1 list-disc list-inside space-y-1">
+                    <li><strong>Capacidad Máxima:</strong> Límite superior por espacio físico (congelador, anaquel). El sistema no sugerirá más de lo que cabe.</li>
+                    <li><strong>Mínimo Exhibición:</strong> Cantidad mínima para que el producto se vea bien en el mostrador. El sistema elevará la sugerencia si es necesario.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            {/* Formulario para agregar nueva configuración */}
+            <div className="bg-white border border-gray-200 rounded-lg p-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
+                <Plus size={20} />
+                Agregar Límite de Capacidad
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Selector de tienda */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tienda</label>
+                  <select
+                    value={capacidadTiendaSeleccionada}
+                    onChange={(e) => setCapacidadTiendaSeleccionada(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Seleccionar tienda...</option>
+                    {tiendas.map((t) => (
+                      <option key={t.id} value={t.id}>{t.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Buscador de producto */}
+                <div className="relative">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Producto</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={productoSeleccionado ? productoSeleccionado.descripcion : capacidadBusquedaProducto}
+                      onChange={(e) => {
+                        setCapacidadBusquedaProducto(e.target.value);
+                        setProductoSeleccionado(null);
+                        buscarProductos(e.target.value);
+                      }}
+                      placeholder="Buscar por código o nombre..."
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    />
+                    <Search className="absolute right-3 top-2.5 w-4 h-4 text-gray-400" />
+                  </div>
+                  {/* Dropdown de resultados */}
+                  {productosEncontrados.length > 0 && !productoSeleccionado && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      {productosEncontrados.map((p) => (
+                        <button
+                          key={p.codigo}
+                          onClick={() => {
+                            setProductoSeleccionado(p);
+                            setProductosEncontrados([]);
+                          }}
+                          className="w-full px-3 py-2 text-left hover:bg-gray-50 text-sm border-b last:border-b-0"
+                        >
+                          <span className="font-medium">{p.codigo}</span>
+                          <span className="text-gray-500 ml-2">{p.descripcion}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {buscandoProductos && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-center text-sm text-gray-500">
+                      Buscando...
+                    </div>
+                  )}
+                </div>
+
+                {/* Capacidad máxima */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Capacidad Máxima (unidades)
+                    <span className="ml-1 text-xs text-gray-400 font-normal">opcional</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={nuevaCapacidad.capacidad_maxima_unidades ?? ''}
+                    onChange={(e) => setNuevaCapacidad({ ...nuevaCapacidad, capacidad_maxima_unidades: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="Ej: 200"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Límite superior (congelador, anaquel)</p>
+                </div>
+
+                {/* Mínimo de exhibición */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Mínimo Exhibición (unidades)
+                    <span className="ml-1 text-xs text-gray-400 font-normal">opcional</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={nuevaCapacidad.minimo_exhibicion_unidades ?? ''}
+                    onChange={(e) => setNuevaCapacidad({ ...nuevaCapacidad, minimo_exhibicion_unidades: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="Ej: 30"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Mínimo para que se vea bien</p>
+                </div>
+
+                {/* Tipo de restricción */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Restricción</label>
+                  <select
+                    value={nuevaCapacidad.tipo_restriccion}
+                    onChange={(e) => setNuevaCapacidad({ ...nuevaCapacidad, tipo_restriccion: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                  >
+                    {TIPOS_RESTRICCION.map((t) => (
+                      <option key={t.value} value={t.value}>{t.emoji} {t.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Notas y botón guardar */}
+              <div className="mt-4 flex gap-4 items-end">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
+                  <input
+                    type="text"
+                    value={nuevaCapacidad.notas}
+                    onChange={(e) => setNuevaCapacidad({ ...nuevaCapacidad, notas: e.target.value })}
+                    placeholder="Ej: 2 freezers de 100 unidades cada uno"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <button
+                  onClick={handleCrearCapacidad}
+                  disabled={saving || !capacidadTiendaSeleccionada || !productoSeleccionado ||
+                    (!nuevaCapacidad.capacidad_maxima_unidades && !nuevaCapacidad.minimo_exhibicion_unidades)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm"
+                >
+                  <Plus size={16} />
+                  Agregar
+                </button>
+              </div>
+            </div>
+
+            {/* Lista de configuraciones existentes */}
+            <div className="bg-white border border-gray-200 rounded-lg">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <h3 className="text-lg font-medium text-gray-900">
+                  Límites Configurados ({capacidadesAlmacenamiento.length})
+                </h3>
+              </div>
+
+              {capacidadesAlmacenamiento.length === 0 ? (
+                <div className="p-8 text-center text-gray-500">
+                  <Warehouse className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>No hay límites de capacidad configurados</p>
+                  <p className="text-sm mt-1">Agrega un límite usando el formulario de arriba</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tienda</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Producto</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cap. Máx.</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mín. Exhib.</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notas</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {capacidadesAlmacenamiento.map((cap) => {
+                        const tipoInfo = TIPOS_RESTRICCION.find(t => t.value === cap.tipo_restriccion);
+                        return (
+                          <tr key={cap.id} className="hover:bg-gray-50">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {cap.tienda_nombre || cap.tienda_id}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-900">
+                              <div>
+                                <span className="font-mono text-xs text-gray-500">{cap.producto_codigo}</span>
+                                <br />
+                                <span>{cap.producto_descripcion || '-'}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                              {cap.capacidad_maxima_unidades ? `${cap.capacidad_maxima_unidades.toLocaleString()} unid` : '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                              {cap.minimo_exhibicion_unidades ? `${cap.minimo_exhibicion_unidades.toLocaleString()} unid` : '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {tipoInfo ? `${tipoInfo.emoji} ${tipoInfo.label}` : cap.tipo_restriccion}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">
+                              {cap.notas || '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                              <button
+                                onClick={() => handleDeleteCapacidad(cap)}
+                                className="text-red-600 hover:text-red-800 p-1"
+                                title="Eliminar"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Nota explicativa */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <Info className="w-5 h-5 text-blue-600 mt-0.5" />
+                <div className="text-sm text-blue-700">
+                  <p className="font-medium mb-1">¿Cómo funcionan los límites?</p>
+                  <ul className="list-disc list-inside space-y-1 text-blue-600">
+                    <li><strong>Capacidad Máxima:</strong> Si el sistema sugiere más unidades de las que caben, ajusta a la capacidad disponible</li>
+                    <li><strong>Mínimo Exhibición:</strong> Si el producto necesita más stock para "verse bien", eleva la sugerencia al mínimo</li>
+                    <li>Puedes configurar uno o ambos límites para cada producto</li>
+                    <li>Se mostrará una advertencia en el pedido indicando qué límite se aplicó</li>
+                    <li>Los productos sin configuración usarán el cálculo normal ABC</li>
                   </ul>
                 </div>
               </div>

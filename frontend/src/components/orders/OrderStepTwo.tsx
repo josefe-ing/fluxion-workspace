@@ -275,12 +275,33 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         dias_cobertura: 3,
       });
 
-      const productosConDefaults = response.data.map((p: ProductoPedido) => ({
-        ...p,
-        // No inicializar cantidad_pedida_bultos aquí - dejar que useEffect lo calcule con calcularPedidoSugerido()
-        cantidad_pedida_bultos: undefined,
-        incluido: true,
-      }));
+      const productosConDefaults = response.data.map((p: ProductoPedido) => {
+        // Si hay límites de inventario aplicados, mostrarlos en las notas con sus valores
+        let notasIniciales = p.razon_pedido || '';
+        const notas: string[] = [];
+
+        // Capacidad máxima (límite superior) - texto descriptivo + valor
+        if (p.ajustado_por_capacidad && p.capacidad_maxima_configurada) {
+          notas.push(`⚠️ Ajustado x capacidad (${Math.round(p.capacidad_maxima_configurada)})`);
+        }
+
+        // Mínimo de exhibición (límite inferior) - texto descriptivo + valor
+        if (p.ajustado_por_minimo_exhibicion && p.minimo_exhibicion_configurado) {
+          notas.push(`📊 Elevado x exhibición (${Math.round(p.minimo_exhibicion_configurado)})`);
+        }
+
+        if (notas.length > 0) {
+          notasIniciales = notas.join(' | ');
+        }
+
+        return {
+          ...p,
+          // No inicializar cantidad_pedida_bultos aquí - dejar que useEffect lo calcule con calcularPedidoSugerido()
+          cantidad_pedida_bultos: undefined,
+          incluido: true,
+          razon_pedido: notasIniciales,
+        };
+      });
 
       setProductos(productosConDefaults);
       updateOrderData({ productos: productosConDefaults });
@@ -1497,8 +1518,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         value={producto.razon_pedido || ''}
                         onChange={(e) => handleNotasChange(producto.codigo_producto, e.target.value)}
                         placeholder="Notas..."
+                        title={producto.warnings_calculo?.length > 0 ? producto.warnings_calculo.join('\n') : (producto.razon_pedido || '')}
                         disabled={!producto.incluido}
-                        className="w-full px-1 py-1 border border-gray-300 rounded text-xs text-left disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500"
+                        className={`w-full px-1 py-1 border rounded text-xs text-left disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500 ${
+                          producto.ajustado_por_capacidad || producto.ajustado_por_minimo_exhibicion
+                            ? 'border-amber-400 bg-amber-50 font-medium'
+                            : 'border-gray-300'
+                        }`}
                       />
                     </td>
                   </tr>

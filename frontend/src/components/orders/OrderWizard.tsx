@@ -65,6 +65,11 @@ export interface ProductoPedido {
   exceso_unidades: number;
   exceso_bultos: number;
   dias_exceso: number;
+  // Límites de inventario (capacidad máxima y mínimo exhibición)
+  capacidad_maxima_configurada?: number;
+  ajustado_por_capacidad?: boolean;
+  minimo_exhibicion_configurado?: number;
+  ajustado_por_minimo_exhibicion?: boolean;
   // Warnings de sanity checks
   warnings_calculo: string[];
   cantidad_pedida_bultos?: number;

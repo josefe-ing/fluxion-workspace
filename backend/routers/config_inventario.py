@@ -839,3 +839,461 @@ async def eliminar_cobertura_categoria(
         conn.rollback()
         logger.error(f"Error eliminando configuración de categoría: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================================================================================
+# CAPACIDAD DE ALMACENAMIENTO POR PRODUCTO Y TIENDA
+# =====================================================================================
+# Permite configurar límites de capacidad física (ej: congeladores, refrigeradores)
+# para evitar que los pedidos sugeridos excedan el espacio disponible.
+
+class CapacidadAlmacenamientoBase(BaseModel):
+    """Campos base para capacidad de almacenamiento y mínimo de exhibición"""
+    tienda_id: str
+    producto_codigo: str
+    capacidad_maxima_unidades: Optional[float] = None  # Límite superior (congelador, refrigerador, etc.)
+    minimo_exhibicion_unidades: Optional[float] = None  # Mínimo para que producto se vea bien en exhibición
+    tipo_restriccion: str = "espacio_fisico"  # congelador, refrigerador, anaquel, piso, exhibidor, custom
+    notas: Optional[str] = None
+
+
+class CapacidadAlmacenamientoCreate(CapacidadAlmacenamientoBase):
+    """Modelo para crear nueva configuración de capacidad"""
+    pass
+
+
+class CapacidadAlmacenamientoUpdate(BaseModel):
+    """Modelo para actualizar configuración existente (todos los campos opcionales)"""
+    capacidad_maxima_unidades: Optional[float] = None
+    minimo_exhibicion_unidades: Optional[float] = None
+    tipo_restriccion: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class CapacidadAlmacenamiento(CapacidadAlmacenamientoBase):
+    """Modelo completo con todos los campos"""
+    id: str
+    activo: bool = True
+    fecha_creacion: Optional[str] = None
+    fecha_modificacion: Optional[str] = None
+    # Campos adicionales del JOIN
+    tienda_nombre: Optional[str] = None
+    producto_descripcion: Optional[str] = None
+
+
+# Tipos de restricción válidos
+TIPOS_RESTRICCION_VALIDOS = [
+    'congelador',
+    'refrigerador',
+    'anaquel',
+    'piso',
+    'exhibidor',
+    'espacio_fisico',
+    'custom'
+]
+
+
+@router.get("/capacidad-almacenamiento", response_model=List[CapacidadAlmacenamiento])
+async def obtener_capacidades_almacenamiento(
+    tienda_id: Optional[str] = None,
+    conn: Any = Depends(get_db)
+):
+    """
+    Obtiene todas las configuraciones de capacidad de almacenamiento.
+    Opcionalmente filtra por tienda_id.
+    """
+    try:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT
+                cap.id,
+                cap.tienda_id,
+                cap.producto_codigo,
+                cap.capacidad_maxima_unidades,
+                cap.minimo_exhibicion_unidades,
+                cap.tipo_restriccion,
+                cap.notas,
+                cap.activo,
+                cap.fecha_creacion,
+                cap.fecha_modificacion,
+                u.nombre as tienda_nombre,
+                p.descripcion as producto_descripcion
+            FROM capacidad_almacenamiento_producto cap
+            LEFT JOIN ubicaciones u ON cap.tienda_id = u.id
+            LEFT JOIN productos p ON cap.producto_codigo = p.codigo
+            WHERE cap.activo = true
+        """
+        params = []
+
+        if tienda_id:
+            query += " AND cap.tienda_id = %s"
+            params.append(tienda_id)
+
+        query += " ORDER BY u.nombre, p.descripcion"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        cursor.close()
+
+        return [
+            CapacidadAlmacenamiento(
+                id=row[0],
+                tienda_id=row[1],
+                producto_codigo=row[2],
+                capacidad_maxima_unidades=float(row[3]) if row[3] else None,
+                minimo_exhibicion_unidades=float(row[4]) if row[4] else None,
+                tipo_restriccion=row[5] or 'espacio_fisico',
+                notas=row[6],
+                activo=row[7] if row[7] is not None else True,
+                fecha_creacion=str(row[8]) if row[8] else None,
+                fecha_modificacion=str(row[9]) if row[9] else None,
+                tienda_nombre=row[10],
+                producto_descripcion=row[11]
+            )
+            for row in rows
+        ]
+
+    except Exception as e:
+        logger.error(f"Error obteniendo capacidades de almacenamiento: {str(e)}")
+        # Si la tabla no existe, retornar lista vacía
+        if "does not exist" in str(e) or "no existe" in str(e).lower():
+            return []
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/capacidad-almacenamiento/tienda/{tienda_id}", response_model=List[CapacidadAlmacenamiento])
+async def obtener_capacidades_por_tienda(
+    tienda_id: str,
+    conn: Any = Depends(get_db)
+):
+    """
+    Obtiene las configuraciones de capacidad para una tienda específica.
+    """
+    return await obtener_capacidades_almacenamiento(tienda_id=tienda_id, conn=conn)
+
+
+@router.get("/capacidad-almacenamiento/producto/{producto_codigo}")
+async def obtener_capacidades_por_producto(
+    producto_codigo: str,
+    conn: Any = Depends(get_db)
+):
+    """
+    Obtiene las configuraciones de capacidad para un producto específico en todas las tiendas.
+    """
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                cap.id,
+                cap.tienda_id,
+                cap.producto_codigo,
+                cap.capacidad_maxima_unidades,
+                cap.tipo_restriccion,
+                cap.notas,
+                cap.activo,
+                u.nombre as tienda_nombre
+            FROM capacidad_almacenamiento_producto cap
+            LEFT JOIN ubicaciones u ON cap.tienda_id = u.id
+            WHERE cap.producto_codigo = %s AND cap.activo = true
+            ORDER BY u.nombre
+        """, [producto_codigo])
+        rows = cursor.fetchall()
+        cursor.close()
+
+        return [
+            {
+                "id": row[0],
+                "tienda_id": row[1],
+                "producto_codigo": row[2],
+                "capacidad_maxima_unidades": float(row[3]) if row[3] else 0,
+                "tipo_restriccion": row[4],
+                "notas": row[5],
+                "activo": row[6],
+                "tienda_nombre": row[7]
+            }
+            for row in rows
+        ]
+
+    except Exception as e:
+        logger.error(f"Error obteniendo capacidades por producto: {str(e)}")
+        if "does not exist" in str(e):
+            return []
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/capacidad-almacenamiento")
+async def crear_capacidad_almacenamiento(
+    config: CapacidadAlmacenamientoCreate,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Crea una nueva configuración de capacidad de almacenamiento para un producto en una tienda.
+    """
+    try:
+        # Validar tipo de restricción
+        if config.tipo_restriccion not in TIPOS_RESTRICCION_VALIDOS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tipo de restricción inválido. Valores válidos: {TIPOS_RESTRICCION_VALIDOS}"
+            )
+
+        # Validar que al menos uno de los límites esté configurado
+        if config.capacidad_maxima_unidades is None and config.minimo_exhibicion_unidades is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Debe configurar al menos capacidad máxima o mínimo de exhibición"
+            )
+
+        # Validar capacidad positiva si está configurada
+        if config.capacidad_maxima_unidades is not None and config.capacidad_maxima_unidades <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="La capacidad máxima debe ser mayor a 0"
+            )
+
+        # Validar mínimo exhibición positivo si está configurado
+        if config.minimo_exhibicion_unidades is not None and config.minimo_exhibicion_unidades <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="El mínimo de exhibición debe ser mayor a 0"
+            )
+
+        cursor = conn.cursor()
+
+        # Generar ID único
+        config_id = f"{config.tienda_id}_{config.producto_codigo}"
+
+        cursor.execute("""
+            INSERT INTO capacidad_almacenamiento_producto (
+                id, tienda_id, producto_codigo, capacidad_maxima_unidades,
+                minimo_exhibicion_unidades, tipo_restriccion, notas, activo,
+                fecha_creacion, fecha_modificacion, modificado_por
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'usuario')
+            ON CONFLICT (tienda_id, producto_codigo) DO UPDATE SET
+                capacidad_maxima_unidades = EXCLUDED.capacidad_maxima_unidades,
+                minimo_exhibicion_unidades = EXCLUDED.minimo_exhibicion_unidades,
+                tipo_restriccion = EXCLUDED.tipo_restriccion,
+                notas = EXCLUDED.notas,
+                activo = true,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            RETURNING id
+        """, [
+            config_id,
+            config.tienda_id,
+            config.producto_codigo,
+            config.capacidad_maxima_unidades,
+            config.minimo_exhibicion_unidades,
+            config.tipo_restriccion,
+            config.notas
+        ])
+
+        result = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+
+        # Construir mensaje descriptivo
+        msg_parts = []
+        if config.capacidad_maxima_unidades:
+            msg_parts.append(f"máximo {config.capacidad_maxima_unidades} unidades")
+        if config.minimo_exhibicion_unidades:
+            msg_parts.append(f"mínimo exhibición {config.minimo_exhibicion_unidades} unidades")
+        msg = " y ".join(msg_parts)
+
+        logger.info(f"✅ Límites de inventario configurados: {config.producto_codigo} en {config.tienda_id} = {msg}")
+
+        return {
+            "success": True,
+            "mensaje": f"Límites configurados: {msg}",
+            "id": result[0] if result else config_id,
+            "config": config.model_dump()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error creando capacidad de almacenamiento: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/capacidad-almacenamiento/{config_id}")
+async def actualizar_capacidad_almacenamiento(
+    config_id: str,
+    config: CapacidadAlmacenamientoUpdate,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Actualiza una configuración de capacidad existente.
+    """
+    try:
+        # Validaciones
+        if config.tipo_restriccion and config.tipo_restriccion not in TIPOS_RESTRICCION_VALIDOS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tipo de restricción inválido. Valores válidos: {TIPOS_RESTRICCION_VALIDOS}"
+            )
+
+        if config.capacidad_maxima_unidades is not None and config.capacidad_maxima_unidades <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="La capacidad máxima debe ser mayor a 0"
+            )
+
+        if config.minimo_exhibicion_unidades is not None and config.minimo_exhibicion_unidades <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="El mínimo de exhibición debe ser mayor a 0"
+            )
+
+        cursor = conn.cursor()
+
+        # Construir query dinámicamente con los campos a actualizar
+        updates = ["fecha_modificacion = CURRENT_TIMESTAMP"]
+        params = []
+
+        if config.capacidad_maxima_unidades is not None:
+            updates.append("capacidad_maxima_unidades = %s")
+            params.append(config.capacidad_maxima_unidades)
+
+        if config.minimo_exhibicion_unidades is not None:
+            updates.append("minimo_exhibicion_unidades = %s")
+            params.append(config.minimo_exhibicion_unidades)
+
+        if config.tipo_restriccion is not None:
+            updates.append("tipo_restriccion = %s")
+            params.append(config.tipo_restriccion)
+
+        if config.notas is not None:
+            updates.append("notas = %s")
+            params.append(config.notas)
+
+        params.append(config_id)
+
+        query = f"""
+            UPDATE capacidad_almacenamiento_producto
+            SET {', '.join(updates)}
+            WHERE id = %s AND activo = true
+        """
+
+        cursor.execute(query, params)
+
+        if cursor.rowcount == 0:
+            cursor.close()
+            raise HTTPException(status_code=404, detail="Configuración no encontrada")
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"✅ Capacidad de almacenamiento actualizada: {config_id}")
+
+        return {
+            "success": True,
+            "mensaje": "Configuración actualizada correctamente",
+            "id": config_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error actualizando capacidad de almacenamiento: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/capacidad-almacenamiento/{config_id}")
+async def eliminar_capacidad_almacenamiento(
+    config_id: str,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Elimina (desactiva) una configuración de capacidad.
+    El producto volverá a usar el cálculo normal sin límite de capacidad.
+    """
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE capacidad_almacenamiento_producto
+            SET activo = false, fecha_modificacion = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, [config_id])
+
+        if cursor.rowcount == 0:
+            cursor.close()
+            raise HTTPException(status_code=404, detail="Configuración no encontrada")
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"✅ Capacidad de almacenamiento eliminada: {config_id}")
+
+        return {
+            "success": True,
+            "mensaje": "Configuración eliminada. El producto usará cálculo normal sin límite."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error eliminando capacidad de almacenamiento: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================================================================================
+# BÚSQUEDA DE PRODUCTOS (para UI de capacidad de almacenamiento)
+# =====================================================================================
+
+@router.get("/productos/buscar")
+async def buscar_productos(
+    q: str,
+    limite: int = 10,
+    conn: Any = Depends(get_db)
+):
+    """
+    Busca productos por código o descripción.
+    Usado por el formulario de capacidad de almacenamiento.
+    """
+    if len(q) < 2:
+        return []
+
+    try:
+        cursor = conn.cursor()
+
+        # Buscar por código exacto o descripción parcial
+        cursor.execute("""
+            SELECT codigo, descripcion, categoria
+            FROM productos
+            WHERE activo = true
+              AND (
+                codigo ILIKE %s
+                OR descripcion ILIKE %s
+              )
+            ORDER BY
+              CASE WHEN codigo ILIKE %s THEN 0 ELSE 1 END,
+              descripcion
+            LIMIT %s
+        """, [
+            f"%{q}%",
+            f"%{q}%",
+            f"{q}%",  # Priorizar códigos que empiecen con el término
+            limite
+        ])
+
+        rows = cursor.fetchall()
+        cursor.close()
+
+        return [
+            {
+                "codigo": row[0],
+                "descripcion": row[1] or row[0],
+                "categoria": row[2] or ''
+            }
+            for row in rows
+        ]
+
+    except Exception as e:
+        logger.error(f"Error buscando productos: {str(e)}")
+        return []
