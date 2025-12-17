@@ -942,16 +942,23 @@ class ProductoCalculado(BaseModel):
     ajustado_por_minimo_exhibicion: bool = False  # True si se elevó por mínimo de exhibición
     # Warnings de sanity checks
     warnings_calculo: List[str] = []
-    # === CAMPOS V2 (Shadow Mode) ===
-    # Demanda V2: Blend 60% P75 + 40% Prom20D
-    demanda_v2_blend_unid: float = 0.0
-    cantidad_sugerida_v2_unid: float = 0.0
-    cantidad_sugerida_v2_bultos: float = 0.0
-    # Componentes del blend (para mostrar en modal)
-    v2_componente_p75: float = 0.0       # P75 × 0.60
-    v2_componente_prom20d: float = 0.0   # Prom20D × 0.40
-    # Diferencia vs método actual
-    v2_diferencia_bultos: float = 0.0    # V2 - Actual
+
+    # === CAMPOS V2 (Cobertura Real por Día de Semana) ===
+    # Promedios por día de semana (0=Dom, 1=Lun, ..., 6=Sáb)
+    v2_prom_dow: List[float] = []  # Array de 7 elementos con promedio de cada día
+    # Demanda real del período (suma de demanda de los días específicos a cubrir)
+    v2_demanda_periodo: float = 0.0  # Suma de demanda real del período de cobertura
+    # Cantidad sugerida V2 (basada en demanda real del período)
+    v2_cantidad_sugerida_unid: float = 0.0
+    v2_cantidad_sugerida_bultos: float = 0.0
+    v2_diferencia_bultos: float = 0.0  # V2 - V1 (positivo = V2 pide más)
+    # Simulación de cobertura día a día (con la cantidad V2)
+    v2_cobertura_dias: List[dict] = []  # [{dia: "Jue", demanda: 3.5, stock_final: 19.5, cobertura_pct: 100}, ...]
+    v2_dias_cobertura_real: float = 0.0  # Días reales que cubre (puede ser 3.7 días)
+    v2_primer_dia_riesgo: Optional[str] = None  # Primer día donde cobertura < 100%
+    # Info del período
+    v2_dia_pedido: Optional[str] = None  # Día en que se hace el pedido (ej: "Mié")
+    v2_dia_llegada: Optional[str] = None  # Día en que llega el pedido (ej: "Jue")
 
 
 @router.post("/calcular", response_model=List[ProductoCalculado])
@@ -1309,9 +1316,59 @@ async def calcular_productos_sugeridos(
         ])
 
         rows = cursor.fetchall()
-        cursor.close()
 
         logger.info(f"📊 Encontrados {len(rows)} productos con datos")
+
+        # ====================================================================
+        # QUERY V3: Obtener promedios por día de semana para cada producto
+        # ====================================================================
+        # Esto permite calcular cobertura real día a día
+        # DOW: 0=Domingo, 1=Lunes, ..., 6=Sábado
+        cursor_dow = conn.cursor()
+        cursor_dow.execute("""
+            WITH ventas_por_dow AS (
+                SELECT
+                    producto_id,
+                    EXTRACT(DOW FROM fecha_venta::date) as dow,
+                    fecha_venta::date as fecha,
+                    SUM(cantidad_vendida) as total_dia
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND fecha_venta::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND fecha_venta::date < CURRENT_DATE
+                GROUP BY producto_id, fecha_venta::date
+            )
+            SELECT
+                producto_id,
+                dow,
+                AVG(total_dia) as prom_dow
+            FROM ventas_por_dow
+            GROUP BY producto_id, dow
+            ORDER BY producto_id, dow
+        """, [request.tienda_destino])
+
+        # Construir diccionario de promedios por DOW para cada producto
+        # Formato: {producto_id: [prom_dom, prom_lun, prom_mar, prom_mie, prom_jue, prom_vie, prom_sab]}
+        promedios_dow_dict: dict = {}
+        for row_dow in cursor_dow.fetchall():
+            prod_id = row_dow[0]
+            dow = int(row_dow[1])
+            prom = float(row_dow[2]) if row_dow[2] else 0.0
+            if prod_id not in promedios_dow_dict:
+                promedios_dow_dict[prod_id] = [0.0] * 7  # 7 días
+            promedios_dow_dict[prod_id][dow] = prom
+        cursor_dow.close()
+
+        # Obtener el día actual para calcular cobertura real
+        from datetime import datetime
+        dia_actual = datetime.now().weekday()  # 0=Lunes, 6=Domingo en Python
+        # Convertir a DOW de PostgreSQL (0=Domingo, 6=Sábado)
+        dow_actual = (dia_actual + 1) % 7
+
+        # Mapeo de DOW a nombre del día
+        NOMBRES_DIA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+
+        logger.info(f"📅 Día actual: {NOMBRES_DIA[dow_actual]} (DOW={dow_actual}), productos con DOW data: {len(promedios_dow_dict)}")
 
         productos = []
         productos_sin_venta_con_ref = 0  # Contador para log
@@ -1413,27 +1470,130 @@ async def calcular_productos_sugeridos(
                 )
 
                 # ====================================================================
-                # CÁLCULO V2 (Shadow Mode): Blend 60% P75 + 40% Prom20D
+                # CÁLCULO V2: Cobertura Real por Día de Semana
                 # ====================================================================
-                v2_componente_p75 = p75_usado * 0.60
-                v2_componente_prom20d = prom_20d * 0.40
-                demanda_v2_blend = v2_componente_p75 + v2_componente_prom20d
+                # V2 calcula cuánto REALMENTE se necesita para cubrir el período,
+                # sumando la demanda específica de cada día de la semana.
+                #
+                # Ejemplo: Pedido el Miércoles (llega Jueves PM) para cubrir 7 días:
+                # - Necesita cubrir: Vie + Sáb + Dom + Lun + Mar + Mié + Jue
+                # - Si Sábado vende 2x que Lunes, V2 lo considera
+                #
+                v2_prom_dow = promedios_dow_dict.get(codigo, [0.0] * 7)
+                v2_cobertura_dias = []
+                v2_dias_cobertura_real = 0.0
+                v2_primer_dia_riesgo = None
+                v2_demanda_periodo = 0.0
 
-                # Calcular cantidad sugerida V2 usando el mismo servicio
-                resultado_v2 = calcular_inventario_simple(
-                    demanda_p75=demanda_v2_blend,  # Usar blend como demanda
-                    sigma_demanda=sigma_usada,
-                    demanda_maxima=demanda_maxima if demanda_maxima > 0 else demanda_v2_blend * 2,
-                    unidades_por_bulto=unidades_por_bulto,
-                    stock_actual=stock_tienda,
-                    stock_cedi=stock_cedi,
-                    clase_abc=clasificacion,
-                    es_generador_trafico=es_generador_trafico,
-                    dias_cobertura_override=dias_override
-                )
+                # Días de cobertura según clase ABC (o override si existe)
+                # Prioridad: dias_override (por categoría) > default por clase
+                DIAS_COBERTURA_DEFAULT = {'A': 7, 'B': 14, 'C': 21, 'D': 30, '-': 7}
+                dias_cobertura_abc = dias_override if dias_override else DIAS_COBERTURA_DEFAULT.get(clasificacion, 7)
 
-                cantidad_sugerida_v2_unid = resultado_v2.cantidad_sugerida_unid
-                cantidad_sugerida_v2_bultos = resultado_v2.cantidad_sugerida_bultos
+                # Convertir a bultos para mostrar
+                unid_por_bulto = unidades_por_bulto if unidades_por_bulto > 0 else 1
+
+                # Lead time: pedido hoy → llega mañana PM → empezamos a cubrir pasado mañana
+                # dow_actual viene de Python weekday() convertido: 0=Dom, 1=Lun, ..., 6=Sáb
+                dow_llegada = (dow_actual + 1) % 7  # Llega mañana
+                dow_primer_dia_cubrir = (dow_actual + 2) % 7  # Primer día que cubre es pasado mañana
+
+                v2_dia_pedido = NOMBRES_DIA[dow_actual]
+                v2_dia_llegada = NOMBRES_DIA[dow_llegada]
+
+                # ============================================================
+                # PASO 1: Calcular demanda total del período (días específicos)
+                # ============================================================
+                demanda_total_periodo = 0.0
+                dias_a_cubrir = []
+
+                for i in range(int(dias_cobertura_abc)):
+                    dow_dia = (dow_primer_dia_cubrir + i) % 7
+                    nombre_dia = NOMBRES_DIA[dow_dia]
+
+                    # Demanda de este día específico
+                    demanda_dia = v2_prom_dow[dow_dia] if v2_prom_dow and v2_prom_dow[dow_dia] > 0 else prom_20d
+
+                    # Si no hay datos de DOW para ningún día, usar prom_20d
+                    if demanda_dia == 0 and (not v2_prom_dow or sum(v2_prom_dow) == 0):
+                        demanda_dia = prom_20d
+
+                    dias_a_cubrir.append({
+                        "dow": dow_dia,
+                        "nombre": nombre_dia,
+                        "demanda": demanda_dia
+                    })
+                    demanda_total_periodo += demanda_dia
+
+                v2_demanda_periodo = demanda_total_periodo
+
+                # ============================================================
+                # PASO 2: Calcular cantidad sugerida V2
+                # ============================================================
+                # Necesitamos: demanda_total_periodo + stock_seguridad - stock_actual
+                # Usamos el mismo stock de seguridad que V1 para consistencia
+                stock_seguridad_v2 = resultado.stock_seguridad_unid
+
+                # Cantidad necesaria = demanda del período + seguridad - lo que ya tenemos
+                cantidad_necesaria_unid = demanda_total_periodo + stock_seguridad_v2 - stock_tienda
+                cantidad_necesaria_unid = max(0, cantidad_necesaria_unid)  # No puede ser negativo
+
+                # Redondear a bultos completos (hacia arriba)
+                v2_cantidad_sugerida_bultos = math.ceil(cantidad_necesaria_unid / unid_por_bulto) if unid_por_bulto > 0 else 0
+                v2_cantidad_sugerida_unid = v2_cantidad_sugerida_bultos * unid_por_bulto
+
+                # Diferencia vs V1
+                v2_diferencia_bultos = v2_cantidad_sugerida_bultos - resultado.cantidad_sugerida_bultos
+
+                # ============================================================
+                # PASO 3: Simular cobertura día a día CON la cantidad V2
+                # ============================================================
+                stock_disponible_v2 = stock_tienda + v2_cantidad_sugerida_unid
+                stock_restante = stock_disponible_v2
+                dias_cubiertos = 0.0
+
+                for dia_info in dias_a_cubrir:
+                    demanda_dia = dia_info["demanda"]
+                    nombre_dia = dia_info["nombre"]
+                    dow_dia = dia_info["dow"]
+
+                    # Calcular cobertura para este día
+                    if demanda_dia > 0:
+                        cobertura_pct = min(100, (stock_restante / demanda_dia) * 100)
+                        stock_despues = max(0, stock_restante - demanda_dia)
+                    else:
+                        cobertura_pct = 100
+                        stock_despues = stock_restante
+
+                    # Determinar estado del día
+                    if cobertura_pct >= 100:
+                        estado = "ok"
+                        dias_cubiertos += 1.0
+                    elif cobertura_pct >= 50:
+                        estado = "riesgo"
+                        dias_cubiertos += cobertura_pct / 100
+                        if v2_primer_dia_riesgo is None:
+                            v2_primer_dia_riesgo = nombre_dia
+                    else:
+                        estado = "quiebre"
+                        dias_cubiertos += cobertura_pct / 100
+                        if v2_primer_dia_riesgo is None:
+                            v2_primer_dia_riesgo = nombre_dia
+
+                    v2_cobertura_dias.append({
+                        "dia": nombre_dia,
+                        "dow": dow_dia,
+                        "demanda_unid": round(demanda_dia, 1),
+                        "demanda_bultos": round(demanda_dia / unid_por_bulto, 2),
+                        "stock_antes": round(stock_restante, 1),
+                        "stock_despues": round(stock_despues, 1),
+                        "cobertura_pct": round(cobertura_pct, 0),
+                        "estado": estado
+                    })
+
+                    stock_restante = stock_despues
+
+                v2_dias_cobertura_real = round(dias_cubiertos, 1)
 
                 # ENVÍO PRUEBA: Garantizar mínimo 1 bulto
                 # Si es envío de prueba y la sugerencia es 0, forzar a 1 bulto
@@ -1617,13 +1777,17 @@ async def calcular_productos_sugeridos(
                     minimo_exhibicion_configurado=limite_info['minimo_exhibicion'] if limite_info else None,
                     ajustado_por_minimo_exhibicion=minimo_exhibicion_aplicado is not None,
                     warnings_calculo=warnings,
-                    # === CAMPOS V2 (Shadow Mode) ===
-                    demanda_v2_blend_unid=demanda_v2_blend,
-                    cantidad_sugerida_v2_unid=cantidad_sugerida_v2_unid,
-                    cantidad_sugerida_v2_bultos=float(cantidad_sugerida_v2_bultos),
-                    v2_componente_p75=v2_componente_p75,
-                    v2_componente_prom20d=v2_componente_prom20d,
-                    v2_diferencia_bultos=float(cantidad_sugerida_v2_bultos) - float(cantidad_sugerida_bultos_final)
+                    # === CAMPOS V2 (Cobertura Real por Día) ===
+                    v2_prom_dow=v2_prom_dow,
+                    v2_demanda_periodo=round(v2_demanda_periodo, 1),
+                    v2_cantidad_sugerida_unid=v2_cantidad_sugerida_unid,
+                    v2_cantidad_sugerida_bultos=float(v2_cantidad_sugerida_bultos),
+                    v2_diferencia_bultos=float(v2_diferencia_bultos),
+                    v2_cobertura_dias=v2_cobertura_dias,
+                    v2_dias_cobertura_real=v2_dias_cobertura_real,
+                    v2_primer_dia_riesgo=v2_primer_dia_riesgo,
+                    v2_dia_pedido=v2_dia_pedido,
+                    v2_dia_llegada=v2_dia_llegada
                 ))
             else:
                 # Producto sin demanda o sin clasificacion - no sugerir pedido

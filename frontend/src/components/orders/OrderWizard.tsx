@@ -74,13 +74,26 @@ export interface ProductoPedido {
   warnings_calculo: string[];
   cantidad_pedida_bultos?: number;
   incluido?: boolean;
-  // === CAMPOS V2 (Shadow Mode) ===
-  demanda_v2_blend_unid?: number;
-  cantidad_sugerida_v2_unid?: number;
-  cantidad_sugerida_v2_bultos?: number;
-  v2_componente_p75?: number;
-  v2_componente_prom20d?: number;
-  v2_diferencia_bultos?: number;
+  // === CAMPOS V2 (Cobertura Real por Día de Semana) ===
+  v2_prom_dow?: number[];  // Array de 7 elementos con promedio de cada día
+  v2_demanda_periodo?: number;  // Suma de demanda real del período
+  v2_cantidad_sugerida_unid?: number;
+  v2_cantidad_sugerida_bultos?: number;
+  v2_diferencia_bultos?: number;  // V2 - V1 (positivo = V2 pide más)
+  v2_cobertura_dias?: {
+    dia: string;
+    dow: number;
+    demanda_unid: number;
+    demanda_bultos: number;
+    stock_antes: number;
+    stock_despues: number;
+    cobertura_pct: number;
+    estado: 'ok' | 'riesgo' | 'quiebre';
+  }[];
+  v2_dias_cobertura_real?: number;
+  v2_primer_dia_riesgo?: string | null;
+  v2_dia_pedido?: string;
+  v2_dia_llegada?: string;
 }
 
 export default function OrderWizard() {

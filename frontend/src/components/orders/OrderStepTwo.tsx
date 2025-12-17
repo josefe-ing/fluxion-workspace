@@ -9,7 +9,7 @@ import StockSeguridadModal from './StockSeguridadModal';
 import StockMaximoModal from './StockMaximoModal';
 import StockDiasModal from './StockDiasModal';
 import PedidoSugeridoModal from './PedidoSugeridoModal';
-import BlendSugeridoModal from './BlendSugeridoModal';
+import CoberturaRealModal from './CoberturaRealModal';
 import MetodosPromedioModal from './MetodosPromedioModal';
 import CriticidadModal from './CriticidadModal';
 import ModalAnalisisComparativo from './ModalAnalisisComparativo';
@@ -73,9 +73,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [selectedProductoDias, setSelectedProductoDias] = useState<ProductoPedido | null>(null);
   const [pedidoSugeridoModalOpen, setPedidoSugeridoModalOpen] = useState(false);
   const [selectedProductoPedido, setSelectedProductoPedido] = useState<ProductoPedido | null>(null);
-  // Estados para modal de Blend V2
-  const [blendSugeridoModalOpen, setBlendSugeridoModalOpen] = useState(false);
-  const [selectedProductoBlend, setSelectedProductoBlend] = useState<ProductoPedido | null>(null);
+  // Estados para modal de Cobertura Real V2
+  const [coberturaRealModalOpen, setCoberturaRealModalOpen] = useState(false);
+  const [selectedProductoCobertura, setSelectedProductoCobertura] = useState<ProductoPedido | null>(null);
   // Estados para modal de métodos de promedio (TOP3 vs P75)
   const [metodosPromedioModalOpen, setMetodosPromedioModalOpen] = useState(false);
   const [selectedProductoMetodos, setSelectedProductoMetodos] = useState<ProductoPedido | null>(null);
@@ -195,9 +195,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     setPedidoSugeridoModalOpen(true);
   };
 
-  const handleBlendSugeridoClick = (producto: ProductoPedido) => {
-    setSelectedProductoBlend(producto);
-    setBlendSugeridoModalOpen(true);
+  const handleCoberturaRealClick = (producto: ProductoPedido) => {
+    setSelectedProductoCobertura(producto);
+    setCoberturaRealModalOpen(true);
   };
 
   const handleMetodosPromedioClick = (producto: ProductoPedido) => {
@@ -1213,9 +1213,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   <SortableHeader field="rop" label="ROP" bgColor="bg-orange-100" width="45px" />
                   <SortableHeader field="max" label="Max" bgColor="bg-orange-100" width="45px" />
                   <SortableHeader field="sugerido" label="Sug" bgColor="bg-orange-100" width="50px" />
-                  {/* Columna V2 (Blend 60/40) */}
-                  <th className="bg-cyan-100 px-1 py-2 text-center font-semibold text-cyan-800 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }} title="Sugerido V2: Blend 60% P75 + 40% Prom20D">
-                    V2
+                  {/* Columna V2 (Cobertura Real) */}
+                  <th className="bg-cyan-100 px-1 py-2 text-center font-semibold text-cyan-800 text-xs uppercase whitespace-nowrap" style={{ width: '65px' }} title="Cobertura Real: Días que realmente cubre el pedido considerando demanda por día de semana">
+                    Cob.
                   </th>
 
                   {/* Columnas XYZ - Solo visibles en Modo Consultor */}
@@ -1459,19 +1459,19 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                       })()}
                     </td>
 
-                    {/* Columna V2 (Blend 60/40) */}
-                    <td className="bg-cyan-50 px-1 py-1.5 text-center" style={{ width: '55px' }}>
-                      {producto.cantidad_sugerida_v2_bultos !== undefined && producto.cantidad_sugerida_v2_bultos !== null ? (
+                    {/* Columna V2 (Sugerido por Cobertura Real) */}
+                    <td className="bg-cyan-50 px-1 py-1.5 text-center" style={{ width: '65px' }}>
+                      {producto.v2_cantidad_sugerida_bultos !== undefined && producto.v2_cantidad_sugerida_bultos !== null ? (
                         <button
-                          onClick={() => handleBlendSugeridoClick(producto)}
-                          className="hover:underline cursor-pointer transition-colors text-cyan-700 hover:text-cyan-900"
-                          title="Ver cálculo Blend V2"
+                          onClick={() => handleCoberturaRealClick(producto)}
+                          className="hover:underline cursor-pointer transition-colors"
+                          title={`V2: ${producto.v2_cantidad_sugerida_bultos} bultos (clic para detalle)`}
                         >
-                          <span className="text-xs font-semibold block">
-                            {producto.cantidad_sugerida_v2_bultos.toFixed(0)}
+                          <span className="text-xs font-semibold block text-cyan-700">
+                            {producto.v2_cantidad_sugerida_bultos.toFixed(0)}
                           </span>
                           {producto.v2_diferencia_bultos !== undefined && producto.v2_diferencia_bultos !== 0 && (
-                            <span className={`text-[10px] block ${producto.v2_diferencia_bultos > 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                            <span className={`text-[10px] block ${producto.v2_diferencia_bultos > 0 ? 'text-orange-600' : 'text-green-600'}`}>
                               {producto.v2_diferencia_bultos > 0 ? '+' : ''}{producto.v2_diferencia_bultos.toFixed(0)}
                             </span>
                           )}
@@ -1784,23 +1784,28 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         />
       )}
 
-      {/* Modal de Blend V2 (60/40) */}
-      {selectedProductoBlend && (
-        <BlendSugeridoModal
-          isOpen={blendSugeridoModalOpen}
-          onClose={() => setBlendSugeridoModalOpen(false)}
+      {/* Modal de Cobertura Real V2 */}
+      {selectedProductoCobertura && (
+        <CoberturaRealModal
+          isOpen={coberturaRealModalOpen}
+          onClose={() => setCoberturaRealModalOpen(false)}
           producto={{
-            codigo_producto: selectedProductoBlend.codigo_producto,
-            descripcion_producto: selectedProductoBlend.descripcion_producto,
-            prom_p75_unid: selectedProductoBlend.prom_p75_unid || 0,
-            prom_ventas_20dias_unid: selectedProductoBlend.prom_ventas_20dias_unid || 0,
-            cantidad_bultos: selectedProductoBlend.cantidad_bultos,
-            cantidad_sugerida_bultos: selectedProductoBlend.cantidad_sugerida_bultos,
-            cantidad_sugerida_v2_bultos: selectedProductoBlend.cantidad_sugerida_v2_bultos,
-            demanda_v2_blend_unid: selectedProductoBlend.demanda_v2_blend_unid,
-            v2_componente_p75: selectedProductoBlend.v2_componente_p75,
-            v2_componente_prom20d: selectedProductoBlend.v2_componente_prom20d,
-            v2_diferencia_bultos: selectedProductoBlend.v2_diferencia_bultos,
+            codigo_producto: selectedProductoCobertura.codigo_producto,
+            descripcion_producto: selectedProductoCobertura.descripcion_producto,
+            cantidad_sugerida_bultos: selectedProductoCobertura.cantidad_sugerida_bultos,
+            stock_tienda: selectedProductoCobertura.stock_tienda,
+            cantidad_bultos: selectedProductoCobertura.cantidad_bultos,
+            prom_p75_unid: selectedProductoCobertura.prom_p75_unid,
+            v2_prom_dow: selectedProductoCobertura.v2_prom_dow,
+            v2_demanda_periodo: selectedProductoCobertura.v2_demanda_periodo,
+            v2_cantidad_sugerida_unid: selectedProductoCobertura.v2_cantidad_sugerida_unid,
+            v2_cantidad_sugerida_bultos: selectedProductoCobertura.v2_cantidad_sugerida_bultos,
+            v2_diferencia_bultos: selectedProductoCobertura.v2_diferencia_bultos,
+            v2_cobertura_dias: selectedProductoCobertura.v2_cobertura_dias,
+            v2_dias_cobertura_real: selectedProductoCobertura.v2_dias_cobertura_real,
+            v2_primer_dia_riesgo: selectedProductoCobertura.v2_primer_dia_riesgo,
+            v2_dia_pedido: selectedProductoCobertura.v2_dia_pedido,
+            v2_dia_llegada: selectedProductoCobertura.v2_dia_llegada,
           }}
         />
       )}
