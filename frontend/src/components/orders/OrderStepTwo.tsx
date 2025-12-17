@@ -9,6 +9,7 @@ import StockSeguridadModal from './StockSeguridadModal';
 import StockMaximoModal from './StockMaximoModal';
 import StockDiasModal from './StockDiasModal';
 import PedidoSugeridoModal from './PedidoSugeridoModal';
+import BlendSugeridoModal from './BlendSugeridoModal';
 import MetodosPromedioModal from './MetodosPromedioModal';
 import CriticidadModal from './CriticidadModal';
 import ModalAnalisisComparativo from './ModalAnalisisComparativo';
@@ -72,6 +73,9 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [selectedProductoDias, setSelectedProductoDias] = useState<ProductoPedido | null>(null);
   const [pedidoSugeridoModalOpen, setPedidoSugeridoModalOpen] = useState(false);
   const [selectedProductoPedido, setSelectedProductoPedido] = useState<ProductoPedido | null>(null);
+  // Estados para modal de Blend V2
+  const [blendSugeridoModalOpen, setBlendSugeridoModalOpen] = useState(false);
+  const [selectedProductoBlend, setSelectedProductoBlend] = useState<ProductoPedido | null>(null);
   // Estados para modal de métodos de promedio (TOP3 vs P75)
   const [metodosPromedioModalOpen, setMetodosPromedioModalOpen] = useState(false);
   const [selectedProductoMetodos, setSelectedProductoMetodos] = useState<ProductoPedido | null>(null);
@@ -189,6 +193,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const handlePedidoSugeridoClick = (producto: ProductoPedido) => {
     setSelectedProductoPedido(producto);
     setPedidoSugeridoModalOpen(true);
+  };
+
+  const handleBlendSugeridoClick = (producto: ProductoPedido) => {
+    setSelectedProductoBlend(producto);
+    setBlendSugeridoModalOpen(true);
   };
 
   const handleMetodosPromedioClick = (producto: ProductoPedido) => {
@@ -1204,6 +1213,10 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   <SortableHeader field="rop" label="ROP" bgColor="bg-orange-100" width="45px" />
                   <SortableHeader field="max" label="Max" bgColor="bg-orange-100" width="45px" />
                   <SortableHeader field="sugerido" label="Sug" bgColor="bg-orange-100" width="50px" />
+                  {/* Columna V2 (Blend 60/40) */}
+                  <th className="bg-cyan-100 px-1 py-2 text-center font-semibold text-cyan-800 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }} title="Sugerido V2: Blend 60% P75 + 40% Prom20D">
+                    V2
+                  </th>
 
                   {/* Columnas XYZ - Solo visibles en Modo Consultor */}
                   {modoConsultorActivo && (
@@ -1444,6 +1457,28 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                           </button>
                         );
                       })()}
+                    </td>
+
+                    {/* Columna V2 (Blend 60/40) */}
+                    <td className="bg-cyan-50 px-1 py-1.5 text-center" style={{ width: '55px' }}>
+                      {producto.cantidad_sugerida_v2_bultos !== undefined && producto.cantidad_sugerida_v2_bultos !== null ? (
+                        <button
+                          onClick={() => handleBlendSugeridoClick(producto)}
+                          className="hover:underline cursor-pointer transition-colors text-cyan-700 hover:text-cyan-900"
+                          title="Ver cálculo Blend V2"
+                        >
+                          <span className="text-xs font-semibold block">
+                            {producto.cantidad_sugerida_v2_bultos.toFixed(0)}
+                          </span>
+                          {producto.v2_diferencia_bultos !== undefined && producto.v2_diferencia_bultos !== 0 && (
+                            <span className={`text-[10px] block ${producto.v2_diferencia_bultos > 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                              {producto.v2_diferencia_bultos > 0 ? '+' : ''}{producto.v2_diferencia_bultos.toFixed(0)}
+                            </span>
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400">-</span>
+                      )}
                     </td>
 
                     {/* Columnas XYZ - Solo visibles en Modo Consultor */}
@@ -1745,6 +1780,27 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             stock_minimo: selectedProductoPedido.stock_minimo || 0,
             stock_maximo: selectedProductoPedido.stock_maximo || 0,
             metodo_calculo: selectedProductoPedido.metodo_calculo || 'estadistico',
+          }}
+        />
+      )}
+
+      {/* Modal de Blend V2 (60/40) */}
+      {selectedProductoBlend && (
+        <BlendSugeridoModal
+          isOpen={blendSugeridoModalOpen}
+          onClose={() => setBlendSugeridoModalOpen(false)}
+          producto={{
+            codigo_producto: selectedProductoBlend.codigo_producto,
+            descripcion_producto: selectedProductoBlend.descripcion_producto,
+            prom_p75_unid: selectedProductoBlend.prom_p75_unid || 0,
+            prom_ventas_20dias_unid: selectedProductoBlend.prom_ventas_20dias_unid || 0,
+            cantidad_bultos: selectedProductoBlend.cantidad_bultos,
+            cantidad_sugerida_bultos: selectedProductoBlend.cantidad_sugerida_bultos,
+            cantidad_sugerida_v2_bultos: selectedProductoBlend.cantidad_sugerida_v2_bultos,
+            demanda_v2_blend_unid: selectedProductoBlend.demanda_v2_blend_unid,
+            v2_componente_p75: selectedProductoBlend.v2_componente_p75,
+            v2_componente_prom20d: selectedProductoBlend.v2_componente_prom20d,
+            v2_diferencia_bultos: selectedProductoBlend.v2_diferencia_bultos,
           }}
         />
       )}

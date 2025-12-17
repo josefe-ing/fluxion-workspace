@@ -942,6 +942,16 @@ class ProductoCalculado(BaseModel):
     ajustado_por_minimo_exhibicion: bool = False  # True si se elevó por mínimo de exhibición
     # Warnings de sanity checks
     warnings_calculo: List[str] = []
+    # === CAMPOS V2 (Shadow Mode) ===
+    # Demanda V2: Blend 60% P75 + 40% Prom20D
+    demanda_v2_blend_unid: float = 0.0
+    cantidad_sugerida_v2_unid: float = 0.0
+    cantidad_sugerida_v2_bultos: float = 0.0
+    # Componentes del blend (para mostrar en modal)
+    v2_componente_p75: float = 0.0       # P75 × 0.60
+    v2_componente_prom20d: float = 0.0   # Prom20D × 0.40
+    # Diferencia vs método actual
+    v2_diferencia_bultos: float = 0.0    # V2 - Actual
 
 
 @router.post("/calcular", response_model=List[ProductoCalculado])
@@ -1402,6 +1412,29 @@ async def calcular_productos_sugeridos(
                     dias_cobertura_override=dias_override
                 )
 
+                # ====================================================================
+                # CÁLCULO V2 (Shadow Mode): Blend 60% P75 + 40% Prom20D
+                # ====================================================================
+                v2_componente_p75 = p75_usado * 0.60
+                v2_componente_prom20d = prom_20d * 0.40
+                demanda_v2_blend = v2_componente_p75 + v2_componente_prom20d
+
+                # Calcular cantidad sugerida V2 usando el mismo servicio
+                resultado_v2 = calcular_inventario_simple(
+                    demanda_p75=demanda_v2_blend,  # Usar blend como demanda
+                    sigma_demanda=sigma_usada,
+                    demanda_maxima=demanda_maxima if demanda_maxima > 0 else demanda_v2_blend * 2,
+                    unidades_por_bulto=unidades_por_bulto,
+                    stock_actual=stock_tienda,
+                    stock_cedi=stock_cedi,
+                    clase_abc=clasificacion,
+                    es_generador_trafico=es_generador_trafico,
+                    dias_cobertura_override=dias_override
+                )
+
+                cantidad_sugerida_v2_unid = resultado_v2.cantidad_sugerida_unid
+                cantidad_sugerida_v2_bultos = resultado_v2.cantidad_sugerida_bultos
+
                 # ENVÍO PRUEBA: Garantizar mínimo 1 bulto
                 # Si es envío de prueba y la sugerencia es 0, forzar a 1 bulto
                 cantidad_sugerida_bultos_final = resultado.cantidad_sugerida_bultos
@@ -1583,7 +1616,14 @@ async def calcular_productos_sugeridos(
                     notas_capacidad=notas_capacidad,
                     minimo_exhibicion_configurado=limite_info['minimo_exhibicion'] if limite_info else None,
                     ajustado_por_minimo_exhibicion=minimo_exhibicion_aplicado is not None,
-                    warnings_calculo=warnings
+                    warnings_calculo=warnings,
+                    # === CAMPOS V2 (Shadow Mode) ===
+                    demanda_v2_blend_unid=demanda_v2_blend,
+                    cantidad_sugerida_v2_unid=cantidad_sugerida_v2_unid,
+                    cantidad_sugerida_v2_bultos=float(cantidad_sugerida_v2_bultos),
+                    v2_componente_p75=v2_componente_p75,
+                    v2_componente_prom20d=v2_componente_prom20d,
+                    v2_diferencia_bultos=float(cantidad_sugerida_v2_bultos) - float(cantidad_sugerida_bultos_final)
                 ))
             else:
                 # Producto sin demanda o sin clasificacion - no sugerir pedido

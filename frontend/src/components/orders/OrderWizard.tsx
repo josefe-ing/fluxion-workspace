@@ -74,6 +74,13 @@ export interface ProductoPedido {
   warnings_calculo: string[];
   cantidad_pedida_bultos?: number;
   incluido?: boolean;
+  // === CAMPOS V2 (Shadow Mode) ===
+  demanda_v2_blend_unid?: number;
+  cantidad_sugerida_v2_unid?: number;
+  cantidad_sugerida_v2_bultos?: number;
+  v2_componente_p75?: number;
+  v2_componente_prom20d?: number;
+  v2_diferencia_bultos?: number;
 }
 
 export default function OrderWizard() {
