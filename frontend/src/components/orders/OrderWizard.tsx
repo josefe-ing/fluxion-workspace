@@ -82,6 +82,7 @@ export interface ProductoPedido {
   v2_diferencia_bultos?: number;  // V2 - V1 (positivo = V2 pide más)
   v2_cobertura_dias?: {
     dia: string;
+    fecha: string;  // "20 Dic"
     dow: number;
     demanda_unid: number;
     demanda_bultos: number;
@@ -94,6 +95,17 @@ export interface ProductoPedido {
   v2_primer_dia_riesgo?: string | null;
   v2_dia_pedido?: string;
   v2_dia_llegada?: string;
+  v2_fecha_pedido?: string;  // "18 Dic"
+  v2_fecha_llegada?: string;  // "19 Dic"
+  v2_dias_cobertura_config?: number;  // Días de cobertura según config ABC
+  v2_lead_time_config?: number;  // Lead time según config
+  v2_historico_dow?: {
+    dow: number;
+    nombre: string;
+    promedio: number;
+    dias_con_data: number;
+    detalle: { fecha: string; venta: number }[];
+  }[];
 }
 
 export default function OrderWizard() {

@@ -1796,6 +1796,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             stock_tienda: selectedProductoCobertura.stock_tienda,
             cantidad_bultos: selectedProductoCobertura.cantidad_bultos,
             prom_p75_unid: selectedProductoCobertura.prom_p75_unid,
+            clasificacion_abc: selectedProductoCobertura.clasificacion_abc || undefined,
             v2_prom_dow: selectedProductoCobertura.v2_prom_dow,
             v2_demanda_periodo: selectedProductoCobertura.v2_demanda_periodo,
             v2_cantidad_sugerida_unid: selectedProductoCobertura.v2_cantidad_sugerida_unid,
@@ -1806,6 +1807,11 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             v2_primer_dia_riesgo: selectedProductoCobertura.v2_primer_dia_riesgo,
             v2_dia_pedido: selectedProductoCobertura.v2_dia_pedido,
             v2_dia_llegada: selectedProductoCobertura.v2_dia_llegada,
+            v2_fecha_pedido: selectedProductoCobertura.v2_fecha_pedido,
+            v2_fecha_llegada: selectedProductoCobertura.v2_fecha_llegada,
+            v2_dias_cobertura_config: selectedProductoCobertura.v2_dias_cobertura_config,
+            v2_lead_time_config: selectedProductoCobertura.v2_lead_time_config,
+            v2_historico_dow: selectedProductoCobertura.v2_historico_dow,
           }}
         />
       )}

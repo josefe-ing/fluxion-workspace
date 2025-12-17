@@ -1,4 +1,5 @@
-import { X, Calendar, CheckCircle2, XCircle, AlertTriangle, Package, Truck, ShoppingCart } from 'lucide-react';
+import { useState } from 'react';
+import { X, Calendar, CheckCircle2, XCircle, AlertTriangle, Package, Truck, ShoppingCart, ChevronDown, ChevronUp, Info } from 'lucide-react';
 
 interface CoberturaRealModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface CoberturaRealModalProps {
     stock_tienda: number;
     cantidad_bultos: number;
     prom_p75_unid?: number;
+    clasificacion_abc?: string;
     v2_prom_dow?: number[];
     v2_demanda_periodo?: number;
     v2_cantidad_sugerida_unid?: number;
@@ -17,6 +19,7 @@ interface CoberturaRealModalProps {
     v2_diferencia_bultos?: number;
     v2_cobertura_dias?: {
       dia: string;
+      fecha: string;
       dow: number;
       demanda_unid: number;
       demanda_bultos: number;
@@ -29,27 +32,39 @@ interface CoberturaRealModalProps {
     v2_primer_dia_riesgo?: string | null;
     v2_dia_pedido?: string;
     v2_dia_llegada?: string;
+    v2_fecha_pedido?: string;
+    v2_fecha_llegada?: string;
+    v2_dias_cobertura_config?: number;
+    v2_lead_time_config?: number;
+    v2_historico_dow?: {
+      dow: number;
+      nombre: string;
+      promedio: number;
+      dias_con_data: number;
+      detalle: { fecha: string; venta: number }[];
+    }[];
   };
 }
 
 export default function CoberturaRealModal({ isOpen, onClose, producto }: CoberturaRealModalProps) {
+  const [historicoExpandido, setHistoricoExpandido] = useState<number | null>(null);
+
   if (!isOpen) return null;
 
   const coberturaDias = producto.v2_cobertura_dias || [];
   const demandaPeriodo = producto.v2_demanda_periodo || 0;
-  const promDow = producto.v2_prom_dow || [];
+  const historicoDow = producto.v2_historico_dow || [];
   const unidadesPorBulto = producto.cantidad_bultos || 1;
 
   const sugeridoV1 = producto.cantidad_sugerida_bultos;
   const sugeridoV2 = producto.v2_cantidad_sugerida_bultos || 0;
   const diferencia = producto.v2_diferencia_bultos || 0;
   const stockActual = producto.stock_tienda;
+  const diasCoberturaConfig = producto.v2_dias_cobertura_config || coberturaDias.length;
+  const leadTimeConfig = producto.v2_lead_time_config || 1;
 
   // Calcular demanda promedio P75 en bultos
   const p75Bultos = (producto.prom_p75_unid || 0) / unidadesPorBulto;
-
-  // Nombres de días
-  const NOMBRES_DIA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
   // Encontrar día más alto y más bajo del período
   const demandaMaxDia = coberturaDias.length > 0
@@ -72,6 +87,12 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
                 <span>1 bulto = {unidadesPorBulto} unid</span>
                 <span>•</span>
                 <span>Stock actual: {(stockActual / unidadesPorBulto).toFixed(1)} bultos</span>
+                {producto.clasificacion_abc && (
+                  <>
+                    <span>•</span>
+                    <span className="bg-white/20 px-2 py-0.5 rounded">Clase {producto.clasificacion_abc}</span>
+                  </>
+                )}
               </div>
             </div>
             <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-full">
@@ -95,7 +116,7 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
             </p>
           </div>
 
-          {/* SECCIÓN 2: Timeline del pedido */}
+          {/* SECCIÓN 2: Timeline del pedido con fechas exactas */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <h3 className="font-bold text-blue-800 mb-3 flex items-center gap-2">
               <Truck className="w-5 h-5" />
@@ -108,25 +129,34 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
                 </div>
                 <div className="text-xs text-gray-500">HOY</div>
                 <div className="font-bold text-blue-800">{producto.v2_dia_pedido}</div>
+                <div className="text-xs text-blue-600 font-medium">{producto.v2_fecha_pedido}</div>
                 <div className="text-xs text-gray-600">Haces el pedido</div>
               </div>
-              <div className="flex-shrink-0 w-16 border-t-2 border-dashed border-blue-300" />
+              <div className="flex-shrink-0 w-12 border-t-2 border-dashed border-blue-300 relative">
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-xs text-blue-500 bg-blue-50 px-1">
+                  {leadTimeConfig}d
+                </span>
+              </div>
               <div className="flex-1">
                 <div className="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center mx-auto mb-2">
                   <Truck className="w-6 h-6 text-white" />
                 </div>
-                <div className="text-xs text-gray-500">MAÑANA</div>
+                <div className="text-xs text-gray-500">LLEGADA</div>
                 <div className="font-bold text-blue-800">{producto.v2_dia_llegada}</div>
+                <div className="text-xs text-blue-600 font-medium">{producto.v2_fecha_llegada}</div>
                 <div className="text-xs text-gray-600">Llega el pedido</div>
               </div>
-              <div className="flex-shrink-0 w-16 border-t-2 border-dashed border-blue-300" />
+              <div className="flex-shrink-0 w-12 border-t-2 border-dashed border-cyan-300" />
               <div className="flex-1">
                 <div className="w-12 h-12 bg-cyan-500 rounded-full flex items-center justify-center mx-auto mb-2">
                   <Package className="w-6 h-6 text-white" />
                 </div>
                 <div className="text-xs text-gray-500">COBERTURA</div>
-                <div className="font-bold text-cyan-700">{coberturaDias.length} días</div>
-                <div className="text-xs text-gray-600">{coberturaDias.map(d => d.dia).join(' → ')}</div>
+                <div className="font-bold text-cyan-700">{diasCoberturaConfig} días</div>
+                <div className="text-xs text-cyan-600 font-medium">
+                  {coberturaDias.length > 0 && `${coberturaDias[0].fecha} - ${coberturaDias[coberturaDias.length - 1]?.fecha}`}
+                </div>
+                <div className="text-xs text-gray-600">Clase {producto.clasificacion_abc || 'A'}</div>
               </div>
             </div>
           </div>
@@ -145,7 +175,7 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
                 <div className="text-sm text-gray-500 mb-3">bultos</div>
                 <div className="text-xs text-gray-600 bg-white rounded p-2">
                   <div className="font-medium mb-1">Cálculo:</div>
-                  P75 ({p75Bultos.toFixed(1)} blt/día) × {coberturaDias.length} días
+                  P75 ({p75Bultos.toFixed(1)} blt/día) × {diasCoberturaConfig} días
                 </div>
               </div>
               {/* V2 */}
@@ -175,7 +205,7 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
             </div>
           </div>
 
-          {/* SECCIÓN 4: Demanda día a día */}
+          {/* SECCIÓN 4: Demanda día a día con fechas exactas */}
           <div>
             <h3 className="font-bold text-gray-800 mb-3">
               Demanda Proyectada por Día
@@ -189,10 +219,11 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
 
                   return (
                     <div key={index} className="flex items-center gap-3">
-                      <div className={`w-12 text-sm font-bold ${
-                        esAlto ? 'text-orange-600' : esBajo ? 'text-green-600' : 'text-gray-700'
+                      <div className={`w-20 text-sm ${
+                        esAlto ? 'text-orange-600 font-bold' : esBajo ? 'text-green-600' : 'text-gray-700'
                       }`}>
-                        {dia.dia}
+                        <span className="font-bold">{dia.dia}</span>
+                        <span className="text-xs text-gray-500 ml-1">{dia.fecha}</span>
                       </div>
                       <div className="flex-1 h-6 bg-gray-200 rounded-full overflow-hidden">
                         <div
@@ -232,6 +263,7 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
                 <thead>
                   <tr className="bg-gray-100">
                     <th className="px-3 py-2 text-left font-semibold border-b">Día</th>
+                    <th className="px-3 py-2 text-left font-semibold border-b">Fecha</th>
                     <th className="px-3 py-2 text-right font-semibold border-b">Stock Inicio</th>
                     <th className="px-3 py-2 text-right font-semibold border-b">Venta</th>
                     <th className="px-3 py-2 text-right font-semibold border-b">Stock Final</th>
@@ -246,6 +278,7 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
                       index % 2 === 0 ? 'bg-white' : 'bg-gray-50'
                     }>
                       <td className="px-3 py-2 font-medium border-b">{dia.dia}</td>
+                      <td className="px-3 py-2 text-gray-600 border-b">{dia.fecha}</td>
                       <td className="px-3 py-2 text-right font-mono border-b">
                         {(dia.stock_antes / unidadesPorBulto).toFixed(1)}
                       </td>
@@ -281,30 +314,85 @@ export default function CoberturaRealModal({ isOpen, onClose, producto }: Cobert
             </div>
           )}
 
-          {/* Promedios históricos por día */}
-          {promDow.length > 0 && promDow.some(v => v > 0) && (
-            <details className="bg-gray-50 rounded-lg border border-gray-200">
-              <summary className="p-3 cursor-pointer font-medium text-gray-700 hover:bg-gray-100">
-                Ver histórico de ventas por día de semana
-              </summary>
-              <div className="p-4 pt-0">
-                <div className="grid grid-cols-7 gap-2 text-center">
-                  {promDow.map((prom, dow) => (
-                    <div key={dow} className={`p-2 rounded ${
-                      coberturaDias.some(d => d.dow === dow) ? 'bg-cyan-100' : 'bg-white'
-                    }`}>
-                      <div className="text-xs text-gray-500">{NOMBRES_DIA[dow]}</div>
-                      <div className={`text-sm font-bold ${prom > 0 ? 'text-gray-700' : 'text-gray-300'}`}>
-                        {prom > 0 ? (prom / unidadesPorBulto).toFixed(1) : '-'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Los días resaltados en azul son los que cubre este pedido.
-                </p>
+          {/* SECCIÓN 7: Histórico detallado por día de semana */}
+          {historicoDow.length > 0 && historicoDow.some(h => h.dias_con_data > 0) && (
+            <div className="bg-gray-50 rounded-lg border border-gray-200">
+              <div className="p-3 border-b border-gray-200">
+                <h4 className="font-medium text-gray-700 flex items-center gap-2">
+                  <Info className="w-4 h-4" />
+                  Histórico de ventas por día de semana (últimos 30 días)
+                </h4>
               </div>
-            </details>
+              <div className="p-4 space-y-2">
+                {historicoDow.map((dowData) => {
+                  const esDiaEnPeriodo = coberturaDias.some(d => d.dow === dowData.dow);
+                  const isExpanded = historicoExpandido === dowData.dow;
+
+                  return (
+                    <div key={dowData.dow} className={`rounded-lg border ${esDiaEnPeriodo ? 'border-cyan-300 bg-cyan-50' : 'border-gray-200 bg-white'}`}>
+                      <button
+                        onClick={() => setHistoricoExpandido(isExpanded ? null : dowData.dow)}
+                        className="w-full p-3 flex items-center justify-between text-left hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`font-bold w-10 ${esDiaEnPeriodo ? 'text-cyan-700' : 'text-gray-700'}`}>
+                            {dowData.nombre}
+                          </span>
+                          <span className="font-mono text-lg font-bold text-gray-800">
+                            {(dowData.promedio / unidadesPorBulto).toFixed(1)} blt
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            promedio de {dowData.dias_con_data} {dowData.dias_con_data === 1 ? 'día' : 'días'}
+                          </span>
+                          {esDiaEnPeriodo && (
+                            <span className="text-xs bg-cyan-200 text-cyan-800 px-2 py-0.5 rounded">
+                              En período
+                            </span>
+                          )}
+                        </div>
+                        {dowData.dias_con_data > 0 && (
+                          isExpanded ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />
+                        )}
+                      </button>
+
+                      {isExpanded && dowData.detalle && dowData.detalle.length > 0 && (
+                        <div className="px-3 pb-3 border-t border-gray-100">
+                          <table className="w-full text-sm mt-2">
+                            <thead>
+                              <tr className="text-gray-500 text-xs">
+                                <th className="text-left py-1">Fecha</th>
+                                <th className="text-right py-1">Venta (unid)</th>
+                                <th className="text-right py-1">Venta (blt)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {dowData.detalle.map((d, idx) => (
+                                <tr key={idx} className="border-t border-gray-100">
+                                  <td className="py-1 text-gray-700">{d.fecha}</td>
+                                  <td className="py-1 text-right font-mono text-gray-600">{d.venta.toFixed(0)}</td>
+                                  <td className="py-1 text-right font-mono font-medium text-gray-800">
+                                    {(d.venta / unidadesPorBulto).toFixed(1)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-gray-300 font-bold">
+                                <td className="py-1 text-gray-700">Promedio</td>
+                                <td className="py-1 text-right font-mono text-gray-600">{dowData.promedio.toFixed(0)}</td>
+                                <td className="py-1 text-right font-mono text-cyan-700">
+                                  {(dowData.promedio / unidadesPorBulto).toFixed(1)}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
 

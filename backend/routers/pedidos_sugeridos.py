@@ -953,12 +953,18 @@ class ProductoCalculado(BaseModel):
     v2_cantidad_sugerida_bultos: float = 0.0
     v2_diferencia_bultos: float = 0.0  # V2 - V1 (positivo = V2 pide más)
     # Simulación de cobertura día a día (con la cantidad V2)
-    v2_cobertura_dias: List[dict] = []  # [{dia: "Jue", demanda: 3.5, stock_final: 19.5, cobertura_pct: 100}, ...]
+    v2_cobertura_dias: List[dict] = []  # [{dia: "Jue", fecha: "20 Dic", demanda: 3.5, stock_final: 19.5, cobertura_pct: 100}, ...]
     v2_dias_cobertura_real: float = 0.0  # Días reales que cubre (puede ser 3.7 días)
     v2_primer_dia_riesgo: Optional[str] = None  # Primer día donde cobertura < 100%
     # Info del período
     v2_dia_pedido: Optional[str] = None  # Día en que se hace el pedido (ej: "Mié")
     v2_dia_llegada: Optional[str] = None  # Día en que llega el pedido (ej: "Jue")
+    v2_fecha_pedido: Optional[str] = None  # Fecha del pedido (ej: "18 Dic")
+    v2_fecha_llegada: Optional[str] = None  # Fecha de llegada (ej: "19 Dic")
+    v2_dias_cobertura_config: int = 0  # Días de cobertura según config ABC de tienda
+    v2_lead_time_config: float = 1.5  # Lead time según config de tienda
+    # Histórico detallado por día de semana para el modal
+    v2_historico_dow: List[dict] = []  # [{dow: 0, nombre: "Dom", promedio: 11.9, dias_con_data: 4, fechas: ["1 Dic", "8 Dic", ...], ventas: [12, 10, ...]}]
 
 
 @router.post("/calcular", response_model=List[ProductoCalculado])
@@ -1000,11 +1006,13 @@ async def calcular_productos_sugeridos(
                 set_config_tienda(config_tienda)
                 logger.info(f"📋 Config tienda aplicada: LT={config_tienda.lead_time}, A={config_tienda.dias_cobertura_a}d, B={config_tienda.dias_cobertura_b}d, C={config_tienda.dias_cobertura_c}d, D={config_tienda.dias_cobertura_d}d")
             else:
-                set_config_tienda(None)  # Usar defaults
+                config_tienda = ConfigTiendaABC()  # Usar defaults
+                set_config_tienda(config_tienda)
                 logger.info(f"📋 Usando configuración ABC por defecto para {request.tienda_destino}")
         except Exception as e:
             logger.warning(f"No se pudo cargar config tienda: {e}. Usando defaults.")
-            set_config_tienda(None)
+            config_tienda = ConfigTiendaABC()  # Usar defaults
+            set_config_tienda(config_tienda)
 
         # 1.5. Cargar umbrales ABC desde config_inventario_global
         umbral_a, umbral_b, umbral_c = 50, 200, 800  # Defaults
@@ -1359,8 +1367,44 @@ async def calcular_productos_sugeridos(
             promedios_dow_dict[prod_id][dow] = prom
         cursor_dow.close()
 
+        # ====================================================================
+        # QUERY V3b: Obtener detalle histórico por DOW (para modal explicativo)
+        # ====================================================================
+        cursor_dow_detail = conn.cursor()
+        cursor_dow_detail.execute("""
+            SELECT
+                producto_id,
+                EXTRACT(DOW FROM fecha_venta::date) as dow,
+                TO_CHAR(fecha_venta::date, 'DD Mon') as fecha_str,
+                fecha_venta::date as fecha,
+                SUM(cantidad_vendida) as total_dia
+            FROM ventas
+            WHERE ubicacion_id = %s
+              AND fecha_venta::date >= CURRENT_DATE - INTERVAL '30 days'
+              AND fecha_venta::date < CURRENT_DATE
+            GROUP BY producto_id, fecha_venta::date
+            ORDER BY producto_id, fecha_venta::date
+        """, [request.tienda_destino])
+
+        # Construir diccionario de detalle histórico por DOW
+        # Formato: {producto_id: {dow: [{fecha: "18 Dic", venta: 25}, ...]}}
+        historico_dow_dict: dict = {}
+        for row_detail in cursor_dow_detail.fetchall():
+            prod_id = row_detail[0]
+            dow = int(row_detail[1])
+            fecha_str = row_detail[2]
+            venta = float(row_detail[4]) if row_detail[4] else 0.0
+            if prod_id not in historico_dow_dict:
+                historico_dow_dict[prod_id] = {i: [] for i in range(7)}
+            historico_dow_dict[prod_id][dow].append({
+                "fecha": fecha_str,
+                "venta": venta
+            })
+        cursor_dow_detail.close()
+
         # Obtener el día actual para calcular cobertura real
-        from datetime import datetime
+        from datetime import datetime, timedelta
+        fecha_actual = datetime.now().date()
         dia_actual = datetime.now().weekday()  # 0=Lunes, 6=Domingo en Python
         # Convertir a DOW de PostgreSQL (0=Domingo, 6=Sábado)
         dow_actual = (dia_actual + 1) % 7
@@ -1475,9 +1519,9 @@ async def calcular_productos_sugeridos(
                 # V2 calcula cuánto REALMENTE se necesita para cubrir el período,
                 # sumando la demanda específica de cada día de la semana.
                 #
-                # Ejemplo: Pedido el Miércoles (llega Jueves PM) para cubrir 7 días:
-                # - Necesita cubrir: Vie + Sáb + Dom + Lun + Mar + Mié + Jue
-                # - Si Sábado vende 2x que Lunes, V2 lo considera
+                # Ejemplo: Pedido el Miércoles (llega Jueves PM) para cubrir 3 días (clase A):
+                # - Necesita cubrir: Vie + Sáb + Dom
+                # - Si Sábado vende 2x que Viernes, V2 lo considera
                 #
                 v2_prom_dow = promedios_dow_dict.get(codigo, [0.0] * 7)
                 v2_cobertura_dias = []
@@ -1485,21 +1529,42 @@ async def calcular_productos_sugeridos(
                 v2_primer_dia_riesgo = None
                 v2_demanda_periodo = 0.0
 
-                # Días de cobertura según clase ABC (o override si existe)
-                # Prioridad: dias_override (por categoría) > default por clase
-                DIAS_COBERTURA_DEFAULT = {'A': 7, 'B': 14, 'C': 21, 'D': 30, '-': 7}
-                dias_cobertura_abc = dias_override if dias_override else DIAS_COBERTURA_DEFAULT.get(clasificacion, 7)
+                # Días de cobertura según config_tienda por clase ABC (o override por categoría)
+                # Prioridad: dias_override (por categoría) > config_tienda por clase
+                dias_cobertura_por_clase = {
+                    'A': config_tienda.dias_cobertura_a,
+                    'B': config_tienda.dias_cobertura_b,
+                    'C': config_tienda.dias_cobertura_c,
+                    'D': config_tienda.dias_cobertura_d,
+                    '-': config_tienda.dias_cobertura_a  # Default a clase A si no tiene clasificación
+                }
+                dias_cobertura_abc = dias_override if dias_override else dias_cobertura_por_clase.get(clasificacion, config_tienda.dias_cobertura_a)
 
                 # Convertir a bultos para mostrar
                 unid_por_bulto = unidades_por_bulto if unidades_por_bulto > 0 else 1
 
-                # Lead time: pedido hoy → llega mañana PM → empezamos a cubrir pasado mañana
+                # Lead time desde config_tienda (default 1.5 días → llega mañana PM)
+                lead_time_dias = config_tienda.lead_time
+                # Si lead_time es 1 o 1.5, llega mañana; primer día que cubre es pasado mañana
+                dias_hasta_llegada = int(lead_time_dias) if lead_time_dias >= 1 else 1
+                dias_hasta_cobertura = dias_hasta_llegada + 1  # Día siguiente a la llegada
+
                 # dow_actual viene de Python weekday() convertido: 0=Dom, 1=Lun, ..., 6=Sáb
-                dow_llegada = (dow_actual + 1) % 7  # Llega mañana
-                dow_primer_dia_cubrir = (dow_actual + 2) % 7  # Primer día que cubre es pasado mañana
+                dow_llegada = (dow_actual + dias_hasta_llegada) % 7
+                dow_primer_dia_cubrir = (dow_actual + dias_hasta_cobertura) % 7
+
+                # Calcular fechas exactas
+                fecha_llegada = fecha_actual + timedelta(days=dias_hasta_llegada)
+                fecha_primer_dia_cubrir = fecha_actual + timedelta(days=dias_hasta_cobertura)
+
+                MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
                 v2_dia_pedido = NOMBRES_DIA[dow_actual]
                 v2_dia_llegada = NOMBRES_DIA[dow_llegada]
+                v2_fecha_pedido = f"{fecha_actual.day} {MESES_ES[fecha_actual.month - 1]}"
+                v2_fecha_llegada = f"{fecha_llegada.day} {MESES_ES[fecha_llegada.month - 1]}"
+                v2_dias_cobertura_config = int(dias_cobertura_abc)
+                v2_lead_time_config = lead_time_dias
 
                 # ============================================================
                 # PASO 1: Calcular demanda total del período (días específicos)
@@ -1510,6 +1575,8 @@ async def calcular_productos_sugeridos(
                 for i in range(int(dias_cobertura_abc)):
                     dow_dia = (dow_primer_dia_cubrir + i) % 7
                     nombre_dia = NOMBRES_DIA[dow_dia]
+                    fecha_dia = fecha_primer_dia_cubrir + timedelta(days=i)
+                    fecha_dia_str = f"{fecha_dia.day} {MESES_ES[fecha_dia.month - 1]}"
 
                     # Demanda de este día específico
                     demanda_dia = v2_prom_dow[dow_dia] if v2_prom_dow and v2_prom_dow[dow_dia] > 0 else prom_20d
@@ -1521,11 +1588,26 @@ async def calcular_productos_sugeridos(
                     dias_a_cubrir.append({
                         "dow": dow_dia,
                         "nombre": nombre_dia,
+                        "fecha": fecha_dia_str,
                         "demanda": demanda_dia
                     })
                     demanda_total_periodo += demanda_dia
 
                 v2_demanda_periodo = demanda_total_periodo
+
+                # Construir histórico detallado por DOW para este producto
+                v2_historico_dow = []
+                historico_producto = historico_dow_dict.get(codigo, {})
+                for dow in range(7):
+                    datos_dow = historico_producto.get(dow, [])
+                    promedio = v2_prom_dow[dow] if v2_prom_dow else 0.0
+                    v2_historico_dow.append({
+                        "dow": dow,
+                        "nombre": NOMBRES_DIA[dow],
+                        "promedio": round(promedio, 1),
+                        "dias_con_data": len(datos_dow),
+                        "detalle": datos_dow  # [{fecha: "18 Dic", venta: 25}, ...]
+                    })
 
                 # ============================================================
                 # PASO 2: Calcular cantidad sugerida V2
@@ -1556,6 +1638,7 @@ async def calcular_productos_sugeridos(
                     demanda_dia = dia_info["demanda"]
                     nombre_dia = dia_info["nombre"]
                     dow_dia = dia_info["dow"]
+                    fecha_dia_str = dia_info["fecha"]
 
                     # Calcular cobertura para este día
                     if demanda_dia > 0:
@@ -1582,6 +1665,7 @@ async def calcular_productos_sugeridos(
 
                     v2_cobertura_dias.append({
                         "dia": nombre_dia,
+                        "fecha": fecha_dia_str,
                         "dow": dow_dia,
                         "demanda_unid": round(demanda_dia, 1),
                         "demanda_bultos": round(demanda_dia / unid_por_bulto, 2),
@@ -1787,7 +1871,12 @@ async def calcular_productos_sugeridos(
                     v2_dias_cobertura_real=v2_dias_cobertura_real,
                     v2_primer_dia_riesgo=v2_primer_dia_riesgo,
                     v2_dia_pedido=v2_dia_pedido,
-                    v2_dia_llegada=v2_dia_llegada
+                    v2_dia_llegada=v2_dia_llegada,
+                    v2_fecha_pedido=v2_fecha_pedido,
+                    v2_fecha_llegada=v2_fecha_llegada,
+                    v2_dias_cobertura_config=v2_dias_cobertura_config,
+                    v2_lead_time_config=v2_lead_time_config,
+                    v2_historico_dow=v2_historico_dow
                 ))
             else:
                 # Producto sin demanda o sin clasificacion - no sugerir pedido
