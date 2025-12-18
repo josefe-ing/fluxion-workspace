@@ -334,6 +334,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
         'Cód. Barras': p.codigo_barras || '',
         'Descripción': p.descripcion_producto,
         'Und/Bulto': p.cantidad_bultos,
+        'Unidad Pedido': p.unidad_pedido || 'Bulto',
         'Criticidad': criticidad,
         'Nivel': criticidadDisplay.nivel,
         'P75 (b/día)': formatNumber((p.prom_p75_unid || 0) / p.cantidad_bultos, 2),
@@ -365,6 +366,7 @@ export default function OrderStepThree({ orderData, onBack }: Props) {
       { wch: 15 },  // Cód. Barras
       { wch: 40 },  // Descripción
       { wch: 10 },  // Und/Bulto
+      { wch: 12 },  // Unidad Pedido
       { wch: 10 },  // Criticidad
       { wch: 10 },  // Nivel
       { wch: 10 },  // P75 (b/día)

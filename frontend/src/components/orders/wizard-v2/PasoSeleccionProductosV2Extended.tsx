@@ -546,13 +546,18 @@ export default function PasoSeleccionProductosV2Extended({
                   {/* Campo Editable PEDIR - fondo naranja */}
                   <td className="px-4 py-3 bg-orange-50">
                     {seleccionado ? (
-                      <input
-                        type="number"
-                        value={cantidadPedir}
-                        onChange={(e) => actualizarCantidadPedir(producto.producto_id, parseInt(e.target.value) || 0)}
-                        className="w-24 px-2 py-1 text-sm text-right border-2 border-orange-300 rounded focus:ring-2 focus:ring-orange-500 font-bold text-orange-700"
-                        min="0"
-                      />
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={cantidadPedir}
+                          onChange={(e) => actualizarCantidadPedir(producto.producto_id, parseInt(e.target.value) || 0)}
+                          className="w-20 px-2 py-1 text-sm text-right border-2 border-orange-300 rounded focus:ring-2 focus:ring-orange-500 font-bold text-orange-700"
+                          min="0"
+                        />
+                        <span className="text-xs text-orange-600 font-medium whitespace-nowrap">
+                          {producto.unidad_pedido || 'Bulto'}
+                        </span>
+                      </div>
                     ) : (
                       <span className="block text-center text-gray-400">-</span>
                     )}

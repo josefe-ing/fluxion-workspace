@@ -74,6 +74,7 @@ export interface ProductoNivelObjetivo {
   prioridad: number;
   peso_kg: number;
   unidad_medida: string;
+  unidad_pedido: string;  // Unidad de pedido: Bulto, Blister, Cesta, KG, UND, etc.
 }
 
 export interface NivelesInventarioTiendaResponse {

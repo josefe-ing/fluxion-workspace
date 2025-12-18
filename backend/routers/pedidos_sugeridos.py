@@ -890,6 +890,7 @@ class ProductoCalculado(BaseModel):
     marca: Optional[str] = None
     presentacion: Optional[str] = None
     cantidad_bultos: float = 1.0
+    unidad_pedido: str = "Bulto"  # Unidad de pedido: Bulto, Blister, Cesta, KG, UND, etc.
     peso_unidad: float = 1000.0
     cuadrante_producto: Optional[str] = None
     # Ventas
@@ -1271,6 +1272,7 @@ async def calcular_productos_sugeridos(
                 p.marca,
                 p.presentacion,
                 COALESCE(p.unidades_por_bulto, 1) as cantidad_bultos,
+                COALESCE(p.unidad_pedido, 'Bulto') as unidad_pedido,
                 COALESCE(p.peso_unitario * 1000, 1000.0) as peso_unidad,  -- Convertir kg a gramos
                 -- Ventas
                 COALESCE(v5.prom_diario_5d, 0) as prom_ventas_5dias_unid,
@@ -1420,19 +1422,20 @@ async def calcular_productos_sugeridos(
             codigo = row[0]
             categoria_producto = (row[3] or '').upper()  # Categoría normalizada para buscar config
             cantidad_bultos = float(row[8]) if row[8] and row[8] > 0 else 1.0
+            unidad_pedido = row[9] or 'Bulto'  # Unidad de pedido: Bulto, Blister, Cesta, etc.
             unidades_por_bulto = int(cantidad_bultos) if cantidad_bultos > 0 else 1
-            prom_20d = float(row[11]) if row[11] else 0.0
-            stock_tienda = float(row[14]) if row[14] else 0.0
-            stock_cedi = float(row[15]) if row[15] else 0.0
-            prom_top3 = float(row[16]) if row[16] else 0.0
-            prom_p75 = float(row[17]) if row[17] else 0.0
-            clase_abc_valor = row[18]  # ABC por ranking de cantidad de SQL
-            sigma_demanda = float(row[19]) if row[19] else 0.0
-            demanda_maxima = float(row[20]) if row[20] else 0.0
-            es_generador_trafico = bool(row[21]) if row[21] else False
+            prom_20d = float(row[12]) if row[12] else 0.0
+            stock_tienda = float(row[15]) if row[15] else 0.0
+            stock_cedi = float(row[16]) if row[16] else 0.0
+            prom_top3 = float(row[17]) if row[17] else 0.0
+            prom_p75 = float(row[18]) if row[18] else 0.0
+            clase_abc_valor = row[19]  # ABC por ranking de cantidad de SQL
+            sigma_demanda = float(row[20]) if row[20] else 0.0
+            demanda_maxima = float(row[21]) if row[21] else 0.0
+            es_generador_trafico = bool(row[22]) if row[22] else False
             # P75 de tiendas de referencia
-            p75_referencia = float(row[22]) if row[22] else 0.0
-            tiendas_referencia_str = row[23]  # String con IDs de tiendas separados por coma
+            p75_referencia = float(row[23]) if row[23] else 0.0
+            tiendas_referencia_str = row[24]  # String con IDs de tiendas separados por coma
 
             # Clasificacion ABC: usar ABC por ranking del SQL si esta disponible
             venta_diaria_bultos = prom_20d / cantidad_bultos if cantidad_bultos > 0 else 0
@@ -1823,8 +1826,9 @@ async def calcular_productos_sugeridos(
                     marca=row[6],
                     presentacion=row[7],
                     cantidad_bultos=cantidad_bultos,
-                    peso_unidad=float(row[9]) if row[9] else 1000.0,
-                    prom_ventas_5dias_unid=float(row[10]) if row[10] else 0.0,
+                    unidad_pedido=unidad_pedido,
+                    peso_unidad=float(row[10]) if row[10] else 1000.0,
+                    prom_ventas_5dias_unid=float(row[11]) if row[11] else 0.0,
                     prom_ventas_20dias_unid=prom_20d,
                     prom_top3_unid=prom_top3,
                     prom_p75_unid=p75_usado,  # Usar P75 local o de referencia
@@ -1890,8 +1894,9 @@ async def calcular_productos_sugeridos(
                     marca=row[6],
                     presentacion=row[7],
                     cantidad_bultos=cantidad_bultos,
-                    peso_unidad=float(row[9]) if row[9] else 1000.0,
-                    prom_ventas_5dias_unid=float(row[10]) if row[10] else 0.0,
+                    unidad_pedido=unidad_pedido,
+                    peso_unidad=float(row[10]) if row[10] else 1000.0,
+                    prom_ventas_5dias_unid=float(row[11]) if row[11] else 0.0,
                     prom_ventas_20dias_unid=prom_20d,
                     prom_top3_unid=prom_top3,
                     prom_p75_unid=prom_p75,

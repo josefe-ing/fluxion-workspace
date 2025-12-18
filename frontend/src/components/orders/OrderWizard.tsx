@@ -23,6 +23,7 @@ export interface ProductoPedido {
   marca: string | null;
   presentacion: string | null;
   cantidad_bultos: number;
+  unidad_pedido: string; // Unidad de pedido: Bulto, Blister, Cesta, KG, UND, etc.
   peso_unidad: number; // Peso por unidad en gramos
   prom_ventas_5dias_unid: number;
   prom_ventas_20dias_unid: number;

@@ -877,6 +877,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         'ABC': p.clasificacion_abc || '',
         'Pedido Unidades': pedidoUnidades,
         'U/B': p.cantidad_bultos,
+        'Unidad Pedido': p.unidad_pedido || 'Bulto',
         'Pedido Bultos': pedidoBultos,
         'Stock Tienda': p.stock_tienda,
         'Stock CEDI': p.stock_cedi_origen,
@@ -897,6 +898,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       { wch: 5 },   // ABC
       { wch: 15 },  // Pedido Unidades
       { wch: 6 },   // U/B
+      { wch: 12 },  // Unidad Pedido
       { wch: 13 },  // Pedido Bultos
       { wch: 12 },  // Stock Tienda
       { wch: 12 },  // Stock CEDI
