@@ -1198,7 +1198,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   <th className="sticky left-[36px] z-30 bg-gray-100 px-0 py-2 text-center font-semibold text-gray-500 text-xs" style={{ width: '28px' }}>#</th>
                   <th className="sticky left-[64px] z-30 bg-blue-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '70px' }}>Código</th>
                   <th className="sticky left-[134px] z-30 bg-blue-100 px-1 py-2 text-left font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '200px' }}>Descripción</th>
-                  <th className="bg-blue-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '35px' }}>U/B</th>
+                  <th className="bg-blue-100 px-1 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '55px' }}>U/B</th>
                   <th className="bg-purple-100 px-0 py-2 text-center font-semibold text-gray-700 text-xs uppercase whitespace-nowrap" style={{ width: '28px' }} title="Análisis de Ventas por Tienda">
                     <span className="text-sm">📈</span>
                   </th>
@@ -1271,7 +1271,10 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                         {producto.descripcion_producto}
                       </span>
                     </td>
-                    <td className="bg-blue-50 px-1 py-1.5 text-xs text-gray-700 text-center" style={{ width: '35px' }}>{Math.round(producto.cantidad_bultos)}</td>
+                    <td className="bg-blue-50 px-1 py-1.5 text-xs text-gray-700 text-center" style={{ width: '55px' }}>
+                      <span className="block">{Math.round(producto.cantidad_bultos)}</span>
+                      <span className="text-[9px] text-gray-500">{producto.unidad_pedido || 'Bulto'}</span>
+                    </td>
                     <td className="bg-purple-50 px-0 py-1.5 text-center" style={{ width: '28px' }}>
                       <button
                         onClick={() => handleVentasClick(producto)}
