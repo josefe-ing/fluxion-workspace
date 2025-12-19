@@ -1044,15 +1044,15 @@ async def calcular_productos_sugeridos(
                 WHERE activo = true
             """)
             for row in cursor.fetchall():
-                cat_norm = row[0].upper() if row[0] else ''
+                cat_norm = (row[0] or '').strip().upper()
                 config_cobertura_categoria[cat_norm] = {
-                    'A': row[1] or 7,
-                    'B': row[2] or 14,
-                    'C': row[3] or 21,
-                    'D': row[4] or 30
+                    'A': row[1] if row[1] is not None else 7,
+                    'B': row[2] if row[2] is not None else 14,
+                    'C': row[3] if row[3] is not None else 21,
+                    'D': row[4] if row[4] is not None else 30
                 }
             if config_cobertura_categoria:
-                logger.info(f"🥬 Coberturas por categoría cargadas: {list(config_cobertura_categoria.keys())}")
+                logger.info(f"🥬 Coberturas por categoría cargadas: {config_cobertura_categoria}")
         except Exception as e:
             logger.warning(f"No se pudo cargar config cobertura por categoría: {e}")
 
@@ -1420,7 +1420,7 @@ async def calcular_productos_sugeridos(
         productos_sin_venta_con_ref = 0  # Contador para log
         for row in rows:
             codigo = row[0]
-            categoria_producto = (row[3] or '').upper()  # Categoría normalizada para buscar config
+            categoria_producto = (row[3] or '').strip().upper()  # Categoría normalizada para buscar config
             cantidad_bultos = float(row[8]) if row[8] and row[8] > 0 else 1.0
             unidad_pedido = row[9] or 'Bulto'  # Unidad de pedido: Bulto, Blister, Cesta, etc.
             unidades_por_bulto = int(cantidad_bultos) if cantidad_bultos > 0 else 1
@@ -1497,12 +1497,29 @@ async def calcular_productos_sugeridos(
                     sigma_usada = p75_usado * 0.3  # Estimar 30% de variabilidad
 
                 # Determinar si hay override de días por categoría (perecederos)
+                # Buscar coincidencia exacta o parcial (categoría del producto contiene la key)
                 dias_override = None
+                categoria_match = None
+
+                # Primero buscar coincidencia exacta
                 if categoria_producto in config_cobertura_categoria:
-                    config_cat = config_cobertura_categoria[categoria_producto]
+                    categoria_match = categoria_producto
+                else:
+                    # Buscar coincidencia parcial: si la categoría del producto CONTIENE alguna key configurada
+                    # Ejemplo: producto tiene "FRUVER Y VERDURAS" y config tiene "FRUVER"
+                    for cat_config in config_cobertura_categoria.keys():
+                        if cat_config and cat_config in categoria_producto:
+                            categoria_match = cat_config
+                            break
+
+                if categoria_match:
+                    config_cat = config_cobertura_categoria[categoria_match]
                     dias_override = config_cat.get(clasificacion, None)
-                    if dias_override:
-                        logger.info(f"🥬 {codigo} ({categoria_producto}): Clase {clasificacion} -> {dias_override} días cobertura")
+                    if dias_override is not None:
+                        logger.debug(f"🥬 {codigo} ({categoria_producto} -> {categoria_match}): Clase {clasificacion} -> {dias_override} días cobertura")
+                elif categoria_producto and config_cobertura_categoria:
+                    # Log para diagnóstico: categoría del producto no encontrada en config
+                    logger.debug(f"⚠️ Categoría '{categoria_producto}' no encontrada en config_cobertura_categoria. Keys disponibles: {list(config_cobertura_categoria.keys())}")
 
                 resultado = calcular_inventario_simple(
                     demanda_p75=p75_usado,  # Usar P75 local o de referencia
@@ -1515,6 +1532,15 @@ async def calcular_productos_sugeridos(
                     es_generador_trafico=es_generador_trafico,
                     dias_cobertura_override=dias_override
                 )
+
+                # Log diagnóstico para categorías perecederas (ej: FRUVER)
+                if categoria_match and dias_override is not None:
+                    logger.info(
+                        f"🥬 PERECEDERO {codigo}: cat={categoria_producto}→{categoria_match}, "
+                        f"clase={clasificacion}, dias_override={dias_override}, "
+                        f"P75={p75_usado:.1f}, stock={stock_tienda:.0f}, "
+                        f"MAX={resultado.stock_maximo_unid:.1f}, SUG={resultado.cantidad_sugerida_bultos}"
+                    )
 
                 # ====================================================================
                 # CÁLCULO V2: Cobertura Real por Día de Semana
@@ -1541,7 +1567,7 @@ async def calcular_productos_sugeridos(
                     'D': config_tienda.dias_cobertura_d,
                     '-': config_tienda.dias_cobertura_a  # Default a clase A si no tiene clasificación
                 }
-                dias_cobertura_abc = dias_override if dias_override else dias_cobertura_por_clase.get(clasificacion, config_tienda.dias_cobertura_a)
+                dias_cobertura_abc = dias_override if dias_override is not None else dias_cobertura_por_clase.get(clasificacion, config_tienda.dias_cobertura_a)
 
                 # Convertir a bultos para mostrar
                 unid_por_bulto = unidades_por_bulto if unidades_por_bulto > 0 else 1
