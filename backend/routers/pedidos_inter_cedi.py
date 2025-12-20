@@ -1414,6 +1414,22 @@ async def obtener_historial_inventario_cedi(
                 'cantidad': float(cantidad)
             })
 
+        # 5b. Añadir stock actual como punto de hoy si no existe
+        hoy = date.today().isoformat()
+        if snapshots:
+            # Si el último snapshot no es de hoy, añadir el stock actual
+            if snapshots[0]['fecha'] != hoy:
+                snapshots.insert(0, {
+                    'fecha': hoy,
+                    'cantidad': stock_actual
+                })
+        else:
+            # Si no hay snapshots, crear uno con el stock actual
+            snapshots.append({
+                'fecha': hoy,
+                'cantidad': stock_actual
+            })
+
         # 6. Calcular estadísticas
         cantidades = [s['cantidad'] for s in snapshots]
         if cantidades:
