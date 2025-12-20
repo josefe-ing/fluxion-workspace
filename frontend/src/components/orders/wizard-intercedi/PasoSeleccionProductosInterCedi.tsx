@@ -85,8 +85,8 @@ export default function PasoSeleccionProductosInterCedi({
   const [searchTerm, setSearchTerm] = useState('');
   const [filtroCediOrigen, setFiltroCediOrigen] = useState<string>('todos');
   const [filtroABC, setFiltroABC] = useState<string>('todos');
-  const [sortField, setSortField] = useState<SortField>('demanda');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [sortField, setSortField] = useState<SortField>('prioridad');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [paginaActual, setPaginaActual] = useState(1);
   const productosPorPagina = 50;
 
@@ -257,6 +257,16 @@ export default function PasoSeleccionProductosInterCedi({
     updateProductos(nuevosProductos);
   };
 
+  const handleNotasChange = (codigoProducto: string, notas: string) => {
+    const nuevosProductos = productos.map(p => {
+      if (p.codigo_producto === codigoProducto) {
+        return { ...p, observaciones: notas };
+      }
+      return p;
+    });
+    updateProductos(nuevosProductos);
+  };
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -417,7 +427,7 @@ export default function PasoSeleccionProductosInterCedi({
                 <th colSpan={5} className="bg-emerald-100 px-1 py-1 text-center text-xs font-semibold text-emerald-700 uppercase border-b border-emerald-300">
                   Stock Tiendas / CEDI Caracas
                 </th>
-                <th colSpan={3} className="bg-violet-100 px-1 py-1 text-center text-xs font-semibold text-violet-700 uppercase border-b border-violet-300">
+                <th colSpan={5} className="bg-violet-100 px-1 py-1 text-center text-xs font-semibold text-violet-700 uppercase border-b border-violet-300">
                   Pedido
                 </th>
               </tr>
@@ -461,40 +471,40 @@ export default function PasoSeleccionProductosInterCedi({
                   ABC {getSortIcon('abc')}
                 </th>
                 <th
-                  className="bg-amber-50 px-1 py-1.5 text-center text-xs font-medium text-amber-700 uppercase tracking-wider cursor-pointer hover:bg-amber-100 w-16"
+                  className="bg-amber-50 px-1 py-1.5 text-center text-xs font-medium text-amber-700 uppercase whitespace-nowrap cursor-pointer hover:bg-amber-100"
                   onClick={() => handleSort('stock_origen')}
                   title="Stock CEDI Origen en bultos"
                 >
                   Stk Orig {getSortIcon('stock_origen')}
                 </th>
                 <th
-                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase tracking-wider cursor-pointer hover:bg-emerald-100 w-16"
+                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase whitespace-nowrap cursor-pointer hover:bg-emerald-100"
                   onClick={() => handleSort('stock_cedi')}
                   title="Stock CEDI Caracas en bultos"
                 >
                   Stk CCS {getSortIcon('stock_cedi')}
                 </th>
                 <th
-                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase tracking-wider cursor-pointer hover:bg-emerald-100 w-12"
+                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase whitespace-nowrap cursor-pointer hover:bg-emerald-100"
                   onClick={() => handleSort('dias_cedi')}
                   title="Días de stock en CEDI Caracas"
                 >
                   D.CCS {getSortIcon('dias_cedi')}
                 </th>
                 <th
-                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase tracking-wider w-16"
+                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase whitespace-nowrap"
                   title="Stock en Tiendas de la región"
                 >
                   Stk Tda
                 </th>
                 <th
-                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase tracking-wider w-12"
+                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase whitespace-nowrap"
                   title="Días de stock en Tiendas"
                 >
                   D.Tda
                 </th>
                 <th
-                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase tracking-wider cursor-pointer hover:bg-emerald-100 w-16"
+                  className="bg-emerald-50 px-1 py-1.5 text-center text-xs font-medium text-emerald-700 uppercase whitespace-nowrap cursor-pointer hover:bg-emerald-100"
                   onClick={() => handleSort('demanda')}
                   title="Demanda P75 regional en bultos/día"
                 >
@@ -515,6 +525,12 @@ export default function PasoSeleccionProductosInterCedi({
                 </th>
                 <th className="bg-violet-50 px-1 py-1.5 text-center text-xs font-medium text-violet-700 uppercase tracking-wider w-16">
                   A Pedir
+                </th>
+                <th className="bg-violet-50 px-1 py-1.5 text-center text-xs font-medium text-violet-700 uppercase tracking-wider w-16">
+                  Peso
+                </th>
+                <th className="bg-violet-50 px-1 py-1.5 text-center text-xs font-medium text-violet-700 uppercase tracking-wider w-24">
+                  Notas
                 </th>
               </tr>
             </thead>
@@ -564,8 +580,9 @@ export default function PasoSeleccionProductosInterCedi({
                         {producto.categoria} {producto.marca && `· ${producto.marca}`}
                       </div>
                     </td>
-                    <td className="px-1 py-1 text-center text-xs text-gray-600 w-10">
-                      {unidadesPorBulto}
+                    <td className="px-1 py-1 text-center w-10">
+                      <span className="text-xs text-gray-900 font-medium block">{unidadesPorBulto}</span>
+                      <span className="text-[10px] text-gray-500 block">{producto.unidad_pedido || 'Bulto'}</span>
                     </td>
                     <td className="px-1 py-1 text-center w-12">
                       <span className={`inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold ${abcColor}`}>
@@ -601,7 +618,7 @@ export default function PasoSeleccionProductosInterCedi({
                         className={`text-xs ${getDiasStockColor(diasStockCedi)} hover:underline cursor-pointer`}
                         title="Click para ver detalle de días de stock CEDI"
                       >
-                        {diasStockCedi >= 999 ? '-' : formatNumber(diasStockCedi, 0)}
+                        {diasStockCedi >= 999 ? '-' : `${formatNumber(diasStockCedi, 0)} d`}
                       </button>
                     </td>
                     {/* Stock Tiendas */}
@@ -626,7 +643,7 @@ export default function PasoSeleccionProductosInterCedi({
                             className={`text-xs ${getDiasStockColor(diasStockTiendas)} hover:underline cursor-pointer`}
                             title="Días de stock en tiendas"
                           >
-                            {diasStockTiendas >= 999 ? '-' : formatNumber(diasStockTiendas, 0)}
+                            {diasStockTiendas >= 999 ? '-' : `${formatNumber(diasStockTiendas, 0)} d`}
                           </button>
                         );
                       })()}
@@ -665,7 +682,12 @@ export default function PasoSeleccionProductosInterCedi({
                         className="hover:text-violet-700 hover:underline cursor-pointer transition-colors"
                         title="Click para ver detalle del cálculo"
                       >
-                        {formatNumber(producto.cantidad_sugerida_bultos)}
+                        <span className="block">{formatNumber(producto.cantidad_sugerida_bultos)}</span>
+                        {producto.cantidad_sugerida_unidades > 0 && producto.demanda_regional_p75 > 0 && (
+                          <span className="text-[10px] text-orange-600 block">
+                            ~{formatNumber(producto.cantidad_sugerida_unidades / producto.demanda_regional_p75, 0)}d
+                          </span>
+                        )}
                       </button>
                     </td>
                     <td className="bg-violet-50 px-1 py-1 w-16">
@@ -675,6 +697,28 @@ export default function PasoSeleccionProductosInterCedi({
                         value={cantidadPedida}
                         onChange={(e) => handleCantidadChange(producto.codigo_producto, e.target.value)}
                         className="w-14 px-1 py-0.5 border border-gray-300 rounded text-center text-xs focus:outline-none focus:ring-2 focus:ring-gray-900"
+                      />
+                    </td>
+                    {/* Peso */}
+                    <td className="bg-violet-50 px-1 py-1 text-center text-xs text-gray-600 w-16 whitespace-nowrap">
+                      {(() => {
+                        const pesoUnitario = producto.peso_unitario_kg || 0;
+                        const pesoTotalKg = cantidadPedida * unidadesPorBulto * pesoUnitario;
+                        if (pesoTotalKg <= 0) return '-';
+                        if (pesoTotalKg >= 1000) {
+                          return `${formatNumber(pesoTotalKg / 1000, 2)} Ton`;
+                        }
+                        return `${formatNumber(pesoTotalKg, 2)} Kg`;
+                      })()}
+                    </td>
+                    {/* Notas */}
+                    <td className="bg-violet-50 px-1 py-1 w-24">
+                      <input
+                        type="text"
+                        value={producto.observaciones || ''}
+                        onChange={(e) => handleNotasChange(producto.codigo_producto, e.target.value)}
+                        placeholder="Notas..."
+                        className="w-full px-1 py-0.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-gray-900"
                       />
                     </td>
                   </tr>

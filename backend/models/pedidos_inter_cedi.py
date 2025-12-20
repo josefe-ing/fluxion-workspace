@@ -78,11 +78,15 @@ class CediOrigen:
 # =====================================================================================
 
 class ConfiguracionDiasCobertura(BaseModel):
-    """Configuración de días de cobertura por clase ABC"""
-    dias_cobertura_a: int = Field(default=7, ge=1, le=60, description="Días cobertura clase A")
-    dias_cobertura_b: int = Field(default=14, ge=1, le=90, description="Días cobertura clase B")
-    dias_cobertura_c: int = Field(default=21, ge=1, le=120, description="Días cobertura clase C")
-    dias_cobertura_d: int = Field(default=30, ge=1, le=180, description="Días cobertura clase D")
+    """Configuración de días de cobertura por clase ABC y perecederos"""
+    # Productos normales (Seco/Frío) por clase ABC
+    dias_cobertura_a: int = Field(default=12, ge=1, le=60, description="Días cobertura clase A")
+    dias_cobertura_b: int = Field(default=15, ge=1, le=90, description="Días cobertura clase B")
+    dias_cobertura_c: int = Field(default=18, ge=1, le=120, description="Días cobertura clase C")
+    dias_cobertura_d: int = Field(default=18, ge=1, le=180, description="Días cobertura clase D")
+    # Productos perecederos (ignoran clase ABC)
+    dias_cobertura_fruver: int = Field(default=1, ge=1, le=7, description="Días cobertura FRUVER")
+    dias_cobertura_panaderia: int = Field(default=1, ge=1, le=5, description="Días cobertura Panadería")
 
 
 class ConfiguracionRutaInterCedi(BaseModel):
@@ -124,6 +128,7 @@ class ProductoInterCediBase(BaseModel):
 
     # Cantidades físicas del producto
     unidades_por_bulto: Decimal = Field(default=Decimal("1"))
+    unidad_pedido: Optional[str] = Field(default="Bulto", description="Unidad de pedido: Bulto, Blister, Cesta, etc.")
     peso_unitario_kg: Optional[Decimal] = None
 
 

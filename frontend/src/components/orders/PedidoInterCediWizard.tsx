@@ -16,10 +16,12 @@ export default function PedidoInterCediWizard() {
   const [config, setConfig] = useState<InterCediOrderConfig>({
     cedi_destino_id: 'cedi_caracas',
     cedi_destino_nombre: 'CEDI Caracas',
-    dias_cobertura_a: 7,
-    dias_cobertura_b: 14,
-    dias_cobertura_c: 21,
-    dias_cobertura_d: 30,
+    dias_cobertura_a: 12,
+    dias_cobertura_b: 15,
+    dias_cobertura_c: 18,
+    dias_cobertura_d: 18,
+    dias_cobertura_fruver: 1,
+    dias_cobertura_panaderia: 1,
     frecuencia_viajes_dias: 'Mar,Jue,Sab',
     lead_time_dias: 2
   });
@@ -56,6 +58,8 @@ export default function PedidoInterCediWizard() {
         dias_cobertura_b: config.dias_cobertura_b,
         dias_cobertura_c: config.dias_cobertura_c,
         dias_cobertura_d: config.dias_cobertura_d,
+        dias_cobertura_fruver: config.dias_cobertura_fruver,
+        dias_cobertura_panaderia: config.dias_cobertura_panaderia,
         frecuencia_viajes_dias: config.frecuencia_viajes_dias,
         lead_time_dias: config.lead_time_dias
       });

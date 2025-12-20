@@ -10,10 +10,15 @@ import http from './http';
 // =====================================================================================
 
 export interface ConfiguracionDiasCobertura {
+  // Productos normales (Seco/Frío)
   dias_cobertura_a: number;
   dias_cobertura_b: number;
   dias_cobertura_c: number;
   dias_cobertura_d: number;
+  // Productos FRUVER (perecederos corta vida)
+  dias_cobertura_fruver: number;
+  // Productos Panadería (muy perecederos)
+  dias_cobertura_panaderia: number;
 }
 
 export interface P75PorTienda {
@@ -46,6 +51,7 @@ export interface ProductoInterCedi {
 
   // Cantidades físicas
   unidades_por_bulto: number;
+  unidad_pedido?: string; // Bulto, Blister, Cesta, KG, UND, etc.
   peso_unitario_kg?: number;
 
   // Demanda regional agregada

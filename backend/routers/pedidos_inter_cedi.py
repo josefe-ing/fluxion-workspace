@@ -258,6 +258,7 @@ async def calcular_pedido_inter_cedi(
                 p.marca,
                 p.presentacion,
                 COALESCE(p.unidades_por_bulto, 1) as unidades_por_bulto,
+                COALESCE(p.unidad_pedido, 'Bulto') as unidad_pedido,
                 p.peso_unitario,
                 p.cedi_origen_id,
                 -- Demanda regional
@@ -406,13 +407,26 @@ async def calcular_pedido_inter_cedi(
             if producto_id in stock_por_producto_cedi:
                 stock_cedi_origen = stock_por_producto_cedi[producto_id].get(cedi_origen_id, Decimal('0'))
 
-            # Obtener días de cobertura según clase ABC
-            dias_cobertura = {
-                'A': request.dias_cobertura_a,
-                'B': request.dias_cobertura_b,
-                'C': request.dias_cobertura_c,
-                'D': request.dias_cobertura_d
-            }.get(clase_abc, 30)
+            # Obtener categoría del producto
+            categoria = (row_dict['categoria'] or '').upper()
+
+            # Determinar días de cobertura según tipo de producto
+            # Perecederos usan días fijos (ignoran ABC)
+            es_fruver = cedi_origen_id == 'cedi_verde' or 'FRUVER' in categoria or 'FRUT' in categoria or 'VERDUR' in categoria
+            es_panaderia = 'PANAD' in categoria or 'PAN ' in categoria or categoria.startswith('PAN')
+
+            if es_fruver:
+                dias_cobertura = request.dias_cobertura_fruver
+            elif es_panaderia:
+                dias_cobertura = request.dias_cobertura_panaderia
+            else:
+                # Productos normales usan días según ABC
+                dias_cobertura = {
+                    'A': request.dias_cobertura_a,
+                    'B': request.dias_cobertura_b,
+                    'C': request.dias_cobertura_c,
+                    'D': request.dias_cobertura_d
+                }.get(clase_abc, 18)
 
             # FÓRMULA INTER-CEDI:
             # SS_CEDI = Z × σ_regional × √Lead_Time
@@ -493,6 +507,7 @@ async def calcular_pedido_inter_cedi(
 
                     # Cantidades físicas
                     unidades_por_bulto=unidades_por_bulto,
+                    unidad_pedido=row_dict.get('unidad_pedido', 'Bulto'),
                     peso_unitario_kg=Decimal(str(row_dict['peso_unitario'] or 0)) if row_dict['peso_unitario'] else None,
 
                     # Demanda regional

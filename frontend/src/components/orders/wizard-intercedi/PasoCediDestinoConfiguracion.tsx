@@ -48,7 +48,7 @@ export default function PasoCediDestinoConfiguracion({
     }
   }, []);
 
-  const handleDiasCoberturaChange = (clase: 'a' | 'b' | 'c' | 'd', value: string) => {
+  const handleDiasCoberturaChange = (clase: 'a' | 'b' | 'c' | 'd' | 'fruver' | 'panaderia', value: string) => {
     const numValue = parseInt(value) || 0;
     const key = `dias_cobertura_${clase}` as keyof ConfiguracionDiasCobertura;
     const newConfig = { ...localConfig, [key]: numValue };
@@ -190,6 +190,56 @@ export default function PasoCediDestinoConfiguracion({
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-center text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-gray-500"
                 />
                 <p className="text-xs text-center text-gray-600 mt-1">días</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Días de Cobertura Perecederos */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Días de Cobertura - Productos Perecederos
+            </label>
+            <p className="text-xs text-gray-500 mb-4">
+              Los productos perecederos tienen vida útil corta. Se ignora la clasificación ABC y se usa este valor fijo.
+            </p>
+
+            <div className="grid grid-cols-2 gap-4">
+              {/* FRUVER */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">
+                    🥬 FRUVER
+                  </span>
+                  <span className="text-xs text-emerald-600">Frutas y Verduras</span>
+                </div>
+                <input
+                  type="number"
+                  min="1"
+                  max="7"
+                  value={localConfig.dias_cobertura_fruver}
+                  onChange={(e) => handleDiasCoberturaChange('fruver', e.target.value)}
+                  className="w-full px-3 py-2 border border-emerald-300 rounded-md text-center text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <p className="text-xs text-center text-emerald-600 mt-1">días (máx 7)</p>
+              </div>
+
+              {/* Panadería */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800">
+                    🥖 Panadería
+                  </span>
+                  <span className="text-xs text-amber-600">Pan y Repostería</span>
+                </div>
+                <input
+                  type="number"
+                  min="1"
+                  max="5"
+                  value={localConfig.dias_cobertura_panaderia}
+                  onChange={(e) => handleDiasCoberturaChange('panaderia', e.target.value)}
+                  className="w-full px-3 py-2 border border-amber-300 rounded-md text-center text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <p className="text-xs text-center text-amber-600 mt-1">días (máx 5)</p>
               </div>
             </div>
           </div>
