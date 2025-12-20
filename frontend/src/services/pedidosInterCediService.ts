@@ -279,15 +279,19 @@ export async function calcularPedidoInterCedi(config: {
   dias_cobertura_b?: number;
   dias_cobertura_c?: number;
   dias_cobertura_d?: number;
+  dias_cobertura_fruver?: number;
+  dias_cobertura_panaderia?: number;
   frecuencia_viajes_dias?: string;
   lead_time_dias?: number;
 }): Promise<CalcularPedidoResponse> {
   const response = await http.post(`${API_PREFIX}/calcular`, {
     cedi_destino_id: config.cedi_destino_id,
-    dias_cobertura_a: config.dias_cobertura_a ?? 7,
-    dias_cobertura_b: config.dias_cobertura_b ?? 14,
-    dias_cobertura_c: config.dias_cobertura_c ?? 21,
-    dias_cobertura_d: config.dias_cobertura_d ?? 30,
+    dias_cobertura_a: config.dias_cobertura_a ?? 12,
+    dias_cobertura_b: config.dias_cobertura_b ?? 15,
+    dias_cobertura_c: config.dias_cobertura_c ?? 18,
+    dias_cobertura_d: config.dias_cobertura_d ?? 18,
+    dias_cobertura_fruver: config.dias_cobertura_fruver ?? 1,
+    dias_cobertura_panaderia: config.dias_cobertura_panaderia ?? 1,
     frecuencia_viajes_dias: config.frecuencia_viajes_dias ?? 'Mar,Jue,Sab',
     lead_time_dias: config.lead_time_dias ?? 2.0
   });

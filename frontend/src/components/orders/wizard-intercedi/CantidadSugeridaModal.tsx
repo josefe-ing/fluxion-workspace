@@ -36,7 +36,6 @@ export default function CantidadSugeridaModal({
 
   // Valores del backend (ya calculados correctamente)
   const demandaP75Unid = producto.demanda_regional_p75;
-  const demandaP75Bultos = demandaP75Unid / unidadesPorBulto;
   const stockActualUnid = producto.stock_actual_cedi;
   const stockActualBultos = stockActualUnid / unidadesPorBulto;
 
