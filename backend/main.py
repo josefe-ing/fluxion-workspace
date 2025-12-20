@@ -63,6 +63,7 @@ from routers.generadores_trafico_router import router as generadores_trafico_rou
 from routers.config_inventario import router as config_inventario_router
 from routers.pedidos_inter_cedi import router as pedidos_inter_cedi_router
 from routers.emergencias import router as emergencias_router
+from routers.productos_excluidos import router as productos_excluidos_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
 # Configurar logging
@@ -135,6 +136,7 @@ app.include_router(generadores_trafico_router)
 app.include_router(config_inventario_router)
 app.include_router(pedidos_inter_cedi_router)
 app.include_router(emergencias_router)
+app.include_router(productos_excluidos_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
 # ============================================================================

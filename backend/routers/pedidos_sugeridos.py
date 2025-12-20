@@ -1079,6 +1079,20 @@ async def calcular_productos_sugeridos(
         except Exception as e:
             logger.warning(f"No se pudo cargar límites de inventario: {e}")
 
+        # 1.8. Cargar productos excluidos para la tienda destino
+        codigos_excluidos = set()
+        try:
+            cursor.execute("""
+                SELECT codigo_producto
+                FROM productos_excluidos_tienda
+                WHERE tienda_id = %s AND activo = TRUE
+            """, [request.tienda_destino])
+            codigos_excluidos = {row[0] for row in cursor.fetchall()}
+            if codigos_excluidos:
+                logger.info(f"🚫 Productos excluidos cargados: {len(codigos_excluidos)} productos no aparecerán en sugerencias")
+        except Exception as e:
+            logger.warning(f"No se pudo cargar productos excluidos: {e}")
+
         # 2. Obtener la región de la tienda destino y tiendas de referencia
         cursor.execute("""
             SELECT region FROM ubicaciones WHERE id = %s
@@ -1418,8 +1432,15 @@ async def calcular_productos_sugeridos(
 
         productos = []
         productos_sin_venta_con_ref = 0  # Contador para log
+        productos_excluidos_count = 0  # Contador de productos excluidos
         for row in rows:
             codigo = row[0]
+
+            # Saltar productos excluidos para esta tienda
+            if codigo in codigos_excluidos:
+                productos_excluidos_count += 1
+                continue
+
             categoria_producto = (row[3] or '').strip().upper()  # Categoría normalizada para buscar config
             cantidad_bultos = float(row[8]) if row[8] and row[8] > 0 else 1.0
             unidad_pedido = row[9] or 'Bulto'  # Unidad de pedido: Bulto, Blister, Cesta, etc.
@@ -1956,6 +1977,8 @@ async def calcular_productos_sugeridos(
         logger.info(f"✅ Calculados {len(productos)} productos sugeridos")
         if productos_sin_venta_con_ref > 0:
             logger.info(f"📦 Incluidos {productos_sin_venta_con_ref} productos sin ventas locales (envíos de prueba basados en región {tienda_region})")
+        if productos_excluidos_count > 0:
+            logger.info(f"🚫 Excluidos {productos_excluidos_count} productos de la lista de exclusiones")
         return productos
 
     except Exception as e:

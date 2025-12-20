@@ -10,7 +10,7 @@
 
 import { useState, useEffect } from 'react';
 import http from '../../services/http';
-import { Settings, Store, TrendingUp, Shield, Package, Info, Save, RefreshCw, Leaf, Plus, Trash2, Warehouse, Search } from 'lucide-react';
+import { Settings, Store, TrendingUp, Shield, Package, Info, Save, RefreshCw, Leaf, Plus, Trash2, Warehouse, Search, Ban } from 'lucide-react';
 
 // Tipos
 interface ParametrosGlobales {
@@ -80,7 +80,21 @@ interface ProductoBusqueda {
   categoria: string;
 }
 
-type TabType = 'global' | 'umbrales' | 'niveles' | 'tiendas' | 'categorias' | 'capacidad';
+interface ProductoExcluido {
+  id: number;
+  tienda_id: string;
+  tienda_nombre: string | null;
+  codigo_producto: string;
+  descripcion_producto: string | null;
+  categoria: string | null;
+  motivo: string;
+  observaciones: string | null;
+  creado_por: string;
+  fecha_creacion: string;
+  activo: boolean;
+}
+
+type TabType = 'global' | 'umbrales' | 'niveles' | 'tiendas' | 'categorias' | 'capacidad' | 'excluidos';
 
 // Valores por defecto (los mismos del backend)
 const DEFAULTS = {
@@ -192,6 +206,18 @@ export default function ConfiguracionABC() {
     notas: ''
   });
   const [buscandoProductos, setBuscandoProductos] = useState(false);
+
+  // Estado para productos excluidos
+  const [productosExcluidos, setProductosExcluidos] = useState<ProductoExcluido[]>([]);
+  const [excluidosTiendaSeleccionada, setExcluidosTiendaSeleccionada] = useState<string>('');
+  const [excluidosBusquedaProducto, setExcluidosBusquedaProducto] = useState<string>('');
+  const [excluidosProductosEncontrados, setExcluidosProductosEncontrados] = useState<ProductoBusqueda[]>([]);
+  const [excluidosProductoSeleccionado, setExcluidosProductoSeleccionado] = useState<ProductoBusqueda | null>(null);
+  const [excluidosMotivo, setExcluidosMotivo] = useState<string>('MANUAL');
+  const [excluidosObservaciones, setExcluidosObservaciones] = useState<string>('');
+  const [excluidosBuscando, setExcluidosBuscando] = useState(false);
+  const [excluidosCargando, setExcluidosCargando] = useState(false);
+  const [excluidosFiltro, setExcluidosFiltro] = useState<string>('');
 
   // Cargar datos al montar
   useEffect(() => {
@@ -579,6 +605,111 @@ export default function ConfiguracionABC() {
     }
   };
 
+  // ============ FUNCIONES PARA PRODUCTOS EXCLUIDOS ============
+
+  const cargarProductosExcluidos = async (tiendaId: string) => {
+    if (!tiendaId) {
+      setProductosExcluidos([]);
+      return;
+    }
+
+    try {
+      setExcluidosCargando(true);
+      const response = await http.get(`/api/productos-excluidos/${tiendaId}`);
+      setProductosExcluidos(response.data || []);
+    } catch (err) {
+      console.error('Error cargando productos excluidos:', err);
+      setProductosExcluidos([]);
+    } finally {
+      setExcluidosCargando(false);
+    }
+  };
+
+  const buscarProductosParaExcluir = async (search: string) => {
+    if (!excluidosTiendaSeleccionada || search.length < 2) {
+      setExcluidosProductosEncontrados([]);
+      return;
+    }
+
+    try {
+      setExcluidosBuscando(true);
+      const response = await http.get(`/api/productos-excluidos/buscar-productos/`, {
+        params: { tienda_id: excluidosTiendaSeleccionada, search }
+      });
+      setExcluidosProductosEncontrados(response.data || []);
+    } catch (err) {
+      console.error('Error buscando productos:', err);
+      setExcluidosProductosEncontrados([]);
+    } finally {
+      setExcluidosBuscando(false);
+    }
+  };
+
+  const handleCrearExclusion = async () => {
+    if (!excluidosTiendaSeleccionada || !excluidosProductoSeleccionado) {
+      setError('Selecciona tienda y producto');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      await http.post('/api/productos-excluidos', {
+        tienda_id: excluidosTiendaSeleccionada,
+        codigo_producto: excluidosProductoSeleccionado.codigo,
+        motivo: excluidosMotivo,
+        observaciones: excluidosObservaciones || null
+      });
+
+      setSuccessMessage('Producto agregado a la lista de excluidos');
+      setTimeout(() => setSuccessMessage(null), 3000);
+
+      // Limpiar formulario
+      setExcluidosProductoSeleccionado(null);
+      setExcluidosBusquedaProducto('');
+      setExcluidosProductosEncontrados([]);
+      setExcluidosMotivo('MANUAL');
+      setExcluidosObservaciones('');
+
+      // Recargar lista
+      await cargarProductosExcluidos(excluidosTiendaSeleccionada);
+    } catch (err: any) {
+      console.error('Error creando exclusión:', err);
+      setError(err.response?.data?.detail || 'Error al agregar exclusión');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEliminarExclusion = async (excluido: ProductoExcluido) => {
+    if (!confirm(`¿Eliminar ${excluido.codigo_producto} de la lista de excluidos?`)) return;
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      await http.delete(`/api/productos-excluidos/${excluido.tienda_id}/${excluido.codigo_producto}`);
+
+      setSuccessMessage('Producto eliminado de la lista de excluidos');
+      setTimeout(() => setSuccessMessage(null), 3000);
+
+      await cargarProductosExcluidos(excluidosTiendaSeleccionada);
+    } catch (err) {
+      console.error('Error eliminando exclusión:', err);
+      setError('Error al eliminar exclusión');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const MOTIVOS_EXCLUSION = [
+    { value: 'MANUAL', label: 'Manual', descripcion: 'Exclusión decidida manualmente' },
+    { value: 'DESCONTINUADO', label: 'Descontinuado', descripcion: 'Producto descontinuado para esta tienda' },
+    { value: 'NO_VENDE', label: 'No vende', descripcion: 'Producto que no tiene rotación en esta tienda' },
+    { value: 'OTRO', label: 'Otro', descripcion: 'Otra razón' },
+  ];
+
   const TIPOS_RESTRICCION = [
     { value: 'congelador', label: 'Congelador', emoji: '❄️' },
     { value: 'refrigerador', label: 'Refrigerador', emoji: '🧊' },
@@ -595,6 +726,7 @@ export default function ConfiguracionABC() {
     { id: 'tiendas' as TabType, label: 'Por Tienda', icon: Store },
     { id: 'categorias' as TabType, label: 'Por Categoría', icon: Leaf },
     { id: 'capacidad' as TabType, label: 'Límites Inventario', icon: Warehouse },
+    { id: 'excluidos' as TabType, label: 'Excluidos', icon: Ban },
   ];
 
   if (loading) {
@@ -1636,6 +1768,248 @@ export default function ConfiguracionABC() {
                   </ul>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: Productos Excluidos */}
+        {activeTab === 'excluidos' && (
+          <div className="space-y-6">
+            {/* Info Banner */}
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <Ban className="w-5 h-5 text-red-600 mt-0.5" />
+                <div>
+                  <p className="text-sm text-red-700">
+                    <strong>Productos Excluidos:</strong> Los productos en esta lista nunca aparecerán en las sugerencias de pedido para la tienda seleccionada.
+                  </p>
+                  <p className="text-sm text-red-600 mt-1">
+                    Usa esta función para excluir productos descontinuados, sin rotación o que no deben pedirse para una tienda específica.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Formulario para agregar exclusión */}
+            <div className="bg-white border border-gray-200 rounded-lg p-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
+                <Plus size={20} />
+                Agregar Producto a Excluidos
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Selector de tienda */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tienda</label>
+                  <select
+                    value={excluidosTiendaSeleccionada}
+                    onChange={(e) => {
+                      setExcluidosTiendaSeleccionada(e.target.value);
+                      cargarProductosExcluidos(e.target.value);
+                      setExcluidosProductoSeleccionado(null);
+                      setExcluidosBusquedaProducto('');
+                      setExcluidosProductosEncontrados([]);
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500"
+                  >
+                    <option value="">Seleccionar tienda...</option>
+                    {tiendas.filter(t => t.id.startsWith('tienda_')).map((t) => (
+                      <option key={t.id} value={t.id}>{t.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Buscador de producto */}
+                <div className="relative">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Producto</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={excluidosProductoSeleccionado ? excluidosProductoSeleccionado.descripcion : excluidosBusquedaProducto}
+                      onChange={(e) => {
+                        setExcluidosBusquedaProducto(e.target.value);
+                        setExcluidosProductoSeleccionado(null);
+                        buscarProductosParaExcluir(e.target.value);
+                      }}
+                      placeholder="Buscar por código o nombre..."
+                      disabled={!excluidosTiendaSeleccionada}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 disabled:bg-gray-100"
+                    />
+                    {excluidosBuscando && (
+                      <div className="absolute right-3 top-2">
+                        <RefreshCw className="w-4 h-4 animate-spin text-gray-400" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Dropdown de resultados */}
+                  {excluidosProductosEncontrados.length > 0 && !excluidosProductoSeleccionado && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                      {excluidosProductosEncontrados.map((prod) => (
+                        <div
+                          key={prod.codigo}
+                          onClick={() => {
+                            setExcluidosProductoSeleccionado(prod);
+                            setExcluidosProductosEncontrados([]);
+                          }}
+                          className="px-3 py-2 hover:bg-red-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                        >
+                          <div className="font-medium text-sm">{prod.codigo}</div>
+                          <div className="text-xs text-gray-500 truncate">{prod.descripcion}</div>
+                          <div className="text-xs text-gray-400">{prod.categoria}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selector de motivo */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Motivo</label>
+                  <select
+                    value={excluidosMotivo}
+                    onChange={(e) => setExcluidosMotivo(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500"
+                  >
+                    {MOTIVOS_EXCLUSION.map((m) => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Botón agregar */}
+                <div className="flex items-end">
+                  <button
+                    onClick={handleCrearExclusion}
+                    disabled={!excluidosTiendaSeleccionada || !excluidosProductoSeleccionado || saving}
+                    className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Plus size={16} />
+                    Agregar
+                  </button>
+                </div>
+              </div>
+
+              {/* Campo de observaciones */}
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Observaciones (opcional)</label>
+                <input
+                  type="text"
+                  value={excluidosObservaciones}
+                  onChange={(e) => setExcluidosObservaciones(e.target.value)}
+                  placeholder="Razón adicional de la exclusión..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500"
+                />
+              </div>
+            </div>
+
+            {/* Lista de productos excluidos */}
+            <div className="bg-white border border-gray-200 rounded-lg p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-gray-900 flex items-center gap-2">
+                  <Ban size={20} className="text-red-600" />
+                  Productos Excluidos
+                  {excluidosTiendaSeleccionada && (
+                    <span className="text-sm font-normal text-gray-500">
+                      ({tiendas.find(t => t.id === excluidosTiendaSeleccionada)?.nombre || excluidosTiendaSeleccionada})
+                    </span>
+                  )}
+                </h3>
+
+                {/* Filtro de búsqueda */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={excluidosFiltro}
+                    onChange={(e) => setExcluidosFiltro(e.target.value)}
+                    placeholder="Filtrar..."
+                    className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 w-48"
+                  />
+                </div>
+              </div>
+
+              {!excluidosTiendaSeleccionada ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Ban className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>Selecciona una tienda para ver sus productos excluidos</p>
+                </div>
+              ) : excluidosCargando ? (
+                <div className="text-center py-8">
+                  <RefreshCw className="w-8 h-8 mx-auto mb-3 text-red-500 animate-spin" />
+                  <p className="text-gray-500">Cargando productos excluidos...</p>
+                </div>
+              ) : productosExcluidos.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Package className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>No hay productos excluidos para esta tienda</p>
+                  <p className="text-sm mt-1">Usa el formulario de arriba para agregar exclusiones</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Categoría</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Motivo</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {productosExcluidos
+                        .filter(p =>
+                          !excluidosFiltro ||
+                          p.codigo_producto.toLowerCase().includes(excluidosFiltro.toLowerCase()) ||
+                          (p.descripcion_producto || '').toLowerCase().includes(excluidosFiltro.toLowerCase())
+                        )
+                        .map((excluido) => (
+                          <tr key={excluido.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-sm font-mono font-medium text-gray-900">
+                              {excluido.codigo_producto}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-700">
+                              {excluido.descripcion_producto || '-'}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-500">
+                              {excluido.categoria || '-'}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                excluido.motivo === 'MANUAL' ? 'bg-gray-100 text-gray-700' :
+                                excluido.motivo === 'DESCONTINUADO' ? 'bg-orange-100 text-orange-700' :
+                                excluido.motivo === 'NO_VENDE' ? 'bg-red-100 text-red-700' :
+                                'bg-blue-100 text-blue-700'
+                              }`}>
+                                {MOTIVOS_EXCLUSION.find(m => m.value === excluido.motivo)?.label || excluido.motivo}
+                              </span>
+                              {excluido.observaciones && (
+                                <span className="ml-2 text-xs text-gray-400" title={excluido.observaciones}>
+                                  ({excluido.observaciones.slice(0, 20)}...)
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-500">
+                              {new Date(excluido.fecha_creacion).toLocaleDateString('es-VE')}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <button
+                                onClick={() => handleEliminarExclusion(excluido)}
+                                disabled={saving}
+                                className="text-red-600 hover:text-red-800 disabled:text-gray-400"
+                                title="Eliminar exclusión"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}

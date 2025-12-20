@@ -557,9 +557,9 @@ export default function ProductSalesModal({
       const nombreTienda = ventasData.ventas_diarias
         .find(v => v.tiendas[tiendaId])?.tiendas[tiendaId]?.tienda || tiendaId;
 
-      // Datos históricos y detección de outliers
+      // Datos históricos y detección de outliers - AHORA EN UNIDADES
       const dataHistoricaCompleta = ventasData.ventas_diarias.map(ventaDia => {
-        return ventaDia.tiendas[tiendaId]?.bultos || 0;
+        return ventaDia.tiendas[tiendaId]?.unidades || 0;
       });
 
       const esOutlier = ventasData.ventas_diarias.map(ventaDia => {
@@ -581,7 +581,12 @@ export default function ProductSalesModal({
         borderColor: COLORES_TIENDAS[tiendaId] || '#64748b',
         backgroundColor: COLORES_TIENDAS[tiendaId] || '#64748b',
         tension: 0.4, // Más suavizado
-        borderWidth: 2,
+        borderWidth: 2.5,
+        pointRadius: 5, // Puntos visibles para los datos históricos
+        pointHoverRadius: 7,
+        pointBackgroundColor: COLORES_TIENDAS[tiendaId] || '#64748b',
+        pointBorderColor: '#ffffff',
+        pointBorderWidth: 2,
         spanGaps: true, // Importante: conecta los puntos saltando los nulls
       });
 
@@ -615,10 +620,10 @@ export default function ProductSalesModal({
           }
         }
 
-        // Solo usar tantos valores de forecast como fechas futuras tengamos
+        // Solo usar tantos valores de forecast como fechas futuras tengamos - AHORA EN UNIDADES
         const forecastValues = forecastData[tiendaId].forecasts
           .slice(0, fechasFuturas.length)
-          .map(f => f.forecast_bultos);
+          .map(f => f.forecast_unidades);
 
         // Array de datos:
         // - null para todo hasta el último dato histórico (exclusivo)
@@ -653,13 +658,13 @@ export default function ProductSalesModal({
         });
       }
 
-      // Dataset de inventario (si está activado) - Ahora en bultos para consistencia
+      // Dataset de inventario (si está activado) - AHORA EN UNIDADES
       if (showInventario && historialInventario[tiendaId]) {
         const inventarioData = historialInventario[tiendaId];
 
-        // Mapear los datos de inventario EN BULTOS a las fechas del gráfico
+        // Mapear los datos de inventario EN UNIDADES a las fechas del gráfico
         const inventarioMap = new Map(
-          inventarioData.map(d => [d.fecha.split('T')[0], d.inventario_bultos])
+          inventarioData.map(d => [d.fecha.split('T')[0], d.inventario])
         );
 
         const dataInventario = allFechas.map(fecha => {
@@ -684,6 +689,72 @@ export default function ProductSalesModal({
           pointHoverRadius: 5,
           order: 10, // Dibujar detrás de las ventas
         });
+
+        // Dataset de proyección de inventario (stock proyectado restando forecast)
+        if (forecastData[tiendaId] && forecastData[tiendaId].forecasts.length > 0) {
+          // Obtener el último inventario conocido
+          let ultimoInventario: number | null = null;
+          for (let i = dataInventario.length - 1; i >= 0; i--) {
+            if (dataInventario[i] !== null) {
+              ultimoInventario = dataInventario[i];
+              break;
+            }
+          }
+
+          if (ultimoInventario !== null) {
+            const forecastValues = forecastData[tiendaId].forecasts.slice(0, fechasFuturas.length);
+
+            // Calcular inventario proyectado día a día
+            let inventarioProyectado = ultimoInventario;
+            const dataInventarioProyectado: (number | null)[] = [
+              ...Array(fechasHistoricas.length).fill(null),
+            ];
+
+            // Agregar el punto de conexión (último inventario real)
+            dataInventarioProyectado[fechasHistoricas.length - 1] = ultimoInventario;
+
+            // Calcular proyección restando forecast acumulado - AHORA EN UNIDADES
+            forecastValues.forEach((f) => {
+              inventarioProyectado = inventarioProyectado - f.forecast_unidades;
+              dataInventarioProyectado.push(inventarioProyectado);
+            });
+
+            // Colores: verde si positivo, rojo si negativo
+            const pointColors = dataInventarioProyectado.map(val => {
+              if (val === null) return 'transparent';
+              return val < 0 ? '#dc2626' : '#16a34a'; // Rojo si negativo, verde si positivo
+            });
+
+            const segmentColors = (ctx: any) => {
+              if (ctx.p1DataIndex === undefined) return colorBase;
+              const val = dataInventarioProyectado[ctx.p1DataIndex];
+              if (val === null) return colorBase;
+              return val < 0 ? '#dc2626' : '#16a34a';
+            };
+
+            datasets.push({
+              label: `📉 ${nombreTienda} - Stock Proyectado`,
+              data: dataInventarioProyectado,
+              borderColor: segmentColors,
+              backgroundColor: 'transparent',
+              borderWidth: 2.5,
+              borderDash: [6, 4],
+              tension: 0.2,
+              pointRadius: dataInventarioProyectado.map((val, idx) => idx >= fechasHistoricas.length && val !== null ? 6 : 0),
+              pointHoverRadius: 8,
+              pointBackgroundColor: pointColors,
+              pointBorderColor: '#ffffff',
+              pointBorderWidth: 2,
+              segment: {
+                borderColor: (ctx: any) => {
+                  const val = dataInventarioProyectado[ctx.p1DataIndex];
+                  return val !== null && val < 0 ? '#dc2626' : '#16a34a';
+                },
+              },
+              order: 5,
+            });
+          }
+        }
       }
     });
 
@@ -749,7 +820,7 @@ export default function ProductSalesModal({
       },
       title: {
         display: true,
-        text: `Ventas Diarias en Bultos - ${descripcionProducto}`,
+        text: `Ventas Diarias en Unidades - ${descripcionProducto}`,
         font: {
           size: 16,
           weight: 'bold',
@@ -798,8 +869,8 @@ export default function ProductSalesModal({
             const value = context.parsed.y;
             const fecha = context.label;
 
-            // Para datos históricos, buscar las unidades originales
-            if (ventasData && !label.includes('Proyección') && !label.includes('⚠️')) {
+            // Para datos históricos de ventas - AHORA EN UNIDADES
+            if (ventasData && !label.includes('Proyección') && !label.includes('⚠️') && !label.includes('Inventario') && !label.includes('Stock Proyectado')) {
               const tiendaId = Array.from(selectedTiendas).find(tid => {
                 const nombreTienda = ventasData.ventas_diarias
                   .find(v => v.tiendas[tid])?.tiendas[tid]?.tienda;
@@ -809,13 +880,13 @@ export default function ProductSalesModal({
               if (tiendaId) {
                 const ventaDia = ventasData.ventas_diarias.find(v => v.fecha === fecha);
                 if (ventaDia?.tiendas[tiendaId]) {
-                  const unidades = ventaDia.tiendas[tiendaId].unidades || 0;
-                  return `${label}: ${value.toFixed(2)} bultos (${unidades.toFixed(0)} unid)`;
+                  const bultos = ventaDia.tiendas[tiendaId].bultos || 0;
+                  return `${label}: ${value.toFixed(0)} unidades (${bultos.toFixed(2)} bultos)`;
                 }
               }
             }
 
-            // Para proyección, mostrar también unidades estimadas
+            // Para proyección de ventas - AHORA EN UNIDADES
             if (label.includes('Proyección') && forecastData) {
               const tiendaId = Array.from(selectedTiendas).find(tid => {
                 const nombreTienda = ventasData?.ventas_diarias
@@ -826,19 +897,28 @@ export default function ProductSalesModal({
               if (tiendaId && forecastData[tiendaId]) {
                 const forecastDia = forecastData[tiendaId].forecasts.find(f => f.fecha === fecha);
                 if (forecastDia) {
-                  return `${label}: ${value.toFixed(2)} bultos (${forecastDia.forecast_unidades.toFixed(0)} unid)`;
+                  return `${label}: ${value.toFixed(0)} unidades (${forecastDia.forecast_bultos.toFixed(2)} bultos)`;
                 }
               }
             }
 
-            // Para inventario, mostrar bultos (ahora consistente con ventas)
-            if (label.includes('Inventario')) {
+            // Para inventario histórico - AHORA EN UNIDADES
+            if (label.includes('Inventario') && !label.includes('Stock Proyectado')) {
               const stockValue = value !== null ? value : 0;
               const esStockCero = stockValue === 0;
-              return `${label}: ${stockValue.toFixed(2)} bultos${esStockCero ? ' ⚠️ SIN STOCK' : ''}`;
+              return `${label}: ${stockValue.toFixed(0)} unidades${esStockCero ? ' ⚠️ SIN STOCK' : ''}`;
             }
 
-            return `${label}: ${value.toFixed(2)} bultos`;
+            // Para stock proyectado - AHORA EN UNIDADES, resaltar si es negativo
+            if (label.includes('Stock Proyectado')) {
+              const stockValue = value !== null ? value : 0;
+              if (stockValue < 0) {
+                return `🔴 ${label}: ${stockValue.toFixed(0)} unidades ⚠️ QUIEBRE DE STOCK`;
+              }
+              return `🟢 ${label}: ${stockValue.toFixed(0)} unidades`;
+            }
+
+            return `${label}: ${value.toFixed(0)} unidades`;
           },
         },
       },
@@ -848,8 +928,8 @@ export default function ProductSalesModal({
           const label = context.dataset.label || '';
           if (label.includes('⚠️ Posible falta de stock')) return false;
 
-          // NO mostrar en datasets de inventario
-          if (label.includes('Inventario')) return false;
+          // NO mostrar en datasets de inventario ni stock proyectado
+          if (label.includes('Inventario') || label.includes('Stock Proyectado')) return false;
 
           // Para Proyección PMP: no mostrar etiqueta en el punto de conexión (el primero no-null)
           // El punto de conexión es hoy (dato real), no queremos etiqueta naranja ahí
@@ -884,7 +964,7 @@ export default function ProductSalesModal({
         },
         formatter: (value: number | null) => {
           if (value === null || value === undefined) return '';
-          return value.toFixed(2);
+          return value.toFixed(0); // Unidades son enteros
         },
         padding: 4,
         backgroundColor: (context) => {
@@ -901,9 +981,10 @@ export default function ProductSalesModal({
         display: true,
         position: 'left' as const,
         beginAtZero: true,
+        suggestedMax: 50, // Mínimo de escala para mejor visualización cuando hay valores bajos (en unidades)
         title: {
           display: true,
-          text: showInventario ? 'Bultos (Ventas e Inventario)' : 'Bultos Vendidos',
+          text: showInventario ? 'Unidades (Ventas e Inventario)' : 'Unidades Vendidas',
         },
       },
       // Ya no necesitamos eje Y secundario - todo está en bultos ahora
@@ -1122,11 +1203,15 @@ export default function ProductSalesModal({
                           <>
                             <div className="flex items-center gap-2">
                               <span className="inline-block w-3 h-3 bg-purple-200 border border-purple-400 border-dashed"></span>
-                              <span>Inventario (bultos)</span>
+                              <span>Inventario histórico</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="inline-block w-3 h-3 bg-red-200 border border-red-300"></span>
-                              <span>Sin stock</span>
+                              <span className="inline-block w-3 h-3 bg-green-500 rounded-full"></span>
+                              <span>Stock proyectado (+)</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="inline-block w-3 h-3 bg-red-500 rounded-full"></span>
+                              <span>Stock proyectado (-) QUIEBRE</span>
                             </div>
                           </>
                         )}
