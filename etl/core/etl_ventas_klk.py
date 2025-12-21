@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 ETL de Ventas para Sistema KLK - La Granja Mercado
-Extrae, transforma y carga datos de ventas desde API KLK a DuckDB
+Extrae, transforma y carga datos de ventas desde API KLK a PostgreSQL
+PostgreSQL only - DuckDB removed (Dec 2025)
 
 Tiendas KLK:
 - PERIFERICO (tienda_01) - SUC001

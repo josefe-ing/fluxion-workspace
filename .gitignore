@@ -1,21 +1,10 @@
 # ==========================================
-# Fluxion AI - DuckDB Architecture
+# Fluxion AI - PostgreSQL Architecture
 # ==========================================
 
 # ============ DATABASES ============
-# DuckDB databases (PRODUCTION DATA - DO NOT COMMIT)
+# Local data directory (legacy, kept for local backups)
 data/
-*.db
-*.duckdb
-*.db-journal
-*.db-wal
-*.db.tmp/
-data/*.db.tmp/
-data/*_temp.db
-
-# NOTA IMPORTANTE: Las bases de datos NO se suben a GitHub
-# Son demasiado grandes (16GB+) y contienen datos de producción
-# En producción, las DBs se crean vacías y se llenan con ETL
 
 # ============ ETL ============
 etl/logs/
@@ -111,14 +100,8 @@ cdk.out/
 # ETL Reports (temporary files)
 **/reporte_ventas_*.txt
 **/reporte_ventas_*.json
-etl/test_copy_optimization.py
 venv_old_python39/
 
-# Scripts de verificación temporal
+# Temporary verification scripts
 check_*.py
-database/test_*.py
-database/recreate_*.py
 etl/test_*.sh
-
-# Fixes SQL ya aplicados
-database/fix_visible_pedidos.sql

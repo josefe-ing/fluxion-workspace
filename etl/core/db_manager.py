@@ -1,299 +1,111 @@
 """
-Dual Database Manager para Fluxion AI
-Soporta migración gradual DuckDB → PostgreSQL
-
-Durante la migración, el sistema puede funcionar en 3 modos:
-1. duckdb: Solo DuckDB (legacy, default)
-2. dual: DuckDB + PostgreSQL en paralelo (para validación)
-3. postgresql: Solo PostgreSQL (después de migración completa)
+Database Manager para Fluxion AI
+PostgreSQL only - DuckDB removed (Dec 2025)
 """
 
-import duckdb
 import psycopg2
 import psycopg2.extras
-import os
-from pathlib import Path
-from contextlib import contextmanager
-from typing import Union, Any, Dict, List, Optional
 import logging
+from contextlib import contextmanager
+from typing import Any, Dict, List, Optional
 
-from db_config import (
-    DB_MODE,
-    DUCKDB_PATH,
-    POSTGRES_DSN,
-    get_db_mode,
-    is_duckdb_mode,
-    is_postgres_mode,
-    get_primary_db
-)
+from db_config import POSTGRES_DSN
 
 logger = logging.getLogger(__name__)
 
 
-# Custom exception para compatibilidad con FastAPI (cuando se usa desde backend)
-# y con ETL (cuando NO tiene FastAPI disponible)
 class DatabaseError(Exception):
-    """Error de base de datos compatible con ETL y FastAPI"""
+    """Database error compatible with ETL and FastAPI"""
     def __init__(self, message: str, status_code: int = 500):
         self.message = message
         self.status_code = status_code
         super().__init__(self.message)
 
 
-# =============================================================================
-# DUCKDB CONNECTIONS (Legacy)
-# =============================================================================
-
-@contextmanager
-def get_duckdb_connection(read_only: bool = True):
-    """
-    Context manager para conexiones DuckDB
-
-    Args:
-        read_only: Si True, abre en modo read-only (permite múltiples lectores)
-    """
-    db_path = Path(DUCKDB_PATH)
-
-    if not db_path.exists():
-        raise DatabaseError(f"DuckDB no encontrada en {db_path}", status_code=500)
-
-    conn = None
-    try:
-        conn = duckdb.connect(str(db_path), read_only=read_only)
-        yield conn
-    finally:
-        if conn:
-            conn.close()
-
-
-# =============================================================================
-# POSTGRESQL CONNECTIONS (New)
-# =============================================================================
-
 @contextmanager
 def get_postgres_connection():
     """
-    Context manager para conexiones PostgreSQL
-    Usa connection pooling implícito de psycopg2
+    Context manager for PostgreSQL connections
     """
     conn = None
     try:
         conn = psycopg2.connect(POSTGRES_DSN)
-        conn.autocommit = False  # Transacciones explícitas
+        conn.autocommit = False
         yield conn
     except psycopg2.Error as e:
         logger.error(f"PostgreSQL connection error: {e}")
         if conn:
             conn.rollback()
-        raise DatabaseError(f"Error conectando a PostgreSQL: {str(e)}", status_code=500)
+        raise DatabaseError(f"Error connecting to PostgreSQL: {str(e)}", status_code=500)
     finally:
         if conn:
             conn.close()
 
 
-# =============================================================================
-# UNIFIED DATABASE CONNECTION (Abstraction Layer)
-# =============================================================================
-
 @contextmanager
 def get_db_connection(read_only: bool = True):
     """
-    Retorna una conexión a la base de datos primaria según DB_MODE
-
-    - duckdb mode: Retorna DuckDB connection
-    - dual mode: Retorna DuckDB connection (DuckDB es primary durante dual-mode)
-    - postgresql mode: Retorna PostgreSQL connection
-
-    Args:
-        read_only: Para DuckDB, si abrir en modo read-only. Ignorado para PostgreSQL.
-
-    Usage:
-        with get_db_connection() as conn:
-            cursor = conn.cursor() if is_postgres else conn
-            cursor.execute("SELECT * FROM productos")
-            results = cursor.fetchall()
+    Returns a PostgreSQL connection.
+    read_only parameter kept for backward compatibility but ignored.
     """
-    primary_db = get_primary_db()
-
-    if primary_db == "duckdb":
-        with get_duckdb_connection(read_only=read_only) as conn:
-            yield conn
-    else:  # postgresql
-        with get_postgres_connection() as conn:
-            yield conn
+    with get_postgres_connection() as conn:
+        yield conn
 
 
 @contextmanager
 def get_db_connection_write():
     """
-    Retorna una conexión WRITE a la base de datos primaria
-
-    Para migración dual-mode, escribe en AMBAS bases de datos:
-    - Primero escribe en PostgreSQL (nueva DB)
-    - Luego en DuckDB (legacy, para backward compatibility)
-
-    Usage:
-        with get_db_connection_write() as conn:
-            # conn es PostgreSQL o DuckDB según modo
-            cursor = conn.cursor() if is_postgres_mode() else conn
-            cursor.execute("INSERT INTO ubicaciones ...")
-            conn.commit()
+    Returns a write connection to PostgreSQL
     """
-    primary_db = get_primary_db()
+    with get_postgres_connection() as conn:
+        yield conn
 
-    if primary_db == "duckdb":
-        with get_duckdb_connection(read_only=False) as conn:
-            yield conn
-    else:  # postgresql
-        with get_postgres_connection() as conn:
-            yield conn
-
-
-# =============================================================================
-# DUAL-MODE HELPERS (Para write operations en ambas DBs)
-# =============================================================================
-
-def execute_dual_write(
-    duckdb_sql: str,
-    postgres_sql: str,
-    params: Optional[tuple] = None,
-    duckdb_params: Optional[tuple] = None,
-    postgres_params: Optional[tuple] = None
-):
-    """
-    Ejecuta un INSERT/UPDATE/DELETE en ambas bases de datos durante dual-mode
-
-    Args:
-        duckdb_sql: SQL para DuckDB
-        postgres_sql: SQL para PostgreSQL
-        params: Parámetros compartidos (si son iguales para ambas DBs)
-        duckdb_params: Parámetros específicos para DuckDB
-        postgres_params: Parámetros específicos para PostgreSQL
-
-    Returns:
-        Dict con resultados de ambas ejecuciones
-
-    Raises:
-        Exception si alguna de las dos falla
-    """
-    if DB_MODE != "dual":
-        raise ValueError("execute_dual_write solo funciona en modo 'dual'")
-
-    # Usar parámetros específicos o fallback a params compartidos
-    duck_params = duckdb_params if duckdb_params is not None else params
-    pg_params = postgres_params if postgres_params is not None else params
-
-    results = {"duckdb": None, "postgresql": None}
-    errors = []
-
-    # Ejecutar en PostgreSQL primero (nueva DB tiene prioridad)
-    try:
-        with get_postgres_connection() as pg_conn:
-            cursor = pg_conn.cursor()
-            cursor.execute(postgres_sql, pg_params)
-            pg_conn.commit()
-            results["postgresql"] = {"rowcount": cursor.rowcount, "success": True}
-            logger.info(f"✅ PostgreSQL write OK: {cursor.rowcount} rows affected")
-    except Exception as e:
-        logger.error(f"❌ PostgreSQL write failed: {e}")
-        errors.append(("postgresql", str(e)))
-        results["postgresql"] = {"error": str(e), "success": False}
-
-    # Ejecutar en DuckDB (para backward compatibility)
-    try:
-        with get_duckdb_connection(read_only=False) as duck_conn:
-            duck_conn.execute(duckdb_sql, duck_params)
-            results["duckdb"] = {"success": True}
-            logger.info("✅ DuckDB write OK")
-    except Exception as e:
-        logger.error(f"❌ DuckDB write failed: {e}")
-        errors.append(("duckdb", str(e)))
-        results["duckdb"] = {"error": str(e), "success": False}
-
-    # Si ambas fallaron, lanzar excepción
-    if len(errors) == 2:
-        error_msg = "; ".join([f"{db}: {err}" for db, err in errors])
-        raise Exception(f"Dual write failed on both databases: {error_msg}")
-
-    # Si solo una falló, logear warning pero no fallar
-    if len(errors) == 1:
-        db, err = errors[0]
-        logger.warning(f"⚠️  Dual write partially failed on {db}: {err}")
-
-    return results
-
-
-# =============================================================================
-# QUERY HELPERS (Cross-database compatibility)
-# =============================================================================
 
 def execute_query(sql: str, params: Optional[tuple] = None) -> List[tuple]:
     """
-    Ejecuta una query SELECT y retorna resultados
-    Funciona con DuckDB o PostgreSQL según el modo
-
-    Args:
-        sql: SQL query
-        params: Parámetros de la query
-
-    Returns:
-        Lista de tuplas con resultados
+    Execute a SELECT query and return results
     """
-    with get_db_connection(read_only=True) as conn:
-        if is_postgres_mode():
-            cursor = conn.cursor()
-            cursor.execute(sql, params)
-            results = cursor.fetchall()
-            cursor.close()
-            return results
-        else:  # DuckDB
-            result = conn.execute(sql, params)
-            return result.fetchall()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
 
 
 def execute_query_dict(sql: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
     """
-    Ejecuta una query SELECT y retorna resultados como lista de dicts
-
-    Args:
-        sql: SQL query
-        params: Parámetros de la query
-
-    Returns:
-        Lista de diccionarios con resultados
+    Execute a SELECT query and return results as list of dicts
     """
-    with get_db_connection(read_only=True) as conn:
-        if is_postgres_mode():
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cursor.execute(sql, params)
-            results = cursor.fetchall()
-            cursor.close()
-            return [dict(row) for row in results]
-        else:  # DuckDB
-            result = conn.execute(sql, params)
-            columns = [desc[0] for desc in result.description]
-            return [dict(zip(columns, row)) for row in result.fetchall()]
+    with get_db_connection() as conn:
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor.execute(sql, params)
+        results = cursor.fetchall()
+        cursor.close()
+        return [dict(row) for row in results]
 
 
-# =============================================================================
-# BACKWARD COMPATIBILITY (Para código legacy que usa database.py)
-# =============================================================================
+def is_postgres_mode() -> bool:
+    """Always returns True - PostgreSQL only mode"""
+    return True
 
-# Aliases para compatibilidad con código existente
+
+def get_primary_db() -> str:
+    """Returns 'postgresql' - the only database mode"""
+    return "postgresql"
+
+
+# Backward compatibility aliases
 get_db_connection_read = get_db_connection
 
-# Para facilitar migración gradual
 __all__ = [
     'get_db_connection',
     'get_db_connection_read',
     'get_db_connection_write',
-    'get_duckdb_connection',
     'get_postgres_connection',
-    'execute_dual_write',
     'execute_query',
     'execute_query_dict',
-    'get_db_mode',
-    'is_duckdb_mode',
     'is_postgres_mode',
-    'get_primary_db'
+    'get_primary_db',
+    'DatabaseError'
 ]

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 ETL Execution Tracker - Sistema de tracking y recuperación de fallos
+PostgreSQL only - DuckDB removed (Dec 2025)
+
 Registra ejecuciones de ETL y detecta gaps para recuperación automática
 
 Autor: ETL Team
@@ -14,10 +16,10 @@ from dataclasses import dataclass
 import logging
 
 try:
-    from loader_inventario import DuckDBLoader
+    from db_manager import get_postgres_connection
     from config import ETLConfig
 except ImportError:
-    from core.loader_inventario import DuckDBLoader
+    from core.db_manager import get_postgres_connection
     from core.config import ETLConfig
 
 
@@ -66,6 +68,7 @@ class GapRecuperacion:
 class ETLTracker:
     """
     Tracker de ejecuciones ETL con capacidad de recuperación de gaps
+    PostgreSQL only - DuckDB removed (Dec 2025)
 
     Funcionalidades:
     - Registra inicio/fin de ejecuciones
@@ -75,10 +78,10 @@ class ETLTracker:
     """
 
     def __init__(self, version_etl: str = "2.0"):
-        self.loader = DuckDBLoader()
         self.logger = self._setup_logger()
         self.version_etl = version_etl
         self.hostname = socket.gethostname()
+        self._ensure_tables_exist()
 
     def _setup_logger(self) -> logging.Logger:
         """Configura el logger"""
@@ -90,6 +93,24 @@ class ETLTracker:
             handler.setFormatter(formatter)
             logger.addHandler(handler)
         return logger
+
+    def _ensure_tables_exist(self):
+        """Verifica que la tabla etl_ejecuciones existe en PostgreSQL"""
+        try:
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'etl_ejecuciones'
+                    )
+                """)
+                exists = cursor.fetchone()[0]
+                if not exists:
+                    self.logger.warning("⚠️ Tabla etl_ejecuciones no existe - tracking deshabilitado")
+                cursor.close()
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudo verificar tabla etl_ejecuciones: {e}")
 
     def iniciar_ejecucion(self, ejecucion: ETLEjecucion) -> int:
         """
@@ -103,43 +124,49 @@ class ETLTracker:
         ejecucion.version_etl = self.version_etl
         ejecucion.host = self.hostname
 
-        conn = self.loader.get_connection()
-
         try:
-            # Insertar ejecución
-            result = conn.execute("""
-                INSERT INTO etl_ejecuciones (
-                    etl_tipo, ubicacion_id, ubicacion_nombre,
-                    fecha_inicio, fecha_desde, fecha_hasta,
-                    hora_desde, hora_hasta,
-                    estado, modo, version_etl, host
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                RETURNING id
-            """, [
-                ejecucion.etl_tipo,
-                ejecucion.ubicacion_id,
-                ejecucion.ubicacion_nombre,
-                ejecucion.fecha_inicio,
-                ejecucion.fecha_desde,
-                ejecucion.fecha_hasta,
-                str(ejecucion.hora_desde) if ejecucion.hora_desde else None,
-                str(ejecucion.hora_hasta) if ejecucion.hora_hasta else None,
-                ejecucion.estado,
-                ejecucion.modo,
-                ejecucion.version_etl,
-                ejecucion.host
-            ]).fetchone()
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
 
-            ejecucion_id = result[0]
-            ejecucion.id = ejecucion_id
+                # Insertar ejecución
+                cursor.execute("""
+                    INSERT INTO etl_ejecuciones (
+                        etl_tipo, ubicacion_id, ubicacion_nombre,
+                        fecha_inicio, fecha_desde, fecha_hasta,
+                        hora_desde, hora_hasta,
+                        estado, modo, version_etl, host
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    ejecucion.etl_tipo,
+                    ejecucion.ubicacion_id,
+                    ejecucion.ubicacion_nombre,
+                    ejecucion.fecha_inicio,
+                    ejecucion.fecha_desde,
+                    ejecucion.fecha_hasta,
+                    str(ejecucion.hora_desde) if ejecucion.hora_desde else None,
+                    str(ejecucion.hora_hasta) if ejecucion.hora_hasta else None,
+                    ejecucion.estado,
+                    ejecucion.modo,
+                    ejecucion.version_etl,
+                    ejecucion.host
+                ))
 
-            self.logger.info(f"📝 Ejecución iniciada: ID={ejecucion_id}, tipo={ejecucion.etl_tipo}, "
-                           f"ubicacion={ejecucion.ubicacion_id}, modo={ejecucion.modo}")
+                result = cursor.fetchone()
+                ejecucion_id = result[0]
+                ejecucion.id = ejecucion_id
 
-            return ejecucion_id
+                conn.commit()
+                cursor.close()
 
-        finally:
-            conn.close()
+                self.logger.info(f"📝 Ejecución iniciada: ID={ejecucion_id}, tipo={ejecucion.etl_tipo}, "
+                               f"ubicacion={ejecucion.ubicacion_id}, modo={ejecucion.modo}")
+
+                return ejecucion_id
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudo registrar ejecución (tabla no existe?): {e}")
+            return -1
 
     def finalizar_ejecucion_exitosa(
         self,
@@ -148,41 +175,49 @@ class ETLTracker:
         registros_cargados: int
     ):
         """Marca una ejecución como exitosa"""
+        if ejecucion_id < 0:
+            return
+
         fecha_fin = datetime.now()
 
-        conn = self.loader.get_connection()
-
         try:
-            # Obtener fecha_inicio para calcular duración
-            result = conn.execute("""
-                SELECT fecha_inicio
-                FROM etl_ejecuciones
-                WHERE id = ?
-            """, [ejecucion_id]).fetchone()
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
 
-            if not result:
-                self.logger.error(f"❌ Ejecución {ejecucion_id} no encontrada")
-                return
+                # Obtener fecha_inicio para calcular duración
+                cursor.execute("""
+                    SELECT fecha_inicio
+                    FROM etl_ejecuciones
+                    WHERE id = %s
+                """, (ejecucion_id,))
 
-            fecha_inicio = result[0]
-            duracion = (fecha_fin - fecha_inicio).total_seconds()
+                result = cursor.fetchone()
+                if not result:
+                    self.logger.error(f"❌ Ejecución {ejecucion_id} no encontrada")
+                    return
 
-            # Actualizar ejecución
-            conn.execute("""
-                UPDATE etl_ejecuciones
-                SET estado = 'exitoso',
-                    fecha_fin = ?,
-                    duracion_segundos = ?,
-                    registros_extraidos = ?,
-                    registros_cargados = ?
-                WHERE id = ?
-            """, [fecha_fin, duracion, registros_extraidos, registros_cargados, ejecucion_id])
+                fecha_inicio = result[0]
+                duracion = (fecha_fin - fecha_inicio).total_seconds()
 
-            self.logger.info(f"✅ Ejecución {ejecucion_id} finalizada exitosamente: "
-                           f"{registros_cargados:,} registros en {duracion:.2f}s")
+                # Actualizar ejecución
+                cursor.execute("""
+                    UPDATE etl_ejecuciones
+                    SET estado = 'exitoso',
+                        fecha_fin = %s,
+                        duracion_segundos = %s,
+                        registros_extraidos = %s,
+                        registros_cargados = %s
+                    WHERE id = %s
+                """, (fecha_fin, duracion, registros_extraidos, registros_cargados, ejecucion_id))
 
-        finally:
-            conn.close()
+                conn.commit()
+                cursor.close()
+
+                self.logger.info(f"✅ Ejecución {ejecucion_id} finalizada exitosamente: "
+                               f"{registros_cargados:,} registros en {duracion:.2f}s")
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudo actualizar ejecución: {e}")
 
     def finalizar_ejecucion_fallida(
         self,
@@ -192,41 +227,49 @@ class ETLTracker:
         registros_extraidos: int = 0
     ):
         """Marca una ejecución como fallida"""
+        if ejecucion_id < 0:
+            return
+
         fecha_fin = datetime.now()
 
-        conn = self.loader.get_connection()
-
         try:
-            # Obtener fecha_inicio para calcular duración
-            result = conn.execute("""
-                SELECT fecha_inicio
-                FROM etl_ejecuciones
-                WHERE id = ?
-            """, [ejecucion_id]).fetchone()
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
 
-            if not result:
-                self.logger.error(f"❌ Ejecución {ejecucion_id} no encontrada")
-                return
+                # Obtener fecha_inicio para calcular duración
+                cursor.execute("""
+                    SELECT fecha_inicio
+                    FROM etl_ejecuciones
+                    WHERE id = %s
+                """, (ejecucion_id,))
 
-            fecha_inicio = result[0]
-            duracion = (fecha_fin - fecha_inicio).total_seconds()
+                result = cursor.fetchone()
+                if not result:
+                    self.logger.error(f"❌ Ejecución {ejecucion_id} no encontrada")
+                    return
 
-            # Actualizar ejecución
-            conn.execute("""
-                UPDATE etl_ejecuciones
-                SET estado = 'fallido',
-                    fecha_fin = ?,
-                    duracion_segundos = ?,
-                    registros_extraidos = ?,
-                    error_mensaje = ?,
-                    error_tipo = ?
-                WHERE id = ?
-            """, [fecha_fin, duracion, registros_extraidos, error_mensaje, error_tipo, ejecucion_id])
+                fecha_inicio = result[0]
+                duracion = (fecha_fin - fecha_inicio).total_seconds()
 
-            self.logger.error(f"❌ Ejecución {ejecucion_id} falló: {error_tipo} - {error_mensaje[:100]}")
+                # Actualizar ejecución
+                cursor.execute("""
+                    UPDATE etl_ejecuciones
+                    SET estado = 'fallido',
+                        fecha_fin = %s,
+                        duracion_segundos = %s,
+                        registros_extraidos = %s,
+                        error_mensaje = %s,
+                        error_tipo = %s
+                    WHERE id = %s
+                """, (fecha_fin, duracion, registros_extraidos, error_mensaje, error_tipo, ejecucion_id))
 
-        finally:
-            conn.close()
+                conn.commit()
+                cursor.close()
+
+                self.logger.error(f"❌ Ejecución {ejecucion_id} falló: {error_tipo} - {error_mensaje[:100]}")
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudo actualizar ejecución fallida: {e}")
 
     def obtener_gaps_por_recuperar(
         self,
@@ -245,64 +288,79 @@ class ETLTracker:
         Returns:
             Lista de gaps que necesitan recuperación
         """
-        conn = self.loader.get_connection()
-
         try:
-            query = """
-                SELECT
-                    etl_tipo,
-                    ubicacion_id,
-                    ubicacion_nombre,
-                    fecha_desde,
-                    fecha_hasta,
-                    hora_desde,
-                    hora_hasta,
-                    fecha_fallo,
-                    error_tipo,
-                    error_mensaje,
-                    horas_desde_fallo
-                FROM v_gaps_por_recuperar
-                WHERE horas_desde_fallo <= ?
-            """
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
 
-            params = [max_horas]
+                # Buscar ejecuciones fallidas que no tienen una exitosa posterior
+                query = """
+                    SELECT
+                        e.etl_tipo,
+                        e.ubicacion_id,
+                        e.ubicacion_nombre,
+                        e.fecha_desde,
+                        e.fecha_hasta,
+                        e.hora_desde,
+                        e.hora_hasta,
+                        e.fecha_inicio as fecha_fallo,
+                        e.error_tipo,
+                        e.error_mensaje,
+                        EXTRACT(EPOCH FROM (NOW() - e.fecha_inicio)) / 3600 as horas_desde_fallo
+                    FROM etl_ejecuciones e
+                    WHERE e.estado = 'fallido'
+                      AND e.fecha_inicio >= NOW() - INTERVAL '%s hours'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM etl_ejecuciones e2
+                          WHERE e2.etl_tipo = e.etl_tipo
+                            AND e2.ubicacion_id = e.ubicacion_id
+                            AND e2.fecha_desde = e.fecha_desde
+                            AND e2.fecha_hasta = e.fecha_hasta
+                            AND e2.estado = 'exitoso'
+                            AND e2.fecha_inicio > e.fecha_inicio
+                      )
+                """
 
-            if etl_tipo:
-                query += " AND etl_tipo = ?"
-                params.append(etl_tipo)
+                params = [max_horas]
 
-            if ubicacion_id:
-                query += " AND ubicacion_id = ?"
-                params.append(ubicacion_id)
+                if etl_tipo:
+                    query += " AND e.etl_tipo = %s"
+                    params.append(etl_tipo)
 
-            query += " ORDER BY fecha_fallo ASC"
+                if ubicacion_id:
+                    query += " AND e.ubicacion_id = %s"
+                    params.append(ubicacion_id)
 
-            results = conn.execute(query, params).fetchall()
+                query += " ORDER BY e.fecha_inicio ASC"
 
-            gaps = []
-            for row in results:
-                gap = GapRecuperacion(
-                    etl_tipo=row[0],
-                    ubicacion_id=row[1],
-                    ubicacion_nombre=row[2],
-                    fecha_desde=row[3],
-                    fecha_hasta=row[4],
-                    hora_desde=row[5],
-                    hora_hasta=row[6],
-                    fecha_fallo=row[7],
-                    error_tipo=row[8],
-                    error_mensaje=row[9],
-                    horas_desde_fallo=row[10]
-                )
-                gaps.append(gap)
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                cursor.close()
 
-            if gaps:
-                self.logger.info(f"🔍 Encontrados {len(gaps)} gaps por recuperar")
+                gaps = []
+                for row in results:
+                    gap = GapRecuperacion(
+                        etl_tipo=row[0],
+                        ubicacion_id=row[1],
+                        ubicacion_nombre=row[2],
+                        fecha_desde=row[3],
+                        fecha_hasta=row[4],
+                        hora_desde=row[5],
+                        hora_hasta=row[6],
+                        fecha_fallo=row[7],
+                        error_tipo=row[8],
+                        error_mensaje=row[9],
+                        horas_desde_fallo=row[10] or 0
+                    )
+                    gaps.append(gap)
 
-            return gaps
+                if gaps:
+                    self.logger.info(f"🔍 Encontrados {len(gaps)} gaps por recuperar")
 
-        finally:
-            conn.close()
+                return gaps
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudieron obtener gaps: {e}")
+            return []
 
     def obtener_metricas_confiabilidad(
         self,
@@ -319,57 +377,59 @@ class ETLTracker:
         Returns:
             Lista de métricas por tienda/día
         """
-        conn = self.loader.get_connection()
-
         try:
-            query = """
-                SELECT
-                    etl_tipo,
-                    ubicacion_id,
-                    ubicacion_nombre,
-                    fecha,
-                    total_ejecuciones,
-                    ejecuciones_exitosas,
-                    ejecuciones_fallidas,
-                    tasa_exito_pct,
-                    duracion_promedio_seg,
-                    total_registros_cargados
-                FROM v_metricas_confiabilidad
-                WHERE fecha >= CURRENT_DATE - INTERVAL '? days'
-            """
+            with get_postgres_connection() as conn:
+                cursor = conn.cursor()
 
-            params = []
+                query = """
+                    SELECT
+                        etl_tipo,
+                        ubicacion_id,
+                        ubicacion_nombre,
+                        DATE(fecha_inicio) as fecha,
+                        COUNT(*) as total_ejecuciones,
+                        SUM(CASE WHEN estado = 'exitoso' THEN 1 ELSE 0 END) as ejecuciones_exitosas,
+                        SUM(CASE WHEN estado = 'fallido' THEN 1 ELSE 0 END) as ejecuciones_fallidas,
+                        ROUND(100.0 * SUM(CASE WHEN estado = 'exitoso' THEN 1 ELSE 0 END) / COUNT(*), 2) as tasa_exito_pct,
+                        ROUND(AVG(duracion_segundos)::numeric, 2) as duracion_promedio_seg,
+                        SUM(registros_cargados) as total_registros_cargados
+                    FROM etl_ejecuciones
+                    WHERE fecha_inicio >= CURRENT_DATE - INTERVAL '%s days'
+                """
 
-            if etl_tipo:
-                query += " AND etl_tipo = ?"
-                params.append(etl_tipo)
+                params = [dias]
 
-            query += " ORDER BY fecha DESC, ubicacion_id"
+                if etl_tipo:
+                    query += " AND etl_tipo = %s"
+                    params.append(etl_tipo)
 
-            # Reemplazar el placeholder manualmente (DuckDB no soporta ? en INTERVAL)
-            query = query.replace('? days', f'{dias} days')
+                query += " GROUP BY etl_tipo, ubicacion_id, ubicacion_nombre, DATE(fecha_inicio)"
+                query += " ORDER BY fecha DESC, ubicacion_id"
 
-            results = conn.execute(query, params).fetchall()
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                cursor.close()
 
-            metricas = []
-            for row in results:
-                metricas.append({
-                    'etl_tipo': row[0],
-                    'ubicacion_id': row[1],
-                    'ubicacion_nombre': row[2],
-                    'fecha': row[3],
-                    'total_ejecuciones': row[4],
-                    'ejecuciones_exitosas': row[5],
-                    'ejecuciones_fallidas': row[6],
-                    'tasa_exito_pct': row[7],
-                    'duracion_promedio_seg': row[8],
-                    'total_registros_cargados': row[9]
-                })
+                metricas = []
+                for row in results:
+                    metricas.append({
+                        'etl_tipo': row[0],
+                        'ubicacion_id': row[1],
+                        'ubicacion_nombre': row[2],
+                        'fecha': row[3],
+                        'total_ejecuciones': row[4],
+                        'ejecuciones_exitosas': row[5],
+                        'ejecuciones_fallidas': row[6],
+                        'tasa_exito_pct': float(row[7]) if row[7] else 0,
+                        'duracion_promedio_seg': float(row[8]) if row[8] else 0,
+                        'total_registros_cargados': row[9] or 0
+                    })
 
-            return metricas
+                return metricas
 
-        finally:
-            conn.close()
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudieron obtener métricas: {e}")
+            return []
 
     def recuperar_gaps_automaticamente(
         self,
@@ -429,7 +489,7 @@ class ETLTracker:
 def test_tracker():
     """Test básico del tracker"""
     print("\n" + "="*80)
-    print("TEST: ETL Tracker")
+    print("TEST: ETL Tracker (PostgreSQL)")
     print("="*80 + "\n")
 
     tracker = ETLTracker(version_etl="2.0-test")

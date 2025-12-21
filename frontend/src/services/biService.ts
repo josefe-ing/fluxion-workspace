@@ -1,0 +1,302 @@
+import http from './http';
+
+// ============ Types ============
+
+// Impact Types
+export interface FluxionImpactSummary {
+  capital_liberado: number;
+  stock_actual: number;
+  stock_baseline: number;
+  stock_actual_total?: number;
+  stock_baseline_total?: number;
+  reduccion_pct: number;
+  fill_rate: number;
+  tiendas_activas: number;
+  tiendas_activas_fluxion?: number;
+  dias_promedio_activo: number;
+  regiones?: RegionImpact[];
+  por_region?: RegionImpact[];
+}
+
+export interface RegionImpact {
+  region: string;
+  capital_liberado: number;
+  stock_actual: number;
+  stock_baseline?: number;
+  reduccion_pct: number;
+  tiendas_activas?: number;
+  tiendas?: number;
+}
+
+export interface StoreImpact {
+  ubicacion_id: string;
+  nombre: string;
+  region: string;
+  fecha_activacion: string;
+  dias_activo: number;
+  stock_baseline: number;
+  stock_actual: number;
+  capital_liberado: number;
+  reduccion_pct: number;
+  fill_rate: number;
+  rank?: number;
+}
+
+// Alias for backward compatibility
+export type ImpactSummary = FluxionImpactSummary;
+
+// Store Analysis Types
+export interface StoreKPIs {
+  ubicacion_id: string;
+  nombre: string;
+  gmroi: number;
+  rotacion_anual: number;
+  ventas_30d: number;
+  margen_promedio: number;
+  stock_valorizado: number;
+  fill_rate: number;
+  skus_activos: number;
+  dias_inventario_promedio?: number;
+  vs_promedio_red?: Record<string, number>;
+}
+
+export interface StoreProduct {
+  producto_id: string;
+  nombre: string;
+  categoria: string;
+  gmroi: number;
+  rotacion: number;
+  ventas_30d: number;
+  margen_pct: number;
+  tipo: 'top' | 'bottom';
+}
+
+export interface StoreRanking {
+  ubicacion_id: string;
+  nombre: string;
+  region: string;
+  valor: number;
+  ranking: number;
+  rank?: number;
+  vs_promedio?: number;
+  fill_rate?: number;
+  promedio?: number;
+  tiendas?: StoreRankingItem[];
+}
+
+export interface StoreRankingItem {
+  ubicacion_id: string;
+  nombre: string;
+  valor: number;
+  ranking: number;
+}
+
+// Product Matrix Types
+export interface ProductMatrix {
+  productos: ProductMatrixItem[];
+  conteo_cuadrantes: Record<string, number>;
+  umbrales: {
+    gmroi: number;
+    rotacion: number;
+  };
+}
+
+export interface ProductMatrixItem {
+  producto_id: string;
+  nombre: string;
+  categoria: string;
+  gmroi: number;
+  rotacion: number;
+  ventas_30d: number;
+  margen_promedio: number;
+  cuadrante: 'ESTRELLA' | 'VACA' | 'NICHO' | 'PERRO';
+}
+
+export interface ProductStar {
+  producto_id: string;
+  nombre: string;
+  categoria: string;
+  gmroi: number;
+  rotacion_anual: number;
+  ventas_30d: number;
+  margen_pct: number;
+  stock_valorizado?: number;
+}
+
+// Profitability Types
+export interface CategoryProfitability {
+  categoria: string;
+  ventas_30d: number;
+  margen_bruto_30d: number;
+  margen_pct: number;
+  gmroi: number;
+  rotacion_anual: number;
+  stock_valorizado: number;
+}
+
+export interface TopProfitProduct {
+  producto_id: string;
+  nombre: string;
+  categoria: string;
+  margen_bruto_30d: number;
+  gmroi: number;
+  ventas_30d: number;
+  margen_pct: number;
+}
+
+// Coverage Types
+export interface CoverageSummary {
+  total_skus: number;
+  cobertura_promedio: number;
+  skus_baja_cobertura: number;
+  skus_media_cobertura: number;
+  skus_alta_cobertura: number;
+  stock_atrapado_cedi: number;
+  oportunidad_estimada: number;
+}
+
+export interface LowCoverageProduct {
+  producto_id: string;
+  nombre: string;
+  categoria: string;
+  cobertura_pct: number;
+  tiendas_con_stock: number;
+  total_tiendas: number;
+  venta_promedio_tienda: number;
+  oportunidad_estimada: number;
+}
+
+export interface TrappedStock {
+  producto_id: string;
+  nombre: string;
+  cedi_id: string;
+  stock_cedi: number;
+  valor_atrapado: number;
+  dias_stock: number;
+  tiendas_sin_stock: number;
+}
+
+export interface StoreGap {
+  tienda_id: string;
+  tienda_nombre: string;
+  producto_id: string;
+  producto_nombre: string;
+  categoria: string;
+  venta_otras_tiendas: number;
+  margen_pct: number;
+  oportunidad_estimada: number;
+  prioridad: 'ALTA' | 'MEDIA' | 'BAJA';
+}
+
+// ============ API Service ============
+
+export const biService = {
+  // === Impact Endpoints ===
+  async getImpactSummary(): Promise<FluxionImpactSummary> {
+    const response = await http.get('/bi/impact/summary');
+    return response.data;
+  },
+
+  async getImpactByStore(): Promise<StoreImpact[]> {
+    const response = await http.get('/bi/impact/by-store');
+    return response.data;
+  },
+
+  // === Store Analysis Endpoints ===
+  async getStoreKPIs(ubicacionId: string): Promise<StoreKPIs> {
+    const response = await http.get(`/bi/store/${ubicacionId}/kpis`);
+    return response.data;
+  },
+
+  async getStoreTopBottomProducts(
+    ubicacionId: string,
+    limit: number = 10
+  ): Promise<{ top: StoreProduct[]; bottom: StoreProduct[] }> {
+    const response = await http.get(`/bi/store/${ubicacionId}/top-bottom-products`, {
+      params: { limit },
+    });
+    return response.data;
+  },
+
+  async getStoresRanking(
+    metric: 'gmroi' | 'ventas' | 'rotacion' | 'stock' = 'gmroi',
+    region?: string
+  ): Promise<StoreRanking[]> {
+    const response = await http.get('/bi/stores/ranking', {
+      params: { metric, region },
+    });
+    return response.data;
+  },
+
+  // === Product Matrix Endpoints ===
+  async getProductsMatrix(filters?: { categoria?: string }): Promise<ProductMatrix> {
+    const response = await http.get('/bi/products/matrix', {
+      params: filters,
+    });
+    return response.data;
+  },
+
+  async getProductsStars(limit: number = 20): Promise<ProductStar[]> {
+    const response = await http.get('/bi/products/stars', {
+      params: { limit },
+    });
+    return response.data;
+  },
+
+  async getProductsEliminate(limit: number = 20): Promise<ProductStar[]> {
+    const response = await http.get('/bi/products/eliminate', {
+      params: { limit },
+    });
+    return response.data;
+  },
+
+  // === Profitability Endpoints ===
+  async getProfitabilityByCategory(region?: string): Promise<CategoryProfitability[]> {
+    const response = await http.get('/bi/profitability/by-category', {
+      params: { region },
+    });
+    return response.data;
+  },
+
+  async getTopProfitProducts(limit: number = 20, region?: string): Promise<TopProfitProduct[]> {
+    const response = await http.get('/bi/profitability/top-products', {
+      params: { limit, region },
+    });
+    return response.data;
+  },
+
+  // === Coverage Endpoints ===
+  async getCoverageSummary(region?: string): Promise<CoverageSummary> {
+    const response = await http.get('/bi/coverage/summary', {
+      params: { region },
+    });
+    return response.data;
+  },
+
+  async getLowCoverageProducts(limit: number = 20, region?: string): Promise<LowCoverageProduct[]> {
+    const response = await http.get('/bi/coverage/low-coverage-products', {
+      params: { limit, region },
+    });
+    return response.data;
+  },
+
+  async getTrappedInCedi(limit: number = 20, region?: string): Promise<TrappedStock[]> {
+    const response = await http.get('/bi/coverage/trapped-in-cedi', {
+      params: { limit, region },
+    });
+    return response.data;
+  },
+
+  async getStoreGaps(limit: number = 20, region?: string): Promise<StoreGap[]> {
+    const response = await http.get('/bi/coverage/store-gaps', {
+      params: { limit, region },
+    });
+    return response.data;
+  },
+
+  // === Admin Endpoints ===
+  async refreshViews(): Promise<{ success: boolean; message: string }> {
+    const response = await http.post('/bi/admin/refresh-views', {});
+    return response.data;
+  },
+};

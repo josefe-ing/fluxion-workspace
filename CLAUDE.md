@@ -12,10 +12,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 fluxion-workspace/
-├── backend/                    # Python FastAPI + DuckDB
+├── backend/                    # Python FastAPI + PostgreSQL
 │   ├── main.py                # Main API server
-│   ├── simple_api.py          # Simplified API version
-│   ├── start.py               # Startup script
+│   ├── routers/               # API route modules
+│   ├── services/              # Business logic
 │   └── requirements.txt       # Python dependencies
 │
 ├── frontend/                   # React + TypeScript + Vite
@@ -25,34 +25,27 @@ fluxion-workspace/
 │   │   └── App.tsx
 │   └── package.json
 │
-├── database/                   # DuckDB schemas
-│   ├── schema.sql             # Base schema
-│   ├── schema_extended.sql    # Extended schema
-│   ├── init_db.py             # Database initialization
-│   └── setup_extended_config.py
+├── database/                   # PostgreSQL migrations
+│   ├── migrations/            # SQL migration files
+│   ├── run_migrations.py      # Migration runner
+│   └── postgresql_schema.sql  # Reference schema
 │
 ├── etl/                        # Data extraction/migration
 │   ├── core/                  # Main ETL scripts
 │   ├── docs/                  # ETL documentation
-│   ├── scripts/               # Support scripts
-│   └── extract_gaps.sh        # Gap extraction wrapper
+│   └── etl_ventas_postgres.py # Main sales ETL
 │
-├── data/                       # DuckDB databases (GITIGNORED)
-│   ├── fluxion_production.db  # Main DB (16GB)
-│   └── granja_analytics.db    # Analytics DB (1GB)
-│
-└── archive/                    # Reference materials
-    ├── migration-scripts/     # One-time analysis/fix scripts
-    └── docs/                  # Legacy documentation
+└── infrastructure/             # AWS CDK infrastructure
+    └── lib/                   # CDK stack definitions
 ```
 
 ### Tech Stack
 
-- **Backend:** Python 3.14.0 + FastAPI 0.119+ + DuckDB 1.4+
+- **Backend:** Python 3.14.0 + FastAPI 0.119+ + PostgreSQL (AWS RDS)
 - **Frontend:** React + TypeScript + Vite
-- **Database:** DuckDB (embedded, file-based OLAP database)
+- **Database:** PostgreSQL (AWS RDS with read replica)
 - **ETL:** Python scripts for data extraction
-- **Security:** All dependencies updated as of Oct 2025 (see PYTHON_UPGRADE_REPORT.md)
+- **Infrastructure:** AWS CDK (ECS Fargate, RDS, S3, CloudFront)
 
 ## Common Development Commands
 
@@ -77,39 +70,35 @@ cd frontend
 npm install
 npm run dev        # Port 3001
 npm run build      # Production build to dist/
-npm run preview    # Preview production build
 npm run lint       # ESLint check
 npm run type-check # TypeScript validation
 ```
 
-### Database (DuckDB)
+### Database (PostgreSQL)
 ```bash
-# Initialize database
+# Run migrations
 cd database
-python3 init_db.py
+python3 run_migrations.py
 
-# Setup extended configuration
-python3 setup_extended_config.py
+# Check tables
+python3 check_rds_tables.py
 
-# Query database directly
-duckdb data/fluxion_production.db
+# Connect to local PostgreSQL
+psql -h localhost -U fluxion -d fluxion_production
 ```
 
 ### ETL System
 ```bash
 cd etl
 
-# Extract data gaps
-./extract_gaps.sh
+# Run sales ETL (PostgreSQL)
+python3 etl_ventas_postgres.py
 
-# Run ETL for historical sales
-python3 core/etl_ventas_historico.py
+# Run with specific stores
+python3 etl_ventas_postgres.py --tiendas tienda_01 tienda_08
 
-# Check connectivity
-python3 core/verificar_conectividad.py
-
-# View logs
-tail -f logs/ventas_historico_*.log
+# Check logs
+tail -f logs/ventas_postgres_*.log
 ```
 
 ## Architecture Patterns
@@ -117,31 +106,30 @@ tail -f logs/ventas_historico_*.log
 ### API Server
 - **Backend API**: Port 8001 - FastAPI REST API
 - **Frontend Dev**: Port 3001 - React dashboard with Vite HMR
-- **Database**: DuckDB file-based (`data/fluxion_production.db`)
+- **Database**: PostgreSQL (AWS RDS in production, local in dev)
 
 ### Data Flow
 ```
-Source Systems → ETL Scripts → DuckDB → Backend API → Frontend Dashboard
+Source Systems → ETL Scripts → PostgreSQL → Backend API → Frontend Dashboard
 ```
 
 ### Database Schema
 
-DuckDB tables:
-- **ventas**: Sales transactions (81M+ records)
+PostgreSQL tables:
+- **ventas**: Sales transactions
 - **productos**: Product catalog
 - **ubicaciones**: Store locations (16 stores)
-- **stock_actual**: Current inventory levels
+- **inventario_actual**: Current inventory levels
+- **pedidos_sugeridos**: Suggested orders
 
-See `DATA_MODEL_DOCUMENTATION.md` for detailed schema.
+See `database/migrations/` for schema definitions.
 
 ## Important Notes
 
-1. **DuckDB Architecture**: System uses DuckDB for fast OLAP queries (NOT PostgreSQL)
+1. **PostgreSQL Architecture**: System uses PostgreSQL (AWS RDS) for all data
 2. **Single Tenant**: Designed for La Granja Mercado (not multi-tenant)
 3. **Venezuelan Context**: All data reflects real Venezuelan B2B wholesale distribution
-4. **Data Files Gitignored**: DuckDB files in `/data/` are 16GB+ and excluded from git
-5. **ETL Active**: Ongoing data migration from legacy systems
-6. **Archive Directory**: Scripts in `/archive/` are one-time migration tools for reference only
+4. **ETL Active**: Runs every 30 minutes via AWS EventBridge
 
 ## Development Workflow
 
@@ -158,28 +146,12 @@ See `DATA_MODEL_DOCUMENTATION.md` for detailed schema.
 ./stop.sh
 ```
 
-### Working with Data
-```bash
-# Check database stats
-duckdb data/fluxion_production.db "SELECT COUNT(*) as total_ventas FROM ventas"
-
-# Check data for specific store
-duckdb data/fluxion_production.db "SELECT * FROM ventas WHERE tienda_id = 1 LIMIT 10"
-
-# Run ETL for missing data
-cd etl
-python3 core/etl_ventas_historico.py
-
-# Monitor ETL logs
-tail -f etl/logs/ventas_historico_*.log
-```
-
 ### Adding New Features
 
 When adding features, update:
-1. **Backend**: Add endpoints in `backend/main.py`
+1. **Backend**: Add endpoints in `backend/routers/`
 2. **Frontend**: Add components in `frontend/src/components/`
-3. **Database**: Update schema in `database/schema_extended.sql`
+3. **Database**: Add migration in `database/migrations/`
 4. **Documentation**: Update this file and README.md
 
 ## Service URLs
@@ -188,20 +160,23 @@ When adding features, update:
 - **Backend API**: http://localhost:8001
 - **Frontend**: http://localhost:3001
 - **API Docs**: http://localhost:8001/docs (Swagger UI)
-- **DuckDB**: `file://data/fluxion_production.db`
+
+### Production
+- **Frontend**: https://app.fluxionia.co
+- **API**: https://api.fluxionia.co
 
 ## API Endpoints
 
 Backend REST API (`backend/main.py`):
 
 ```
-GET  /                 # Health check
-GET  /ventas           # Sales data with filters
-GET  /estadisticas     # Business statistics
-GET  /tendencias       # Sales trends
-GET  /productos        # Product catalog
-GET  /ubicaciones      # Store locations
-POST /query            # Custom DuckDB query
+GET  /                      # Health check
+GET  /ventas                # Sales data with filters
+GET  /estadisticas          # Business statistics
+GET  /productos             # Product catalog
+GET  /ubicaciones           # Store locations
+GET  /pedidos-sugeridos     # Suggested orders
+POST /pedidos-sugeridos     # Create order
 ```
 
 ## Frontend Components
@@ -210,148 +185,68 @@ Key React components (`frontend/src/components/`):
 
 - **AIAgentPanel.tsx**: Proactive alerts and insights
 - **PurchaseIntelligence.tsx**: Container optimization recommendations
-- **ClientIntelligence.tsx**: Customer behavior predictions
 - **MainDashboard.tsx**: Executive KPI cards
-- **ProactiveInsightsPanel.tsx**: AI-driven business insights
-- **DailyActionCenter.tsx**: Priority actions for today
+- **OrderWizard**: Multi-step order creation wizard
 
 ## ETL System
 
-ETL scripts (`etl/core/`):
+ETL scripts (`etl/`):
 
-- **etl_ventas_historico.py**: Historical sales data extraction (main ETL)
-- **config.py**: ETL configuration
-- **tiendas_config.py**: Store/location configuration
-- **verificar_conectividad.py**: Connectivity checks
+- **etl_ventas_postgres.py**: Main sales ETL (PostgreSQL)
+- **core/tiendas_config.py**: Store/location configuration
+- **core/extractor_ventas_klk.py**: KLK API extractor
+- **core/loader_ventas_postgres.py**: PostgreSQL loader
 
 ETL extracts data from:
 - 16 stores (tiendas)
-- 13 months of historical data (Sep 2024 - Sep 2025)
-- 81.8M sales records total
+- 2 distribution centers (CEDIs)
+- Real-time sales every 30 minutes
 
 ## Troubleshooting
 
 ### Port in use
 ```bash
-# Check what's using the port
 lsof -i :8001  # Backend
 lsof -i :3001  # Frontend
-
-# Kill process
 kill -9 <PID>
 ```
 
-### Database locked
+### Database connection
 ```bash
-# DuckDB might be locked by another process
-lsof | grep fluxion_production.db
+# Check PostgreSQL is running
+pg_isready -h localhost -p 5432
 
-# Kill the locking process
-kill -9 <PID>
+# Test connection
+psql -h localhost -U fluxion -d fluxion_production -c "SELECT 1"
 ```
 
 ### ETL errors
 ```bash
 # Check logs
-tail -100 etl/logs/ventas_historico_*.log
+tail -100 etl/logs/ventas_postgres_*.log
 
-# Check connectivity to source
+# Check connectivity
 cd etl
 python3 core/verificar_conectividad.py
-
-# Check ETL configuration
-cat etl/core/config.py
-```
-
-### Missing dependencies
-```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-
-# Frontend
-cd frontend
-npm install
-```
-
-## Performance Considerations
-
-1. **DuckDB is fast**: Optimized for OLAP queries, can handle 80M+ rows easily
-2. **ETL runs**: Best run during off-hours for large data loads
-3. **Frontend caching**: API responses cached where appropriate
-4. **Database indexes**: See `archive/migration-scripts/create_indexes.sql`
-
-## Data Model
-
-### Main Tables
-
-**ventas** (Sales transactions):
-- fecha_venta: Transaction date
-- tienda_id: Store identifier
-- producto_id: Product identifier
-- cantidad: Quantity sold
-- precio_unitario: Unit price
-- monto_total: Total amount
-
-**productos** (Product catalog):
-- producto_id: Unique identifier
-- nombre: Product name
-- categoria: Category
-- unidad: Unit of measure
-
-**ubicaciones** (Store locations):
-- tienda_id: Unique identifier
-- nombre: Store name
-- ciudad: City
-- estado: State
-
-See `DATA_MODEL_DOCUMENTATION.md` for full schema documentation.
-
-## Archived Scripts
-
-Scripts in `/archive/migration-scripts/` are one-time tools used during:
-- Data migration from legacy systems
-- Data quality analysis
-- Duplicate detection
-- Schema fixes
-- Performance optimization
-
-These are kept for reference but not part of active development. See `/archive/migration-scripts/README.md` for details.
-
-## Testing & Quality
-
-### Run tests
-```bash
-# Backend tests
-cd backend
-python3 -m pytest
-
-# Frontend tests
-cd frontend
-npm run test
-```
-
-### Linting
-```bash
-# Frontend
-cd frontend
-npm run lint
-npm run type-check
 ```
 
 ## Production Deployment
 
-For production deployment:
+Deployed via AWS CDK:
 
-1. Build frontend: `cd frontend && npm run build`
-2. Backend runs with: `cd backend && uvicorn main:app --host 0.0.0.0 --port 8001`
-3. Serve frontend `dist/` with nginx or similar
-4. Ensure `data/` directory is backed up regularly
-5. Monitor ETL jobs and logs
+1. **Frontend**: S3 + CloudFront (CDN)
+2. **Backend**: ECS Fargate
+3. **Database**: RDS PostgreSQL (with read replica)
+4. **ETL**: ECS Tasks triggered by EventBridge
+
+Deploy with:
+```bash
+cd infrastructure
+npx cdk deploy
+```
 
 ## Additional Resources
 
-- **Architecture**: See `docs/` directory
+- **Infrastructure**: See `infrastructure/` directory
 - **ETL Documentation**: See `etl/docs/`
-- **Data Model**: See `DATA_MODEL_DOCUMENTATION.md`
 - **API Documentation**: http://localhost:8001/docs (when backend running)

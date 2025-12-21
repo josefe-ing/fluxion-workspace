@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
 ETL de Inventario para Sistema KLK - La Granja Mercado
-Extrae, transforma y carga datos de inventario desde API KLK a DuckDB
+Extrae, transforma y carga datos de inventario desde API KLK a PostgreSQL
+PostgreSQL only - DuckDB removed (Dec 2025)
 
 Tiendas KLK:
 - PERIFERICO (tienda_01)
 - BOSQUE (tienda_08)
+- ARTIGAS (tienda_17)
+- PARAISO (tienda_18)
+- TAZAJAL (tienda_20)
 
 Autor: ETL Team
 Fecha: 2025-01-17

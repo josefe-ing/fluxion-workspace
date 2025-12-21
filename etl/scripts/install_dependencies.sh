@@ -96,10 +96,10 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    import duckdb
-    print('   ✅ duckdb instalado correctamente')
+    import psycopg2
+    print('   ✅ psycopg2 instalado correctamente')
 except ImportError:
-    print('   ❌ Error importando duckdb')
+    print('   ❌ Error importando psycopg2')
     sys.exit(1)
 
 try:
