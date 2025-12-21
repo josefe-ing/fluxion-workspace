@@ -59,6 +59,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [vistaActiva, setVistaActiva] = useState<'seleccionados' | 'no_seleccionados' | 'todos'>('seleccionados');
   const [filtroCedi, setFiltroCedi] = useState<'todos' | 'con_stock' | 'sin_stock'>('todos');
   const [filtroPrioridad, setFiltroPrioridad] = useState<'todas' | 'critico' | 'urgente' | 'optimo' | 'exceso'>('todas');
+  const [filtroSugerencia, setFiltroSugerencia] = useState<'todos' | 'con_sugerencia' | 'sin_sugerencia'>('todos');
   const [salesModalOpen, setSalesModalOpen] = useState(false);
   const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
   const [abcModalOpen, setAbcModalOpen] = useState(false);
@@ -446,6 +447,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       }
 
       if (nivelCriticidad !== filtroPrioridad) return false;
+    }
+
+    // Filtro por sugerencia (con/sin sugerencia del sistema)
+    if (filtroSugerencia !== 'todos') {
+      const tieneSugerencia = (p.cantidad_sugerida_bultos || 0) > 0;
+      if (filtroSugerencia === 'con_sugerencia' && !tieneSugerencia) return false;
+      if (filtroSugerencia === 'sin_sugerencia' && tieneSugerencia) return false;
     }
 
     // Filtro por búsqueda (soporta múltiples códigos separados por coma)
@@ -1084,8 +1092,28 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             </select>
           </div>
 
+          {/* Dropdown de Sugerencia (con/sin sugerencia del sistema) */}
+          <div className="flex items-center gap-1">
+            <label className="text-xs font-medium text-gray-600">Sugerencia:</label>
+            <select
+              value={filtroSugerencia}
+              onChange={(e) => { setFiltroSugerencia(e.target.value as 'todos' | 'con_sugerencia' | 'sin_sugerencia'); setPaginaActual(1); }}
+              className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
+            >
+              <option value="todos">
+                Todos ({productos.length})
+              </option>
+              <option value="con_sugerencia">
+                Con sugerencia ({productos.filter(p => (p.cantidad_sugerida_bultos || 0) > 0).length})
+              </option>
+              <option value="sin_sugerencia">
+                Sin sugerencia ({productos.filter(p => (p.cantidad_sugerida_bultos || 0) === 0).length})
+              </option>
+            </select>
+          </div>
+
           {/* Contador de resultados */}
-          {(searchTerm || categoriaActiva !== 'Todas' || cuadranteActivo !== 'Todos' || vistaActiva !== 'todos' || filtroCedi !== 'todos' || filtroPrioridad !== 'todas') && (
+          {(searchTerm || categoriaActiva !== 'Todas' || cuadranteActivo !== 'Todos' || vistaActiva !== 'todos' || filtroCedi !== 'todos' || filtroPrioridad !== 'todas' || filtroSugerencia !== 'todos') && (
             <div className="text-xs text-gray-500">
               {productosFiltrados.length}/{productos.length}
             </div>

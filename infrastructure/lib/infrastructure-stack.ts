@@ -1045,11 +1045,12 @@ PersistentKeepalive = 25`),
     // ========================================
     // Runs unified ventas sync for ALL stores (KLK + Stellar) - similar to inventario
     // Script auto-detects sistema_pos for each tienda
-    // Executes at XX:10 and XX:40 every hour (10 min offset from inventory)
+    // Executes at XX:20 and XX:50 every hour (20 min offset from inventory to avoid overlap)
+    // Inventory runs at :00/:30, takes ~15min. Ventas runs at :20/:50, takes ~11min.
     // ONLY between 6am-11pm Venezuela time (same as inventory ETL)
     const ventasSyncRule = new events.Rule(this, 'FluxionVentasSync30Min', {
       schedule: events.Schedule.cron({
-        minute: '10,40',  // Run at :10 and :40 of every hour (10 min after inventory)
+        minute: '20,50',  // Run at :20 and :50 of every hour (20 min after inventory to avoid overlap)
         hour: '10-23,0-2',  // 6am-11pm Venezuela time (UTC-4)
         weekDay: '*',
       }),
@@ -1078,6 +1079,45 @@ PersistentKeepalive = 25`),
         // Prevent concurrent executions
         maxEventAge: cdk.Duration.minutes(25),  // Discard if older than 25 min (avoid overlap)
         retryAttempts: 1,  // Retry once if task launch fails
+      })
+    );
+
+    // ========================================
+    // 11b. Ventas ETL Recovery Rule (Daily at 3am Venezuela = 7am UTC)
+    // ========================================
+    // Reprocesa el día ANTERIOR completo para llenar cualquier gap
+    // que haya dejado el ETL de 30 minutos (por fallas, timeouts, etc.)
+    // Usa --fecha-desde y --fecha-hasta para el día anterior (calculado por el script)
+    const ventasRecoveryRule = new events.Rule(this, 'FluxionVentasRecoveryDaily', {
+      schedule: events.Schedule.cron({
+        minute: '0',
+        hour: '7',  // 3am Venezuela (UTC-4)
+        weekDay: '*',
+      }),
+      description: 'Daily ventas recovery - reprocesa día anterior completo para llenar gaps',
+      ruleName: 'fluxion-ventas-recovery-daily',
+      enabled: true,
+    });
+
+    ventasRecoveryRule.addTarget(
+      new targets.EcsTask({
+        cluster,
+        taskDefinition: ventasEtlTask,
+        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [etlSecurityGroup],
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+        taskCount: 1,
+        propagateTags: ecs.PropagatedTagSource.TASK_DEFINITION,
+        containerOverrides: [{
+          containerName: 'ventas-etl',
+          command: [
+            'python', 'etl_ventas_postgres.py',
+            '--tiendas', 'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_17', 'tienda_18', 'tienda_19', 'tienda_20',
+            '--recovery-mode'  // Modo recuperación: procesa día anterior completo
+          ]
+        }],
+        maxEventAge: cdk.Duration.hours(1),  // Más tiempo para recovery
+        retryAttempts: 2,  // Más reintentos para recovery
       })
     );
 

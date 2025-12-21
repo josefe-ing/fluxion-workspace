@@ -1519,7 +1519,8 @@ async def calcular_productos_sugeridos(
                 # Mantener clasificación original, no forzar a C
 
             # Usar nuevo modulo de calculo ABC si hay demanda (local o de referencia)
-            if p75_usado > 0 and clasificacion in ('A', 'B', 'C'):
+            # Incluir clase D para no dejar productos sin sugerencia (evita ciclo: sin stock → sin venta → sin demanda → sin sugerencia)
+            if p75_usado > 0 and clasificacion in ('A', 'B', 'C', 'D'):
                 # Para envío prueba o referencia regional, estimar sigma si no hay datos locales
                 sigma_usada = sigma_demanda
                 if (es_envio_prueba or usa_referencia_regional) and sigma_demanda == 0:

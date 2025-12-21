@@ -7,11 +7,18 @@ Modo de operacion:
 - Ejecutar cada 30 minutos
 - Extraer ultimos 30 minutos de ventas
 - Detecta automaticamente el sistema POS (KLK o Stellar)
-- Deduplicacion por numero_factura
+- Deduplicacion por numero_factura (UPSERT con ON CONFLICT)
 
 Uso:
   python etl_ventas_postgres.py --tiendas tienda_01 tienda_03 tienda_08
   python etl_ventas_postgres.py  # Sin args = ultimos 30 min, todas las tiendas activas
+
+Modo Recuperacion (para llenar gaps de datos):
+  python etl_ventas_postgres.py --recovery-mode                    # Procesa dia anterior completo
+  python etl_ventas_postgres.py --recovery-mode --recovery-days 2  # Procesa hace 2 dias
+
+Este modo se ejecuta automaticamente cada noche a las 3am Venezuela para recuperar
+cualquier dato que se haya perdido durante las ejecuciones de 30 minutos del dia.
 """
 
 import sys
@@ -55,6 +62,14 @@ try:
 except ImportError:
     NOTIFIER_AVAILABLE = False
 
+# PostgreSQL tracking
+try:
+    import psycopg2
+    import json as _json
+    TRACKING_AVAILABLE = True
+except ImportError:
+    TRACKING_AVAILABLE = False
+
 
 class VentasETLPostgres:
     """
@@ -62,14 +77,16 @@ class VentasETLPostgres:
     Detecta automaticamente KLK vs Stellar y usa el extractor apropiado
     """
 
-    def __init__(self, dry_run: bool = False, minutos_atras: int = 30):
+    def __init__(self, dry_run: bool = False, minutos_atras: int = 30, auto_gap_recovery: bool = True):
         """
         Args:
             dry_run: Si True, no carga datos (solo extrae)
             minutos_atras: Minutos hacia atras para extraer (default: 30)
+            auto_gap_recovery: Si True, detecta y recupera gaps automáticamente (default: True)
         """
         self.dry_run = dry_run
         self.minutos_atras = minutos_atras
+        self.auto_gap_recovery = auto_gap_recovery
         self.logger = self._setup_logger()
 
         # KLK components
@@ -91,7 +108,8 @@ class VentasETLPostgres:
             'total_ventas_cargadas': 0,
             'total_duplicados_omitidos': 0,
             'tiendas_klk': 0,
-            'tiendas_stellar': 0
+            'tiendas_stellar': 0,
+            'gaps_recuperados': 0
         }
 
     def _setup_logger(self) -> logging.Logger:
@@ -114,12 +132,191 @@ class VentasETLPostgres:
 
         return logger
 
+    def _track_start(self, fecha_desde: datetime, fecha_hasta: datetime, tiendas: List[str], etl_type: str = 'scheduled') -> Optional[int]:
+        """Registra inicio de ejecución ETL en PostgreSQL"""
+        if not TRACKING_AVAILABLE or self.dry_run:
+            return None
+
+        try:
+            conn = self.klk_loader._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO etl_executions (
+                    etl_name, etl_type, started_at, fecha_desde, fecha_hasta,
+                    tiendas_procesadas, status, triggered_by
+                ) VALUES (%s, %s, %s, %s, %s, %s, 'running', %s)
+                RETURNING id
+            """, (
+                'ventas',
+                etl_type,
+                datetime.now(),
+                fecha_desde,
+                fecha_hasta,
+                tiendas,
+                'eventbridge' if os.environ.get('AWS_EXECUTION_ENV') else 'cli'
+            ))
+
+            execution_id = cursor.fetchone()[0]
+            conn.commit()
+            conn.close()
+            self.logger.info(f"Tracking: Ejecución iniciada (ID: {execution_id})")
+            return execution_id
+        except Exception as e:
+            self.logger.warning(f"Tracking: Error al registrar inicio: {e}")
+            return None
+
+    def _track_finish(self, execution_id: Optional[int], tiendas_results: List[Dict], status: str = 'success', error_msg: str = None):
+        """Registra fin de ejecución ETL en PostgreSQL"""
+        if not TRACKING_AVAILABLE or execution_id is None:
+            return
+
+        try:
+            conn = self.klk_loader._get_connection()
+            cursor = conn.cursor()
+
+            finished_at = datetime.now()
+
+            # Calcular duración
+            cursor.execute("SELECT started_at FROM etl_executions WHERE id = %s", (execution_id,))
+            row = cursor.fetchone()
+            duration_seconds = (finished_at - row[0]).total_seconds() if row else None
+
+            cursor.execute("""
+                UPDATE etl_executions SET
+                    finished_at = %s,
+                    duration_seconds = %s,
+                    status = %s,
+                    records_extracted = %s,
+                    records_loaded = %s,
+                    duplicates_skipped = %s,
+                    gaps_recovered = %s,
+                    tiendas_detail = %s,
+                    error_message = %s
+                WHERE id = %s
+            """, (
+                finished_at,
+                duration_seconds,
+                status,
+                self.stats['total_ventas_extraidas'],
+                self.stats['total_ventas_cargadas'],
+                self.stats['total_duplicados_omitidos'],
+                self.stats['gaps_recuperados'],
+                _json.dumps(tiendas_results) if tiendas_results else None,
+                error_msg,
+                execution_id
+            ))
+
+            conn.commit()
+            conn.close()
+            self.logger.info(f"Tracking: Ejecución finalizada (ID: {execution_id}, status: {status}, duración: {duration_seconds:.1f}s)")
+        except Exception as e:
+            self.logger.warning(f"Tracking: Error al registrar fin: {e}")
+
     def _get_sistema_pos(self, tienda_id: str) -> str:
         """Detecta el sistema POS de una tienda"""
         if tienda_id not in TIENDAS_CONFIG:
             return 'unknown'
         config = TIENDAS_CONFIG[tienda_id]
         return getattr(config, 'sistema_pos', 'stellar')
+
+    def _detectar_gaps_recientes(self, tienda_id: str, horas_atras: int = 6) -> List[Dict]:
+        """
+        Detecta gaps de datos en las últimas N horas para una tienda.
+        Un gap es un periodo de 30+ minutos sin ventas durante horario comercial (6am-11pm).
+
+        Args:
+            tienda_id: ID de tienda (ej: tienda_18)
+            horas_atras: Cuántas horas hacia atrás revisar
+
+        Returns:
+            Lista de gaps detectados con hora_inicio y hora_fin
+        """
+        try:
+            import psycopg2
+            from core.config import DatabaseConfig
+
+            conn = psycopg2.connect(DatabaseConfig.get_dsn())
+            cursor = conn.cursor()
+
+            ahora = datetime.now()
+            desde = ahora - timedelta(hours=horas_atras)
+
+            # Obtener conteo de ventas por hora para la tienda
+            query = """
+                SELECT
+                    DATE_TRUNC('hour', fecha_venta) as hora,
+                    COUNT(*) as num_ventas
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND fecha_venta >= %s
+                  AND fecha_venta <= %s
+                GROUP BY DATE_TRUNC('hour', fecha_venta)
+                ORDER BY hora
+            """
+            cursor.execute(query, (tienda_id, desde, ahora))
+            rows = cursor.fetchall()
+            conn.close()
+
+            if not rows:
+                return []
+
+            # Construir conjunto de horas con datos
+            horas_con_datos = {row[0].replace(tzinfo=None) for row in rows}
+
+            # Detectar horas faltantes en horario comercial (6am-11pm)
+            gaps = []
+            hora_actual = desde.replace(minute=0, second=0, microsecond=0)
+            while hora_actual < ahora:
+                hora_local = hora_actual.hour
+                # Solo horario comercial (6am a 11pm)
+                if 6 <= hora_local <= 22:
+                    if hora_actual not in horas_con_datos:
+                        gaps.append({
+                            'hora_inicio': hora_actual,
+                            'hora_fin': hora_actual + timedelta(hours=1)
+                        })
+                hora_actual += timedelta(hours=1)
+
+            return gaps
+
+        except Exception as e:
+            self.logger.warning(f"Error detectando gaps para {tienda_id}: {e}")
+            return []
+
+    def _recuperar_gap(self, config, gap: Dict) -> bool:
+        """
+        Intenta recuperar un gap de datos específico.
+
+        Args:
+            config: Configuración de la tienda
+            gap: Dict con hora_inicio y hora_fin
+
+        Returns:
+            True si se recuperó exitosamente
+        """
+        tienda_id = config.ubicacion_id
+        sistema_pos = self._get_sistema_pos(tienda_id)
+
+        self.logger.info(f"   Recuperando gap: {gap['hora_inicio'].strftime('%H:%M')} - {gap['hora_fin'].strftime('%H:%M')}")
+
+        try:
+            if sistema_pos == 'klk':
+                resultado = self._procesar_tienda_klk(config, gap['hora_inicio'], gap['hora_fin'])
+            else:
+                resultado = self._procesar_tienda_stellar(config, gap['hora_inicio'], gap['hora_fin'])
+
+            if resultado['success']:
+                self.stats['gaps_recuperados'] += 1
+                registros = resultado.get('registros', 0)
+                self.logger.info(f"   Gap recuperado: {registros} registros")
+                return True
+            else:
+                self.logger.warning(f"   Error recuperando gap: {resultado.get('message', 'Unknown')}")
+                return False
+        except Exception as e:
+            self.logger.warning(f"   Excepción recuperando gap: {e}")
+            return False
 
     def _procesar_tienda_klk(self, config, fecha_desde: datetime, fecha_hasta: datetime) -> Dict[str, Any]:
         """Procesa tienda KLK usando API REST"""
@@ -341,7 +538,11 @@ class VentasETLPostgres:
         if fecha_hasta is None:
             fecha_hasta = datetime.now()
         if fecha_desde is None:
-            fecha_desde = fecha_hasta - timedelta(minutes=self.minutos_atras)
+            # Agregar 60 minutos de overlap para evitar gaps por timing
+            # Si ETL corre cada 30 min, extraemos 90 min hacia atras
+            # Los duplicados se descartan automaticamente por UPSERT con ON CONFLICT
+            overlap_minutos = 60
+            fecha_desde = fecha_hasta - timedelta(minutes=self.minutos_atras + overlap_minutos)
 
         self.logger.info(f"\n{'#'*80}")
         self.logger.info(f"# ETL VENTAS UNIFICADO -> POSTGRESQL")
@@ -362,11 +563,38 @@ class VentasETLPostgres:
             self.logger.error("No hay tiendas para procesar")
             return False
 
+        # Iniciar tracking
+        tienda_ids_list = list(tiendas.keys())
+        execution_id = self._track_start(fecha_desde, fecha_hasta, tienda_ids_list)
+
         # Mostrar tiendas
         self.logger.info(f"Tiendas a procesar: {len(tiendas)}")
         for tienda_id, config in tiendas.items():
             sistema = self._get_sistema_pos(tienda_id)
             self.logger.info(f"   - {config.ubicacion_nombre} ({tienda_id}) - {sistema.upper()}")
+
+        # Auto-recuperación de gaps (si está habilitada y no es modo manual con fechas)
+        if self.auto_gap_recovery and fecha_desde is None:
+            self.logger.info(f"\n{'='*70}")
+            self.logger.info(f"DETECCIÓN AUTOMÁTICA DE GAPS (últimas 6 horas)")
+            self.logger.info(f"{'='*70}")
+
+            total_gaps_detectados = 0
+            for tienda_id, config in tiendas.items():
+                gaps = self._detectar_gaps_recientes(tienda_id, horas_atras=6)
+                if gaps:
+                    total_gaps_detectados += len(gaps)
+                    self.logger.info(f"\n{config.ubicacion_nombre}: {len(gaps)} gap(s) detectado(s)")
+                    for gap in gaps:
+                        self._recuperar_gap(config, gap)
+
+            if total_gaps_detectados == 0:
+                self.logger.info("No se detectaron gaps en las últimas 6 horas")
+            else:
+                self.logger.info(f"\nTotal gaps detectados: {total_gaps_detectados}")
+                self.logger.info(f"Gaps recuperados: {self.stats['gaps_recuperados']}")
+
+            self.logger.info(f"{'='*70}\n")
 
         # Procesar cada tienda
         tiendas_results = []
@@ -394,6 +622,8 @@ class VentasETLPostgres:
         self.logger.info(f"Total ventas extraidas: {self.stats['total_ventas_extraidas']:,}")
         self.logger.info(f"Total ventas cargadas: {self.stats['total_ventas_cargadas']:,}")
         self.logger.info(f"Total duplicados omitidos: {self.stats['total_duplicados_omitidos']:,}")
+        if self.stats['gaps_recuperados'] > 0:
+            self.logger.info(f"Gaps recuperados: {self.stats['gaps_recuperados']}")
         self.logger.info(f"{'#'*80}\n")
 
         # Email notification
@@ -419,6 +649,10 @@ class VentasETLPostgres:
             except Exception as e:
                 self.logger.warning(f"Error enviando email: {e}")
 
+        # Finalizar tracking
+        status = 'success' if self.stats['tiendas_fallidas'] == 0 else 'partial' if self.stats['tiendas_exitosas'] > 0 else 'failed'
+        self._track_finish(execution_id, tiendas_results, status=status)
+
         return self.stats['tiendas_fallidas'] == 0
 
 
@@ -439,26 +673,58 @@ def main():
                        help='Fecha/hora fin (formato: YYYY-MM-DD HH:MM)')
     parser.add_argument('--chunk-days', type=int, default=0,
                        help='Dividir rango en chunks de N dias (ej: 5 para procesar de 5 en 5 dias)')
+    parser.add_argument('--recovery-mode', action='store_true',
+                       help='Modo recuperacion: procesa el dia anterior completo (00:00 a 23:59) para llenar gaps')
+    parser.add_argument('--recovery-days', type=int, default=1,
+                       help='Dias hacia atras para recovery-mode (default: 1 = ayer)')
+    parser.add_argument('--auto-gap-recovery', action='store_true', default=True,
+                       help='Detecta y recupera gaps automaticamente en ultimas 6 horas (default: activado)')
+    parser.add_argument('--no-gap-recovery', action='store_true',
+                       help='Desactiva la recuperacion automatica de gaps')
 
     args = parser.parse_args()
 
-    # Parsear fechas
-    fecha_desde = None
-    fecha_hasta = None
+    # Determinar si hacer auto-recovery de gaps
+    auto_gap_recovery = args.auto_gap_recovery and not args.no_gap_recovery
 
-    if args.fecha_desde:
-        try:
-            fecha_desde = datetime.strptime(args.fecha_desde, '%Y-%m-%d %H:%M')
-        except ValueError:
-            print(f"Error: formato invalido para --fecha-desde: {args.fecha_desde}")
-            sys.exit(1)
+    # Recovery mode: calcular día anterior automáticamente
+    if args.recovery_mode:
+        # Calcular el día a recuperar (ayer por defecto)
+        hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        dia_recovery = hoy - timedelta(days=args.recovery_days)
 
-    if args.fecha_hasta:
-        try:
-            fecha_hasta = datetime.strptime(args.fecha_hasta, '%Y-%m-%d %H:%M')
-        except ValueError:
-            print(f"Error: formato invalido para --fecha-hasta: {args.fecha_hasta}")
-            sys.exit(1)
+        fecha_desde = dia_recovery.replace(hour=0, minute=0)
+        fecha_hasta = dia_recovery.replace(hour=23, minute=59)
+
+        print(f"\n{'='*70}")
+        print(f"MODO RECUPERACIÓN ACTIVADO")
+        print(f"{'='*70}")
+        print(f"Procesando día completo: {dia_recovery.strftime('%Y-%m-%d')}")
+        print(f"Rango: {fecha_desde.strftime('%Y-%m-%d %H:%M')} -> {fecha_hasta.strftime('%Y-%m-%d %H:%M')}")
+        print(f"Este modo reprocesa el día completo para llenar gaps de datos")
+        print(f"{'='*70}\n")
+
+    # Parsear fechas (solo si no estamos en recovery-mode)
+    elif args.fecha_desde or args.fecha_hasta:
+        fecha_desde = None
+        fecha_hasta = None
+
+        if args.fecha_desde:
+            try:
+                fecha_desde = datetime.strptime(args.fecha_desde, '%Y-%m-%d %H:%M')
+            except ValueError:
+                print(f"Error: formato invalido para --fecha-desde: {args.fecha_desde}")
+                sys.exit(1)
+
+        if args.fecha_hasta:
+            try:
+                fecha_hasta = datetime.strptime(args.fecha_hasta, '%Y-%m-%d %H:%M')
+            except ValueError:
+                print(f"Error: formato invalido para --fecha-hasta: {args.fecha_hasta}")
+                sys.exit(1)
+    else:
+        fecha_desde = None
+        fecha_hasta = None
 
     # Ejecutar ETL con chunking si se especifica
     chunk_days = args.chunk_days
@@ -497,7 +763,8 @@ def main():
             print(f"# CHUNK {i}/{len(chunks)}: {chunk_start.strftime('%Y-%m-%d')} -> {chunk_end.strftime('%Y-%m-%d')}")
             print(f"{'#'*70}\n")
 
-            etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos)
+            # En modo chunking no hacemos auto-recovery (ya estamos reprocesando rangos específicos)
+            etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos, auto_gap_recovery=False)
             exitoso = etl.ejecutar(tienda_ids=args.tiendas, fecha_desde=chunk_start, fecha_hasta=chunk_end)
 
             if exitoso:
@@ -516,7 +783,8 @@ def main():
         sys.exit(0 if total_fallidos == 0 else 1)
     else:
         # Modo normal: ejecutar una sola vez
-        etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos)
+        # auto_gap_recovery solo aplica si no hay fechas manuales especificadas
+        etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos, auto_gap_recovery=auto_gap_recovery)
         exitoso = etl.ejecutar(tienda_ids=args.tiendas, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
         sys.exit(0 if exitoso else 1)
 
