@@ -84,12 +84,29 @@ Ya no había referencias a DATABASE_PATH en los archivos .env.
 | **EBS Volume (25-30GB)** | Backup de .db | ~$3/mes | ELIMINAR |
 | **S3 Backups** | Backups de DuckDB | Variable | Limpiar archivos .db |
 
-### FASE ADICIONAL OPCIONAL (pendiente):
-1. Eliminar el recurso EFS del stack CDK
-2. Limpiar backups de DuckDB en S3 (si existen)
-3. Re-deploy del stack para eliminar recursos
+### FASE 11: Eliminar EFS del Infrastructure Stack ✅
 
-Esto requiere un deploy de infraestructura separado.
+**Completado el 21 de Diciembre de 2025**
+
+Cambios realizados en `infrastructure/lib/infrastructure-stack.ts`:
+
+1. **EFS FileSystem y AccessPoint eliminados** - Ya no se crea el recurso
+2. **Volúmenes EFS removidos de todas las task definitions**:
+   - Backend Task: Sin volumen EFS
+   - ETL Task: Sin volumen EFS
+   - Ventas ETL Task: Sin volumen EFS
+3. **Mount points eliminados** de todos los containers
+4. **Grants de EFS eliminados** de todos los task roles
+5. **Security group connections a EFS eliminadas**
+
+**Reducción de recursos:**
+- Backend Task: 4GB → 2GB RAM, 2 vCPU → 1 vCPU
+- ETL Task: 4GB → 2GB RAM, 2 vCPU → 1 vCPU
+- Ventas ETL Task: 4GB → 2GB RAM, 2 vCPU → 1 vCPU
+
+**Ahorro estimado:** ~$5-10/mes (EFS) + ~$20-30/mes (Fargate compute reducido)
+
+**NOTA:** El EFS existente en AWS (fluxion-data) tiene `removalPolicy: RETAIN`, por lo que NO se eliminará automáticamente con el deploy. Debe eliminarse manualmente desde la consola AWS si se desea.
 
 ---
 

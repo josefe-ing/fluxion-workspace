@@ -3,7 +3,7 @@ import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
-import * as efs from 'aws-cdk-lib/aws-efs';
+// import * as efs from 'aws-cdk-lib/aws-efs';  // REMOVED - DuckDB eliminated Dec 2025
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -273,31 +273,10 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 2. EFS for DuckDB Persistence
+    // 2. EFS REMOVED - DuckDB eliminated Dec 2025
     // ========================================
-    const fileSystem = new efs.FileSystem(this, 'FluxionEFS', {
-      vpc,
-      fileSystemName: 'fluxion-data',
-      encrypted: false, // Disabled for now - can enable later with specific KMS key
-      lifecyclePolicy: efs.LifecyclePolicy.AFTER_14_DAYS,
-      performanceMode: efs.PerformanceMode.GENERAL_PURPOSE,
-      throughputMode: efs.ThroughputMode.BURSTING,
-      removalPolicy: cdk.RemovalPolicy.RETAIN, // Don't delete DB on stack destroy
-    });
-
-    // EFS Access Point
-    const accessPoint = fileSystem.addAccessPoint('FluxionAccessPoint', {
-      path: '/fluxion-data',
-      createAcl: {
-        ownerGid: '1000',
-        ownerUid: '1000',
-        permissions: '777', // Full read-write-execute for all (required for DuckDB write access)
-      },
-      posixUser: {
-        gid: '1000',
-        uid: '1000',
-      },
-    });
+    // EFS was only used for DuckDB persistence. Now using PostgreSQL RDS.
+    // Cost savings: ~$5-10/month
 
     // ========================================
     // 3. S3 for Frontend + Backups (Import existing buckets)
@@ -544,27 +523,15 @@ PersistentKeepalive = 25`),
 //     */
 
     // ========================================
-    // 6. Backend Task Definition (EC2 with host volume)
+    // 6. Backend Task Definition (Fargate - PostgreSQL only)
     // ========================================
     const backendTask = new ecs.FargateTaskDefinition(
       this,
       'FluxionBackendTask',
       {
-        memoryLimitMiB: 4096,  // 4GB - necesario para DuckDB connections en FastAPI startup + VentasETLScheduler
-        cpu: 2048,  // 2 vCPU - más robusto para manejo de DuckDB y requests concurrentes
-        volumes: [
-          {
-            name: 'fluxion-data',
-            efsVolumeConfiguration: {
-              fileSystemId: fileSystem.fileSystemId,
-              transitEncryption: 'ENABLED',
-              authorizationConfig: {
-                accessPointId: accessPoint.accessPointId,
-                iam: 'ENABLED',
-              },
-            },
-          },
-        ],
+        memoryLimitMiB: 2048,  // 2GB - sufficient for FastAPI + PostgreSQL connections (reduced from 4GB after DuckDB removal)
+        cpu: 1024,  // 1 vCPU - sufficient for API workload without DuckDB
+        // EFS volumes REMOVED - DuckDB eliminated Dec 2025
       }
     );
 
@@ -579,8 +546,7 @@ PersistentKeepalive = 25`),
     // Also grant access to new backup bucket
     backupBucket.grantRead(backendTask.taskRole);
 
-    // Grant EFS root access to task role (required for Fargate)
-    fileSystem.grantRootAccess(backendTask.taskRole);
+    // EFS grant REMOVED - DuckDB eliminated Dec 2025
 
     // Grant Backend permission to launch ETL tasks (will be configured after ETL task is created)
     // This allows the Backend to manually trigger ETL via /api/etl/sync endpoint
@@ -621,11 +587,7 @@ PersistentKeepalive = 25`),
     });
 
     backendContainer.addPortMappings({ containerPort: 8001 });
-    backendContainer.addMountPoints({
-      containerPath: '/data',
-      sourceVolume: 'fluxion-data',
-      readOnly: false,
-    });
+    // EFS mount point REMOVED - DuckDB eliminated Dec 2025
 
     // ========================================
     // 7. Backend Service with ALB (EC2)
@@ -644,8 +606,7 @@ PersistentKeepalive = 25`),
       enableExecuteCommand: true, // Enable ECS Exec for debugging and operations
     });
 
-    // Allow ECS tasks to access EFS (keep for ETL compatibility)
-    fileSystem.connections.allowDefaultPortFrom(backendService);
+    // EFS connection REMOVED - DuckDB eliminated Dec 2025
 
     // Allow Backend to connect to PostgreSQL Primary (for writes if needed)
     dbInstance.connections.allowFrom(
@@ -718,28 +679,16 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 9. ETL Task Definition (Fargate)
+    // 9. ETL Task Definition (Fargate - PostgreSQL only)
     // ========================================
     const etlTask = new ecs.FargateTaskDefinition(this, 'FluxionETLTask', {
-      memoryLimitMiB: 4096,  // 4GB RAM
-      cpu: 2048,              // 2 vCPU
-      volumes: [
-        {
-          name: 'fluxion-data',
-          efsVolumeConfiguration: {
-            fileSystemId: fileSystem.fileSystemId,
-            transitEncryption: 'ENABLED',
-            authorizationConfig: {
-              accessPointId: accessPoint.accessPointId,
-              iam: 'ENABLED',
-            },
-          },
-        },
-      ],
+      memoryLimitMiB: 2048,  // 2GB RAM - reduced from 4GB after DuckDB removal
+      cpu: 1024,              // 1 vCPU - reduced from 2 vCPU after DuckDB removal
+      // EFS volumes REMOVED - DuckDB eliminated Dec 2025
     });
 
     // Grant permissions to ETL task
-    fileSystem.grantRootAccess(etlTask.taskRole);
+    // EFS grant REMOVED - DuckDB eliminated Dec 2025
     sqlCredentials.grantRead(etlTask.taskRole);
     wireguardConfig.grantRead(etlTask.taskRole);
     productionSecrets.grantRead(etlTask.taskRole);  // SendGrid credentials for email notifications
@@ -800,12 +749,7 @@ PersistentKeepalive = 25`),
       stopTimeout: cdk.Duration.seconds(120),  // Máximo permitido por Fargate
     });
 
-    // Mount EFS volume to /data
-    etlContainer.addMountPoints({
-      containerPath: '/data',
-      sourceVolume: 'fluxion-data',
-      readOnly: false,
-    });
+    // EFS mount point REMOVED - DuckDB eliminated Dec 2025
 
     // Security Group for ETL
     const etlSecurityGroup = new ec2.SecurityGroup(this, 'ETLSecurityGroup', {
@@ -821,8 +765,7 @@ PersistentKeepalive = 25`),
       'Allow ETL to access La Granja network via VPN'
     );
 
-    // Allow ETL to access EFS
-    fileSystem.connections.allowDefaultPortFrom(etlSecurityGroup);
+    // EFS connection REMOVED - DuckDB eliminated Dec 2025
 
     // Allow ETL to connect to PostgreSQL
     dbInstance.connections.allowFrom(
@@ -958,28 +901,16 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 10. Ventas ETL Task Definition (Fargate)
+    // 10. Ventas ETL Task Definition (Fargate - PostgreSQL only)
     // ========================================
     const ventasEtlTask = new ecs.FargateTaskDefinition(this, 'FluxionVentasETLTask', {
-      memoryLimitMiB: 4096,  // 4GB RAM
-      cpu: 2048,              // 2 vCPU
-      volumes: [
-        {
-          name: 'fluxion-data',
-          efsVolumeConfiguration: {
-            fileSystemId: fileSystem.fileSystemId,
-            transitEncryption: 'ENABLED',
-            authorizationConfig: {
-              accessPointId: accessPoint.accessPointId,
-              iam: 'ENABLED',
-            },
-          },
-        },
-      ],
+      memoryLimitMiB: 2048,  // 2GB RAM - reduced from 4GB after DuckDB removal
+      cpu: 1024,              // 1 vCPU - reduced from 2 vCPU after DuckDB removal
+      // EFS volumes REMOVED - DuckDB eliminated Dec 2025
     });
 
     // Grant permissions to Ventas ETL task
-    fileSystem.grantRootAccess(ventasEtlTask.taskRole);
+    // EFS grant REMOVED - DuckDB eliminated Dec 2025
     sqlCredentials.grantRead(ventasEtlTask.taskRole);
     wireguardConfig.grantRead(ventasEtlTask.taskRole);
     productionSecrets.grantRead(ventasEtlTask.taskRole);  // SendGrid credentials for email notifications
@@ -1033,12 +964,7 @@ PersistentKeepalive = 25`),
       stopTimeout: cdk.Duration.minutes(2),  // Fargate max is 120 seconds
     });
 
-    // Mount EFS volume to /data
-    ventasEtlContainer.addMountPoints({
-      containerPath: '/data',
-      sourceVolume: 'fluxion-data',
-      readOnly: false,
-    });
+    // EFS mount point REMOVED - DuckDB eliminated Dec 2025
 
     // ========================================
     // 11. Ventas ETL Scheduled Rule (Every 30 minutes at :10 and :40)
@@ -1172,74 +1098,10 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 13. Backup Task Definition (TEMPORARILY DISABLED)
+    // 13. Backup Task Definition - REMOVED
     // ========================================
-    /* COMMENTED OUT - Will enable after initial deployment
-    const backupTask = new ecs.FargateTaskDefinition(
-      this,
-      'FluxionBackupTask',
-      {
-        memoryLimitMiB: 2048,
-        cpu: 1024,
-        volumes: [
-          {
-            name: 'fluxion-data',
-            efsVolumeConfiguration: {
-              fileSystemId: fileSystem.fileSystemId,
-              transitEncryption: 'ENABLED',
-              authorizationConfig: {
-                accessPointId: accessPoint.accessPointId,
-                iam: 'ENABLED',
-              },
-            },
-          },
-        ],
-      }
-    );
-
-    fileSystem.grantRootAccess(backupTask.taskRole);
-    backupBucket.grantWrite(backupTask.taskRole);
-
-    const backupContainer = backupTask.addContainer('backup', {
-      image: ecs.ContainerImage.fromRegistry('amazon/aws-cli'),
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: 'fluxion-backup',
-        logRetention: logs.RetentionDays.ONE_WEEK,
-      }),
-      command: [
-        's3',
-        'cp',
-        '/data/fluxion_production.db',
-        `s3://${backupBucket.bucketName}/backups/fluxion_production_$(date +%Y%m%d_%H%M%S).db`,
-      ],
-    });
-
-    backupContainer.addMountPoints({
-      containerPath: '/data',
-      sourceVolume: 'fluxion-data',
-      readOnly: true,
-    });
-
-    // Backup Schedule (Daily at 3am UTC)
-    const backupRule = new events.Rule(this, 'FluxionBackupSchedule', {
-      schedule: events.Schedule.cron({
-        minute: '0',
-        hour: '3',
-        weekDay: '*',
-      }),
-      description: 'Backup Fluxion database daily at 3am UTC',
-      ruleName: 'fluxion-backup-daily',
-    });
-
-    backupRule.addTarget(
-      new targets.EcsTask({
-        cluster,
-        taskDefinition: backupTask,
-        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        taskCount: 1,
-      })
-    );
-    */ // END BACKUP COMMENT
+    // DuckDB backup task eliminated Dec 2025.
+    // PostgreSQL uses RDS automated backups (7-day retention configured above).
 
     // ========================================
     // 14. Documentation Site (S3 + CloudFront)
