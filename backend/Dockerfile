@@ -30,9 +30,6 @@ COPY backend/ .
 # Crear directorio para schemas de base de datos
 RUN mkdir -p /app/database
 
-# Copiar schemas de migraciones desde el directorio database
-COPY database/schema_etl_tracking.sql /app/database/schema_etl_tracking.sql
-
 # Copiar migraciones de PostgreSQL
 COPY database/migrations/ /app/database/migrations/
 
