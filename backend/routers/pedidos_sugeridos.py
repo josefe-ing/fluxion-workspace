@@ -1082,15 +1082,23 @@ async def calcular_productos_sugeridos(
         # 1.8. Cargar productos excluidos para la tienda destino
         codigos_excluidos = set()
         try:
+            # Usar savepoint para no romper la transacción si la tabla no existe
+            cursor.execute("SAVEPOINT check_excluidos")
             cursor.execute("""
                 SELECT codigo_producto
                 FROM productos_excluidos_tienda
                 WHERE tienda_id = %s AND activo = TRUE
             """, [request.tienda_destino])
             codigos_excluidos = {row[0] for row in cursor.fetchall()}
+            cursor.execute("RELEASE SAVEPOINT check_excluidos")
             if codigos_excluidos:
                 logger.info(f"🚫 Productos excluidos cargados: {len(codigos_excluidos)} productos no aparecerán en sugerencias")
         except Exception as e:
+            # Rollback al savepoint para recuperar la transacción
+            try:
+                cursor.execute("ROLLBACK TO SAVEPOINT check_excluidos")
+            except:
+                pass
             logger.warning(f"No se pudo cargar productos excluidos: {e}")
 
         # 2. Obtener la región de la tienda destino y tiendas de referencia
