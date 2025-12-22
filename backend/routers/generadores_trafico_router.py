@@ -96,7 +96,12 @@ class RecalcularABCResult(BaseModel):
     productos_a: int
     productos_b: int
     productos_c: int
+    productos_d: int = 0
     fecha_calculo: str
+    # ABC por tienda (si se recalculó)
+    tiendas_procesadas: int = 0
+    productos_por_tienda: int = 0
+    tiempo_por_tienda_ms: int = 0
 
 
 # ============================================================================
@@ -603,14 +608,21 @@ async def get_historial_producto(
 @router.post("/recalcular-abc", response_model=RecalcularABCResult)
 async def recalcular_abc_cache_endpoint(
     dias: int = 30,
+    incluir_por_tienda: bool = True,
     conn: Any = Depends(get_db_write)
 ):
     """
-    Recalcular la tabla cache de clasificación ABC.
-    Este proceso puede tomar ~30-60 segundos dependiendo del volumen de datos.
+    Recalcular las tablas cache de clasificación ABC.
+
+    Este proceso recalcula:
+    1. productos_abc_cache - ABC global (ranking por cantidad vendida)
+    2. productos_abc_tienda - ABC por cada tienda (si incluir_por_tienda=True)
 
     Parámetros:
     - dias: Período de análisis (default: 30 días)
+    - incluir_por_tienda: Si True, también recalcula ABC por tienda (default: True)
+
+    Tiempo estimado: ~30-60 segundos para global, +30-60 segundos para por tienda
     """
     try:
         cursor = conn.cursor()
@@ -623,23 +635,61 @@ async def recalcular_abc_cache_endpoint(
         row = cursor.fetchone()
         producto_excluido = row[0] if row else '003760'
 
-        # Ejecutar función de recálculo
+        # Obtener umbrales ABC de configuración
+        cursor.execute("""
+            SELECT parametro, valor_numerico
+            FROM config_inventario_global
+            WHERE categoria = 'abc_umbrales_ranking'
+        """)
+        umbrales = {row[0]: int(row[1]) for row in cursor.fetchall()}
+        umbral_a = umbrales.get('umbral_a', 50)
+        umbral_b = umbrales.get('umbral_b', 200)
+        umbral_c = umbrales.get('umbral_c', 800)
+
+        logger.info(f"Recalculando ABC cache: dias={dias}, umbrales=A:{umbral_a}, B:{umbral_b}, C:{umbral_c}")
+
+        # 1. Ejecutar función de recálculo GLOBAL
         cursor.execute(
-            "SELECT * FROM recalcular_abc_cache(%s, %s)",
-            (dias, producto_excluido)
+            "SELECT * FROM recalcular_abc_cache(%s, %s, %s, %s, %s)",
+            (dias, producto_excluido, umbral_a, umbral_b, umbral_c)
         )
-        result = cursor.fetchone()
+        result_global = cursor.fetchone()
+
+        # 2. Ejecutar función de recálculo POR TIENDA (si se solicita)
+        tiendas_procesadas = 0
+        productos_por_tienda = 0
+        tiempo_por_tienda_ms = 0
+
+        if incluir_por_tienda:
+            logger.info("Recalculando ABC por tienda...")
+            cursor.execute(
+                "SELECT * FROM recalcular_abc_por_tienda(%s, %s, %s, %s, %s)",
+                (dias, producto_excluido, umbral_a, umbral_b, umbral_c)
+            )
+            result_tienda = cursor.fetchone()
+            tiendas_procesadas = result_tienda[0] if result_tienda else 0
+            productos_por_tienda = result_tienda[1] if result_tienda else 0
+            tiempo_por_tienda_ms = result_tienda[2] if result_tienda else 0
 
         conn.commit()
         cursor.close()
 
+        logger.info(
+            f"ABC cache recalculado: {result_global[0]} productos globales, "
+            f"{productos_por_tienda} productos por tienda en {tiendas_procesadas} tiendas"
+        )
+
         return RecalcularABCResult(
-            productos_procesados=result[0],
-            tiempo_ejecucion_ms=result[1],
-            productos_a=result[2],
-            productos_b=result[3],
-            productos_c=result[4],
-            fecha_calculo=datetime.now().isoformat()
+            productos_procesados=result_global[0],
+            tiempo_ejecucion_ms=result_global[1],
+            productos_a=result_global[2],
+            productos_b=result_global[3],
+            productos_c=result_global[4],
+            productos_d=result_global[5] if len(result_global) > 5 else 0,
+            fecha_calculo=datetime.now().isoformat(),
+            tiendas_procesadas=tiendas_procesadas,
+            productos_por_tienda=productos_por_tienda,
+            tiempo_por_tienda_ms=tiempo_por_tienda_ms
         )
 
     except Exception as e:

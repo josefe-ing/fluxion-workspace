@@ -1015,7 +1015,9 @@ async def calcular_productos_sugeridos(
             config_tienda = ConfigTiendaABC()  # Usar defaults
             set_config_tienda(config_tienda)
 
-        # 1.5. Cargar umbrales ABC desde config_inventario_global
+        # 1.5. Cargar umbrales ABC para log informativo
+        # NOTA: La clasificación ABC ahora viene de productos_abc_tienda (tabla cache)
+        # que se recalcula diariamente a las 4:00 AM por recalcular_abc_cache.py
         umbral_a, umbral_b, umbral_c = 50, 200, 800  # Defaults
         try:
             cursor.execute("""
@@ -1030,7 +1032,7 @@ async def calcular_productos_sugeridos(
                     umbral_b = int(row[1])
                 elif row[0] == 'abc_umbral_c' and row[1]:
                     umbral_c = int(row[1])
-            logger.info(f"📋 Umbrales ABC: A≤{umbral_a}, B≤{umbral_b}, C≤{umbral_c}, D>{umbral_c}")
+            logger.info(f"📋 Umbrales ABC (desde cache): A≤{umbral_a}, B≤{umbral_b}, C≤{umbral_c}, D>{umbral_c}")
         except Exception as e:
             logger.warning(f"No se pudieron cargar umbrales ABC: {e}. Usando defaults.")
 
@@ -1203,40 +1205,18 @@ async def calcular_productos_sugeridos(
                 WHERE fecha >= CURRENT_DATE - INTERVAL '30 days'
                 GROUP BY producto_id
             ),
-            -- ABC por ranking de CANTIDAD vendida (30 días)
-            ventas_30d_tienda AS (
+            -- ABC desde tabla cache (productos_abc_tienda)
+            -- Pre-calculado diariamente a las 4:00 AM por recalcular_abc_cache.py
+            -- Usa ranking por CANTIDAD vendida en los últimos 30 días POR TIENDA
+            abc_tienda_cache AS (
                 SELECT
                     producto_id,
-                    SUM(cantidad_vendida) as cantidad_total,  -- Por cantidad, no valor
-                    SUM(venta_total) as venta_total           -- Mantener para referencia
-                FROM ventas
-                WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                  AND fecha_venta < CURRENT_DATE  -- Excluir hoy (día incompleto)
-                  AND producto_id != '003760'
-                GROUP BY producto_id
-            ),
-            abc_con_ranking AS (
-                SELECT
-                    producto_id,
-                    cantidad_total,
-                    venta_total,
-                    ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) as rank_cantidad
-                FROM ventas_30d_tienda
-            ),
-            abc_clasificado AS (
-                SELECT
-                    producto_id,
-                    venta_total,
-                    cantidad_total,
+                    clase_abc as clase_abc_valor,
                     rank_cantidad,
-                    CASE
-                        WHEN rank_cantidad <= {umbral_a} THEN 'A'
-                        WHEN rank_cantidad <= {umbral_b} THEN 'B'
-                        WHEN rank_cantidad <= {umbral_c} THEN 'C'
-                        ELSE 'D'
-                    END as clase_abc_valor
-                FROM abc_con_ranking
+                    cantidad_30d as cantidad_total,
+                    venta_30d as venta_total
+                FROM productos_abc_tienda
+                WHERE ubicacion_id = %s
             ),
             inv_tienda AS (
                 SELECT
@@ -1322,7 +1302,7 @@ async def calcular_productos_sugeridos(
             LEFT JOIN ventas_5dias v5 ON p.codigo = v5.producto_id
             LEFT JOIN top3_ventas t3 ON p.codigo = t3.producto_id
             LEFT JOIN percentil_75 p75 ON p.codigo = p75.producto_id
-            LEFT JOIN abc_clasificado abc ON p.codigo = abc.producto_id
+            LEFT JOIN abc_tienda_cache abc ON p.codigo = abc.producto_id
             LEFT JOIN estadisticas_30d est30 ON p.codigo = est30.producto_id
             LEFT JOIN inv_tienda it ON p.codigo = it.producto_id
             LEFT JOIN inv_cedi ic ON p.codigo = ic.producto_id
@@ -1332,16 +1312,11 @@ async def calcular_productos_sugeridos(
             ORDER BY COALESCE(v20.total_vendido, 0) DESC
         """
 
-        # Insertar los umbrales ABC en el query (son enteros, no parámetros de usuario)
-        query_formatted = query.format(
-            umbral_a=umbral_a,
-            umbral_b=umbral_b,
-            umbral_c=umbral_c
-        )
-
-        cursor.execute(query_formatted, [
+        # Ejecutar query con parámetros
+        # NOTA: ABC ahora viene de tabla cache productos_abc_tienda (pre-calculada diariamente)
+        cursor.execute(query, [
             request.tienda_destino,  # ventas_diarias_disponibles
-            request.tienda_destino,  # ventas_30d_tienda (ABC por cantidad)
+            request.tienda_destino,  # abc_tienda_cache (tabla cache ABC por tienda)
             request.tienda_destino,  # inv_tienda
             request.cedi_origen,     # inv_cedi
             tiendas_ref_ids if tiendas_ref_ids else ['__NONE__']  # tiendas referencia (evitar error si vacío)

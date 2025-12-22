@@ -1098,10 +1098,42 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
-    // 13. Backup Task Definition - REMOVED
+    // 13. ABC Cache Recalculation (Daily at 4:00 AM EST)
     // ========================================
-    // DuckDB backup task eliminated Dec 2025.
-    // PostgreSQL uses RDS automated backups (7-day retention configured above).
+    // Recalculates productos_abc_cache (global) and productos_abc_tienda (per store)
+    // Should run after the nightly sales ETL completes
+    // Uses the same ETL task definition but with different command
+
+    const abcRecalcRule = new events.Rule(this, 'ABCRecalcSchedule', {
+      ruleName: 'fluxion-abc-recalc-daily',
+      description: 'Recalculate ABC classification cache daily at 4:00 AM EST (8:00 AM UTC)',
+      schedule: events.Schedule.cron({
+        minute: '0',
+        hour: '8',  // 8:00 UTC = 4:00 AM EST
+        day: '*',
+        month: '*',
+        year: '*',
+      }),
+      enabled: true,
+    });
+
+    abcRecalcRule.addTarget(
+      new targets.EcsTask({
+        cluster,
+        taskDefinition: etlTask,  // Reuse ETL task definition
+        securityGroups: [etlSecurityGroup],
+        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        containerOverrides: [{
+          containerName: 'fluxion-etl',
+          command: [
+            'python', 'recalcular_abc_cache.py',
+            '--dias', '30'
+          ]
+        }],
+        maxEventAge: cdk.Duration.hours(1),
+        retryAttempts: 2,
+      })
+    );
 
     // ========================================
     // 14. Documentation Site (S3 + CloudFront)

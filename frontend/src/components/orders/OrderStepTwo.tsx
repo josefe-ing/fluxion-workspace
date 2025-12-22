@@ -1108,13 +1108,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                 Todos ({productos.length})
               </option>
               <option value="con_venta">
-                Con venta local ({productos.filter(p => p.metodo_calculo !== 'envio_prueba' && p.metodo_calculo !== 'referencia_regional').length})
+                Con venta local, P75 ≥ 1 ({productos.filter(p => p.metodo_calculo !== 'envio_prueba' && p.metodo_calculo !== 'referencia_regional').length})
               </option>
               <option value="ref_regional">
-                Ref. regional ({productos.filter(p => p.metodo_calculo === 'referencia_regional').length})
+                Poca venta, 0 &lt; P75 &lt; 1 ({productos.filter(p => p.metodo_calculo === 'referencia_regional').length})
               </option>
               <option value="envio_prueba">
-                Envío prueba ({productos.filter(p => p.metodo_calculo === 'envio_prueba').length})
+                Sin venta, P75 = 0, 1 bulto prueba ({productos.filter(p => p.metodo_calculo === 'envio_prueba').length})
               </option>
             </select>
           </div>
