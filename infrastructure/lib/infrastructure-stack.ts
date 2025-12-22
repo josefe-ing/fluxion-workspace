@@ -171,6 +171,30 @@ PersistentKeepalive = 25`),
     // 1c. RDS PostgreSQL v2.0 Database (PRIMARY - for ETL writes)
     // ========================================
 
+    // Custom Parameter Group for PostgreSQL performance optimization
+    const dbParameterGroup = new rds.ParameterGroup(this, 'FluxionPostgresParams', {
+      engine: rds.DatabaseInstanceEngine.postgres({
+        version: rds.PostgresEngineVersion.VER_16_3,
+      }),
+      description: 'Optimized PostgreSQL parameters for Fluxion AI',
+      parameters: {
+        // Memory optimization - avoid disk sorts on large queries
+        'work_mem': '65536',  // 64MB (default 4MB) - for sorting/hashing in queries
+        'maintenance_work_mem': '131072',  // 128MB - for VACUUM, CREATE INDEX
+
+        // Connection and query optimization
+        'effective_cache_size': '3145728',  // 3GB - helps planner estimate cache size
+        'random_page_cost': '1.1',  // SSD-optimized (default 4.0 for HDD)
+
+        // Parallel query optimization
+        'max_parallel_workers_per_gather': '2',  // Enable parallel queries
+        'max_parallel_workers': '4',  // Total parallel workers
+
+        // Logging for debugging (optional)
+        'log_min_duration_statement': '1000',  // Log queries > 1 second
+      },
+    });
+
     // PostgreSQL RDS Instance for Fluxion v2.0
     const dbInstance = new rds.DatabaseInstance(this, 'FluxionPostgres', {
       engine: rds.DatabaseInstanceEngine.postgres({
@@ -178,8 +202,9 @@ PersistentKeepalive = 25`),
       }),
       instanceType: ec2.InstanceType.of(
         ec2.InstanceClass.T3,
-        ec2.InstanceSize.SMALL  // t3.small: 2 vCPU, 2GB RAM
+        ec2.InstanceSize.MEDIUM  // t3.medium: 2 vCPU, 4GB RAM (upgraded from t3.small for better query performance)
       ),
+      parameterGroup: dbParameterGroup,  // Apply optimized parameters
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
@@ -233,8 +258,9 @@ PersistentKeepalive = 25`),
       instanceIdentifier: 'fluxion-postgres-replica',
       instanceType: ec2.InstanceType.of(
         ec2.InstanceClass.T3,
-        ec2.InstanceSize.SMALL  // Same size as primary
+        ec2.InstanceSize.MEDIUM  // t3.medium: 2 vCPU, 4GB RAM (same as primary)
       ),
+      parameterGroup: dbParameterGroup,  // Apply same optimized parameters
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,

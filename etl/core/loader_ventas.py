@@ -207,6 +207,10 @@ class VentasLoader:
                 pg_conn.commit()
                 self.logger.info(f"✅ Carga completada: {records_loaded:,} registros, {errors} errores")
 
+                # Refresh materialized views for performance
+                if records_loaded > 0:
+                    self._refresh_materialized_views(pg_conn)
+
         except Exception as e:
             self.logger.error(f"❌ Error cargando ventas a PostgreSQL: {str(e)}")
             return {
@@ -235,3 +239,35 @@ class VentasLoader:
             "duplicates_skipped": total_rows - records_loaded - errors,
             "errors": errors
         }
+
+    def _refresh_materialized_views(self, conn) -> None:
+        """
+        Refresh materialized views after ventas load.
+        Uses CONCURRENTLY to avoid blocking reads.
+        """
+        views_to_refresh = [
+            'mv_ventas_summary',  # Summary by ubicacion for /api/ventas/summary
+        ]
+
+        for view_name in views_to_refresh:
+            try:
+                cursor = conn.cursor()
+                # Check if view exists
+                cursor.execute("""
+                    SELECT 1 FROM pg_matviews WHERE matviewname = %s
+                """, (view_name,))
+
+                if cursor.fetchone():
+                    self.logger.info(f"🔄 Refreshing materialized view: {view_name}")
+                    # CONCURRENTLY allows reads during refresh (requires unique index)
+                    cursor.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {view_name}")
+                    conn.commit()
+                    self.logger.info(f"✅ Refreshed {view_name}")
+                else:
+                    self.logger.warning(f"⚠️ Materialized view {view_name} not found, skipping refresh")
+
+                cursor.close()
+            except Exception as e:
+                self.logger.error(f"❌ Error refreshing {view_name}: {e}")
+                # Don't fail the whole ETL if view refresh fails
+                conn.rollback()
