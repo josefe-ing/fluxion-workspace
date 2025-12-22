@@ -758,13 +758,29 @@ def main():
         total_exitosos = 0
         total_fallidos = 0
 
+        # IMPORTANTE: Crear UNA sola instancia del ETL y reutilizarla para todos los chunks
+        # Esto evita memory leak al no crear nuevos extractors/loaders en cada iteración
+        etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos, auto_gap_recovery=False)
+
         for i, (chunk_start, chunk_end) in enumerate(chunks, 1):
             print(f"\n{'#'*70}")
             print(f"# CHUNK {i}/{len(chunks)}: {chunk_start.strftime('%Y-%m-%d')} -> {chunk_end.strftime('%Y-%m-%d')}")
             print(f"{'#'*70}\n")
 
-            # En modo chunking no hacemos auto-recovery (ya estamos reprocesando rangos específicos)
-            etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos, auto_gap_recovery=False)
+            # Resetear estadísticas para este chunk
+            etl.stats = {
+                'inicio': datetime.now(),
+                'tiendas_procesadas': 0,
+                'tiendas_exitosas': 0,
+                'tiendas_fallidas': 0,
+                'total_ventas_extraidas': 0,
+                'total_ventas_cargadas': 0,
+                'total_duplicados_omitidos': 0,
+                'tiendas_klk': 0,
+                'tiendas_stellar': 0,
+                'gaps_recuperados': 0
+            }
+
             exitoso = etl.ejecutar(tienda_ids=args.tiendas, fecha_desde=chunk_start, fecha_hasta=chunk_end)
 
             if exitoso:
