@@ -1738,11 +1738,18 @@ async def calcular_productos_sugeridos(
 
                 v2_dias_cobertura_real = round(dias_cubiertos, 1)
 
-                # ENVÍO PRUEBA: Garantizar mínimo 1 bulto
-                # Si es envío de prueba y la sugerencia es 0, forzar a 1 bulto
+                # SOBRESTOCK: Si hay sobrestock, NO sugerir nada (prioridad máxima)
+                # Esto evita que lógicas posteriores (mínimo exhibición, envío prueba) eleven la cantidad
                 cantidad_sugerida_bultos_final = resultado.cantidad_sugerida_bultos
                 cantidad_sugerida_unid_final = resultado.cantidad_sugerida_unid
-                if es_envio_prueba and resultado.cantidad_sugerida_bultos == 0:
+
+                if resultado.tiene_sobrestock:
+                    # Forzar cantidad a 0 - hay sobrestock, no pedir nada
+                    cantidad_sugerida_bultos_final = 0
+                    cantidad_sugerida_unid_final = 0.0
+                    logger.debug(f"🔴 {codigo}: Sobrestock detectado - cantidad forzada a 0")
+                elif es_envio_prueba and resultado.cantidad_sugerida_bultos == 0:
+                    # ENVÍO PRUEBA: Garantizar mínimo 1 bulto (solo si NO hay sobrestock)
                     cantidad_sugerida_bultos_final = 1
                     cantidad_sugerida_unid_final = float(unidades_por_bulto)
                     logger.info(f"📦 {codigo}: Envío prueba forzado a 1 bulto ({unidades_por_bulto} unid)")
@@ -1761,7 +1768,9 @@ async def calcular_productos_sugeridos(
                 notas_capacidad = None
                 minimo_exhibicion_aplicado = None
 
-                if limite_info:
+                if limite_info and not resultado.tiene_sobrestock:
+                    # NOTA: No aplicar límites de inventario si hay sobrestock
+                    # (ya tenemos demasiado stock, no tiene sentido elevar por exhibición)
                     tipo_restriccion_cap = limite_info['tipo_restriccion']
                     notas_capacidad = limite_info['notas']
 

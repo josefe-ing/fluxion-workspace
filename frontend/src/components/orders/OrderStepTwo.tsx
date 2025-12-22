@@ -59,7 +59,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [vistaActiva, setVistaActiva] = useState<'seleccionados' | 'no_seleccionados' | 'todos'>('seleccionados');
   const [filtroCedi, setFiltroCedi] = useState<'todos' | 'con_stock' | 'sin_stock'>('todos');
   const [filtroPrioridad, setFiltroPrioridad] = useState<'todas' | 'critico' | 'urgente' | 'optimo' | 'exceso'>('todas');
-  const [filtroSugerencia, setFiltroSugerencia] = useState<'todos' | 'con_sugerencia' | 'sin_sugerencia'>('todos');
+  const [filtroSugerencia, setFiltroSugerencia] = useState<'todos' | 'envio_prueba' | 'ref_regional' | 'con_venta'>('todos');
   const [salesModalOpen, setSalesModalOpen] = useState(false);
   const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
   const [abcModalOpen, setAbcModalOpen] = useState(false);
@@ -449,11 +449,15 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       if (nivelCriticidad !== filtroPrioridad) return false;
     }
 
-    // Filtro por sugerencia (con/sin sugerencia del sistema)
+    // Filtro por tipo de sugerencia (basado en método de cálculo)
+    // - envio_prueba: Sin ventas locales (P75=0), usa referencia de otra tienda
+    // - referencia_regional: Pocas ventas locales (P75<1), usa P75 de referencia
+    // - con_venta: Venta local normal (estadistico o padre_prudente)
     if (filtroSugerencia !== 'todos') {
-      const tieneSugerencia = (p.cantidad_sugerida_bultos || 0) > 0;
-      if (filtroSugerencia === 'con_sugerencia' && !tieneSugerencia) return false;
-      if (filtroSugerencia === 'sin_sugerencia' && tieneSugerencia) return false;
+      const metodo = p.metodo_calculo || '';
+      if (filtroSugerencia === 'envio_prueba' && metodo !== 'envio_prueba') return false;
+      if (filtroSugerencia === 'ref_regional' && metodo !== 'referencia_regional') return false;
+      if (filtroSugerencia === 'con_venta' && (metodo === 'envio_prueba' || metodo === 'referencia_regional')) return false;
     }
 
     // Filtro por búsqueda (soporta múltiples códigos separados por coma)
@@ -1092,22 +1096,25 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             </select>
           </div>
 
-          {/* Dropdown de Sugerencia (con/sin sugerencia del sistema) */}
+          {/* Dropdown de tipo de sugerencia por método de cálculo */}
           <div className="flex items-center gap-1">
-            <label className="text-xs font-medium text-gray-600">Sugerencia:</label>
+            <label className="text-xs font-medium text-gray-600">Método:</label>
             <select
               value={filtroSugerencia}
-              onChange={(e) => { setFiltroSugerencia(e.target.value as 'todos' | 'con_sugerencia' | 'sin_sugerencia'); setPaginaActual(1); }}
+              onChange={(e) => { setFiltroSugerencia(e.target.value as 'todos' | 'envio_prueba' | 'ref_regional' | 'con_venta'); setPaginaActual(1); }}
               className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
             >
               <option value="todos">
                 Todos ({productos.length})
               </option>
-              <option value="con_sugerencia">
-                Con sugerencia ({productos.filter(p => (p.cantidad_sugerida_bultos || 0) > 0).length})
+              <option value="con_venta">
+                Con venta local ({productos.filter(p => p.metodo_calculo !== 'envio_prueba' && p.metodo_calculo !== 'referencia_regional').length})
               </option>
-              <option value="sin_sugerencia">
-                Sin sugerencia ({productos.filter(p => (p.cantidad_sugerida_bultos || 0) === 0).length})
+              <option value="ref_regional">
+                Ref. regional ({productos.filter(p => p.metodo_calculo === 'referencia_regional').length})
+              </option>
+              <option value="envio_prueba">
+                Envío prueba ({productos.filter(p => p.metodo_calculo === 'envio_prueba').length})
               </option>
             </select>
           </div>
