@@ -71,6 +71,7 @@ export default function PedidoApprovalView() {
   const [loadingVerificacion, setLoadingVerificacion] = useState(false);
   const [showVerificacion, setShowVerificacion] = useState(false);
   const [guardandoLlegada, setGuardandoLlegada] = useState(false);
+  const [filtroEstadoLlegada, setFiltroEstadoLlegada] = useState<string>('todos');
 
   useEffect(() => {
     if (pedidoId) {
@@ -222,6 +223,48 @@ export default function PedidoApprovalView() {
     return verificacionData?.productos.find(p => p.codigo_producto === codigoProducto);
   };
 
+  // Filtrar productos por estado de llegada
+  const getProductosFiltrados = () => {
+    if (!pedido?.productos) return [];
+    if (!showVerificacion || filtroEstadoLlegada === 'todos') {
+      return pedido.productos;
+    }
+    return pedido.productos.filter(p => {
+      const verif = getVerificacionProducto(p.codigo_producto);
+      return verif?.estado_llegada === filtroEstadoLlegada;
+    });
+  };
+
+  // Exportar a Excel
+  const handleExportarExcel = () => {
+    if (!verificacionData) return;
+
+    // Crear contenido CSV
+    const headers = ['Código', 'Descripción', 'ABC', 'Und/Bulto', 'Pedido', 'Unidad', 'Llegada', 'Estado'];
+    const rows = verificacionData.productos.map(p => [
+      p.codigo_producto,
+      p.descripcion_producto,
+      p.clasificacion_abc,
+      p.unidades_x_bulto,
+      p.cantidad_pedida_bultos,
+      p.unidad,
+      p.total_llegadas_detectadas,
+      ESTADO_LLEGADA_LABELS[p.estado_llegada] || p.estado_llegada
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(r => r.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    // Descargar archivo
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `verificacion_${pedido?.numero_pedido || 'pedido'}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -301,7 +344,7 @@ export default function PedidoApprovalView() {
           {/* Resumen de verificación */}
           {showVerificacion && verificacionData && (
             <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between mb-3">
                 <div>
                   <h4 className="font-medium text-blue-900">Verificación de Llegada</h4>
                   <p className="text-sm text-blue-700 mt-1">
@@ -314,25 +357,62 @@ export default function PedidoApprovalView() {
                     <span className="text-red-700">{verificacionData.productos_no_llegaron} no llegaron</span>
                   </p>
                 </div>
-                {verificacionData.hay_nuevos_incrementos && (
+                <div className="flex items-center gap-2">
+                  {verificacionData.hay_nuevos_incrementos && (
+                    <button
+                      onClick={handleGuardarLlegada}
+                      disabled={guardandoLlegada}
+                      className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {guardandoLlegada ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          Guardando...
+                        </>
+                      ) : (
+                        <>
+                          <span>💾</span>
+                          Guardar Llegada
+                        </>
+                      )}
+                    </button>
+                  )}
                   <button
-                    onClick={handleGuardarLlegada}
-                    disabled={guardandoLlegada}
-                    className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                    onClick={handleExportarExcel}
+                    className="px-4 py-2 bg-gray-600 text-white text-sm rounded-lg hover:bg-gray-700 flex items-center gap-2"
                   >
-                    {guardandoLlegada ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        Guardando...
-                      </>
-                    ) : (
-                      <>
-                        <span>💾</span>
-                        Guardar Llegada
-                      </>
-                    )}
+                    <span>📥</span>
+                    Exportar Excel
                   </button>
-                )}
+                </div>
+              </div>
+              {/* Filtro por estado */}
+              <div className="flex items-center gap-2 pt-3 border-t border-blue-200">
+                <span className="text-sm text-blue-800">Filtrar:</span>
+                <button
+                  onClick={() => setFiltroEstadoLlegada('todos')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroEstadoLlegada === 'todos' ? 'bg-blue-600 text-white' : 'bg-white text-blue-700 border border-blue-300'}`}
+                >
+                  Todos
+                </button>
+                <button
+                  onClick={() => setFiltroEstadoLlegada('completo')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroEstadoLlegada === 'completo' ? 'bg-green-600 text-white' : 'bg-white text-green-700 border border-green-300'}`}
+                >
+                  Completo ({verificacionData.productos_completos})
+                </button>
+                <button
+                  onClick={() => setFiltroEstadoLlegada('parcial')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroEstadoLlegada === 'parcial' ? 'bg-yellow-600 text-white' : 'bg-white text-yellow-700 border border-yellow-300'}`}
+                >
+                  Parcial ({verificacionData.productos_parciales})
+                </button>
+                <button
+                  onClick={() => setFiltroEstadoLlegada('no_llego')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroEstadoLlegada === 'no_llego' ? 'bg-red-600 text-white' : 'bg-white text-red-700 border border-red-300'}`}
+                >
+                  No llegó ({verificacionData.productos_no_llegaron})
+                </button>
               </div>
             </div>
           )}
@@ -386,6 +466,12 @@ export default function PedidoApprovalView() {
                 </th>
                 {showVerificacion && (
                   <>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      ABC
+                    </th>
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                      Und/Bulto
+                    </th>
                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                       Llegada
                     </th>
@@ -400,7 +486,7 @@ export default function PedidoApprovalView() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {pedido.productos?.map((producto) => (
+              {getProductosFiltrados().map((producto) => (
                 <tr key={producto.codigo_producto} className="hover:bg-gray-50">
                   <td className="px-3 py-3 text-sm font-mono text-gray-900">
                     {producto.codigo_producto}
@@ -422,29 +508,56 @@ export default function PedidoApprovalView() {
                   </td>
                   {showVerificacion && (
                     <>
+                      {/* Columna ABC */}
+                      <td className="px-3 py-3 text-center">
+                        {(() => {
+                          const verif = getVerificacionProducto(producto.codigo_producto);
+                          if (!verif) return '-';
+                          const abcColors: Record<string, string> = {
+                            'A': 'bg-green-100 text-green-800',
+                            'B': 'bg-blue-100 text-blue-800',
+                            'C': 'bg-yellow-100 text-yellow-800',
+                            'D': 'bg-gray-100 text-gray-600'
+                          };
+                          return (
+                            <span className={`px-2 py-1 text-xs font-bold rounded ${abcColors[verif.clasificacion_abc] || 'bg-gray-100'}`}>
+                              {verif.clasificacion_abc}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      {/* Columna Und/Bulto */}
+                      <td className="px-3 py-3 text-sm text-right text-gray-600">
+                        {(() => {
+                          const verif = getVerificacionProducto(producto.codigo_producto);
+                          return verif ? verif.unidades_x_bulto : '-';
+                        })()}
+                      </td>
+                      {/* Columna Llegada */}
                       <td className="px-3 py-3 text-sm text-right">
                         {(() => {
                           const verif = getVerificacionProducto(producto.codigo_producto);
                           if (!verif) return '-';
                           return (
                             <div>
-                              {verif.nuevo_incremento > 0 && (
+                              {Number(verif.nuevo_incremento) > 0 && (
                                 <span className="text-green-600 font-semibold">
-                                  +{formatNumber(verif.nuevo_incremento)}
+                                  +{formatNumber(verif.nuevo_incremento)} {verif.unidad}
                                 </span>
                               )}
-                              {verif.cantidad_ya_guardada > 0 && (
+                              {Number(verif.cantidad_ya_guardada) > 0 && (
                                 <span className="text-gray-500 text-xs block">
-                                  (Total: {formatNumber(verif.total_llegadas_detectadas)})
+                                  (Total: {formatNumber(verif.total_llegadas_detectadas)} {verif.unidad})
                                 </span>
                               )}
-                              {verif.nuevo_incremento === 0 && verif.cantidad_ya_guardada === 0 && (
-                                <span className="text-gray-400">0</span>
+                              {Number(verif.nuevo_incremento) === 0 && Number(verif.cantidad_ya_guardada) === 0 && (
+                                <span className="text-gray-400">0 {verif.unidad}</span>
                               )}
                             </div>
                           );
                         })()}
                       </td>
+                      {/* Columna Estado */}
                       <td className="px-3 py-3 text-center">
                         {(() => {
                           const verif = getVerificacionProducto(producto.codigo_producto);

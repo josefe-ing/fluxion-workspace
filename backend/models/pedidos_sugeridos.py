@@ -753,7 +753,16 @@ class ProductoLlegadaVerificacion(BaseModel):
     cantidad_pedida_bultos: Decimal
     cantidad_pedida_unidades: Decimal
 
-    # Llegadas detectadas
+    # Unidad de medida (bultos, cestas, blister, etc.)
+    unidad: str = "bultos"
+
+    # Unidades por bulto (factor de conversión)
+    unidades_x_bulto: int = 1
+
+    # Clasificación ABC
+    clasificacion_abc: str = "D"
+
+    # Llegadas detectadas (expresadas en la unidad del producto)
     total_llegadas_detectadas: Decimal = 0  # Suma de todos los incrementos positivos
     cantidad_ya_guardada: Decimal = 0       # Lo que ya estaba en cantidad_recibida_bultos
     nuevo_incremento: Decimal = 0           # total_llegadas - ya_guardada

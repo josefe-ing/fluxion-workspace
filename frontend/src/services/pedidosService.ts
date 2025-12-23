@@ -218,6 +218,9 @@ export interface ProductoLlegadaVerificacion {
   descripcion_producto: string;
   cantidad_pedida_bultos: number;
   cantidad_pedida_unidades: number;
+  unidad: string;  // bultos, cestas, blister, etc.
+  unidades_x_bulto: number;  // Factor de conversión
+  clasificacion_abc: string;  // A, B, C, D
   total_llegadas_detectadas: number;
   cantidad_ya_guardada: number;
   nuevo_incremento: number;

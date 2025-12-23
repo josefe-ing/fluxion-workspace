@@ -2155,7 +2155,7 @@ async def verificar_llegada(
 
         _, numero_pedido, fecha_pedido, tienda_destino_id, tienda_destino_nombre = pedido_row
 
-        # 2. Obtener productos del pedido con sus cantidades
+        # 2. Obtener productos del pedido con sus cantidades, factor de conversión, unidad y clasificación
         cursor.execute("""
             SELECT
                 d.codigo_producto,
@@ -2163,7 +2163,10 @@ async def verificar_llegada(
                 COALESCE(d.cantidad_pedida_bultos, 0) as cantidad_pedida_bultos,
                 COALESCE(d.cantidad_pedida_unidades, d.total_unidades, 0) as cantidad_pedida_unidades,
                 COALESCE(d.cantidad_recibida_bultos, 0) as cantidad_recibida_bultos,
-                p.id as producto_id
+                p.id as producto_id,
+                COALESCE(p.unidades_x_bulto, 1) as unidades_x_bulto,
+                COALESCE(p.unidad, 'bultos') as unidad,
+                COALESCE(d.clasificacion_abc, 'D') as clasificacion_abc
             FROM pedidos_sugeridos_detalle d
             LEFT JOIN productos p ON d.codigo_producto = p.codigo
             WHERE d.pedido_id = %s AND d.incluido = true
@@ -2183,8 +2186,14 @@ async def verificar_llegada(
         productos_sin_datos = 0
         hay_nuevos_incrementos = False
 
+        # Tolerancia del 3% para considerar llegada "completa"
+        TOLERANCIA_COMPLETO = Decimal('97')
+
         for prod_row in productos_pedido:
-            codigo_producto, descripcion, cant_pedida_bultos, cant_pedida_unidades, cant_ya_guardada, producto_id = prod_row
+            codigo_producto, descripcion, cant_pedida_bultos, cant_pedida_unidades, cant_ya_guardada, producto_id, unidades_x_bulto, unidad, clasificacion_abc = prod_row
+            unidades_x_bulto = Decimal(str(unidades_x_bulto or 1))
+            unidad = unidad or 'bultos'
+            clasificacion_abc = clasificacion_abc or 'D'
 
             # Query para detectar incrementos desde fecha_pedido
             # Suma todos los incrementos positivos entre snapshots consecutivos
@@ -2223,32 +2232,33 @@ async def verificar_llegada(
             """, [producto_id, tienda_destino_id, fecha_pedido])
 
             result = cursor.fetchone()
-            total_llegadas, fecha_primer_incremento, snapshot_inicial, snapshot_final, num_snapshots = result
+            total_llegadas_unidades, fecha_primer_incremento, snapshot_inicial, snapshot_final, num_snapshots = result
 
-            total_llegadas = Decimal(str(total_llegadas or 0))
+            total_llegadas_unidades = Decimal(str(total_llegadas_unidades or 0))
             cant_ya_guardada = Decimal(str(cant_ya_guardada or 0))
             cant_pedida_bultos = Decimal(str(cant_pedida_bultos or 0))
             cant_pedida_unidades = Decimal(str(cant_pedida_unidades or 0))
 
-            # Calcular nuevo incremento (lo que no se ha guardado aún)
-            nuevo_incremento = max(Decimal(0), total_llegadas - cant_ya_guardada)
+            # Convertir llegadas de unidades a bultos
+            total_llegadas_bultos = total_llegadas_unidades / unidades_x_bulto
 
-            # Calcular porcentaje
-            if cant_pedida_unidades > 0:
-                porcentaje = (total_llegadas / cant_pedida_unidades) * 100
-            elif cant_pedida_bultos > 0:
-                porcentaje = (total_llegadas / cant_pedida_bultos) * 100
+            # Calcular nuevo incremento en bultos (lo que no se ha guardado aún)
+            nuevo_incremento = max(Decimal(0), total_llegadas_bultos - cant_ya_guardada)
+
+            # Calcular porcentaje basado en bultos pedidos
+            if cant_pedida_bultos > 0:
+                porcentaje = (total_llegadas_bultos / cant_pedida_bultos) * 100
             else:
                 porcentaje = Decimal(0)
 
-            # Determinar estado
+            # Determinar estado (con tolerancia del 3%)
             tiene_datos = num_snapshots > 1 if num_snapshots else False
 
             if not tiene_datos:
                 estado = EstadoLlegada.SIN_DATOS
                 productos_sin_datos += 1
                 mensaje = "No hay datos de inventario en el período"
-            elif porcentaje >= 95:
+            elif porcentaje >= TOLERANCIA_COMPLETO:
                 estado = EstadoLlegada.COMPLETO
                 productos_completos += 1
                 mensaje = "Llegada completa"
@@ -2269,9 +2279,12 @@ async def verificar_llegada(
                 descripcion_producto=descripcion or "",
                 cantidad_pedida_bultos=cant_pedida_bultos,
                 cantidad_pedida_unidades=cant_pedida_unidades,
-                total_llegadas_detectadas=total_llegadas,
+                unidad=unidad,  # bultos, cestas, blister, etc.
+                unidades_x_bulto=int(unidades_x_bulto),  # Factor de conversión
+                clasificacion_abc=clasificacion_abc,  # A, B, C, D
+                total_llegadas_detectadas=total_llegadas_bultos.quantize(Decimal('0.01')),
                 cantidad_ya_guardada=cant_ya_guardada,
-                nuevo_incremento=nuevo_incremento,
+                nuevo_incremento=nuevo_incremento.quantize(Decimal('0.01')),
                 porcentaje_llegada=min(porcentaje, Decimal(150)),  # Cap at 150%
                 estado_llegada=estado,
                 tiene_datos=tiene_datos,
@@ -2283,10 +2296,10 @@ async def verificar_llegada(
 
         cursor.close()
 
-        # Calcular porcentaje global
-        total_pedido = sum(p.cantidad_pedida_unidades or p.cantidad_pedida_bultos for p in productos_verificados)
-        total_llegado = sum(p.total_llegadas_detectadas for p in productos_verificados)
-        porcentaje_global = (total_llegado / total_pedido * 100) if total_pedido > 0 else Decimal(0)
+        # Calcular porcentaje global (basado en bultos)
+        total_pedido_bultos = sum(p.cantidad_pedida_bultos for p in productos_verificados)
+        total_llegado_bultos = sum(p.total_llegadas_detectadas for p in productos_verificados)
+        porcentaje_global = (total_llegado_bultos / total_pedido_bultos * 100) if total_pedido_bultos > 0 else Decimal(0)
 
         return VerificarLlegadaResponse(
             pedido_id=pedido_id,
