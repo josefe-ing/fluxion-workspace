@@ -2159,6 +2159,7 @@ async def verificar_llegada(
         # La clasificación ABC viene de productos_abc_tienda (específica por tienda)
         # El factor de conversión (unidades_por_bulto) viene de la tabla productos
         # Los stocks vienen de inventario_actual para tienda, cedi_caracas y cedi_verde
+        # IMPORTANTE: inventario_historico.producto_id almacena el CÓDIGO del producto, no productos.id
         cursor.execute("""
             SELECT
                 d.codigo_producto,
@@ -2166,7 +2167,7 @@ async def verificar_llegada(
                 COALESCE(d.cantidad_pedida_bultos, 0) as cantidad_pedida_bultos,
                 COALESCE(d.cantidad_pedida_unidades, d.total_unidades, 0) as cantidad_pedida_unidades,
                 COALESCE(d.cantidad_recibida_bultos, 0) as cantidad_recibida_bultos,
-                p.id as producto_id,
+                d.codigo_producto as producto_id_historico,
                 COALESCE(p.unidades_por_bulto, 1) as unidades_x_bulto,
                 'bultos' as unidad,
                 COALESCE(abc.clase_abc, 'D') as clasificacion_abc,
@@ -2176,9 +2177,9 @@ async def verificar_llegada(
             FROM pedidos_sugeridos_detalle d
             LEFT JOIN productos p ON d.codigo_producto = p.codigo
             LEFT JOIN productos_abc_tienda abc ON abc.producto_id = p.id AND abc.ubicacion_id = %s
-            LEFT JOIN inventario_actual inv_tienda ON inv_tienda.producto_id = p.id AND inv_tienda.ubicacion_id = %s
-            LEFT JOIN inventario_actual inv_caracas ON inv_caracas.producto_id = p.id AND inv_caracas.ubicacion_id = 'cedi_caracas'
-            LEFT JOIN inventario_actual inv_verde ON inv_verde.producto_id = p.id AND inv_verde.ubicacion_id = 'cedi_verde'
+            LEFT JOIN inventario_actual inv_tienda ON inv_tienda.producto_id = d.codigo_producto AND inv_tienda.ubicacion_id = %s
+            LEFT JOIN inventario_actual inv_caracas ON inv_caracas.producto_id = d.codigo_producto AND inv_caracas.ubicacion_id = 'cedi_caracas'
+            LEFT JOIN inventario_actual inv_verde ON inv_verde.producto_id = d.codigo_producto AND inv_verde.ubicacion_id = 'cedi_verde'
             WHERE d.pedido_id = %s AND d.incluido = true
             ORDER BY d.linea_numero
         """, [tienda_destino_id, tienda_destino_id, pedido_id])
@@ -2200,7 +2201,7 @@ async def verificar_llegada(
 
         for prod_row in productos_pedido:
             (codigo_producto, descripcion, cant_pedida_bultos, cant_pedida_unidades,
-             cant_ya_guardada, producto_id, unidades_x_bulto, unidad, clasificacion_abc,
+             cant_ya_guardada, producto_id_historico, unidades_x_bulto, unidad, clasificacion_abc,
              stock_tienda, stock_cedi_caracas, stock_cedi_verde) = prod_row
             unidades_x_bulto = Decimal(str(unidades_x_bulto or 1))
             unidad = unidad or 'bultos'
@@ -2210,6 +2211,7 @@ async def verificar_llegada(
             stock_cedi_verde = Decimal(str(stock_cedi_verde or 0))
 
             # Query para detectar incrementos desde fecha_pedido
+            # IMPORTANTE: inventario_historico.producto_id usa el CÓDIGO del producto
             # Suma todos los incrementos positivos entre snapshots consecutivos
             cursor.execute("""
                 WITH snapshots AS (
@@ -2243,7 +2245,7 @@ async def verificar_llegada(
                     (SELECT cantidad FROM snapshots ORDER BY fecha_snapshot DESC LIMIT 1) as snapshot_final,
                     COUNT(*) as num_snapshots
                 FROM incrementos
-            """, [producto_id, tienda_destino_id, fecha_pedido])
+            """, [producto_id_historico, tienda_destino_id, fecha_pedido])
 
             result = cursor.fetchone()
             total_llegadas_unidades, fecha_primer_incremento, snapshot_inicial, snapshot_final, num_snapshots = result
