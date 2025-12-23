@@ -97,3 +97,4 @@ Pedidos Sugeridos
 - [Crear un Pedido](/modulos/pedidos-sugeridos/crear-pedido) - Guía paso a paso con ejemplos reales
 - [Punto de Reorden](/modulos/pedidos-sugeridos/punto-reorden) - Fórmulas y cálculos detallados
 - [Aprobación de Pedidos](/modulos/pedidos-sugeridos/aprobacion) - Flujo de aprobación
+- [Verificar Llegada](/modulos/pedidos-sugeridos/verificar-llegada) - Seguimiento de recepción de pedidos

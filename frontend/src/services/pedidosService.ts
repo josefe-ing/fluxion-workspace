@@ -175,3 +175,121 @@ export const ESTADO_COLORS: Record<string, string> = {
   [ESTADOS_PEDIDO.FINALIZADO]: 'bg-blue-100 text-blue-800',
   [ESTADOS_PEDIDO.CANCELADO]: 'bg-gray-100 text-gray-800'
 };
+
+// =====================================================================================
+// VERIFICAR LLEGADA - Interfaces y funciones
+// =====================================================================================
+
+/**
+ * Estados posibles de llegada de un producto
+ */
+export const ESTADO_LLEGADA = {
+  COMPLETO: 'completo',
+  PARCIAL: 'parcial',
+  NO_LLEGO: 'no_llego',
+  SIN_DATOS: 'sin_datos'
+} as const;
+
+/**
+ * Colores para badges de estado de llegada
+ */
+export const ESTADO_LLEGADA_COLORS: Record<string, string> = {
+  [ESTADO_LLEGADA.COMPLETO]: 'bg-green-100 text-green-800',
+  [ESTADO_LLEGADA.PARCIAL]: 'bg-yellow-100 text-yellow-800',
+  [ESTADO_LLEGADA.NO_LLEGO]: 'bg-red-100 text-red-800',
+  [ESTADO_LLEGADA.SIN_DATOS]: 'bg-gray-100 text-gray-600'
+};
+
+/**
+ * Labels para estados de llegada
+ */
+export const ESTADO_LLEGADA_LABELS: Record<string, string> = {
+  [ESTADO_LLEGADA.COMPLETO]: 'Completo',
+  [ESTADO_LLEGADA.PARCIAL]: 'Parcial',
+  [ESTADO_LLEGADA.NO_LLEGO]: 'No llegó',
+  [ESTADO_LLEGADA.SIN_DATOS]: 'Sin datos'
+};
+
+/**
+ * Resultado de verificación para un producto
+ */
+export interface ProductoLlegadaVerificacion {
+  codigo_producto: string;
+  descripcion_producto: string;
+  cantidad_pedida_bultos: number;
+  cantidad_pedida_unidades: number;
+  total_llegadas_detectadas: number;
+  cantidad_ya_guardada: number;
+  nuevo_incremento: number;
+  porcentaje_llegada: number;
+  estado_llegada: string;
+  tiene_datos: boolean;
+  mensaje?: string;
+  snapshot_inicial?: number;
+  snapshot_final?: number;
+  fecha_primer_incremento?: string;
+}
+
+/**
+ * Response completo de verificación de llegada
+ */
+export interface VerificarLlegadaResponse {
+  pedido_id: string;
+  numero_pedido: string;
+  tienda_destino_id: string;
+  tienda_destino_nombre: string;
+  fecha_pedido: string;
+  fecha_verificacion: string;
+  productos: ProductoLlegadaVerificacion[];
+  total_productos: number;
+  productos_completos: number;
+  productos_parciales: number;
+  productos_no_llegaron: number;
+  productos_sin_datos: number;
+  porcentaje_cumplimiento_global: number;
+  tiene_datos_suficientes: boolean;
+  hay_nuevos_incrementos: boolean;
+  mensaje: string;
+}
+
+/**
+ * Request para registrar llegadas
+ */
+export interface RegistrarLlegadaRequest {
+  productos: Array<{
+    codigo_producto: string;
+    cantidad_llegada: number;
+  }>;
+}
+
+/**
+ * Response al registrar llegadas
+ */
+export interface RegistrarLlegadaResponse {
+  pedido_id: string;
+  numero_pedido: string;
+  productos_actualizados: number;
+  mensaje: string;
+}
+
+/**
+ * Verifica la llegada de productos de un pedido
+ * Detecta incrementos de inventario desde la fecha del pedido
+ */
+export async function verificarLlegada(pedidoId: string): Promise<VerificarLlegadaResponse> {
+  const response = await http.get(`/api/pedidos-sugeridos/${pedidoId}/verificar-llegada`);
+  return response.data;
+}
+
+/**
+ * Registra/guarda las llegadas detectadas en el pedido
+ */
+export async function registrarLlegada(
+  pedidoId: string,
+  productos: Array<{ codigo_producto: string; cantidad_llegada: number }>
+): Promise<RegistrarLlegadaResponse> {
+  const response = await http.post(`/api/pedidos-sugeridos/${pedidoId}/registrar-llegada`, {
+    productos
+  });
+  return response.data;
+}

@@ -35,6 +35,12 @@ from models.pedidos_sugeridos import (
     PedidoComentario,
     # Enums
     EstadoPedido,
+    # Verificar Llegada
+    EstadoLlegada,
+    ProductoLlegadaVerificacion,
+    VerificarLlegadaResponse,
+    RegistrarLlegadaRequest,
+    RegistrarLlegadaResponse,
 )
 from db_manager import get_db_connection, get_db_connection_write
 from services.calculo_inventario_abc import (
@@ -2112,3 +2118,269 @@ async def crear_pedido_v2(
         conn.rollback()
         logger.error(f"❌ Error creando pedido v2.0: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creando pedido: {str(e)}")
+
+
+# =====================================================================================
+# VERIFICAR LLEGADA - Detectar incrementos de inventario
+# =====================================================================================
+
+@router.get("/{pedido_id}/verificar-llegada", response_model=VerificarLlegadaResponse)
+async def verificar_llegada(
+    pedido_id: str,
+    conn: Any = Depends(get_db)
+):
+    """
+    Verifica si los productos de un pedido llegaron a la tienda.
+
+    Detecta incrementos de inventario desde la fecha del pedido hasta ahora,
+    sumando todos los incrementos positivos (llegadas) e ignorando decrementos (ventas).
+
+    Funciona en cualquier estado del pedido (borrador, aprobado, etc.)
+    """
+    try:
+        cursor = conn.cursor()
+
+        # 1. Obtener información del pedido
+        cursor.execute("""
+            SELECT
+                p.id, p.numero_pedido, p.fecha_pedido,
+                p.tienda_destino_id, p.tienda_destino_nombre
+            FROM pedidos_sugeridos p
+            WHERE p.id = %s
+        """, [pedido_id])
+
+        pedido_row = cursor.fetchone()
+        if not pedido_row:
+            raise HTTPException(status_code=404, detail=f"Pedido {pedido_id} no encontrado")
+
+        _, numero_pedido, fecha_pedido, tienda_destino_id, tienda_destino_nombre = pedido_row
+
+        # 2. Obtener productos del pedido con sus cantidades
+        cursor.execute("""
+            SELECT
+                d.codigo_producto,
+                d.descripcion_producto,
+                COALESCE(d.cantidad_pedida_bultos, 0) as cantidad_pedida_bultos,
+                COALESCE(d.cantidad_pedida_unidades, d.total_unidades, 0) as cantidad_pedida_unidades,
+                COALESCE(d.cantidad_recibida_bultos, 0) as cantidad_recibida_bultos,
+                p.id as producto_id
+            FROM pedidos_sugeridos_detalle d
+            LEFT JOIN productos p ON d.codigo_producto = p.codigo
+            WHERE d.pedido_id = %s AND d.incluido = true
+            ORDER BY d.linea_numero
+        """, [pedido_id])
+
+        productos_pedido = cursor.fetchall()
+
+        if not productos_pedido:
+            raise HTTPException(status_code=404, detail="El pedido no tiene productos")
+
+        # 3. Procesar cada producto
+        productos_verificados = []
+        productos_completos = 0
+        productos_parciales = 0
+        productos_no_llegaron = 0
+        productos_sin_datos = 0
+        hay_nuevos_incrementos = False
+
+        for prod_row in productos_pedido:
+            codigo_producto, descripcion, cant_pedida_bultos, cant_pedida_unidades, cant_ya_guardada, producto_id = prod_row
+
+            # Query para detectar incrementos desde fecha_pedido
+            # Suma todos los incrementos positivos entre snapshots consecutivos
+            cursor.execute("""
+                WITH snapshots AS (
+                    SELECT
+                        fecha_snapshot,
+                        SUM(cantidad) as cantidad,
+                        LAG(SUM(cantidad)) OVER (ORDER BY fecha_snapshot) as cantidad_anterior
+                    FROM inventario_historico
+                    WHERE producto_id = %s
+                      AND ubicacion_id = %s
+                      AND fecha_snapshot >= %s
+                    GROUP BY fecha_snapshot
+                    ORDER BY fecha_snapshot
+                ),
+                incrementos AS (
+                    SELECT
+                        fecha_snapshot,
+                        cantidad,
+                        cantidad_anterior,
+                        CASE
+                            WHEN cantidad_anterior IS NOT NULL AND cantidad > cantidad_anterior
+                            THEN cantidad - cantidad_anterior
+                            ELSE 0
+                        END as incremento
+                    FROM snapshots
+                )
+                SELECT
+                    COALESCE(SUM(incremento), 0) as total_llegadas,
+                    MIN(CASE WHEN incremento > 0 THEN fecha_snapshot END) as fecha_primer_incremento,
+                    (SELECT cantidad FROM snapshots ORDER BY fecha_snapshot ASC LIMIT 1) as snapshot_inicial,
+                    (SELECT cantidad FROM snapshots ORDER BY fecha_snapshot DESC LIMIT 1) as snapshot_final,
+                    COUNT(*) as num_snapshots
+                FROM incrementos
+            """, [producto_id, tienda_destino_id, fecha_pedido])
+
+            result = cursor.fetchone()
+            total_llegadas, fecha_primer_incremento, snapshot_inicial, snapshot_final, num_snapshots = result
+
+            total_llegadas = Decimal(str(total_llegadas or 0))
+            cant_ya_guardada = Decimal(str(cant_ya_guardada or 0))
+            cant_pedida_bultos = Decimal(str(cant_pedida_bultos or 0))
+            cant_pedida_unidades = Decimal(str(cant_pedida_unidades or 0))
+
+            # Calcular nuevo incremento (lo que no se ha guardado aún)
+            nuevo_incremento = max(Decimal(0), total_llegadas - cant_ya_guardada)
+
+            # Calcular porcentaje
+            if cant_pedida_unidades > 0:
+                porcentaje = (total_llegadas / cant_pedida_unidades) * 100
+            elif cant_pedida_bultos > 0:
+                porcentaje = (total_llegadas / cant_pedida_bultos) * 100
+            else:
+                porcentaje = Decimal(0)
+
+            # Determinar estado
+            tiene_datos = num_snapshots > 1 if num_snapshots else False
+
+            if not tiene_datos:
+                estado = EstadoLlegada.SIN_DATOS
+                productos_sin_datos += 1
+                mensaje = "No hay datos de inventario en el período"
+            elif porcentaje >= 95:
+                estado = EstadoLlegada.COMPLETO
+                productos_completos += 1
+                mensaje = "Llegada completa"
+            elif porcentaje > 0:
+                estado = EstadoLlegada.PARCIAL
+                productos_parciales += 1
+                mensaje = f"Llegada parcial ({porcentaje:.0f}%)"
+            else:
+                estado = EstadoLlegada.NO_LLEGO
+                productos_no_llegaron += 1
+                mensaje = "No se detectó llegada"
+
+            if nuevo_incremento > 0:
+                hay_nuevos_incrementos = True
+
+            productos_verificados.append(ProductoLlegadaVerificacion(
+                codigo_producto=codigo_producto,
+                descripcion_producto=descripcion or "",
+                cantidad_pedida_bultos=cant_pedida_bultos,
+                cantidad_pedida_unidades=cant_pedida_unidades,
+                total_llegadas_detectadas=total_llegadas,
+                cantidad_ya_guardada=cant_ya_guardada,
+                nuevo_incremento=nuevo_incremento,
+                porcentaje_llegada=min(porcentaje, Decimal(150)),  # Cap at 150%
+                estado_llegada=estado,
+                tiene_datos=tiene_datos,
+                mensaje=mensaje,
+                snapshot_inicial=Decimal(str(snapshot_inicial)) if snapshot_inicial else None,
+                snapshot_final=Decimal(str(snapshot_final)) if snapshot_final else None,
+                fecha_primer_incremento=fecha_primer_incremento
+            ))
+
+        cursor.close()
+
+        # Calcular porcentaje global
+        total_pedido = sum(p.cantidad_pedida_unidades or p.cantidad_pedida_bultos for p in productos_verificados)
+        total_llegado = sum(p.total_llegadas_detectadas for p in productos_verificados)
+        porcentaje_global = (total_llegado / total_pedido * 100) if total_pedido > 0 else Decimal(0)
+
+        return VerificarLlegadaResponse(
+            pedido_id=pedido_id,
+            numero_pedido=numero_pedido,
+            tienda_destino_id=tienda_destino_id,
+            tienda_destino_nombre=tienda_destino_nombre,
+            fecha_pedido=fecha_pedido,
+            fecha_verificacion=datetime.now(),
+            productos=productos_verificados,
+            total_productos=len(productos_verificados),
+            productos_completos=productos_completos,
+            productos_parciales=productos_parciales,
+            productos_no_llegaron=productos_no_llegaron,
+            productos_sin_datos=productos_sin_datos,
+            porcentaje_cumplimiento_global=min(porcentaje_global, Decimal(150)),
+            tiene_datos_suficientes=productos_sin_datos < len(productos_verificados),
+            hay_nuevos_incrementos=hay_nuevos_incrementos,
+            mensaje="Verificación completada"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error verificando llegada: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error verificando llegada: {str(e)}")
+
+
+# =====================================================================================
+# REGISTRAR LLEGADA - Guardar las llegadas detectadas
+# =====================================================================================
+
+@router.post("/{pedido_id}/registrar-llegada", response_model=RegistrarLlegadaResponse)
+async def registrar_llegada(
+    pedido_id: str,
+    request: RegistrarLlegadaRequest,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Registra/guarda las llegadas detectadas en el pedido.
+
+    Actualiza el campo cantidad_recibida_bultos de cada producto,
+    sumando la cantidad_llegada al valor existente.
+    """
+    try:
+        cursor = conn.cursor()
+
+        # 1. Verificar que el pedido existe
+        cursor.execute("""
+            SELECT numero_pedido FROM pedidos_sugeridos WHERE id = %s
+        """, [pedido_id])
+
+        pedido_row = cursor.fetchone()
+        if not pedido_row:
+            raise HTTPException(status_code=404, detail=f"Pedido {pedido_id} no encontrado")
+
+        numero_pedido = pedido_row[0]
+
+        # 2. Actualizar cada producto
+        productos_actualizados = 0
+
+        for producto in request.productos:
+            # Sumar la cantidad_llegada a lo que ya existe
+            cursor.execute("""
+                UPDATE pedidos_sugeridos_detalle
+                SET
+                    cantidad_recibida_bultos = COALESCE(cantidad_recibida_bultos, 0) + %s,
+                    cantidad_recibida_unidades = COALESCE(cantidad_recibida_unidades, 0) + %s,
+                    fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE pedido_id = %s AND codigo_producto = %s
+            """, [
+                float(producto.cantidad_llegada),
+                float(producto.cantidad_llegada),  # También actualizamos unidades
+                pedido_id,
+                producto.codigo_producto
+            ])
+
+            if cursor.rowcount > 0:
+                productos_actualizados += 1
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"✅ Llegadas registradas para pedido {numero_pedido}: {productos_actualizados} productos")
+
+        return RegistrarLlegadaResponse(
+            pedido_id=pedido_id,
+            numero_pedido=numero_pedido,
+            productos_actualizados=productos_actualizados,
+            mensaje=f"Llegadas registradas exitosamente para {productos_actualizados} productos"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"❌ Error registrando llegada: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error registrando llegada: {str(e)}")

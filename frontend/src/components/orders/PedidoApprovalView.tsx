@@ -15,8 +15,14 @@ import {
   aprobarPedido,
   rechazarPedido,
   agregarComentarioProducto,
+  verificarLlegada,
+  registrarLlegada,
   ESTADO_LABELS,
-  ESTADO_COLORS
+  ESTADO_COLORS,
+  ESTADO_LLEGADA_COLORS,
+  ESTADO_LLEGADA_LABELS,
+  VerificarLlegadaResponse,
+  ProductoLlegadaVerificacion
 } from '../../services/pedidosService';
 import { formatNumber } from '../../utils/formatNumber';
 
@@ -59,6 +65,12 @@ export default function PedidoApprovalView() {
   const [showRechazarModal, setShowRechazarModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Estado para verificación de llegada
+  const [verificacionData, setVerificacionData] = useState<VerificarLlegadaResponse | null>(null);
+  const [loadingVerificacion, setLoadingVerificacion] = useState(false);
+  const [showVerificacion, setShowVerificacion] = useState(false);
+  const [guardandoLlegada, setGuardandoLlegada] = useState(false);
 
   useEffect(() => {
     if (pedidoId) {
@@ -156,6 +168,60 @@ export default function PedidoApprovalView() {
     }
   };
 
+  // =====================================================================================
+  // VERIFICAR LLEGADA
+  // =====================================================================================
+
+  const handleVerificarLlegada = async () => {
+    try {
+      setLoadingVerificacion(true);
+      const data = await verificarLlegada(pedidoId!);
+      setVerificacionData(data);
+      setShowVerificacion(true);
+    } catch (err: any) {
+      console.error('Error verificando llegada:', err);
+      alert(err.response?.data?.detail || 'Error verificando llegada');
+    } finally {
+      setLoadingVerificacion(false);
+    }
+  };
+
+  const handleGuardarLlegada = async () => {
+    if (!verificacionData) return;
+
+    // Filtrar solo productos con nuevo incremento > 0
+    const productosConIncremento = verificacionData.productos
+      .filter(p => p.nuevo_incremento > 0)
+      .map(p => ({
+        codigo_producto: p.codigo_producto,
+        cantidad_llegada: p.nuevo_incremento
+      }));
+
+    if (productosConIncremento.length === 0) {
+      alert('No hay nuevos incrementos para guardar');
+      return;
+    }
+
+    try {
+      setGuardandoLlegada(true);
+      const result = await registrarLlegada(pedidoId!, productosConIncremento);
+      alert(`✅ ${result.mensaje}`);
+
+      // Recargar verificación para actualizar cantidades
+      await handleVerificarLlegada();
+    } catch (err: any) {
+      console.error('Error guardando llegada:', err);
+      alert(err.response?.data?.detail || 'Error guardando llegada');
+    } finally {
+      setGuardandoLlegada(false);
+    }
+  };
+
+  // Helper para obtener datos de verificación de un producto
+  const getVerificacionProducto = (codigoProducto: string): ProductoLlegadaVerificacion | undefined => {
+    return verificacionData?.productos.find(p => p.codigo_producto === codigoProducto);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -208,10 +274,68 @@ export default function PedidoApprovalView() {
               </p>
             </div>
 
-            <span className={`px-3 py-1 rounded-full text-sm font-medium ${estadoColor}`}>
-              {ESTADO_LABELS[pedido.estado]}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${estadoColor}`}>
+                {ESTADO_LABELS[pedido.estado]}
+              </span>
+              <button
+                onClick={handleVerificarLlegada}
+                disabled={loadingVerificacion}
+                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {loadingVerificacion ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Verificando...
+                  </>
+                ) : (
+                  <>
+                    <span>🔍</span>
+                    Verificar Llegada
+                  </>
+                )}
+              </button>
+            </div>
           </div>
+
+          {/* Resumen de verificación */}
+          {showVerificacion && verificacionData && (
+            <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-medium text-blue-900">Verificación de Llegada</h4>
+                  <p className="text-sm text-blue-700 mt-1">
+                    Cumplimiento global: <span className="font-bold">{Number(verificacionData.porcentaje_cumplimiento_global).toFixed(0)}%</span>
+                    {' | '}
+                    <span className="text-green-700">{verificacionData.productos_completos} completos</span>
+                    {' | '}
+                    <span className="text-yellow-700">{verificacionData.productos_parciales} parciales</span>
+                    {' | '}
+                    <span className="text-red-700">{verificacionData.productos_no_llegaron} no llegaron</span>
+                  </p>
+                </div>
+                {verificacionData.hay_nuevos_incrementos && (
+                  <button
+                    onClick={handleGuardarLlegada}
+                    disabled={guardandoLlegada}
+                    className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {guardandoLlegada ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        <span>💾</span>
+                        Guardar Llegada
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="mt-4 grid grid-cols-3 gap-4 pt-4 border-t">
             <div>
@@ -260,6 +384,16 @@ export default function PedidoApprovalView() {
                 <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                   Stock
                 </th>
+                {showVerificacion && (
+                  <>
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                      Llegada
+                    </th>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      Estado
+                    </th>
+                  </>
+                )}
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   Comentario (Opcional)
                 </th>
@@ -286,6 +420,46 @@ export default function PedidoApprovalView() {
                   <td className="px-3 py-3 text-sm text-right text-gray-600">
                     {formatNumber(producto.stock_tienda)}
                   </td>
+                  {showVerificacion && (
+                    <>
+                      <td className="px-3 py-3 text-sm text-right">
+                        {(() => {
+                          const verif = getVerificacionProducto(producto.codigo_producto);
+                          if (!verif) return '-';
+                          return (
+                            <div>
+                              {verif.nuevo_incremento > 0 && (
+                                <span className="text-green-600 font-semibold">
+                                  +{formatNumber(verif.nuevo_incremento)}
+                                </span>
+                              )}
+                              {verif.cantidad_ya_guardada > 0 && (
+                                <span className="text-gray-500 text-xs block">
+                                  (Total: {formatNumber(verif.total_llegadas_detectadas)})
+                                </span>
+                              )}
+                              {verif.nuevo_incremento === 0 && verif.cantidad_ya_guardada === 0 && (
+                                <span className="text-gray-400">0</span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        {(() => {
+                          const verif = getVerificacionProducto(producto.codigo_producto);
+                          if (!verif) return '-';
+                          const colorClass = ESTADO_LLEGADA_COLORS[verif.estado_llegada] || 'bg-gray-100 text-gray-600';
+                          const label = ESTADO_LLEGADA_LABELS[verif.estado_llegada] || verif.estado_llegada;
+                          return (
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${colorClass}`}>
+                              {label}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                    </>
+                  )}
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-2">
                       <input

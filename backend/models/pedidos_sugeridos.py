@@ -730,3 +730,97 @@ class PedidoExportExcel(BaseModel):
                 ]
             }
         }
+
+
+# =====================================================================================
+# MODELOS PARA VERIFICACIÓN DE LLEGADA
+# =====================================================================================
+
+class EstadoLlegada:
+    """Estados posibles de llegada de un producto"""
+    COMPLETO = "completo"      # >= 95% llegó
+    PARCIAL = "parcial"        # 1-94% llegó
+    NO_LLEGO = "no_llego"      # 0% o sin incremento detectado
+    SIN_DATOS = "sin_datos"    # No hay snapshots en el período
+
+
+class ProductoLlegadaVerificacion(BaseModel):
+    """Resultado de verificación de llegada para un producto"""
+    codigo_producto: str
+    descripcion_producto: str
+
+    # Cantidades del pedido
+    cantidad_pedida_bultos: Decimal
+    cantidad_pedida_unidades: Decimal
+
+    # Llegadas detectadas
+    total_llegadas_detectadas: Decimal = 0  # Suma de todos los incrementos positivos
+    cantidad_ya_guardada: Decimal = 0       # Lo que ya estaba en cantidad_recibida_bultos
+    nuevo_incremento: Decimal = 0           # total_llegadas - ya_guardada
+
+    # Porcentaje y estado
+    porcentaje_llegada: Decimal = 0
+    estado_llegada: str = EstadoLlegada.SIN_DATOS
+
+    # Metadata
+    tiene_datos: bool = False
+    mensaje: Optional[str] = None
+
+    # Detalle de snapshots (opcional, para debug)
+    snapshot_inicial: Optional[Decimal] = None
+    snapshot_final: Optional[Decimal] = None
+    fecha_primer_incremento: Optional[datetime] = None
+
+
+class VerificarLlegadaResponse(BaseModel):
+    """Response completo de verificación de llegada"""
+    pedido_id: str
+    numero_pedido: str
+    tienda_destino_id: str
+    tienda_destino_nombre: str
+    fecha_pedido: date
+    fecha_verificacion: datetime
+
+    # Productos con su verificación
+    productos: List[ProductoLlegadaVerificacion]
+
+    # Resumen
+    total_productos: int
+    productos_completos: int = 0
+    productos_parciales: int = 0
+    productos_no_llegaron: int = 0
+    productos_sin_datos: int = 0
+
+    # Porcentaje global
+    porcentaje_cumplimiento_global: Decimal = 0
+
+    # Flags
+    tiene_datos_suficientes: bool = True
+    hay_nuevos_incrementos: bool = False  # True si hay algo nuevo para guardar
+
+    mensaje: str = "Verificación completada"
+
+
+class RegistrarLlegadaProducto(BaseModel):
+    """Un producto para registrar su llegada"""
+    codigo_producto: str
+    cantidad_llegada: Decimal  # Lo que se va a sumar a cantidad_recibida_bultos
+
+
+class RegistrarLlegadaRequest(BaseModel):
+    """Request para registrar/guardar llegadas detectadas"""
+    productos: List[RegistrarLlegadaProducto]
+
+    @validator('productos')
+    def validate_productos(cls, v):
+        if not v:
+            raise ValueError('Debe incluir al menos un producto')
+        return v
+
+
+class RegistrarLlegadaResponse(BaseModel):
+    """Response al registrar llegadas"""
+    pedido_id: str
+    numero_pedido: str
+    productos_actualizados: int
+    mensaje: str = "Llegadas registradas exitosamente"
