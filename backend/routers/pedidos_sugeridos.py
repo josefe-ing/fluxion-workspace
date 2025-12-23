@@ -2164,7 +2164,7 @@ async def verificar_llegada(
                 COALESCE(d.cantidad_pedida_unidades, d.total_unidades, 0) as cantidad_pedida_unidades,
                 COALESCE(d.cantidad_recibida_bultos, 0) as cantidad_recibida_bultos,
                 p.id as producto_id,
-                COALESCE(p.unidades_x_bulto, 1) as unidades_x_bulto,
+                COALESCE(p.unidades_por_bulto, 1) as unidades_x_bulto,
                 COALESCE(p.unidad, 'bultos') as unidad,
                 COALESCE(d.clasificacion_abc, 'D') as clasificacion_abc
             FROM pedidos_sugeridos_detalle d
