@@ -207,7 +207,7 @@ export const ESTADO_LLEGADA_LABELS: Record<string, string> = {
   [ESTADO_LLEGADA.COMPLETO]: 'Completo',
   [ESTADO_LLEGADA.PARCIAL]: 'Parcial',
   [ESTADO_LLEGADA.NO_LLEGO]: 'No llegó',
-  [ESTADO_LLEGADA.SIN_DATOS]: 'Sin datos'
+  [ESTADO_LLEGADA.SIN_DATOS]: 'Sin histórico'  // Ya no se usa, se trata como "no_llego"
 };
 
 /**

@@ -2183,7 +2183,6 @@ async def verificar_llegada(
         productos_completos = 0
         productos_parciales = 0
         productos_no_llegaron = 0
-        productos_sin_datos = 0
         hay_nuevos_incrementos = False
 
         # Tolerancia del 3% para considerar llegada "completa"
@@ -2252,13 +2251,11 @@ async def verificar_llegada(
                 porcentaje = Decimal(0)
 
             # Determinar estado (con tolerancia del 3%)
+            # Si no hay datos de inventario, asumimos inventario cero
+            # Por lo tanto, si no hay incrementos detectados = no llegó
             tiene_datos = num_snapshots > 1 if num_snapshots else False
 
-            if not tiene_datos:
-                estado = EstadoLlegada.SIN_DATOS
-                productos_sin_datos += 1
-                mensaje = "No hay datos de inventario en el período"
-            elif porcentaje >= TOLERANCIA_COMPLETO:
+            if porcentaje >= TOLERANCIA_COMPLETO:
                 estado = EstadoLlegada.COMPLETO
                 productos_completos += 1
                 mensaje = "Llegada completa"
@@ -2267,9 +2264,14 @@ async def verificar_llegada(
                 productos_parciales += 1
                 mensaje = f"Llegada parcial ({porcentaje:.0f}%)"
             else:
+                # Si no hay datos de inventario o porcentaje es 0, es "No llegó"
+                # Asumimos que si no hay histórico, el inventario era cero
                 estado = EstadoLlegada.NO_LLEGO
                 productos_no_llegaron += 1
-                mensaje = "No se detectó llegada"
+                if not tiene_datos:
+                    mensaje = "Sin histórico de inventario (asumido como no llegó)"
+                else:
+                    mensaje = "No se detectó llegada"
 
             if nuevo_incremento > 0:
                 hay_nuevos_incrementos = True
@@ -2296,10 +2298,13 @@ async def verificar_llegada(
 
         cursor.close()
 
-        # Calcular porcentaje global (basado en bultos)
-        total_pedido_bultos = sum(p.cantidad_pedida_bultos for p in productos_verificados)
-        total_llegado_bultos = sum(p.total_llegadas_detectadas for p in productos_verificados)
-        porcentaje_global = (total_llegado_bultos / total_pedido_bultos * 100) if total_pedido_bultos > 0 else Decimal(0)
+        # Calcular porcentaje global = productos completos / total productos
+        # Ya no excluimos "sin_datos" porque ahora se tratan como "no_llego"
+        total_productos = len(productos_verificados)
+        if total_productos > 0:
+            porcentaje_global = Decimal(productos_completos) / Decimal(total_productos) * 100
+        else:
+            porcentaje_global = Decimal(0)
 
         return VerificarLlegadaResponse(
             pedido_id=pedido_id,
@@ -2309,13 +2314,13 @@ async def verificar_llegada(
             fecha_pedido=fecha_pedido,
             fecha_verificacion=datetime.now(),
             productos=productos_verificados,
-            total_productos=len(productos_verificados),
+            total_productos=total_productos,
             productos_completos=productos_completos,
             productos_parciales=productos_parciales,
             productos_no_llegaron=productos_no_llegaron,
-            productos_sin_datos=productos_sin_datos,
-            porcentaje_cumplimiento_global=min(porcentaje_global, Decimal(150)),
-            tiene_datos_suficientes=productos_sin_datos < len(productos_verificados),
+            productos_sin_datos=0,  # Ya no usamos esta categoría
+            porcentaje_cumplimiento_global=porcentaje_global.quantize(Decimal('0.1')),
+            tiene_datos_suficientes=True,  # Siempre tenemos datos (asumimos 0 si no hay histórico)
             hay_nuevos_incrementos=hay_nuevos_incrementos,
             mensaje="Verificación completada"
         )

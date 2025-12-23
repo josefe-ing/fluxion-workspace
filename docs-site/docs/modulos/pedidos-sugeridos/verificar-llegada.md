@@ -59,10 +59,11 @@ Cada producto recibe un estado basado en su porcentaje de cumplimiento:
 
 | Estado | Condición | Color |
 |--------|-----------|-------|
-| **Completo** | >= 95% llegó | 🟢 Verde |
-| **Parcial** | 1-94% llegó | 🟡 Amarillo |
+| **Completo** | >= 97% llegó | 🟢 Verde |
+| **Parcial** | 1-96% llegó | 🟡 Amarillo |
 | **No llegó** | 0% o sin incremento | 🔴 Rojo |
-| **Sin datos** | No hay snapshots | ⚪ Gris |
+
+> **Nota**: Si un producto no tiene histórico de inventario, se asume que su inventario inicial era cero. Por lo tanto, si no se detectan incrementos, se considera como "No llegó".
 
 ## Panel de Verificación
 
@@ -94,8 +95,8 @@ Si se verificó y guardó antes, el sistema:
 2. Detecta solo **nuevos** incrementos desde la última verificación
 3. Permite guardar los nuevos incrementos (se acumulan)
 
-### Sin Datos de Inventario
-Si no hay snapshots en el período, el producto mostrará "Sin datos" en gris.
+### Productos Sin Histórico de Inventario
+Si un producto no tiene registros históricos de inventario (snapshots), el sistema asume que su inventario inicial era cero. Si no se detectan incrementos desde la fecha del pedido, se considera como "No llegó".
 
 ### Tiendas con Múltiples Almacenes
 El sistema suma la cantidad de todos los almacenes asociados a la tienda.
