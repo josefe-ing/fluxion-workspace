@@ -775,6 +775,11 @@ class ProductoLlegadaVerificacion(BaseModel):
     tiene_datos: bool = False
     mensaje: Optional[str] = None
 
+    # Stock actual en diferentes ubicaciones
+    stock_tienda: Decimal = 0
+    stock_cedi_caracas: Decimal = 0
+    stock_cedi_verde: Decimal = 0
+
     # Detalle de snapshots (opcional, para debug)
     snapshot_inicial: Optional[Decimal] = None
     snapshot_final: Optional[Decimal] = None

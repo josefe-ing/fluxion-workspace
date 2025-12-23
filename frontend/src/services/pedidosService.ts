@@ -228,6 +228,9 @@ export interface ProductoLlegadaVerificacion {
   estado_llegada: string;
   tiene_datos: boolean;
   mensaje?: string;
+  stock_tienda: number;
+  stock_cedi_caracas: number;
+  stock_cedi_verde: number;
   snapshot_inicial?: number;
   snapshot_final?: number;
   fecha_primer_incremento?: string;

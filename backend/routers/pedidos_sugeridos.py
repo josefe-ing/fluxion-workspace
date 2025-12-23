@@ -2155,9 +2155,10 @@ async def verificar_llegada(
 
         _, numero_pedido, fecha_pedido, tienda_destino_id, tienda_destino_nombre = pedido_row
 
-        # 2. Obtener productos del pedido con sus cantidades, factor de conversión y clasificación ABC
+        # 2. Obtener productos del pedido con sus cantidades, factor de conversión, clasificación ABC y stocks
         # La clasificación ABC viene de productos_abc_tienda (específica por tienda)
-        # Para la unidad usamos 'bultos' como estándar
+        # El factor de conversión (unidades_por_bulto) viene de la tabla productos
+        # Los stocks vienen de inventario_actual para tienda, cedi_caracas y cedi_verde
         cursor.execute("""
             SELECT
                 d.codigo_producto,
@@ -2166,15 +2167,21 @@ async def verificar_llegada(
                 COALESCE(d.cantidad_pedida_unidades, d.total_unidades, 0) as cantidad_pedida_unidades,
                 COALESCE(d.cantidad_recibida_bultos, 0) as cantidad_recibida_bultos,
                 p.id as producto_id,
-                COALESCE(d.cantidad_bultos, 1) as unidades_x_bulto,
+                COALESCE(p.unidades_por_bulto, 1) as unidades_x_bulto,
                 'bultos' as unidad,
-                COALESCE(abc.clase_abc, 'D') as clasificacion_abc
+                COALESCE(abc.clase_abc, 'D') as clasificacion_abc,
+                COALESCE(inv_tienda.cantidad, 0) as stock_tienda,
+                COALESCE(inv_caracas.cantidad, 0) as stock_cedi_caracas,
+                COALESCE(inv_verde.cantidad, 0) as stock_cedi_verde
             FROM pedidos_sugeridos_detalle d
             LEFT JOIN productos p ON d.codigo_producto = p.codigo
             LEFT JOIN productos_abc_tienda abc ON abc.producto_id = p.id AND abc.ubicacion_id = %s
+            LEFT JOIN inventario_actual inv_tienda ON inv_tienda.producto_id = p.id AND inv_tienda.ubicacion_id = %s
+            LEFT JOIN inventario_actual inv_caracas ON inv_caracas.producto_id = p.id AND inv_caracas.ubicacion_id = 'cedi_caracas'
+            LEFT JOIN inventario_actual inv_verde ON inv_verde.producto_id = p.id AND inv_verde.ubicacion_id = 'cedi_verde'
             WHERE d.pedido_id = %s AND d.incluido = true
             ORDER BY d.linea_numero
-        """, [tienda_destino_id, pedido_id])
+        """, [tienda_destino_id, tienda_destino_id, pedido_id])
 
         productos_pedido = cursor.fetchall()
 
@@ -2192,10 +2199,15 @@ async def verificar_llegada(
         TOLERANCIA_COMPLETO = Decimal('97')
 
         for prod_row in productos_pedido:
-            codigo_producto, descripcion, cant_pedida_bultos, cant_pedida_unidades, cant_ya_guardada, producto_id, unidades_x_bulto, unidad, clasificacion_abc = prod_row
+            (codigo_producto, descripcion, cant_pedida_bultos, cant_pedida_unidades,
+             cant_ya_guardada, producto_id, unidades_x_bulto, unidad, clasificacion_abc,
+             stock_tienda, stock_cedi_caracas, stock_cedi_verde) = prod_row
             unidades_x_bulto = Decimal(str(unidades_x_bulto or 1))
             unidad = unidad or 'bultos'
             clasificacion_abc = clasificacion_abc or 'D'
+            stock_tienda = Decimal(str(stock_tienda or 0))
+            stock_cedi_caracas = Decimal(str(stock_cedi_caracas or 0))
+            stock_cedi_verde = Decimal(str(stock_cedi_verde or 0))
 
             # Query para detectar incrementos desde fecha_pedido
             # Suma todos los incrementos positivos entre snapshots consecutivos
@@ -2294,6 +2306,9 @@ async def verificar_llegada(
                 estado_llegada=estado,
                 tiene_datos=tiene_datos,
                 mensaje=mensaje,
+                stock_tienda=stock_tienda,
+                stock_cedi_caracas=stock_cedi_caracas,
+                stock_cedi_verde=stock_cedi_verde,
                 snapshot_inicial=Decimal(str(snapshot_inicial)) if snapshot_inicial else None,
                 snapshot_final=Decimal(str(snapshot_final)) if snapshot_final else None,
                 fecha_primer_incremento=fecha_primer_incremento

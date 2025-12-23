@@ -25,6 +25,7 @@ import {
   ProductoLlegadaVerificacion
 } from '../../services/pedidosService';
 import { formatNumber } from '../../utils/formatNumber';
+import ProductHistoryModal from '../dashboard/ProductHistoryModal';
 
 interface Producto {
   codigo_producto: string;
@@ -46,11 +47,20 @@ interface PedidoDetalle {
   estado: string;
   cedi_origen_nombre: string;
   tienda_destino_nombre: string;
+  tienda_destino_id: string;
   total_productos: number;
   total_bultos: number;
   productos: Producto[];
   tiene_devoluciones?: boolean;
   total_productos_devolucion?: number;
+}
+
+// Interfaz para el modal de historial
+interface HistoryModalState {
+  isOpen: boolean;
+  codigoProducto: string;
+  descripcionProducto: string;
+  ubicacionId: string;
 }
 
 export default function PedidoApprovalView() {
@@ -73,6 +83,14 @@ export default function PedidoApprovalView() {
   const [guardandoLlegada, setGuardandoLlegada] = useState(false);
   const [filtroEstadoLlegada, setFiltroEstadoLlegada] = useState<string>('todos');
   const [filtroABC, setFiltroABC] = useState<string>('todos');
+
+  // Estado para modal de historial de inventario
+  const [historyModal, setHistoryModal] = useState<HistoryModalState>({
+    isOpen: false,
+    codigoProducto: '',
+    descripcionProducto: '',
+    ubicacionId: ''
+  });
 
   useEffect(() => {
     if (pedidoId) {
@@ -139,7 +157,7 @@ export default function PedidoApprovalView() {
       // Aprobar el pedido
       const result = await aprobarPedido(pedidoId!, comentarioGeneral);
 
-      alert(`✅ ${result.message}`);
+      alert(`${result.message}`);
       navigate('/pedidos-sugeridos');
     } catch (err: any) {
       console.error('Error aprobando pedido:', err);
@@ -159,7 +177,7 @@ export default function PedidoApprovalView() {
       setSubmitting(true);
       const result = await rechazarPedido(pedidoId!, motivoRechazo);
 
-      alert(`❌ ${result.message}`);
+      alert(`${result.message}`);
       navigate('/pedidos-sugeridos');
     } catch (err: any) {
       console.error('Error rechazando pedido:', err);
@@ -207,7 +225,7 @@ export default function PedidoApprovalView() {
     try {
       setGuardandoLlegada(true);
       const result = await registrarLlegada(pedidoId!, productosConIncremento);
-      alert(`✅ ${result.mensaje}`);
+      alert(`${result.mensaje}`);
 
       // Recargar verificación para actualizar cantidades
       await handleVerificarLlegada();
@@ -253,12 +271,22 @@ export default function PedidoApprovalView() {
     }, { A: 0, B: 0, C: 0, D: 0 } as Record<string, number>);
   };
 
+  // Abrir modal de historial de inventario
+  const openHistoryModal = (codigoProducto: string, descripcion: string, ubicacionId: string) => {
+    setHistoryModal({
+      isOpen: true,
+      codigoProducto,
+      descripcionProducto: descripcion,
+      ubicacionId
+    });
+  };
+
   // Exportar a Excel
   const handleExportarExcel = () => {
     if (!verificacionData) return;
 
     // Crear contenido CSV
-    const headers = ['Código', 'Descripción', 'ABC', 'Und/Bulto', 'Pedido', 'Unidad', 'Llegada', 'Diferencia', 'Estado'];
+    const headers = ['Código', 'Descripción', 'ABC', 'Und/Bulto', 'Pedido', 'Stock Tienda', 'Stock CEDI CCS', 'Stock CEDI VLC', 'Llegada', 'Diferencia', 'Estado'];
     const rows = verificacionData.productos.map(p => {
       const diferencia = Number(p.cantidad_pedida_bultos) - Number(p.total_llegadas_detectadas);
       return [
@@ -267,7 +295,9 @@ export default function PedidoApprovalView() {
         p.clasificacion_abc,
         p.unidades_x_bulto,
         p.cantidad_pedida_bultos,
-        p.unidad,
+        p.stock_tienda,
+        p.stock_cedi_caracas,
+        p.stock_cedi_verde,
         p.total_llegadas_detectadas,
         diferencia,
         ESTADO_LLEGADA_LABELS[p.estado_llegada] || p.estado_llegada
@@ -285,6 +315,17 @@ export default function PedidoApprovalView() {
     link.href = URL.createObjectURL(blob);
     link.download = `verificacion_${pedido?.numero_pedido || 'pedido'}_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
+  };
+
+  // Helper para formatear cantidad con bultos y unidades
+  const formatCantidadBultos = (bultos: number, unidadesPorBulto: number) => {
+    const unidades = bultos * unidadesPorBulto;
+    return (
+      <div className="text-right">
+        <span className="font-semibold">{formatNumber(bultos)}</span>
+        <span className="text-xs text-gray-500 block">{formatNumber(unidades)}u</span>
+      </div>
+    );
   };
 
   if (loading) {
@@ -305,7 +346,7 @@ export default function PedidoApprovalView() {
             onClick={() => navigate('/pedidos-sugeridos')}
             className="mt-4 text-red-600 hover:text-red-800 font-medium"
           >
-            ← Volver a Pedidos
+            Volver a Pedidos
           </button>
         </div>
       </div>
@@ -322,7 +363,7 @@ export default function PedidoApprovalView() {
           onClick={() => navigate('/pedidos-sugeridos')}
           className="text-gray-600 hover:text-gray-900 mb-4 inline-flex items-center"
         >
-          ← Volver a Pedidos
+          Volver a Pedidos
         </button>
 
         <div className="bg-white rounded-lg shadow-sm p-6">
@@ -332,7 +373,7 @@ export default function PedidoApprovalView() {
                 Pedido {pedido.numero_pedido}
               </h1>
               <p className="text-gray-600 mt-1">
-                {pedido.cedi_origen_nombre} → {pedido.tienda_destino_nombre}
+                {pedido.cedi_origen_nombre} - {pedido.tienda_destino_nombre}
               </p>
               <p className="text-sm text-gray-500 mt-1">
                 Fecha: {new Date(pedido.fecha_pedido).toLocaleDateString()}
@@ -355,7 +396,6 @@ export default function PedidoApprovalView() {
                   </>
                 ) : (
                   <>
-                    <span>🔍</span>
                     Verificar Llegada
                   </>
                 )}
@@ -393,7 +433,6 @@ export default function PedidoApprovalView() {
                         </>
                       ) : (
                         <>
-                          <span>💾</span>
                           Guardar Llegada
                         </>
                       )}
@@ -403,13 +442,12 @@ export default function PedidoApprovalView() {
                     onClick={handleExportarExcel}
                     className="px-4 py-2 bg-gray-600 text-white text-sm rounded-lg hover:bg-gray-700 flex items-center gap-2"
                   >
-                    <span>📥</span>
                     Exportar Excel
                   </button>
                 </div>
               </div>
               {/* Filtro por estado */}
-              <div className="flex items-center gap-2 pt-3 border-t border-blue-200">
+              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-blue-200">
                 <span className="text-sm text-blue-800">Filtrar:</span>
                 <button
                   onClick={() => setFiltroEstadoLlegada('todos')}
@@ -497,7 +535,7 @@ export default function PedidoApprovalView() {
       {/* Productos a Recibir */}
       <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          📦 Productos a Recibir ({pedido.productos?.length || 0})
+          Productos a Recibir ({pedido.productos?.length || 0})
         </h2>
 
         <div className="overflow-x-auto">
@@ -510,25 +548,32 @@ export default function PedidoApprovalView() {
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   Descripción
                 </th>
+                {showVerificacion && (
+                  <>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      ABC
+                    </th>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      U/B
+                    </th>
+                  </>
+                )}
                 <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                   Sugerido
                 </th>
                 <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                   A Pedir
                 </th>
-                <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                  Prom 5D
-                </th>
-                <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                  Stock
-                </th>
                 {showVerificacion && (
                   <>
-                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">
-                      ABC
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                      Stock Tienda
                     </th>
                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                      Und/Bulto
+                      CEDI CCS
+                    </th>
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                      CEDI VLC
                     </th>
                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                       Llegada
@@ -541,137 +586,176 @@ export default function PedidoApprovalView() {
                     </th>
                   </>
                 )}
+                {!showVerificacion && (
+                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                    Stock
+                  </th>
+                )}
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Comentario (Opcional)
+                  Comentario
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {getProductosFiltrados().map((producto) => (
-                <tr key={producto.codigo_producto} className="hover:bg-gray-50">
-                  <td className="px-3 py-3 text-sm font-mono text-gray-900">
-                    {producto.codigo_producto}
-                  </td>
-                  <td className="px-3 py-3 text-sm text-gray-900">
-                    {producto.descripcion_producto}
-                  </td>
-                  <td className="px-3 py-3 text-sm text-right text-gray-600">
-                    {producto.cantidad_sugerida_bultos} bultos
-                  </td>
-                  <td className="px-3 py-3 text-sm text-right font-semibold text-gray-900">
-                    {producto.cantidad_pedida_bultos} bultos
-                  </td>
-                  <td className="px-3 py-3 text-sm text-right text-gray-600">
-                    {formatNumber(producto.prom_ventas_5dias_unid)}
-                  </td>
-                  <td className="px-3 py-3 text-sm text-right text-gray-600">
-                    {formatNumber(producto.stock_tienda)}
-                  </td>
-                  {showVerificacion && (
-                    <>
-                      {/* Columna ABC */}
-                      <td className="px-3 py-3 text-center">
-                        {(() => {
-                          const verif = getVerificacionProducto(producto.codigo_producto);
-                          if (!verif) return '-';
-                          const abcColors: Record<string, string> = {
-                            'A': 'bg-green-100 text-green-800',
-                            'B': 'bg-blue-100 text-blue-800',
-                            'C': 'bg-yellow-100 text-yellow-800',
-                            'D': 'bg-gray-100 text-gray-600'
-                          };
-                          return (
-                            <span className={`px-2 py-1 text-xs font-bold rounded ${abcColors[verif.clasificacion_abc] || 'bg-gray-100'}`}>
+              {getProductosFiltrados().map((producto) => {
+                const verif = getVerificacionProducto(producto.codigo_producto);
+                const unidadesPorBulto = verif?.unidades_x_bulto || producto.cantidad_bultos || 1;
+
+                return (
+                  <tr key={producto.codigo_producto} className="hover:bg-gray-50">
+                    <td className="px-3 py-3 text-sm font-mono text-gray-900">
+                      {producto.codigo_producto}
+                    </td>
+                    <td className="px-3 py-3 text-sm text-gray-900 max-w-xs truncate">
+                      {producto.descripcion_producto}
+                    </td>
+                    {showVerificacion && (
+                      <>
+                        {/* Columna ABC */}
+                        <td className="px-3 py-3 text-center">
+                          {verif ? (
+                            <span className={`px-2 py-1 text-xs font-bold rounded ${
+                              verif.clasificacion_abc === 'A' ? 'bg-green-100 text-green-800' :
+                              verif.clasificacion_abc === 'B' ? 'bg-blue-100 text-blue-800' :
+                              verif.clasificacion_abc === 'C' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>
                               {verif.clasificacion_abc}
                             </span>
-                          );
-                        })()}
-                      </td>
-                      {/* Columna Und/Bulto */}
-                      <td className="px-3 py-3 text-sm text-right text-gray-600">
-                        {(() => {
-                          const verif = getVerificacionProducto(producto.codigo_producto);
-                          return verif ? verif.unidades_x_bulto : '-';
-                        })()}
-                      </td>
-                      {/* Columna Llegada */}
-                      <td className="px-3 py-3 text-sm text-right">
-                        {(() => {
-                          const verif = getVerificacionProducto(producto.codigo_producto);
-                          if (!verif) return '-';
-                          return (
+                          ) : '-'}
+                        </td>
+                        {/* Columna Und/Bulto */}
+                        <td className="px-3 py-3 text-sm text-center text-gray-600">
+                          {unidadesPorBulto}
+                        </td>
+                      </>
+                    )}
+                    {/* Columna Sugerido */}
+                    <td className="px-3 py-3 text-sm text-gray-600">
+                      {formatCantidadBultos(producto.cantidad_sugerida_bultos, unidadesPorBulto)}
+                    </td>
+                    {/* Columna A Pedir */}
+                    <td className="px-3 py-3 text-sm">
+                      <div className="text-right">
+                        <span className="font-bold text-gray-900">{formatNumber(producto.cantidad_pedida_bultos)}</span>
+                        <span className="text-xs text-gray-500 block">{formatNumber(producto.cantidad_pedida_bultos * unidadesPorBulto)}u</span>
+                      </div>
+                    </td>
+                    {showVerificacion && verif ? (
+                      <>
+                        {/* Stock Tienda - clickeable */}
+                        <td className="px-3 py-3 text-sm text-right">
+                          <button
+                            onClick={() => openHistoryModal(producto.codigo_producto, producto.descripcion_producto, verificacionData?.tienda_destino_id || '')}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            title="Ver historial de inventario"
+                          >
                             <div>
-                              {Number(verif.nuevo_incremento) > 0 && (
-                                <span className="text-green-600 font-semibold">
-                                  +{formatNumber(verif.nuevo_incremento)} {verif.unidad}
-                                </span>
-                              )}
-                              {Number(verif.cantidad_ya_guardada) > 0 && (
-                                <span className="text-gray-500 text-xs block">
-                                  (Total: {formatNumber(verif.total_llegadas_detectadas)} {verif.unidad})
-                                </span>
-                              )}
-                              {Number(verif.nuevo_incremento) === 0 && Number(verif.cantidad_ya_guardada) === 0 && (
-                                <span className="text-gray-400">0 {verif.unidad}</span>
-                              )}
+                              <span className="font-semibold">{formatNumber(verif.stock_tienda / unidadesPorBulto)}</span>
+                              <span className="text-xs text-gray-500 block">{formatNumber(verif.stock_tienda)}u</span>
                             </div>
-                          );
-                        })()}
-                      </td>
-                      {/* Columna Diferencia (Pedido - Llegada) */}
-                      <td className="px-3 py-3 text-sm text-right">
-                        {(() => {
-                          const verif = getVerificacionProducto(producto.codigo_producto);
-                          if (!verif) return '-';
-                          const diferencia = Number(verif.cantidad_pedida_bultos) - Number(verif.total_llegadas_detectadas);
-                          if (diferencia === 0) {
-                            return <span className="text-green-600 font-semibold">0</span>;
-                          } else if (diferencia > 0) {
-                            // Faltante (pedido más de lo que llegó)
-                            return <span className="text-red-600 font-semibold">-{formatNumber(diferencia)}</span>;
-                          } else {
-                            // Llegó más de lo pedido
-                            return <span className="text-blue-600 font-semibold">+{formatNumber(Math.abs(diferencia))}</span>;
-                          }
-                        })()}
-                      </td>
-                      {/* Columna Estado */}
-                      <td className="px-3 py-3 text-center">
-                        {(() => {
-                          const verif = getVerificacionProducto(producto.codigo_producto);
-                          if (!verif) return '-';
-                          const colorClass = ESTADO_LLEGADA_COLORS[verif.estado_llegada] || 'bg-gray-100 text-gray-600';
-                          const label = ESTADO_LLEGADA_LABELS[verif.estado_llegada] || verif.estado_llegada;
-                          return (
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${colorClass}`}>
-                              {label}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                    </>
-                  )}
-                  <td className="px-3 py-3">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={comentarios[producto.codigo_producto] || ''}
-                        onChange={(e) => handleComentarioChange(producto.codigo_producto, e.target.value)}
-                        placeholder="Agregar comentario..."
-                        className="flex-1 text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                      />
-                      {comentarios[producto.codigo_producto] !== producto.comentario_gerente && (
-                        <button
-                          onClick={() => handleGuardarComentario(producto.codigo_producto)}
-                          className="text-xs px-2 py-1 bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100"
-                        >
-                          Guardar
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                          </button>
+                        </td>
+                        {/* Stock CEDI Caracas - clickeable */}
+                        <td className="px-3 py-3 text-sm text-right">
+                          <button
+                            onClick={() => openHistoryModal(producto.codigo_producto, producto.descripcion_producto, 'cedi_caracas')}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            title="Ver historial CEDI Caracas"
+                          >
+                            <div>
+                              <span className="font-semibold">{formatNumber(verif.stock_cedi_caracas / unidadesPorBulto)}</span>
+                              <span className="text-xs text-gray-500 block">{formatNumber(verif.stock_cedi_caracas)}u</span>
+                            </div>
+                          </button>
+                        </td>
+                        {/* Stock CEDI Verde - clickeable */}
+                        <td className="px-3 py-3 text-sm text-right">
+                          <button
+                            onClick={() => openHistoryModal(producto.codigo_producto, producto.descripcion_producto, 'cedi_verde')}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            title="Ver historial CEDI Valencia"
+                          >
+                            <div>
+                              <span className="font-semibold">{formatNumber(verif.stock_cedi_verde / unidadesPorBulto)}</span>
+                              <span className="text-xs text-gray-500 block">{formatNumber(verif.stock_cedi_verde)}u</span>
+                            </div>
+                          </button>
+                        </td>
+                        {/* Columna Llegada */}
+                        <td className="px-3 py-3 text-sm text-right">
+                          <div>
+                            {Number(verif.nuevo_incremento) > 0 && (
+                              <span className="text-green-600 font-semibold">
+                                +{formatNumber(verif.nuevo_incremento)}
+                              </span>
+                            )}
+                            {Number(verif.cantidad_ya_guardada) > 0 && (
+                              <span className="text-gray-500 text-xs block">
+                                (Total: {formatNumber(verif.total_llegadas_detectadas)})
+                              </span>
+                            )}
+                            {Number(verif.nuevo_incremento) === 0 && Number(verif.cantidad_ya_guardada) === 0 && (
+                              <span className="text-gray-400">{formatNumber(verif.total_llegadas_detectadas)}</span>
+                            )}
+                            <span className="text-xs text-gray-500 block">{formatNumber(verif.total_llegadas_detectadas * unidadesPorBulto)}u</span>
+                          </div>
+                        </td>
+                        {/* Columna Diferencia (Pedido - Llegada) - Si no llegó, mostrar 0 */}
+                        <td className="px-3 py-3 text-sm text-right">
+                          {(() => {
+                            // Si no llegó nada, la diferencia no aplica - mostrar 0
+                            if (verif.estado_llegada === 'no_llego') {
+                              return <span className="text-gray-400">-</span>;
+                            }
+                            const diferencia = Number(verif.cantidad_pedida_bultos) - Number(verif.total_llegadas_detectadas);
+                            if (Math.abs(diferencia) < 0.01) {
+                              return <span className="text-green-600 font-semibold">0</span>;
+                            } else if (diferencia > 0) {
+                              // Faltante (pedido más de lo que llegó)
+                              return <span className="text-red-600 font-semibold">-{formatNumber(diferencia)}</span>;
+                            } else {
+                              // Llegó más de lo pedido
+                              return <span className="text-blue-600 font-semibold">+{formatNumber(Math.abs(diferencia))}</span>;
+                            }
+                          })()}
+                        </td>
+                        {/* Columna Estado */}
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <span className={`px-2 py-1 text-xs font-medium rounded-full whitespace-nowrap ${ESTADO_LLEGADA_COLORS[verif.estado_llegada] || 'bg-gray-100 text-gray-600'}`}>
+                            {ESTADO_LLEGADA_LABELS[verif.estado_llegada] || verif.estado_llegada}
+                          </span>
+                        </td>
+                      </>
+                    ) : (
+                      !showVerificacion && (
+                        <td className="px-3 py-3 text-sm text-right text-gray-600">
+                          {formatNumber(producto.stock_tienda)}
+                        </td>
+                      )
+                    )}
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={comentarios[producto.codigo_producto] || ''}
+                          onChange={(e) => handleComentarioChange(producto.codigo_producto, e.target.value)}
+                          placeholder="Agregar comentario..."
+                          className="flex-1 text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                        {comentarios[producto.codigo_producto] !== producto.comentario_gerente && (
+                          <button
+                            onClick={() => handleGuardarComentario(producto.codigo_producto)}
+                            className="text-xs px-2 py-1 bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100"
+                          >
+                            Guardar
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -680,7 +764,7 @@ export default function PedidoApprovalView() {
       {/* Comentario General */}
       <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-3">
-          💬 Comentario General (Opcional)
+          Comentario General (Opcional)
         </h3>
         <textarea
           value={comentarioGeneral}
@@ -698,7 +782,7 @@ export default function PedidoApprovalView() {
           disabled={submitting}
           className="px-6 py-3 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50"
         >
-          ❌ Rechazar Pedido
+          Rechazar Pedido
         </button>
         <button
           onClick={handleAprobar}
@@ -711,7 +795,7 @@ export default function PedidoApprovalView() {
               Procesando...
             </>
           ) : (
-            <>✅ Aprobar Pedido</>
+            <>Aprobar Pedido</>
           )}
         </button>
       </div>
@@ -751,6 +835,15 @@ export default function PedidoApprovalView() {
           </div>
         </div>
       )}
+
+      {/* Modal de Historial de Inventario */}
+      <ProductHistoryModal
+        isOpen={historyModal.isOpen}
+        onClose={() => setHistoryModal({ ...historyModal, isOpen: false })}
+        codigoProducto={historyModal.codigoProducto}
+        descripcionProducto={historyModal.descripcionProducto}
+        ubicacionId={historyModal.ubicacionId}
+      />
     </div>
   );
 }
