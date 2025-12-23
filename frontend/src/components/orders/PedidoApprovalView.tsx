@@ -72,6 +72,7 @@ export default function PedidoApprovalView() {
   const [showVerificacion, setShowVerificacion] = useState(false);
   const [guardandoLlegada, setGuardandoLlegada] = useState(false);
   const [filtroEstadoLlegada, setFiltroEstadoLlegada] = useState<string>('todos');
+  const [filtroABC, setFiltroABC] = useState<string>('todos');
 
   useEffect(() => {
     if (pedidoId) {
@@ -223,16 +224,33 @@ export default function PedidoApprovalView() {
     return verificacionData?.productos.find(p => p.codigo_producto === codigoProducto);
   };
 
-  // Filtrar productos por estado de llegada
+  // Filtrar productos por estado de llegada y ABC
   const getProductosFiltrados = () => {
     if (!pedido?.productos) return [];
-    if (!showVerificacion || filtroEstadoLlegada === 'todos') {
-      return pedido.productos;
-    }
+    if (!showVerificacion) return pedido.productos;
+
     return pedido.productos.filter(p => {
       const verif = getVerificacionProducto(p.codigo_producto);
-      return verif?.estado_llegada === filtroEstadoLlegada;
+      if (!verif) return true; // Mostrar productos sin verificación
+
+      // Filtro por estado de llegada
+      const pasaFiltroEstado = filtroEstadoLlegada === 'todos' || verif.estado_llegada === filtroEstadoLlegada;
+
+      // Filtro por ABC
+      const pasaFiltroABC = filtroABC === 'todos' || verif.clasificacion_abc === filtroABC;
+
+      return pasaFiltroEstado && pasaFiltroABC;
     });
+  };
+
+  // Calcular conteo de productos por ABC
+  const getConteoABC = () => {
+    if (!verificacionData?.productos) return { A: 0, B: 0, C: 0, D: 0 };
+    return verificacionData.productos.reduce((acc, p) => {
+      const abc = p.clasificacion_abc as 'A' | 'B' | 'C' | 'D';
+      acc[abc] = (acc[abc] || 0) + 1;
+      return acc;
+    }, { A: 0, B: 0, C: 0, D: 0 } as Record<string, number>);
   };
 
   // Exportar a Excel
@@ -240,17 +258,21 @@ export default function PedidoApprovalView() {
     if (!verificacionData) return;
 
     // Crear contenido CSV
-    const headers = ['Código', 'Descripción', 'ABC', 'Und/Bulto', 'Pedido', 'Unidad', 'Llegada', 'Estado'];
-    const rows = verificacionData.productos.map(p => [
-      p.codigo_producto,
-      p.descripcion_producto,
-      p.clasificacion_abc,
-      p.unidades_x_bulto,
-      p.cantidad_pedida_bultos,
-      p.unidad,
-      p.total_llegadas_detectadas,
-      ESTADO_LLEGADA_LABELS[p.estado_llegada] || p.estado_llegada
-    ]);
+    const headers = ['Código', 'Descripción', 'ABC', 'Und/Bulto', 'Pedido', 'Unidad', 'Llegada', 'Diferencia', 'Estado'];
+    const rows = verificacionData.productos.map(p => {
+      const diferencia = Number(p.cantidad_pedida_bultos) - Number(p.total_llegadas_detectadas);
+      return [
+        p.codigo_producto,
+        p.descripcion_producto,
+        p.clasificacion_abc,
+        p.unidades_x_bulto,
+        p.cantidad_pedida_bultos,
+        p.unidad,
+        p.total_llegadas_detectadas,
+        diferencia,
+        ESTADO_LLEGADA_LABELS[p.estado_llegada] || p.estado_llegada
+      ];
+    });
 
     const csvContent = [
       headers.join(','),
@@ -413,6 +435,42 @@ export default function PedidoApprovalView() {
                 >
                   No llegó ({verificacionData.productos_no_llegaron})
                 </button>
+
+                {/* Separador */}
+                <span className="text-gray-300 mx-2">|</span>
+
+                {/* Filtro por ABC */}
+                <span className="text-sm text-blue-800">ABC:</span>
+                <button
+                  onClick={() => setFiltroABC('todos')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroABC === 'todos' ? 'bg-blue-600 text-white' : 'bg-white text-blue-700 border border-blue-300'}`}
+                >
+                  Todos
+                </button>
+                <button
+                  onClick={() => setFiltroABC('A')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroABC === 'A' ? 'bg-green-600 text-white' : 'bg-white text-green-700 border border-green-300'}`}
+                >
+                  A ({getConteoABC().A})
+                </button>
+                <button
+                  onClick={() => setFiltroABC('B')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroABC === 'B' ? 'bg-blue-600 text-white' : 'bg-white text-blue-700 border border-blue-300'}`}
+                >
+                  B ({getConteoABC().B})
+                </button>
+                <button
+                  onClick={() => setFiltroABC('C')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroABC === 'C' ? 'bg-yellow-600 text-white' : 'bg-white text-yellow-700 border border-yellow-300'}`}
+                >
+                  C ({getConteoABC().C})
+                </button>
+                <button
+                  onClick={() => setFiltroABC('D')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroABC === 'D' ? 'bg-gray-600 text-white' : 'bg-white text-gray-600 border border-gray-300'}`}
+                >
+                  D ({getConteoABC().D})
+                </button>
               </div>
             </div>
           )}
@@ -474,6 +532,9 @@ export default function PedidoApprovalView() {
                     </th>
                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                       Llegada
+                    </th>
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                      Diferencia
                     </th>
                     <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">
                       Estado
@@ -555,6 +616,23 @@ export default function PedidoApprovalView() {
                               )}
                             </div>
                           );
+                        })()}
+                      </td>
+                      {/* Columna Diferencia (Pedido - Llegada) */}
+                      <td className="px-3 py-3 text-sm text-right">
+                        {(() => {
+                          const verif = getVerificacionProducto(producto.codigo_producto);
+                          if (!verif) return '-';
+                          const diferencia = Number(verif.cantidad_pedida_bultos) - Number(verif.total_llegadas_detectadas);
+                          if (diferencia === 0) {
+                            return <span className="text-green-600 font-semibold">0</span>;
+                          } else if (diferencia > 0) {
+                            // Faltante (pedido más de lo que llegó)
+                            return <span className="text-red-600 font-semibold">-{formatNumber(diferencia)}</span>;
+                          } else {
+                            // Llegó más de lo pedido
+                            return <span className="text-blue-600 font-semibold">+{formatNumber(Math.abs(diferencia))}</span>;
+                          }
                         })()}
                       </td>
                       {/* Columna Estado */}

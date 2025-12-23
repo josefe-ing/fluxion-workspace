@@ -2155,10 +2155,9 @@ async def verificar_llegada(
 
         _, numero_pedido, fecha_pedido, tienda_destino_id, tienda_destino_nombre = pedido_row
 
-        # 2. Obtener productos del pedido con sus cantidades, factor de conversión, unidad y clasificación
-        # Nota: La tabla productos no tiene 'unidades_por_bulto' ni 'unidad',
-        # usamos d.cantidad_bultos de pedidos_sugeridos_detalle como factor
-        # y d.presentacion o 'bultos' por defecto para la unidad
+        # 2. Obtener productos del pedido con sus cantidades, factor de conversión y clasificación ABC
+        # La clasificación ABC viene de productos_abc_tienda (específica por tienda)
+        # Para la unidad usamos 'bultos' como estándar
         cursor.execute("""
             SELECT
                 d.codigo_producto,
@@ -2168,13 +2167,14 @@ async def verificar_llegada(
                 COALESCE(d.cantidad_recibida_bultos, 0) as cantidad_recibida_bultos,
                 p.id as producto_id,
                 COALESCE(d.cantidad_bultos, 1) as unidades_x_bulto,
-                COALESCE(d.presentacion, 'bultos') as unidad,
-                COALESCE(d.clasificacion_abc, 'D') as clasificacion_abc
+                'bultos' as unidad,
+                COALESCE(abc.clase_abc, 'D') as clasificacion_abc
             FROM pedidos_sugeridos_detalle d
             LEFT JOIN productos p ON d.codigo_producto = p.codigo
+            LEFT JOIN productos_abc_tienda abc ON abc.producto_id = p.id AND abc.ubicacion_id = %s
             WHERE d.pedido_id = %s AND d.incluido = true
             ORDER BY d.linea_numero
-        """, [pedido_id])
+        """, [tienda_destino_id, pedido_id])
 
         productos_pedido = cursor.fetchall()
 
