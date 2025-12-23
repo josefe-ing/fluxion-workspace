@@ -83,6 +83,8 @@ export default function PedidoApprovalView() {
   const [guardandoLlegada, setGuardandoLlegada] = useState(false);
   const [filtroEstadoLlegada, setFiltroEstadoLlegada] = useState<string>('todos');
   const [filtroABC, setFiltroABC] = useState<string>('todos');
+  const [filtroCediCCS, setFiltroCediCCS] = useState<string>('todos'); // todos, hay, no_hay, menor_igual_pedido
+  const [filtroCediVLC, setFiltroCediVLC] = useState<string>('todos'); // todos, hay, no_hay
 
   // Estado para modal de historial de inventario
   const [historyModal, setHistoryModal] = useState<HistoryModalState>({
@@ -242,7 +244,7 @@ export default function PedidoApprovalView() {
     return verificacionData?.productos.find(p => p.codigo_producto === codigoProducto);
   };
 
-  // Filtrar productos por estado de llegada y ABC
+  // Filtrar productos por estado de llegada, ABC y stock CEDIs
   const getProductosFiltrados = () => {
     if (!pedido?.productos) return [];
     if (!showVerificacion) return pedido.productos;
@@ -257,7 +259,27 @@ export default function PedidoApprovalView() {
       // Filtro por ABC
       const pasaFiltroABC = filtroABC === 'todos' || verif.clasificacion_abc === filtroABC;
 
-      return pasaFiltroEstado && pasaFiltroABC;
+      // Filtro por stock CEDI CCS
+      let pasaFiltroCediCCS = true;
+      if (filtroCediCCS === 'hay') {
+        pasaFiltroCediCCS = verif.stock_cedi_caracas > 0;
+      } else if (filtroCediCCS === 'no_hay') {
+        pasaFiltroCediCCS = verif.stock_cedi_caracas <= 0;
+      } else if (filtroCediCCS === 'menor_igual_pedido') {
+        const unidadesPorBulto = verif.unidades_x_bulto || 1;
+        const pedidoUnidades = verif.cantidad_pedida_bultos * unidadesPorBulto;
+        pasaFiltroCediCCS = verif.stock_cedi_caracas <= pedidoUnidades;
+      }
+
+      // Filtro por stock CEDI VLC
+      let pasaFiltroCediVLC = true;
+      if (filtroCediVLC === 'hay') {
+        pasaFiltroCediVLC = verif.stock_cedi_verde > 0;
+      } else if (filtroCediVLC === 'no_hay') {
+        pasaFiltroCediVLC = verif.stock_cedi_verde <= 0;
+      }
+
+      return pasaFiltroEstado && pasaFiltroABC && pasaFiltroCediCCS && pasaFiltroCediVLC;
     });
   };
 
@@ -269,6 +291,28 @@ export default function PedidoApprovalView() {
       acc[abc] = (acc[abc] || 0) + 1;
       return acc;
     }, { A: 0, B: 0, C: 0, D: 0 } as Record<string, number>);
+  };
+
+  // Calcular conteos para filtros CEDI
+  const getConteoCediCCS = () => {
+    if (!verificacionData?.productos) return { hay: 0, no_hay: 0, menor_igual: 0 };
+    return verificacionData.productos.reduce((acc, p) => {
+      const unidadesPorBulto = p.unidades_x_bulto || 1;
+      const pedidoUnidades = p.cantidad_pedida_bultos * unidadesPorBulto;
+      if (p.stock_cedi_caracas > 0) acc.hay++;
+      if (p.stock_cedi_caracas <= 0) acc.no_hay++;
+      if (p.stock_cedi_caracas <= pedidoUnidades) acc.menor_igual++;
+      return acc;
+    }, { hay: 0, no_hay: 0, menor_igual: 0 });
+  };
+
+  const getConteoCediVLC = () => {
+    if (!verificacionData?.productos) return { hay: 0, no_hay: 0 };
+    return verificacionData.productos.reduce((acc, p) => {
+      if (p.stock_cedi_verde > 0) acc.hay++;
+      if (p.stock_cedi_verde <= 0) acc.no_hay++;
+      return acc;
+    }, { hay: 0, no_hay: 0 });
   };
 
   // Abrir modal de historial de inventario
@@ -510,6 +554,60 @@ export default function PedidoApprovalView() {
                   D ({getConteoABC().D})
                 </button>
               </div>
+
+              {/* Fila 2: Filtros de stock CEDI */}
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                {/* Filtro por stock CEDI CCS */}
+                <span className="text-sm text-blue-800">CEDI CCS:</span>
+                <button
+                  onClick={() => setFiltroCediCCS('todos')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroCediCCS === 'todos' ? 'bg-blue-600 text-white' : 'bg-white text-blue-700 border border-blue-300'}`}
+                >
+                  Todos
+                </button>
+                <button
+                  onClick={() => setFiltroCediCCS('hay')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroCediCCS === 'hay' ? 'bg-green-600 text-white' : 'bg-white text-green-700 border border-green-300'}`}
+                >
+                  Hay ({getConteoCediCCS().hay})
+                </button>
+                <button
+                  onClick={() => setFiltroCediCCS('no_hay')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroCediCCS === 'no_hay' ? 'bg-red-600 text-white' : 'bg-white text-red-700 border border-red-300'}`}
+                >
+                  No hay ({getConteoCediCCS().no_hay})
+                </button>
+                <button
+                  onClick={() => setFiltroCediCCS('menor_igual_pedido')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroCediCCS === 'menor_igual_pedido' ? 'bg-orange-600 text-white' : 'bg-white text-orange-700 border border-orange-300'}`}
+                >
+                  Stock &le; Pedido ({getConteoCediCCS().menor_igual})
+                </button>
+
+                {/* Separador */}
+                <span className="text-gray-300 mx-2">|</span>
+
+                {/* Filtro por stock CEDI VLC */}
+                <span className="text-sm text-blue-800">CEDI VLC:</span>
+                <button
+                  onClick={() => setFiltroCediVLC('todos')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroCediVLC === 'todos' ? 'bg-blue-600 text-white' : 'bg-white text-blue-700 border border-blue-300'}`}
+                >
+                  Todos
+                </button>
+                <button
+                  onClick={() => setFiltroCediVLC('hay')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroCediVLC === 'hay' ? 'bg-green-600 text-white' : 'bg-white text-green-700 border border-green-300'}`}
+                >
+                  Hay ({getConteoCediVLC().hay})
+                </button>
+                <button
+                  onClick={() => setFiltroCediVLC('no_hay')}
+                  className={`px-3 py-1 text-xs rounded-full ${filtroCediVLC === 'no_hay' ? 'bg-red-600 text-white' : 'bg-white text-red-700 border border-red-300'}`}
+                >
+                  No hay ({getConteoCediVLC().no_hay})
+                </button>
+              </div>
             </div>
           )}
 
@@ -542,6 +640,9 @@ export default function PedidoApprovalView() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase w-10">
+                  #
+                </th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   Código
                 </th>
@@ -597,12 +698,15 @@ export default function PedidoApprovalView() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {getProductosFiltrados().map((producto) => {
+              {getProductosFiltrados().map((producto, index) => {
                 const verif = getVerificacionProducto(producto.codigo_producto);
                 const unidadesPorBulto = verif?.unidades_x_bulto || producto.cantidad_bultos || 1;
 
                 return (
                   <tr key={producto.codigo_producto} className="hover:bg-gray-50">
+                    <td className="px-2 py-3 text-sm text-center text-gray-500">
+                      {index + 1}
+                    </td>
                     <td className="px-3 py-3 text-sm font-mono text-gray-900">
                       {producto.codigo_producto}
                     </td>
