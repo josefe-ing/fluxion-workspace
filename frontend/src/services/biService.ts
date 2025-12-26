@@ -363,6 +363,7 @@ export interface VentaPorTienda {
   gmroi: number;
   rotacion_anual: number;
   stock: number;
+  unidades_vendidas: number;
 }
 
 export interface ProductoParcial {
