@@ -237,10 +237,7 @@ export default function CompararTiendas() {
                             Solo en
                           </th>
                           <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                            Ventas 30d
-                          </th>
-                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                            Utilidad
+                            Unidades Vendidas
                           </th>
                           <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                             Stock
@@ -262,10 +259,7 @@ export default function CompararTiendas() {
                               </span>
                             </td>
                             <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
-                              ${formatNumber(producto.ventas_30d)}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-right text-green-600">
-                              ${formatNumber(producto.utilidad_30d)}
+                              {formatNumber(producto.unidades_vendidas)}
                             </td>
                             <td className="px-4 py-3 text-sm text-right text-gray-600">
                               {formatNumber(producto.stock)}

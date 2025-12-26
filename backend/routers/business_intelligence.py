@@ -1117,7 +1117,8 @@ async def compare_stores(
                 m.margen_promedio,
                 m.gmroi,
                 m.rotacion_anual,
-                m.stock_unidades
+                m.stock_unidades,
+                m.unidades_vendidas
             FROM mv_bi_producto_metricas m
             WHERE m.ubicacion_id IN ({placeholders})
               AND m.ventas_30d > 0
@@ -1144,7 +1145,8 @@ async def compare_stores(
                 "margen_promedio": float(row[6]) if row[6] else 0,
                 "gmroi": float(row[7]) if row[7] else 0,
                 "rotacion_anual": float(row[8]) if row[8] else 0,
-                "stock": float(row[9]) if row[9] else 0
+                "stock": float(row[9]) if row[9] else 0,
+                "unidades_vendidas": float(row[10]) if row[10] else 0
             }
             productos_por_tienda[producto_id]["tiendas_con_venta"].append(ubicacion_id)
 
@@ -1169,7 +1171,8 @@ async def compare_stores(
                     "ventas_30d": ventas["ventas_30d"],
                     "utilidad_30d": ventas["utilidad_30d"],
                     "gmroi": ventas["gmroi"],
-                    "stock": ventas["stock"]
+                    "stock": ventas["stock"],
+                    "unidades_vendidas": ventas["unidades_vendidas"]
                 })
             elif num_tiendas_con_venta == len(tienda_ids):
                 # Producto en todas las tiendas

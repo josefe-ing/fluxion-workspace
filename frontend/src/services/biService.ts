@@ -341,6 +341,7 @@ export interface ProductoUnico {
   utilidad_30d: number;
   gmroi: number;
   stock: number;
+  unidades_vendidas: number;
 }
 
 export interface ProductoComun {
