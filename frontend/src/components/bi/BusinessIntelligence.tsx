@@ -7,14 +7,16 @@ import {
   DollarSign,
   Map,
   BarChart3,
+  ArrowLeftRight,
 } from 'lucide-react';
 import FluxionImpact from './FluxionImpact';
 import StoreAnalysis from './StoreAnalysis';
 import ProductAnalysis from './ProductAnalysis';
 import Profitability from './Profitability';
 import CoverageDistribution from './CoverageDistribution';
+import CompararTiendas from './CompararTiendas';
 
-type TabId = 'impact' | 'stores' | 'products' | 'profitability' | 'coverage';
+type TabId = 'impact' | 'stores' | 'products' | 'profitability' | 'coverage' | 'compare';
 
 interface Tab {
   id: TabId;
@@ -29,6 +31,12 @@ const tabs: Tab[] = [
     label: 'Fluxion Impact',
     icon: TrendingUp,
     description: 'ROI del sistema y capital liberado',
+  },
+  {
+    id: 'compare',
+    label: 'Comparar Tiendas',
+    icon: ArrowLeftRight,
+    description: 'Compara productos entre tiendas',
   },
   {
     id: 'stores',
@@ -68,6 +76,8 @@ export default function BusinessIntelligence() {
     switch (activeTab) {
       case 'impact':
         return <FluxionImpact />;
+      case 'compare':
+        return <CompararTiendas />;
       case 'stores':
         return <StoreAnalysis />;
       case 'products':

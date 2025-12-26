@@ -294,9 +294,83 @@ export const biService = {
     return response.data;
   },
 
+  // === Compare Stores Endpoints ===
+  async compareStores(storeIds: string[]): Promise<CompareStoresResponse> {
+    const response = await http.get('/bi/stores/compare', {
+      params: { store_ids: storeIds.join(',') },
+    });
+    return response.data;
+  },
+
   // === Admin Endpoints ===
   async refreshViews(): Promise<{ success: boolean; message: string }> {
     const response = await http.post('/bi/admin/refresh-views', {});
     return response.data;
   },
 };
+
+// Compare Stores Types
+export interface CompareStoresResponse {
+  tiendas: CompareStoreTienda[];
+  resumen: CompareStoresResumen;
+  productos_unicos: ProductoUnico[];
+  productos_comunes: ProductoComun[];
+  productos_parciales: ProductoParcial[];
+}
+
+export interface CompareStoreTienda {
+  id: string;
+  nombre: string;
+  region: string;
+}
+
+export interface CompareStoresResumen {
+  productos_unicos: number;
+  productos_comunes: number;
+  productos_parciales: number;
+  total_productos_analizados: number;
+}
+
+export interface ProductoUnico {
+  producto_id: string;
+  nombre: string;
+  categoria: string;
+  tienda_id: string;
+  tienda_nombre: string;
+  ventas_30d: number;
+  utilidad_30d: number;
+  gmroi: number;
+  stock: number;
+}
+
+export interface ProductoComun {
+  producto_id: string;
+  nombre: string;
+  categoria: string;
+  ventas_por_tienda: VentaPorTienda[];
+  venta_max: number;
+  venta_min: number;
+  diferencia_pct: number;
+}
+
+export interface VentaPorTienda {
+  tienda_id: string;
+  tienda_nombre: string;
+  ventas_30d: number;
+  utilidad_30d: number;
+  margen_promedio: number;
+  gmroi: number;
+  rotacion_anual: number;
+  stock: number;
+}
+
+export interface ProductoParcial {
+  producto_id: string;
+  nombre: string;
+  categoria: string;
+  tiendas_con_venta: string[];
+  tiendas_sin_venta: string[];
+  num_tiendas_con: number;
+  num_tiendas_sin: number;
+  venta_promedio_donde_existe: number;
+}

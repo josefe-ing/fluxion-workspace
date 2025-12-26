@@ -1063,6 +1063,199 @@ async def get_store_gaps(conn: Any = Depends(get_db)):
 
 
 # =============================================================================
+# COMPARACIÓN DE TIENDAS
+# =============================================================================
+
+@router.get("/stores/compare")
+async def compare_stores(
+    store_ids: str = Query(..., description="IDs de tiendas separados por coma (ej: tienda_17,tienda_18)"),
+    conn: Any = Depends(get_db)
+):
+    """
+    Compara ventas y productos entre 2 o más tiendas.
+
+    Retorna:
+    - Productos que solo venden en algunas tiendas
+    - Productos comunes con diferencias significativas de ventas
+    - Resumen de SKUs únicos vs compartidos
+    """
+    try:
+        cursor = conn.cursor()
+
+        # Parsear IDs de tiendas
+        tienda_ids = [t.strip() for t in store_ids.split(',')]
+
+        if len(tienda_ids) < 2:
+            raise HTTPException(status_code=400, detail="Debes proporcionar al menos 2 tiendas para comparar")
+
+        if len(tienda_ids) > 5:
+            raise HTTPException(status_code=400, detail="Máximo 5 tiendas para comparar")
+
+        # Verificar que las tiendas existen
+        placeholders = ','.join(['%s'] * len(tienda_ids))
+        cursor.execute(f"""
+            SELECT id, nombre, region
+            FROM ubicaciones
+            WHERE id IN ({placeholders}) AND tipo = 'tienda'
+        """, tienda_ids)
+
+        tiendas_info = cursor.fetchall()
+        if len(tiendas_info) != len(tienda_ids):
+            raise HTTPException(status_code=404, detail="Una o más tiendas no encontradas")
+
+        tiendas_map = {t[0]: {"nombre": t[1], "region": t[2]} for t in tiendas_info}
+
+        # Obtener ventas de los últimos 30 días por tienda
+        cursor.execute(f"""
+            SELECT
+                m.producto_id,
+                m.producto_nombre,
+                m.categoria,
+                m.ubicacion_id,
+                m.ventas_30d,
+                m.utilidad_30d,
+                m.margen_promedio,
+                m.gmroi,
+                m.rotacion_anual,
+                m.stock_unidades
+            FROM mv_bi_producto_metricas m
+            WHERE m.ubicacion_id IN ({placeholders})
+              AND m.ventas_30d > 0
+            ORDER BY m.producto_id, m.ubicacion_id
+        """, tienda_ids)
+
+        productos_por_tienda = {}
+        for row in cursor.fetchall():
+            producto_id = row[0]
+            ubicacion_id = row[3]
+
+            if producto_id not in productos_por_tienda:
+                productos_por_tienda[producto_id] = {
+                    "producto_id": producto_id,
+                    "nombre": row[1],
+                    "categoria": row[2],
+                    "ventas_por_tienda": {},
+                    "tiendas_con_venta": []
+                }
+
+            productos_por_tienda[producto_id]["ventas_por_tienda"][ubicacion_id] = {
+                "ventas_30d": float(row[4]) if row[4] else 0,
+                "utilidad_30d": float(row[5]) if row[5] else 0,
+                "margen_promedio": float(row[6]) if row[6] else 0,
+                "gmroi": float(row[7]) if row[7] else 0,
+                "rotacion_anual": float(row[8]) if row[8] else 0,
+                "stock": float(row[9]) if row[9] else 0
+            }
+            productos_por_tienda[producto_id]["tiendas_con_venta"].append(ubicacion_id)
+
+        # Clasificar productos
+        productos_unicos = []  # Solo en una tienda
+        productos_comunes = []  # En todas las tiendas
+        productos_parciales = []  # En algunas tiendas
+
+        for producto_id, data in productos_por_tienda.items():
+            num_tiendas_con_venta = len(data["tiendas_con_venta"])
+
+            if num_tiendas_con_venta == 1:
+                # Producto solo en una tienda
+                tienda_id = data["tiendas_con_venta"][0]
+                ventas = data["ventas_por_tienda"][tienda_id]
+                productos_unicos.append({
+                    "producto_id": producto_id,
+                    "nombre": data["nombre"],
+                    "categoria": data["categoria"],
+                    "tienda_id": tienda_id,
+                    "tienda_nombre": tiendas_map[tienda_id]["nombre"],
+                    "ventas_30d": ventas["ventas_30d"],
+                    "utilidad_30d": ventas["utilidad_30d"],
+                    "gmroi": ventas["gmroi"],
+                    "stock": ventas["stock"]
+                })
+            elif num_tiendas_con_venta == len(tienda_ids):
+                # Producto en todas las tiendas
+                ventas_por_tienda_list = []
+                max_venta = 0
+                min_venta = float('inf')
+
+                for tid in tienda_ids:
+                    v = data["ventas_por_tienda"].get(tid, {"ventas_30d": 0})
+                    venta = v["ventas_30d"]
+                    max_venta = max(max_venta, venta)
+                    min_venta = min(min_venta, venta)
+                    ventas_por_tienda_list.append({
+                        "tienda_id": tid,
+                        "tienda_nombre": tiendas_map[tid]["nombre"],
+                        **v
+                    })
+
+                # Calcular diferencia porcentual
+                diferencia_pct = 0
+                if min_venta > 0:
+                    diferencia_pct = round(((max_venta - min_venta) / min_venta) * 100, 1)
+
+                productos_comunes.append({
+                    "producto_id": producto_id,
+                    "nombre": data["nombre"],
+                    "categoria": data["categoria"],
+                    "ventas_por_tienda": ventas_por_tienda_list,
+                    "venta_max": round(max_venta, 2),
+                    "venta_min": round(min_venta, 2),
+                    "diferencia_pct": diferencia_pct
+                })
+            else:
+                # Producto en algunas tiendas
+                tiendas_con = [tiendas_map[tid]["nombre"] for tid in data["tiendas_con_venta"]]
+                tiendas_sin = [tiendas_map[tid]["nombre"] for tid in tienda_ids if tid not in data["tiendas_con_venta"]]
+
+                # Calcular venta promedio donde existe
+                venta_promedio = sum(v["ventas_30d"] for v in data["ventas_por_tienda"].values()) / num_tiendas_con_venta
+
+                productos_parciales.append({
+                    "producto_id": producto_id,
+                    "nombre": data["nombre"],
+                    "categoria": data["categoria"],
+                    "tiendas_con_venta": tiendas_con,
+                    "tiendas_sin_venta": tiendas_sin,
+                    "num_tiendas_con": num_tiendas_con_venta,
+                    "num_tiendas_sin": len(tienda_ids) - num_tiendas_con_venta,
+                    "venta_promedio_donde_existe": round(venta_promedio, 2)
+                })
+
+        # Ordenar resultados
+        productos_unicos.sort(key=lambda x: x["ventas_30d"], reverse=True)
+        productos_comunes.sort(key=lambda x: x["diferencia_pct"], reverse=True)
+        productos_parciales.sort(key=lambda x: x["venta_promedio_donde_existe"], reverse=True)
+
+        cursor.close()
+
+        return {
+            "tiendas": [
+                {
+                    "id": tid,
+                    "nombre": tiendas_map[tid]["nombre"],
+                    "region": tiendas_map[tid]["region"]
+                }
+                for tid in tienda_ids
+            ],
+            "resumen": {
+                "productos_unicos": len(productos_unicos),
+                "productos_comunes": len(productos_comunes),
+                "productos_parciales": len(productos_parciales),
+                "total_productos_analizados": len(productos_por_tienda)
+            },
+            "productos_unicos": productos_unicos[:50],  # Top 50
+            "productos_comunes": productos_comunes[:100],  # Top 100
+            "productos_parciales": productos_parciales[:50]  # Top 50
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en compare_stores: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # ADMIN - Refrescar vistas
 # =============================================================================
 
