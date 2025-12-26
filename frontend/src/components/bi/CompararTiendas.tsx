@@ -336,7 +336,7 @@ export default function CompararTiendas() {
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                             Producto
                           </th>
-                          {data.tiendas.map((tienda, idx) => (
+                          {data.tiendas.map((tienda) => (
                             <th key={tienda.id} className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                               <span className={`px-2 py-1 text-xs rounded-full ${getTiendaColor(tienda.nombre)}`}>
                                 {tienda.nombre}
