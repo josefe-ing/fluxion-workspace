@@ -31,11 +31,14 @@ export default function CompararTiendas() {
 
     try {
       setLoading(true);
+      console.log('Comparando tiendas:', tiendas);
       const result = await biService.compareStores(tiendas);
+      console.log('Resultado:', result);
       setData(result);
     } catch (error: any) {
       console.error('Error comparando tiendas:', error);
-      alert(error.response?.data?.detail || 'Error al comparar tiendas');
+      console.error('Error response:', error.response);
+      alert(error.response?.data?.detail || error.message || 'Error al comparar tiendas');
     } finally {
       setLoading(false);
     }

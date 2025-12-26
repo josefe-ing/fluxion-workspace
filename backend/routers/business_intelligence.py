@@ -18,7 +18,7 @@ from services.bi_calculations import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/bi", tags=["Business Intelligence"])
+router = APIRouter(prefix="/bi", tags=["Business Intelligence"])
 
 
 def get_db():
