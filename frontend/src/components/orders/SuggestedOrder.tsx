@@ -222,7 +222,7 @@ export default function SuggestedOrder() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div>
-                          <div className="text-sm font-medium text-gray-900">
+                          <div className="text-base font-semibold text-gray-900">
                             {pedido.numero_pedido}
                           </div>
                           <div className="text-xs text-gray-500">
@@ -259,8 +259,21 @@ export default function SuggestedOrder() {
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
                       {formatNumber(pedido.total_bultos)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      Hace {pedido.dias_desde_creacion}d
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric'
+                        })}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {new Date(pedido.fecha_creacion).toLocaleTimeString('es-VE', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: true
+                        })}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex items-center justify-end gap-3">
