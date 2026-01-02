@@ -193,25 +193,25 @@ export default function SuggestedOrder() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
                     Pedido
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Origen → Destino
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
                     Estado
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
                     Productos
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
                     Bultos
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
                     Creado
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
                     Acciones
                   </th>
                 </tr>
@@ -219,19 +219,15 @@ export default function SuggestedOrder() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {pedidos.map((pedido) => (
                   <tr key={pedido.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div>
-                          <div className="text-base font-semibold text-gray-900">
-                            {pedido.numero_pedido}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {new Date(pedido.fecha_pedido).toLocaleDateString()}
-                          </div>
-                        </div>
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="text-base font-semibold text-gray-900">
+                        {pedido.numero_pedido}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {new Date(pedido.fecha_pedido).toLocaleDateString('es-VE')}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="text-sm text-gray-900">
                         {pedido.cedi_origen_nombre}
                       </div>
@@ -242,13 +238,13 @@ export default function SuggestedOrder() {
                         {pedido.tienda_destino_nombre}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-4 whitespace-nowrap">
                       {getEstadoBadge(pedido.estado)}
                       {pedido.tiene_comentarios_gerente && (
                         <span className="ml-2 text-xs text-orange-600">💬</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                    <td className="px-4 py-4 whitespace-nowrap text-right text-sm text-gray-900">
                       {pedido.total_productos}
                       {pedido.tiene_devoluciones && (
                         <div className="text-xs text-orange-600">
@@ -256,10 +252,10 @@ export default function SuggestedOrder() {
                         </div>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                    <td className="px-4 py-4 whitespace-nowrap text-right text-sm text-gray-900">
                       {formatNumber(pedido.total_bultos)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
                         {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', {
                           day: '2-digit',
@@ -275,7 +271,7 @@ export default function SuggestedOrder() {
                         })}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex items-center justify-end gap-3">
                         <button
                           onClick={() => handleVerPedido(pedido.id, pedido.estado)}
