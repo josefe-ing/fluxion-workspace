@@ -25,6 +25,77 @@ from core.extractor import SQLServerExtractor
 from core.transformer import InventoryTransformer
 from core.loader_inventario_postgres import PostgreSQLInventarioLoader
 
+# Concurrency control - prevent multiple ETL instances
+try:
+    import psycopg2
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
+
+
+def check_concurrent_etl(etl_name: str = 'inventario', max_age_minutes: int = 120) -> bool:
+    """
+    Verifica si hay otra ejecución ETL corriendo.
+    También limpia ejecuciones huérfanas (>3 horas).
+
+    Returns:
+        True si hay conflicto (otra ejecución activa), False si está libre
+    """
+    if not POSTGRES_AVAILABLE:
+        return False
+
+    try:
+        conn = psycopg2.connect(DatabaseConfig.get_dsn())
+        cursor = conn.cursor()
+
+        # Limpiar ejecuciones huérfanas (>3 horas)
+        cursor.execute("""
+            UPDATE etl_executions
+            SET status = 'killed',
+                finished_at = NOW(),
+                error_message = 'Orphan execution - cleaned up by concurrency check'
+            WHERE etl_name = %s
+              AND status = 'running'
+              AND started_at < NOW() - INTERVAL '180 minutes'
+        """, (etl_name,))
+        cleaned = cursor.rowcount
+        if cleaned > 0:
+            logging.getLogger('etl_multi_tienda').info(f"Concurrency: Limpiadas {cleaned} ejecuciones huérfanas")
+
+        # Verificar ejecuciones activas recientes
+        cursor.execute("""
+            SELECT id, started_at, triggered_by
+            FROM etl_executions
+            WHERE etl_name = %s
+              AND status = 'running'
+              AND started_at > NOW() - INTERVAL '%s minutes'
+            ORDER BY started_at DESC
+            LIMIT 1
+        """, (etl_name, max_age_minutes))
+
+        row = cursor.fetchone()
+        conn.commit()
+        conn.close()
+
+        if row:
+            logger = logging.getLogger('etl_multi_tienda')
+            running_minutes = (datetime.now() - row[1].replace(tzinfo=None)).total_seconds() / 60
+            logger.warning(f"\n{'!'*80}")
+            logger.warning(f"! EJECUCIÓN ABORTADA: Ya hay un ETL de {etl_name} corriendo")
+            logger.warning(f"! Execution ID: {row[0]}")
+            logger.warning(f"! Iniciado: {row[1]} ({running_minutes:.0f} min ago)")
+            logger.warning(f"! Triggered by: {row[2]}")
+            logger.warning(f"! Esta instancia terminará para evitar conflictos")
+            logger.warning(f"{'!'*80}\n")
+            return True
+
+        return False
+
+    except Exception as e:
+        logging.getLogger('etl_multi_tienda').warning(f"Concurrency check failed: {e}")
+        return False  # En caso de error, permitir ejecución
+
+
 # Configurar logging PRIMERO (antes de usarlo)
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +145,78 @@ class MultiTiendaETL:
         self.klk_transformer = InventarioKLKTransformer() if KLK_AVAILABLE else None
 
         self.results = []
+        self.execution_id = None
+
+    def _track_start(self, tiendas: List[str]) -> None:
+        """Registra inicio de ejecución ETL en PostgreSQL"""
+        if not POSTGRES_AVAILABLE:
+            return
+
+        try:
+            import os
+            conn = psycopg2.connect(DatabaseConfig.get_dsn())
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO etl_executions (
+                    etl_name, etl_type, started_at, tiendas_procesadas, status, triggered_by
+                ) VALUES (%s, %s, %s, %s, 'running', %s)
+                RETURNING id
+            """, (
+                'inventario',
+                'scheduled',
+                datetime.now(),
+                tiendas,
+                'eventbridge' if os.environ.get('AWS_EXECUTION_ENV') else 'cli'
+            ))
+
+            self.execution_id = cursor.fetchone()[0]
+            conn.commit()
+            conn.close()
+            logger.info(f"Tracking: Ejecución iniciada (ID: {self.execution_id})")
+        except Exception as e:
+            logger.warning(f"Tracking: Error al registrar inicio: {e}")
+
+    def _track_finish(self, resultados: List[Dict], status: str = 'success', error_msg: str = None) -> None:
+        """Registra fin de ejecución ETL en PostgreSQL"""
+        if not POSTGRES_AVAILABLE or self.execution_id is None:
+            return
+
+        try:
+            import json
+            conn = psycopg2.connect(DatabaseConfig.get_dsn())
+            cursor = conn.cursor()
+
+            finished_at = datetime.now()
+
+            # Calcular estadísticas
+            exitosos = [r for r in resultados if r.get("success")]
+            total_registros = sum(r.get("registros", 0) for r in exitosos)
+
+            cursor.execute("""
+                UPDATE etl_executions SET
+                    finished_at = %s,
+                    duration_seconds = EXTRACT(EPOCH FROM (%s - started_at)),
+                    status = %s,
+                    records_loaded = %s,
+                    tiendas_detail = %s,
+                    error_message = %s
+                WHERE id = %s
+            """, (
+                finished_at,
+                finished_at,
+                status,
+                total_registros,
+                json.dumps(resultados) if resultados else None,
+                error_msg,
+                self.execution_id
+            ))
+
+            conn.commit()
+            conn.close()
+            logger.info(f"Tracking: Ejecución finalizada (ID: {self.execution_id}, status: {status})")
+        except Exception as e:
+            logger.warning(f"Tracking: Error al registrar fin: {e}")
 
     def ejecutar_etl_tienda(self, tienda_id: str) -> Dict[str, Any]:
         """Ejecuta el ETL para una tienda específica (Stellar o KLK)"""
@@ -359,6 +502,9 @@ class MultiTiendaETL:
         logger.info(f"   📊 Tiendas activas: {len(tiendas_activas)}")
         logger.info("=" * 60)
 
+        # Registrar inicio de ejecución
+        self._track_start(list(tiendas_activas.keys()))
+
         resultados = []
 
         if paralelo:
@@ -372,6 +518,10 @@ class MultiTiendaETL:
             logger.info("-" * 40)
 
         etl_end_time = datetime.now()
+
+        # Registrar fin de ejecución
+        fallidos = [r for r in resultados if not r.get("success")]
+        self._track_finish(resultados, status='success' if not fallidos else 'partial')
 
         # Send email notification (only in production)
         if NOTIFICATIONS_AVAILABLE:
@@ -431,6 +581,14 @@ def main():
         init_sentry_for_etl()
         logger.info("✅ Sentry ETL monitoring inicializado")
 
+    # =====================================================================
+    # CONCURRENCY CHECK: Evitar múltiples ejecuciones simultáneas
+    # =====================================================================
+    if check_concurrent_etl(etl_name='inventario', max_age_minutes=120):
+        # Hay otra ejecución activa, terminar sin error
+        logger.info("Terminando para evitar ejecución concurrente")
+        sys.exit(0)
+
     parser = argparse.ArgumentParser(description='ETL Multi-Tienda para La Granja Mercado')
     parser.add_argument('--tienda', type=str, help='ID de tienda específica (ej: tienda_01)')
     parser.add_argument('--tiendas', nargs='+', help='Lista de IDs de tiendas (ej: tienda_01 tienda_08 cedi_seco)')
@@ -453,11 +611,20 @@ def main():
         # Ejecutar múltiples tiendas específicas (secuencialmente)
         etl_start_time = datetime.now()
         logger.info(f"🎯 Ejecutando ETL para {len(args.tiendas)} tiendas: {args.tiendas}")
+
+        # Registrar inicio de ejecución
+        etl._track_start(args.tiendas)
+
         resultados = []
         for tienda_id in args.tiendas:
             resultado = etl.ejecutar_etl_tienda(tienda_id)
             resultados.append(resultado)
         etl_end_time = datetime.now()
+
+        # Registrar fin de ejecución
+        fallidos = [r for r in resultados if not r.get("success")]
+        etl._track_finish(resultados, status='success' if not fallidos else 'partial')
+
         etl.generar_resumen(resultados)
 
         # Send email notification (only in production)

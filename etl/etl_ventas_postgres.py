@@ -132,6 +132,81 @@ class VentasETLPostgres:
 
         return logger
 
+    def _check_concurrent_execution(self, max_age_minutes: int = 120) -> Optional[Dict]:
+        """
+        Verifica si hay otra ejecución ETL corriendo.
+
+        Args:
+            max_age_minutes: Máximo tiempo (en minutos) para considerar una ejecución como "activa"
+                            Ejecuciones más antiguas se consideran huérfanas.
+
+        Returns:
+            Dict con info de la ejecución activa si existe, None si no hay conflicto
+        """
+        if not TRACKING_AVAILABLE:
+            return None
+
+        try:
+            conn = self.klk_loader._get_connection()
+            cursor = conn.cursor()
+
+            # Buscar ejecuciones "running" que no sean muy antiguas
+            cursor.execute("""
+                SELECT id, started_at, triggered_by
+                FROM etl_executions
+                WHERE etl_name = 'ventas'
+                  AND status = 'running'
+                  AND started_at > NOW() - INTERVAL '%s minutes'
+                ORDER BY started_at DESC
+                LIMIT 1
+            """, (max_age_minutes,))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {
+                    'id': row[0],
+                    'started_at': row[1],
+                    'triggered_by': row[2]
+                }
+            return None
+
+        except Exception as e:
+            self.logger.warning(f"Concurrency check failed: {e}")
+            return None  # En caso de error, permitir ejecución
+
+    def _cleanup_orphan_executions(self, max_age_minutes: int = 180):
+        """
+        Marca como 'killed' las ejecuciones huérfanas (running por más de max_age_minutes).
+        """
+        if not TRACKING_AVAILABLE:
+            return
+
+        try:
+            conn = self.klk_loader._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE etl_executions
+                SET status = 'killed',
+                    finished_at = NOW(),
+                    error_message = 'Orphan execution - cleaned up by concurrency check'
+                WHERE etl_name = 'ventas'
+                  AND status = 'running'
+                  AND started_at < NOW() - INTERVAL '%s minutes'
+            """, (max_age_minutes,))
+
+            cleaned = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            if cleaned > 0:
+                self.logger.info(f"Concurrency: Limpiadas {cleaned} ejecuciones huérfanas")
+
+        except Exception as e:
+            self.logger.warning(f"Orphan cleanup failed: {e}")
+
     def _track_start(self, fecha_desde: datetime, fecha_hasta: datetime, tiendas: List[str], etl_type: str = 'scheduled') -> Optional[int]:
         """Registra inicio de ejecución ETL en PostgreSQL"""
         if not TRACKING_AVAILABLE or self.dry_run:
@@ -534,6 +609,26 @@ class VentasETLPostgres:
         Returns:
             True si todas las tiendas se procesaron exitosamente
         """
+        # =====================================================================
+        # CONCURRENCY CHECK: Evitar múltiples ejecuciones simultáneas
+        # =====================================================================
+        # Primero limpiar ejecuciones huérfanas (más de 3 horas running)
+        self._cleanup_orphan_executions(max_age_minutes=180)
+
+        # Verificar si hay otra ejecución activa (menos de 2 horas)
+        active_execution = self._check_concurrent_execution(max_age_minutes=120)
+        if active_execution:
+            running_minutes = (datetime.now() - active_execution['started_at'].replace(tzinfo=None)).total_seconds() / 60
+            self.logger.warning(f"\n{'!'*80}")
+            self.logger.warning(f"! EJECUCIÓN ABORTADA: Ya hay un ETL de ventas corriendo")
+            self.logger.warning(f"! Execution ID: {active_execution['id']}")
+            self.logger.warning(f"! Iniciado: {active_execution['started_at']} ({running_minutes:.0f} min ago)")
+            self.logger.warning(f"! Triggered by: {active_execution['triggered_by']}")
+            self.logger.warning(f"! Esta instancia terminará para evitar conflictos")
+            self.logger.warning(f"{'!'*80}\n")
+            # Retornar True para no marcar como fallo (es comportamiento esperado)
+            return True
+
         # Calcular rango de fechas
         if fecha_hasta is None:
             fecha_hasta = datetime.now()
