@@ -993,21 +993,21 @@ PersistentKeepalive = 25`),
     // EFS mount point REMOVED - DuckDB eliminated Dec 2025
 
     // ========================================
-    // 11. Ventas ETL Scheduled Rule (Every 30 minutes at :10 and :40)
+    // 11. Ventas ETL Scheduled Rule (Every 3 hours)
     // ========================================
     // Runs unified ventas sync for ALL stores (KLK + Stellar) - similar to inventario
     // Script auto-detects sistema_pos for each tienda
-    // Executes at XX:20 and XX:50 every hour (20 min offset from inventory to avoid overlap)
-    // Inventory runs at :00/:30, takes ~15min. Ventas runs at :20/:50, takes ~11min.
-    // ONLY between 6am-11pm Venezuela time (same as inventory ETL)
+    // Changed from 30min to 3h intervals to prevent task accumulation when Stellar stores are slow
+    // ETL has concurrency protection - will skip if another instance is running
+    // Schedule: 10am, 1pm, 4pm, 7pm, 10pm, 1am (Venezuela time)
     const ventasSyncRule = new events.Rule(this, 'FluxionVentasSync30Min', {
       schedule: events.Schedule.cron({
-        minute: '20,50',  // Run at :20 and :50 of every hour (20 min after inventory to avoid overlap)
-        hour: '10-23,0-2',  // 6am-11pm Venezuela time (UTC-4)
+        minute: '0',  // Run at the top of each scheduled hour
+        hour: '10,13,16,19,22,1',  // 10am, 1pm, 4pm, 7pm, 10pm, 1am Venezuela (UTC-4 = 14,17,20,23,2,5 UTC)
         weekDay: '*',
       }),
-      description: 'Sync ventas every 30 minutes (6am-11pm Venezuela) for all stores - PostgreSQL',
-      ruleName: 'fluxion-ventas-sync-30min',
+      description: 'Sync ventas every 3 hours (10am, 1pm, 4pm, 7pm, 10pm, 1am Venezuela) for all stores - PostgreSQL',
+      ruleName: 'fluxion-ventas-sync-30min',  // Keep name for backwards compatibility
       enabled: true,
     });
 
