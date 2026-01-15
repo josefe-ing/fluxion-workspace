@@ -12,7 +12,7 @@ import SalesDashboard from './components/sales/SalesDashboard';
 // Pedidos Sugeridos
 import SuggestedOrder from './components/orders/SuggestedOrder';
 import OrderWizard from './components/orders/OrderWizard';
-import PedidoSugeridoV2Wizard from './components/orders/PedidoSugeridoV2Wizard';
+// import PedidoSugeridoV2Wizard from './components/orders/PedidoSugeridoV2Wizard'; // Modal version, not used as route
 import PedidoInterCediWizard from './components/orders/PedidoInterCediWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
 import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
