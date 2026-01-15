@@ -83,21 +83,19 @@ VENEZUELA_TZ = ZoneInfo("America/Caracas")
 
 def to_venezuela_aware(dt: datetime) -> datetime:
     """
-    Asegura que un datetime tenga timezone de Venezuela.
+    Convierte un datetime de UTC a hora Venezuela (UTC-4).
 
-    PostgreSQL local está configurado con timezone America/Caracas,
-    por lo que CURRENT_TIMESTAMP ya devuelve hora Venezuela, pero
-    psycopg2 lo retorna como naive datetime (sin tzinfo).
+    PostgreSQL RDS está configurado en UTC, por lo que CURRENT_TIMESTAMP
+    devuelve hora UTC. psycopg2 lo retorna como naive datetime (sin tzinfo).
 
-    Esta función simplemente agrega el tzinfo de Venezuela sin modificar la hora.
+    Esta función asume que el datetime naive está en UTC y lo convierte a Venezuela.
     """
     if dt is None:
         return None
-    # Si no tiene timezone, la fecha ya está en hora Venezuela (del servidor PostgreSQL)
-    # Solo agregamos el tzinfo sin modificar la hora
+    # Si no tiene timezone, asumimos que está en UTC (viene de PostgreSQL RDS)
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=VENEZUELA_TZ)
-    # Si ya tiene timezone, convertir a Venezuela
+        dt = dt.replace(tzinfo=timezone.utc)
+    # Convertir a hora Venezuela
     return dt.astimezone(VENEZUELA_TZ)
 
 
