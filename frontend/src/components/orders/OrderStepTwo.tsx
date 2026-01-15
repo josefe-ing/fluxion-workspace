@@ -60,6 +60,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
   const [filtroCedi, setFiltroCedi] = useState<'todos' | 'con_stock' | 'sin_stock'>('todos');
   const [filtroPrioridad, setFiltroPrioridad] = useState<'todas' | 'critico' | 'urgente' | 'optimo' | 'exceso'>('todas');
   const [filtroSugerencia, setFiltroSugerencia] = useState<'todos' | 'envio_prueba' | 'ref_regional' | 'con_venta'>('todos');
+  const [filtroDiasStock, setFiltroDiasStock] = useState<'todos' | '0-1' | '1-2' | '2-4' | '4-5' | '5+'>('todos');
   const [salesModalOpen, setSalesModalOpen] = useState(false);
   const [selectedProductoSales, setSelectedProductoSales] = useState<ProductoPedido | null>(null);
   const [abcModalOpen, setAbcModalOpen] = useState(false);
@@ -458,6 +459,16 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       if (filtroSugerencia === 'envio_prueba' && metodo !== 'envio_prueba') return false;
       if (filtroSugerencia === 'ref_regional' && metodo !== 'referencia_regional') return false;
       if (filtroSugerencia === 'con_venta' && (metodo === 'envio_prueba' || metodo === 'referencia_regional')) return false;
+    }
+
+    // Filtro por días de stock
+    if (filtroDiasStock !== 'todos') {
+      const diasStock = p.stock_dias_cobertura;
+      if (filtroDiasStock === '0-1' && (diasStock < 0 || diasStock > 1)) return false;
+      if (filtroDiasStock === '1-2' && (diasStock < 1 || diasStock > 2)) return false;
+      if (filtroDiasStock === '2-4' && (diasStock < 2 || diasStock > 4)) return false;
+      if (filtroDiasStock === '4-5' && (diasStock < 4 || diasStock > 5)) return false;
+      if (filtroDiasStock === '5+' && diasStock < 5) return false;
     }
 
     // Filtro por búsqueda (soporta múltiples códigos separados por coma)
@@ -1121,8 +1132,25 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
             </select>
           </div>
 
+          {/* Dropdown de días de stock */}
+          <div className="flex items-center gap-1">
+            <label className="text-xs font-medium text-gray-600">Días Stock:</label>
+            <select
+              value={filtroDiasStock}
+              onChange={(e) => { setFiltroDiasStock(e.target.value as 'todos' | '0-1' | '1-2' | '2-4' | '4-5' | '5+'); setPaginaActual(1); }}
+              className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
+            >
+              <option value="todos">Todos ({productos.length})</option>
+              <option value="0-1">0-1 días ({productos.filter(p => p.stock_dias_cobertura >= 0 && p.stock_dias_cobertura <= 1).length})</option>
+              <option value="1-2">1-2 días ({productos.filter(p => p.stock_dias_cobertura > 1 && p.stock_dias_cobertura <= 2).length})</option>
+              <option value="2-4">2-4 días ({productos.filter(p => p.stock_dias_cobertura > 2 && p.stock_dias_cobertura <= 4).length})</option>
+              <option value="4-5">4-5 días ({productos.filter(p => p.stock_dias_cobertura > 4 && p.stock_dias_cobertura <= 5).length})</option>
+              <option value="5+">5+ días ({productos.filter(p => p.stock_dias_cobertura > 5).length})</option>
+            </select>
+          </div>
+
           {/* Contador de resultados */}
-          {(searchTerm || categoriaActiva !== 'Todas' || cuadranteActivo !== 'Todos' || vistaActiva !== 'todos' || filtroCedi !== 'todos' || filtroPrioridad !== 'todas' || filtroSugerencia !== 'todos') && (
+          {(searchTerm || categoriaActiva !== 'Todas' || cuadranteActivo !== 'Todos' || vistaActiva !== 'todos' || filtroCedi !== 'todos' || filtroPrioridad !== 'todas' || filtroSugerencia !== 'todos' || filtroDiasStock !== 'todos') && (
             <div className="text-xs text-gray-500">
               {productosFiltrados.length}/{productos.length}
             </div>
