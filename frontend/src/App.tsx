@@ -19,6 +19,7 @@ import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
 import ETLControlCenter from './components/settings/ETLControlCenter';
 import ConfiguracionABC from './components/admin/ConfiguracionABC';
 import GeneradoresTrafico from './components/admin/GeneradoresTrafico';
+import UsuariosAdmin from './components/admin/UsuariosAdmin';
 // DEPRECADOS: Comentados para futura eliminación
 // import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
 // import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
@@ -65,6 +66,7 @@ function ProtectedRoutes() {
         <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
         <Route path="administrador/parametros-abc" element={<ConfiguracionABC />} />
         <Route path="administrador/generadores-trafico" element={<GeneradoresTrafico />} />
+        <Route path="administrador/usuarios" element={<UsuariosAdmin />} />
         {/* DEPRECADOS: Redirigir rutas antiguas al nuevo panel */}
         <Route path="administrador/config-inventario" element={<Navigate to="/administrador/parametros-abc" replace />} />
         <Route path="administrador/conjuntos" element={<Navigate to="/administrador/parametros-abc" replace />} />

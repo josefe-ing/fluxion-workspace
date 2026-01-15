@@ -978,6 +978,197 @@ async def register(request: CreateUserRequest, current_user: Usuario = Depends(v
     logger.info(f"Usuario '{new_user.username}' creado por '{current_user.username}'")
     return new_user
 
+
+# =====================================================================================
+# ADMINISTRACIÓN DE USUARIOS
+# =====================================================================================
+
+class UsuarioAdmin(BaseModel):
+    """Usuario con información administrativa"""
+    id: str
+    username: str
+    nombre_completo: Optional[str] = None
+    email: Optional[str] = None
+    activo: bool
+    created_at: Optional[datetime] = None
+    ultimo_login: Optional[datetime] = None
+
+class ChangePasswordRequest(BaseModel):
+    """Request para cambiar contraseña"""
+    new_password: str
+
+class UpdateUserRequest(BaseModel):
+    """Request para actualizar usuario"""
+    nombre_completo: Optional[str] = None
+    email: Optional[str] = None
+    activo: Optional[bool] = None
+
+@app.get("/api/auth/users", response_model=List[UsuarioAdmin], tags=["Administración Usuarios"])
+async def list_users(current_user: Usuario = Depends(verify_token)):
+    """Lista todos los usuarios del sistema"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, username, nombre_completo, email, activo, created_at, ultimo_login
+                FROM usuarios
+                ORDER BY created_at DESC
+            """)
+            rows = cursor.fetchall()
+            cursor.close()
+
+            return [
+                UsuarioAdmin(
+                    id=row[0],
+                    username=row[1],
+                    nombre_completo=row[2],
+                    email=row[3],
+                    activo=row[4],
+                    created_at=row[5],
+                    ultimo_login=row[6]
+                )
+                for row in rows
+            ]
+    except Exception as e:
+        logger.error(f"Error listando usuarios: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/auth/users/{user_id}", response_model=UsuarioAdmin, tags=["Administración Usuarios"])
+async def update_user(user_id: str, request: UpdateUserRequest, current_user: Usuario = Depends(verify_token)):
+    """Actualiza datos de un usuario"""
+    try:
+        with get_db_connection_write() as conn:
+            cursor = conn.cursor()
+
+            # Verificar que el usuario existe
+            cursor.execute("SELECT id FROM usuarios WHERE id = %s", (user_id,))
+            if not cursor.fetchone():
+                cursor.close()
+                raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+            # Construir query de actualización
+            updates = []
+            params = []
+            if request.nombre_completo is not None:
+                updates.append("nombre_completo = %s")
+                params.append(request.nombre_completo)
+            if request.email is not None:
+                updates.append("email = %s")
+                params.append(request.email)
+            if request.activo is not None:
+                updates.append("activo = %s")
+                params.append(request.activo)
+
+            if updates:
+                updates.append("updated_at = CURRENT_TIMESTAMP")
+                params.append(user_id)
+                cursor.execute(f"""
+                    UPDATE usuarios SET {', '.join(updates)}
+                    WHERE id = %s
+                """, params)
+                conn.commit()
+
+            # Retornar usuario actualizado
+            cursor.execute("""
+                SELECT id, username, nombre_completo, email, activo, created_at, ultimo_login
+                FROM usuarios WHERE id = %s
+            """, (user_id,))
+            row = cursor.fetchone()
+            cursor.close()
+
+            logger.info(f"Usuario {user_id} actualizado por {current_user.username}")
+
+            return UsuarioAdmin(
+                id=row[0],
+                username=row[1],
+                nombre_completo=row[2],
+                email=row[3],
+                activo=row[4],
+                created_at=row[5],
+                ultimo_login=row[6]
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error actualizando usuario: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/auth/users/{user_id}/password", tags=["Administración Usuarios"])
+async def change_user_password(user_id: str, request: ChangePasswordRequest, current_user: Usuario = Depends(verify_token)):
+    """Cambia la contraseña de un usuario"""
+    from auth import get_password_hash
+
+    try:
+        with get_db_connection_write() as conn:
+            cursor = conn.cursor()
+
+            # Verificar que el usuario existe
+            cursor.execute("SELECT username FROM usuarios WHERE id = %s", (user_id,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.close()
+                raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+            target_username = row[0]
+
+            # Actualizar contraseña
+            password_hash = get_password_hash(request.new_password)
+            cursor.execute("""
+                UPDATE usuarios
+                SET password_hash = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (password_hash, user_id))
+            conn.commit()
+            cursor.close()
+
+            logger.info(f"Contraseña de '{target_username}' cambiada por '{current_user.username}'")
+
+            return {"message": f"Contraseña de '{target_username}' actualizada exitosamente"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cambiando contraseña: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/auth/users/{user_id}", tags=["Administración Usuarios"])
+async def delete_user(user_id: str, current_user: Usuario = Depends(verify_token)):
+    """Elimina un usuario (soft delete - lo desactiva)"""
+    try:
+        # No permitir auto-eliminación
+        if user_id == current_user.id:
+            raise HTTPException(status_code=400, detail="No puedes eliminarte a ti mismo")
+
+        with get_db_connection_write() as conn:
+            cursor = conn.cursor()
+
+            # Verificar que el usuario existe
+            cursor.execute("SELECT username FROM usuarios WHERE id = %s", (user_id,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.close()
+                raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+            target_username = row[0]
+
+            # Soft delete (desactivar)
+            cursor.execute("""
+                UPDATE usuarios
+                SET activo = FALSE, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (user_id,))
+            conn.commit()
+            cursor.close()
+
+            logger.info(f"Usuario '{target_username}' eliminado por '{current_user.username}'")
+
+            return {"message": f"Usuario '{target_username}' eliminado exitosamente"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminando usuario: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # =====================================================================================
 # ENDPOINTS DE DATOS (PROTEGIDOS)
 # =====================================================================================

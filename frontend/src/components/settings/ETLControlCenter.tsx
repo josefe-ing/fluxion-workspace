@@ -58,15 +58,18 @@ export default function ETLControlCenter() {
               </div>
             </div>
           </Link>
-          <div className="bg-gray-100 rounded-lg border border-gray-200 p-4 opacity-60 cursor-not-allowed">
+          <Link
+            to="/administrador/usuarios"
+            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-purple-400 hover:shadow-md transition-all group"
+          >
             <div className="flex items-center space-x-3">
-              <span className="text-2xl">🔧</span>
+              <span className="text-2xl">👥</span>
               <div>
-                <div className="font-medium text-gray-500">Mas opciones</div>
-                <div className="text-xs text-gray-400">Proximamente</div>
+                <div className="font-medium text-gray-900 group-hover:text-purple-600">Usuarios</div>
+                <div className="text-xs text-gray-500">Gestionar accesos al sistema</div>
               </div>
             </div>
-          </div>
+          </Link>
         </div>
 
         {/* Panels Stack */}
