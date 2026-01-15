@@ -1162,6 +1162,43 @@ PersistentKeepalive = 25`),
     );
 
     // ========================================
+    // 13b. Productos Cache Refresh (Every 6 hours: 5:00, 11:00, 17:00, 23:00 Venezuela)
+    // ========================================
+    // Refreshes productos_analisis_cache table with product states and metrics
+    // Separated from ETL to avoid blocking inventory updates
+    // Venezuela = UTC-4, so: 9:00, 15:00, 21:00, 3:00 UTC
+
+    const cacheRefreshRule = new events.Rule(this, 'ProductosCacheRefresh', {
+      ruleName: 'fluxion-productos-cache-refresh',
+      description: 'Refresh productos_analisis_cache every 6 hours (5:00, 11:00, 17:00, 23:00 VE)',
+      schedule: events.Schedule.cron({
+        minute: '0',
+        hour: '9,15,21,3',  // 5:00, 11:00, 17:00, 23:00 Venezuela (UTC-4)
+        day: '*',
+        month: '*',
+        year: '*',
+      }),
+      enabled: true,
+    });
+
+    cacheRefreshRule.addTarget(
+      new targets.EcsTask({
+        cluster,
+        taskDefinition: etlTask,
+        securityGroups: [etlSecurityGroup],
+        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        containerOverrides: [{
+          containerName: 'etl',
+          command: [
+            'python', 'refresh_productos_cache.py'
+          ]
+        }],
+        maxEventAge: cdk.Duration.minutes(30),
+        retryAttempts: 1,
+      })
+    );
+
+    // ========================================
     // 14. Documentation Site (S3 + CloudFront)
     // ========================================
 
