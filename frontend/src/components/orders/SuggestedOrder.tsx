@@ -189,111 +189,71 @@ export default function SuggestedOrder() {
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
-                    Pedido
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-56">
-                    Origen → Destino
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
-                    Estado
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                    Productos
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                    Bultos
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
-                    Creado
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                    Acciones
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {pedidos.map((pedido) => (
-                  <tr key={pedido.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div className="text-base font-semibold text-gray-900">
-                        {pedido.numero_pedido}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="text-sm text-gray-900">
-                        {pedido.cedi_origen_nombre}
-                      </div>
-                      <div className="text-sm text-gray-500 flex items-center">
-                        <svg className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                        </svg>
-                        {pedido.tienda_destino_nombre}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      {getEstadoBadge(pedido.estado)}
-                      {pedido.tiene_comentarios_gerente && (
-                        <span className="ml-2 text-xs text-orange-600">💬</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-right text-sm text-gray-900">
-                      {pedido.total_productos}
-                      {pedido.tiene_devoluciones && (
-                        <div className="text-xs text-orange-600">
-                          +{pedido.total_productos_devolucion} dev.
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-right text-sm text-gray-900">
-                      {formatNumber(pedido.total_bultos)}
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
-                        {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric'
-                        })}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {new Date(pedido.fecha_creacion).toLocaleTimeString('es-VE', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: true
-                        })}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex items-center justify-end gap-3">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-gray-500 uppercase tracking-wide">
+                <th className="py-3 px-4 font-medium w-28">Pedido</th>
+                <th className="py-3 px-4 font-medium">Destino</th>
+                <th className="py-3 px-4 font-medium w-24">Estado</th>
+                <th className="py-3 px-4 font-medium text-right w-32">Productos</th>
+                <th className="py-3 px-4 font-medium w-20">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {pedidos.map((pedido) => (
+                <tr
+                  key={pedido.id}
+                  className="hover:bg-gray-50 cursor-pointer"
+                  onClick={() => handleVerPedido(pedido.id, pedido.estado)}
+                >
+                  <td className="py-3 px-4">
+                    <span className="font-semibold text-gray-900">{pedido.numero_pedido}</span>
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' }).replace('.', '')} · {pedido.usuario_creador}
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className="font-medium text-gray-900">{pedido.tienda_destino_nombre}</span>
+                    <span className="text-gray-400 mx-1">←</span>
+                    <span className="text-gray-500">{pedido.cedi_origen_nombre}</span>
+                  </td>
+                  <td className="py-3 px-4">
+                    {getEstadoBadge(pedido.estado)}
+                  </td>
+                  <td className="py-3 px-4 text-right">
+                    <div className="font-semibold text-gray-900">{pedido.total_productos} <span className="font-normal text-gray-400">/ {formatNumber(pedido.total_bultos)} bul</span></div>
+                    <div className="flex justify-end gap-1 mt-1">
+                      {pedido.productos_a > 0 && <span className="text-[10px] font-medium text-red-600">A:{pedido.productos_a}</span>}
+                      {pedido.productos_b > 0 && <span className="text-[10px] font-medium text-amber-600">B:{pedido.productos_b}</span>}
+                      {pedido.productos_c > 0 && <span className="text-[10px] font-medium text-blue-600">C:{pedido.productos_c}</span>}
+                      {pedido.productos_d > 0 && <span className="text-[10px] font-medium text-gray-400">D:{pedido.productos_d}</span>}
+                    </div>
+                  </td>
+                  <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleVerPedido(pedido.id, pedido.estado)}
+                        className="text-indigo-600 hover:text-indigo-800 font-medium"
+                      >
+                        Ver
+                      </button>
+                      {pedido.estado === ESTADOS_PEDIDO.BORRADOR && (
                         <button
-                          onClick={() => handleVerPedido(pedido.id, pedido.estado)}
-                          className="text-indigo-600 hover:text-indigo-900"
+                          onClick={() => setPedidoAEliminar(pedido)}
+                          className="text-gray-400 hover:text-red-500"
+                          title="Eliminar"
                         >
-                          {pedido.estado === 'pendiente_aprobacion_gerente' ? 'Aprobar' : 'Ver'}
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
                         </button>
-                        {pedido.estado === ESTADOS_PEDIDO.BORRADOR && (
-                          <button
-                            onClick={() => setPedidoAEliminar(pedido)}
-                            className="text-red-600 hover:text-red-900"
-                            title="Eliminar pedido"
-                          >
-                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

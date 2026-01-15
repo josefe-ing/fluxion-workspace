@@ -121,28 +121,42 @@ async def listar_pedidos(
     try:
         cursor = conn.cursor()
 
+        # Query con conteo de productos por clasificación ABC usando subconsulta
         query = """
             SELECT
-                id, numero_pedido, fecha_pedido, fecha_creacion,
-                cedi_origen_nombre, tienda_destino_nombre,
-                estado, prioridad, tipo_pedido,
-                total_productos, total_lineas, total_bultos, total_unidades, total_peso_kg,
-                fecha_entrega_solicitada, fecha_aprobacion, fecha_recepcion,
-                usuario_creador,
-                COALESCE(EXTRACT(DAY FROM AGE(CURRENT_DATE, fecha_creacion::DATE)), 0)::INTEGER as dias_desde_creacion
-            FROM pedidos_sugeridos
+                ps.id, ps.numero_pedido, ps.fecha_pedido, ps.fecha_creacion,
+                ps.cedi_origen_nombre, ps.tienda_destino_nombre,
+                ps.estado, ps.prioridad, ps.tipo_pedido,
+                ps.total_productos, ps.total_lineas, ps.total_bultos, ps.total_unidades, ps.total_peso_kg,
+                ps.fecha_entrega_solicitada, ps.fecha_aprobacion, ps.fecha_recepcion,
+                ps.usuario_creador,
+                COALESCE(EXTRACT(DAY FROM AGE(CURRENT_DATE, ps.fecha_creacion::DATE)), 0)::INTEGER as dias_desde_creacion,
+                COALESCE(abc_counts.productos_a, 0) as productos_a,
+                COALESCE(abc_counts.productos_b, 0) as productos_b,
+                COALESCE(abc_counts.productos_c, 0) as productos_c,
+                COALESCE(abc_counts.productos_d, 0) as productos_d
+            FROM pedidos_sugeridos ps
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'A') as productos_a,
+                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'B') as productos_b,
+                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'C') as productos_c,
+                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) IN ('D', '') OR clasificacion_abc IS NULL) as productos_d
+                FROM pedidos_sugeridos_detalle
+                WHERE pedido_id = ps.id AND incluido = true
+            ) abc_counts ON true
             WHERE 1=1
         """
 
         params = []
         if estado:
-            query += " AND estado = %s"
+            query += " AND ps.estado = %s"
             params.append(estado)
         if tienda_id:
-            query += " AND tienda_destino_id = %s"
+            query += " AND ps.tienda_destino_id = %s"
             params.append(tienda_id)
 
-        query += " ORDER BY fecha_creacion DESC LIMIT 100"
+        query += " ORDER BY ps.fecha_creacion DESC LIMIT 100"
 
         cursor.execute(query, params if params else None)
         result = cursor.fetchall()
@@ -187,7 +201,11 @@ async def listar_pedidos(
                 fecha_recepcion=to_venezuela_aware(row[16]),
                 usuario_creador=row[17] or "sistema",
                 dias_desde_creacion=row[18],
-                porcentaje_avance=porcentaje
+                porcentaje_avance=porcentaje,
+                productos_a=row[19] or 0,
+                productos_b=row[20] or 0,
+                productos_c=row[21] or 0,
+                productos_d=row[22] or 0
             ))
 
         return pedidos
