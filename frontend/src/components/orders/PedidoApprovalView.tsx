@@ -44,6 +44,7 @@ interface PedidoDetalle {
   id: string;
   numero_pedido: string;
   fecha_pedido: string;
+  fecha_creacion: string;
   estado: string;
   cedi_origen_nombre: string;
   tienda_destino_nombre: string;
@@ -420,7 +421,15 @@ export default function PedidoApprovalView() {
                 {pedido.cedi_origen_nombre} - {pedido.tienda_destino_nombre}
               </p>
               <p className="text-sm text-gray-500 mt-1">
-                Fecha: {new Date(pedido.fecha_pedido).toLocaleDateString()}
+                Creado: {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric'
+                })} {new Date(pedido.fecha_creacion).toLocaleTimeString('es-VE', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: true
+                })}
               </p>
             </div>
 

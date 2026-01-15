@@ -13,7 +13,8 @@ Incluye:
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional, Any
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 import logging
 import math
@@ -75,6 +76,29 @@ ESTADO_BORRADOR = "borrador"
 ESTADO_PENDIENTE_APROBACION_GERENTE = "pendiente_aprobacion_gerente"
 ESTADO_APROBADO_GERENTE = "aprobado_gerente"
 ESTADO_RECHAZADO_GERENTE = "rechazado_gerente"
+
+# Timezone de Venezuela (UTC-4)
+VENEZUELA_TZ = ZoneInfo("America/Caracas")
+
+
+def to_venezuela_aware(dt: datetime) -> datetime:
+    """
+    Asegura que un datetime tenga timezone de Venezuela.
+
+    PostgreSQL local está configurado con timezone America/Caracas,
+    por lo que CURRENT_TIMESTAMP ya devuelve hora Venezuela, pero
+    psycopg2 lo retorna como naive datetime (sin tzinfo).
+
+    Esta función simplemente agrega el tzinfo de Venezuela sin modificar la hora.
+    """
+    if dt is None:
+        return None
+    # Si no tiene timezone, la fecha ya está en hora Venezuela (del servidor PostgreSQL)
+    # Solo agregamos el tzinfo sin modificar la hora
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=VENEZUELA_TZ)
+    # Si ya tiene timezone, convertir a Venezuela
+    return dt.astimezone(VENEZUELA_TZ)
 
 
 # =====================================================================================
@@ -147,7 +171,7 @@ async def listar_pedidos(
                 id=row[0],
                 numero_pedido=row[1],
                 fecha_pedido=row[2],
-                fecha_creacion=row[3],
+                fecha_creacion=to_venezuela_aware(row[3]),
                 cedi_origen_nombre=row[4] or "CEDI",
                 tienda_destino_nombre=row[5] or "Tienda",
                 estado=row[6],
@@ -159,8 +183,8 @@ async def listar_pedidos(
                 total_unidades=float(row[12]) if row[12] else 0.0,
                 total_peso_kg=float(row[13]) if row[13] else None,
                 fecha_entrega_solicitada=row[14],
-                fecha_aprobacion=row[15],
-                fecha_recepcion=row[16],
+                fecha_aprobacion=to_venezuela_aware(row[15]),
+                fecha_recepcion=to_venezuela_aware(row[16]),
                 usuario_creador=row[17] or "sistema",
                 dias_desde_creacion=row[18],
                 porcentaje_avance=porcentaje
@@ -448,7 +472,7 @@ async def obtener_pedido(
             "id": pedido_row[0],
             "numero_pedido": pedido_row[1],
             "fecha_pedido": pedido_row[2],
-            "fecha_creacion": pedido_row[3],
+            "fecha_creacion": to_venezuela_aware(pedido_row[3]),
             "cedi_origen_nombre": pedido_row[5] or "CEDI",
             "tienda_destino_nombre": pedido_row[7] or "Tienda",
             "estado": pedido_row[8],
@@ -488,7 +512,7 @@ async def obtener_pedido(
             "usuario_aprobador": None,
             "usuario_picker": None,
             "usuario_receptor": None,
-            "fecha_modificacion": pedido_row[21],
+            "fecha_modificacion": to_venezuela_aware(pedido_row[21]),
             "fecha_inicio_picking": None,
             "fecha_fin_picking": None,
             "fecha_despacho": None,
