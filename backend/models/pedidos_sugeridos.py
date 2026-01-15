@@ -563,11 +563,15 @@ class PedidoSugeridoResumen(BaseModel):
     dias_desde_creacion: Optional[int] = None
     porcentaje_avance: Optional[int] = None
 
-    # Conteo por clasificación ABC
+    # Conteo por clasificación ABC (productos y bultos)
     productos_a: int = 0
     productos_b: int = 0
     productos_c: int = 0
     productos_d: int = 0
+    bultos_a: float = 0.0
+    bultos_b: float = 0.0
+    bultos_c: float = 0.0
+    bultos_d: float = 0.0
 
     class Config:
         from_attributes = True

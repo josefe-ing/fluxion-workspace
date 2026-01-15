@@ -25,11 +25,15 @@ export interface PedidoSugerido {
   usuario_creador: string;
   dias_desde_creacion: number;
   porcentaje_avance: number;
-  // Conteo por clasificación ABC
+  // Conteo por clasificación ABC (productos y bultos)
   productos_a: number;
   productos_b: number;
   productos_c: number;
   productos_d: number;
+  bultos_a: number;
+  bultos_b: number;
+  bultos_c: number;
+  bultos_d: number;
 }
 
 export interface ProductoDetalle {

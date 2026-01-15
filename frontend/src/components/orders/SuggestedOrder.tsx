@@ -14,8 +14,10 @@ import PedidoSugeridoV2Wizard from './PedidoSugeridoV2Wizard';
 export default function SuggestedOrder() {
   const navigate = useNavigate();
   const [pedidos, setPedidos] = useState<PedidoSugerido[]>([]);
+  const [pedidosFiltrados, setPedidosFiltrados] = useState<PedidoSugerido[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState<string>('');
+  const [filtroTienda, setFiltroTienda] = useState<string>('');
   const [mostrarWizardV2, setMostrarWizardV2] = useState(false);
   const [pedidoAEliminar, setPedidoAEliminar] = useState<PedidoSugerido | null>(null);
   const [eliminando, setEliminando] = useState(false);
@@ -23,6 +25,15 @@ export default function SuggestedOrder() {
   useEffect(() => {
     cargarPedidos();
   }, [filtroEstado]);
+
+  useEffect(() => {
+    // Filtrar por tienda localmente
+    if (filtroTienda) {
+      setPedidosFiltrados(pedidos.filter(p => p.tienda_destino_nombre === filtroTienda));
+    } else {
+      setPedidosFiltrados(pedidos);
+    }
+  }, [pedidos, filtroTienda]);
 
   const cargarPedidos = async () => {
     try {
@@ -35,6 +46,9 @@ export default function SuggestedOrder() {
       setLoading(false);
     }
   };
+
+  // Obtener lista única de tiendas
+  const tiendasUnicas = Array.from(new Set(pedidos.map(p => p.tienda_destino_nombre))).sort();
 
   const handleCrearPedido = () => {
     navigate('/pedidos-sugeridos/nuevo');
@@ -118,23 +132,40 @@ export default function SuggestedOrder() {
 
       {/* Filtros */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <div className="flex items-center gap-4">
-          <label className="text-sm font-medium text-gray-700">
-            Filtrar por estado:
-          </label>
-          <select
-            value={filtroEstado}
-            onChange={(e) => setFiltroEstado(e.target.value)}
-            className="rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-          >
-            <option value="">Todos</option>
-            <option value="borrador">Borrador</option>
-            <option value="pendiente_aprobacion_gerente">Pendiente de Aprobación</option>
-            <option value="aprobado_gerente">Aprobado</option>
-            <option value="rechazado_gerente">Rechazado</option>
-            <option value="finalizado">Finalizado</option>
-          </select>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-gray-700">
+              Filtrar por estado:
+            </label>
+            <select
+              value={filtroEstado}
+              onChange={(e) => setFiltroEstado(e.target.value)}
+              className="rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+            >
+              <option value="">Todos</option>
+              <option value="borrador">Borrador</option>
+              <option value="pendiente_aprobacion_gerente">Pendiente de Aprobación</option>
+              <option value="aprobado_gerente">Aprobado</option>
+              <option value="rechazado_gerente">Rechazado</option>
+              <option value="finalizado">Finalizado</option>
+            </select>
+          </div>
 
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-gray-700">
+              Filtrar por tienda:
+            </label>
+            <select
+              value={filtroTienda}
+              onChange={(e) => setFiltroTienda(e.target.value)}
+              className="rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+            >
+              <option value="">Todas</option>
+              {tiendasUnicas.map(tienda => (
+                <option key={tienda} value={tienda}>{tienda}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -142,7 +173,7 @@ export default function SuggestedOrder() {
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">
-            Pedidos Creados ({pedidos.length})
+            Pedidos Creados ({pedidosFiltrados.length})
           </h2>
         </div>
 
@@ -151,7 +182,7 @@ export default function SuggestedOrder() {
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto"></div>
             <p className="mt-4 text-gray-500">Cargando pedidos...</p>
           </div>
-        ) : pedidos.length === 0 ? (
+        ) : pedidosFiltrados.length === 0 ? (
           <div className="p-12 text-center">
             <svg
               className="mx-auto h-12 w-12 text-gray-400"
@@ -189,66 +220,61 @@ export default function SuggestedOrder() {
             )}
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed">
             <thead>
-              <tr className="border-b text-left text-xs text-gray-500 uppercase tracking-wide">
-                <th className="py-3 px-4 font-medium w-28">Pedido</th>
-                <th className="py-3 px-4 font-medium">Destino</th>
-                <th className="py-3 px-4 font-medium w-24">Estado</th>
-                <th className="py-3 px-4 font-medium text-right w-32">Productos</th>
-                <th className="py-3 px-4 font-medium w-20">Acciones</th>
+              <tr className="border-b border-gray-200">
+                <th className="text-left text-xs font-medium text-gray-500 uppercase pl-3 pr-3 py-2 w-24">Número</th>
+                <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-32">Fecha y Hora</th>
+                <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-24">Usuario</th>
+                <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-96">Destino y Cantidad</th>
+                <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-28">Estado</th>
+                <th className="text-right text-xs font-medium text-gray-500 uppercase pl-3 pr-3 py-2 w-28">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {pedidos.map((pedido) => (
+              {pedidosFiltrados.map((pedido) => (
                 <tr
                   key={pedido.id}
                   className="hover:bg-gray-50 cursor-pointer"
                   onClick={() => handleVerPedido(pedido.id, pedido.estado)}
                 >
-                  <td className="py-3 px-4">
-                    <span className="font-semibold text-gray-900">{pedido.numero_pedido}</span>
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' }).replace('.', '')} · {pedido.usuario_creador}
+                  <td className="pl-3 pr-3 py-2.5 whitespace-nowrap">
+                    <div className="text-sm font-bold text-gray-900">{pedido.numero_pedido}</div>
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <div className="text-sm text-gray-700">
+                      {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', { day: 'numeric', month: 'short' }).replace('.', '')}{' '}
+                      {new Date(pedido.fecha_creacion).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: true })}
                     </div>
                   </td>
-                  <td className="py-3 px-4">
-                    <span className="font-medium text-gray-900">{pedido.tienda_destino_nombre}</span>
-                    <span className="text-gray-400 mx-1">←</span>
-                    <span className="text-gray-500">{pedido.cedi_origen_nombre}</span>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <div className="text-sm text-gray-500">{pedido.usuario_creador}</div>
                   </td>
-                  <td className="py-3 px-4">
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <div className="text-sm font-semibold text-gray-900">{pedido.tienda_destino_nombre}: <span className="font-bold text-blue-600">{pedido.total_productos}</span> productos / <span className="text-gray-600">{formatNumber(pedido.total_bultos)}</span> bultos</div>
+                    <div className="text-xs text-gray-500">desde {pedido.cedi_origen_nombre}</div>
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
                     {getEstadoBadge(pedido.estado)}
                   </td>
-                  <td className="py-3 px-4 text-right">
-                    <div className="font-semibold text-gray-900">{pedido.total_productos} <span className="font-normal text-gray-400">/ {formatNumber(pedido.total_bultos)} bul</span></div>
-                    <div className="flex justify-end gap-1 mt-1">
-                      {pedido.productos_a > 0 && <span className="text-[10px] font-medium text-red-600">A:{pedido.productos_a}</span>}
-                      {pedido.productos_b > 0 && <span className="text-[10px] font-medium text-amber-600">B:{pedido.productos_b}</span>}
-                      {pedido.productos_c > 0 && <span className="text-[10px] font-medium text-blue-600">C:{pedido.productos_c}</span>}
-                      {pedido.productos_d > 0 && <span className="text-[10px] font-medium text-gray-400">D:{pedido.productos_d}</span>}
-                    </div>
-                  </td>
-                  <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-2">
+                  <td className="pl-3 pr-3 py-2.5 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => handleVerPedido(pedido.id, pedido.estado)}
+                      className="text-indigo-600 hover:text-indigo-800 font-medium mr-3"
+                    >
+                      Ver
+                    </button>
+                    {pedido.estado === ESTADOS_PEDIDO.BORRADOR && (
                       <button
-                        onClick={() => handleVerPedido(pedido.id, pedido.estado)}
-                        className="text-indigo-600 hover:text-indigo-800 font-medium"
+                        onClick={() => setPedidoAEliminar(pedido)}
+                        className="text-gray-400 hover:text-red-500"
+                        title="Eliminar"
                       >
-                        Ver
+                        <svg className="h-4 w-4 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
                       </button>
-                      {pedido.estado === ESTADOS_PEDIDO.BORRADOR && (
-                        <button
-                          onClick={() => setPedidoAEliminar(pedido)}
-                          className="text-gray-400 hover:text-red-500"
-                          title="Eliminar"
-                        >
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
+                    )}
                   </td>
                 </tr>
               ))}

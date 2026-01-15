@@ -121,7 +121,7 @@ async def listar_pedidos(
     try:
         cursor = conn.cursor()
 
-        # Query con conteo de productos por clasificación ABC usando subconsulta
+        # Query con conteo de productos y bultos por clasificación ABC usando subconsulta
         query = """
             SELECT
                 ps.id, ps.numero_pedido, ps.fecha_pedido, ps.fecha_creacion,
@@ -134,14 +134,22 @@ async def listar_pedidos(
                 COALESCE(abc_counts.productos_a, 0) as productos_a,
                 COALESCE(abc_counts.productos_b, 0) as productos_b,
                 COALESCE(abc_counts.productos_c, 0) as productos_c,
-                COALESCE(abc_counts.productos_d, 0) as productos_d
+                COALESCE(abc_counts.productos_d, 0) as productos_d,
+                COALESCE(abc_counts.bultos_a, 0) as bultos_a,
+                COALESCE(abc_counts.bultos_b, 0) as bultos_b,
+                COALESCE(abc_counts.bultos_c, 0) as bultos_c,
+                COALESCE(abc_counts.bultos_d, 0) as bultos_d
             FROM pedidos_sugeridos ps
             LEFT JOIN LATERAL (
                 SELECT
                     COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'A') as productos_a,
                     COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'B') as productos_b,
                     COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'C') as productos_c,
-                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) IN ('D', '') OR clasificacion_abc IS NULL) as productos_d
+                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) IN ('D', '') OR clasificacion_abc IS NULL) as productos_d,
+                    SUM(cantidad_pedida_bultos) FILTER (WHERE UPPER(clasificacion_abc) = 'A') as bultos_a,
+                    SUM(cantidad_pedida_bultos) FILTER (WHERE UPPER(clasificacion_abc) = 'B') as bultos_b,
+                    SUM(cantidad_pedida_bultos) FILTER (WHERE UPPER(clasificacion_abc) = 'C') as bultos_c,
+                    SUM(cantidad_pedida_bultos) FILTER (WHERE UPPER(clasificacion_abc) IN ('D', '') OR clasificacion_abc IS NULL) as bultos_d
                 FROM pedidos_sugeridos_detalle
                 WHERE pedido_id = ps.id AND incluido = true
             ) abc_counts ON true
@@ -205,7 +213,11 @@ async def listar_pedidos(
                 productos_a=row[19] or 0,
                 productos_b=row[20] or 0,
                 productos_c=row[21] or 0,
-                productos_d=row[22] or 0
+                productos_d=row[22] or 0,
+                bultos_a=float(row[23]) if row[23] else 0.0,
+                bultos_b=float(row[24]) if row[24] else 0.0,
+                bultos_c=float(row[25]) if row[25] else 0.0,
+                bultos_d=float(row[26]) if row[26] else 0.0
             ))
 
         return pedidos
