@@ -891,7 +891,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
         'U/B': p.cantidad_bultos,
         'Unidad Pedido': p.unidad_pedido || 'Bulto',
         'Pedido Bultos': pedidoBultos,
-        'Stock Tienda': p.stock_tienda,
+        'Stock Actual': p.stock_tienda,
+        'Stock Días': Number(p.stock_dias_cobertura.toFixed(1)),
         'Stock CEDI': p.stock_cedi_origen,
       };
     });
@@ -912,7 +913,8 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       { wch: 6 },   // U/B
       { wch: 12 },  // Unidad Pedido
       { wch: 13 },  // Pedido Bultos
-      { wch: 12 },  // Stock Tienda
+      { wch: 12 },  // Stock Actual
+      { wch: 11 },  // Stock Días
       { wch: 12 },  // Stock CEDI
     ];
 

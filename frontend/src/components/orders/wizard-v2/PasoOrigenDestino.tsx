@@ -7,23 +7,40 @@ interface PasoOrigenDestinoProps {
   onCancelar: () => void;
 }
 
-// Configuración hardcodeada para Región Caracas
-const REGION_CARACAS = {
-  cedi: {
-    id: 'cedi_caracas',
-    nombre: 'CEDI Caracas'
-  },
-  tiendas: [
+// Configuración de CEDIs y tiendas disponibles
+const CEDIS_DISPONIBLES = [
+  { id: 'cedi_caracas', nombre: 'CEDI Caracas', region: 'Caracas' },
+  { id: 'cedi_seco', nombre: 'CEDI Seco', region: 'Valencia' }
+];
+
+const TIENDAS_POR_CEDI: Record<string, Array<{ id: string; nombre: string }>> = {
+  'cedi_caracas': [
     { id: 'tienda_17', nombre: 'ARTIGAS' },
     { id: 'tienda_18', nombre: 'PARAISO' }
+  ],
+  'cedi_seco': [
+    { id: 'tienda_08', nombre: 'BOSQUE' },
+    { id: 'tienda_01', nombre: 'PERIFERICO' },
+    { id: 'tienda_02', nombre: 'AV. BOLIVAR' },
+    { id: 'tienda_03', nombre: 'MAÑONGO' },
+    { id: 'tienda_15', nombre: 'ISABELICA' },
+    { id: 'tienda_20', nombre: 'TAZAJAL' }
   ]
 };
 
 export default function PasoOrigenDestino({ onSiguiente, onCancelar }: PasoOrigenDestinoProps) {
+  const [cediSeleccionado, setCediSeleccionado] = useState('cedi_seco');
   const [tiendaSeleccionada, setTiendaSeleccionada] = useState('');
   const [fechaPedido, setFechaPedido] = useState(
     new Date().toISOString().split('T')[0]
   );
+
+  const tiendasDisponibles = TIENDAS_POR_CEDI[cediSeleccionado] || [];
+
+  const handleCediChange = (nuevoCedi: string) => {
+    setCediSeleccionado(nuevoCedi);
+    setTiendaSeleccionada(''); // Reset tienda cuando cambia CEDI
+  };
 
   const handleSiguiente = () => {
     if (!tiendaSeleccionada) {
@@ -31,24 +48,26 @@ export default function PasoOrigenDestino({ onSiguiente, onCancelar }: PasoOrige
       return;
     }
 
-    const tienda = REGION_CARACAS.tiendas.find(t => t.id === tiendaSeleccionada);
+    const cedi = CEDIS_DISPONIBLES.find(c => c.id === cediSeleccionado);
+    const tienda = tiendasDisponibles.find(t => t.id === tiendaSeleccionada);
 
-    if (!tienda) {
-      alert('Error al obtener datos de la tienda');
+    if (!cedi || !tienda) {
+      alert('Error al obtener datos del CEDI o tienda');
       return;
     }
 
     onSiguiente({
-      cediOrigenId: REGION_CARACAS.cedi.id,
-      cediOrigenNombre: REGION_CARACAS.cedi.nombre,
+      cediOrigenId: cedi.id,
+      cediOrigenNombre: cedi.nombre,
       tiendaDestinoId: tienda.id,
       tiendaDestinoNombre: tienda.nombre,
       fechaPedido
     });
   };
 
-  const puedeAvanzar = tiendaSeleccionada && fechaPedido;
-  const tiendaInfo = REGION_CARACAS.tiendas.find(t => t.id === tiendaSeleccionada);
+  const puedeAvanzar = cediSeleccionado && tiendaSeleccionada && fechaPedido;
+  const cediInfo = CEDIS_DISPONIBLES.find(c => c.id === cediSeleccionado);
+  const tiendaInfo = tiendasDisponibles.find(t => t.id === tiendaSeleccionada);
 
   return (
     <div className="p-8">
@@ -58,20 +77,29 @@ export default function PasoOrigenDestino({ onSiguiente, onCancelar }: PasoOrige
             Seleccionar Origen y Destino
           </h3>
           <p className="text-gray-600">
-            Pedido desde CEDI Caracas hacia tiendas de la región.
+            Pedido desde CEDI hacia tiendas de la región.
           </p>
         </div>
 
         <div className="space-y-6">
-          {/* CEDI Origen - Fijo */}
+          {/* CEDI Origen - Seleccionable */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <Building2 className="inline h-4 w-4 mr-1" />
               CEDI Origen
+              <span className="text-red-500 ml-1">*</span>
             </label>
-            <div className="w-full px-4 py-3 bg-gray-100 border-2 border-gray-200 rounded-lg text-base text-gray-700">
-              {REGION_CARACAS.cedi.nombre}
-            </div>
+            <select
+              value={cediSeleccionado}
+              onChange={(e) => handleCediChange(e.target.value)}
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-base"
+            >
+              {CEDIS_DISPONIBLES.map((cedi) => (
+                <option key={cedi.id} value={cedi.id}>
+                  {cedi.nombre}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Tienda Destino */}
@@ -87,7 +115,7 @@ export default function PasoOrigenDestino({ onSiguiente, onCancelar }: PasoOrige
               className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-base"
             >
               <option value="">Seleccionar Tienda...</option>
-              {REGION_CARACAS.tiendas.map((tienda) => (
+              {tiendasDisponibles.map((tienda) => (
                 <option key={tienda.id} value={tienda.id}>
                   {tienda.nombre}
                 </option>
@@ -115,7 +143,7 @@ export default function PasoOrigenDestino({ onSiguiente, onCancelar }: PasoOrige
               <p className="text-sm font-medium text-indigo-900 mb-2">Resumen:</p>
               <div className="space-y-1 text-sm text-indigo-800">
                 <p>
-                  <strong>Desde:</strong> {REGION_CARACAS.cedi.nombre}
+                  <strong>Desde:</strong> {cediInfo?.nombre}
                 </p>
                 <p>
                   <strong>Hacia:</strong> {tiendaInfo?.nombre}

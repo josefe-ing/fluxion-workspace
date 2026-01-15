@@ -1,15 +1,24 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { OrderData } from './OrderWizard';
 
-// Configuración hardcodeada para Región Caracas
-const REGION_CARACAS = {
-  cedi: {
-    id: 'cedi_caracas',
-    nombre: 'CEDI Caracas'
-  },
-  tiendas: [
+// Configuración de CEDIs y tiendas disponibles
+const CEDIS_DISPONIBLES = [
+  { id: 'cedi_caracas', nombre: 'CEDI Caracas', region: 'Caracas' },
+  { id: 'cedi_seco', nombre: 'CEDI Seco', region: 'Valencia' }
+];
+
+const TIENDAS_POR_CEDI: Record<string, Array<{ id: string; nombre: string }>> = {
+  'cedi_caracas': [
     { id: 'tienda_17', nombre: 'ARTIGAS' },
     { id: 'tienda_18', nombre: 'PARAISO' }
+  ],
+  'cedi_seco': [
+    { id: 'tienda_08', nombre: 'BOSQUE' },
+    { id: 'tienda_01', nombre: 'PERIFERICO' },
+    { id: 'tienda_02', nombre: 'AV. BOLIVAR' },
+    { id: 'tienda_03', nombre: 'MAÑONGO' },
+    { id: 'tienda_15', nombre: 'ISABELICA' },
+    { id: 'tienda_20', nombre: 'TAZAJAL' }
   ]
 };
 
@@ -21,31 +30,49 @@ interface Props {
 }
 
 export default function OrderStepOne({ orderData, updateOrderData, onNext, onCancel }: Props) {
+  const [cediSeleccionado, setCediSeleccionado] = useState(orderData.cedi_origen || 'cedi_seco');
   const [tiendaSeleccionada, setTiendaSeleccionada] = useState(orderData.tienda_destino || '');
 
-  // Auto-seleccionar CEDI Caracas al montar
-  useState(() => {
+  const tiendasDisponibles = TIENDAS_POR_CEDI[cediSeleccionado] || [];
+
+  // Auto-seleccionar CEDI al montar
+  useEffect(() => {
     if (!orderData.cedi_origen) {
-      updateOrderData({
-        cedi_origen: REGION_CARACAS.cedi.id,
-        cedi_origen_nombre: REGION_CARACAS.cedi.nombre,
-      });
+      const cedi = CEDIS_DISPONIBLES.find(c => c.id === cediSeleccionado);
+      if (cedi) {
+        updateOrderData({
+          cedi_origen: cedi.id,
+          cedi_origen_nombre: cedi.nombre,
+        });
+      }
     }
-  });
+  }, []);
+
+  const handleCediChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const nuevoCedi = e.target.value;
+    const cedi = CEDIS_DISPONIBLES.find(c => c.id === nuevoCedi);
+    setCediSeleccionado(nuevoCedi);
+    setTiendaSeleccionada(''); // Reset tienda cuando cambia CEDI
+    updateOrderData({
+      cedi_origen: cedi?.id || '',
+      cedi_origen_nombre: cedi?.nombre || '',
+      tienda_destino: '',
+      tienda_destino_nombre: '',
+    });
+  };
 
   const handleTiendaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const tienda = REGION_CARACAS.tiendas.find(t => t.id === e.target.value);
+    const tienda = tiendasDisponibles.find(t => t.id === e.target.value);
     setTiendaSeleccionada(e.target.value);
     updateOrderData({
-      cedi_origen: REGION_CARACAS.cedi.id,
-      cedi_origen_nombre: REGION_CARACAS.cedi.nombre,
       tienda_destino: e.target.value,
       tienda_destino_nombre: tienda?.nombre || '',
     });
   };
 
-  const canProceed = tiendaSeleccionada;
-  const tiendaInfo = REGION_CARACAS.tiendas.find(t => t.id === tiendaSeleccionada);
+  const canProceed = cediSeleccionado && tiendaSeleccionada;
+  const cediInfo = CEDIS_DISPONIBLES.find(c => c.id === cediSeleccionado);
+  const tiendaInfo = tiendasDisponibles.find(t => t.id === tiendaSeleccionada);
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -55,18 +82,26 @@ export default function OrderStepOne({ orderData, updateOrderData, onNext, onCan
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Seleccionar Origen y Destino</h2>
             <p className="mt-2 text-sm text-gray-500">
-              Pedido desde CEDI Caracas hacia tiendas de la región.
+              Pedido desde CEDI hacia tiendas de la región.
             </p>
           </div>
 
-          {/* CEDI Origen - Fijo */}
+          {/* CEDI Origen - Seleccionable */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              CEDI Origen
+              CEDI Origen <span className="text-red-500">*</span>
             </label>
-            <div className="w-full px-4 py-3 bg-gray-100 border border-gray-200 rounded-md text-gray-700">
-              {REGION_CARACAS.cedi.nombre}
-            </div>
+            <select
+              value={cediSeleccionado}
+              onChange={handleCediChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+            >
+              {CEDIS_DISPONIBLES.map((cedi) => (
+                <option key={cedi.id} value={cedi.id}>
+                  {cedi.nombre}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Tienda Destino */}
@@ -80,7 +115,7 @@ export default function OrderStepOne({ orderData, updateOrderData, onNext, onCan
               className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
             >
               <option value="">Seleccionar Tienda...</option>
-              {REGION_CARACAS.tiendas.map((tienda) => (
+              {tiendasDisponibles.map((tienda) => (
                 <option key={tienda.id} value={tienda.id}>
                   {tienda.nombre}
                 </option>
@@ -94,7 +129,7 @@ export default function OrderStepOne({ orderData, updateOrderData, onNext, onCan
               <h3 className="text-sm font-semibold text-gray-900 mb-2">Resumen de Selección</h3>
               <div className="space-y-1 text-sm text-gray-600">
                 <p>
-                  <span className="font-medium">Origen:</span> {REGION_CARACAS.cedi.nombre}
+                  <span className="font-medium">Origen:</span> {cediInfo?.nombre}
                 </p>
                 <p>
                   <span className="font-medium">Destino:</span> {tiendaInfo?.nombre}
