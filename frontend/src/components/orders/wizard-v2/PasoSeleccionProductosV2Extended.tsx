@@ -205,13 +205,12 @@ export default function PasoSeleccionProductosV2Extended({
   };
 
   const handleSiguiente = () => {
-    const productosParaPedido = Array.from(productosSeleccionados)
-      .map(prodId => {
-        const producto = productos.find(p => p.producto_id === prodId);
-        if (!producto) return null;
-
-        const cantidadPedida = cantidadesPedir.get(prodId) ?? producto.cantidad_sugerida;
-        const notasProducto = notas.get(prodId);
+    // Solo enviar productos que están seleccionados Y visibles en los filtros actuales
+    const productosParaPedido = productosFiltrados
+      .filter(producto => productosSeleccionados.has(producto.producto_id))
+      .map(producto => {
+        const cantidadPedida = cantidadesPedir.get(producto.producto_id) ?? producto.cantidad_sugerida;
+        const notasProducto = notas.get(producto.producto_id);
 
         const productoSeleccionado: ProductoSeleccionado = {
           producto_id: producto.producto_id,
@@ -242,8 +241,7 @@ export default function PasoSeleccionProductosV2Extended({
           ...(notasProducto && { notas: notasProducto })
         };
         return productoSeleccionado;
-      })
-      .filter((p): p is ProductoSeleccionado => p !== null);
+      });
 
     if (productosParaPedido.length === 0) {
       alert('Debes seleccionar al menos un producto');
@@ -253,18 +251,19 @@ export default function PasoSeleccionProductosV2Extended({
     onSiguiente(productosParaPedido);
   };
 
-  const totalSeleccionados = productosSeleccionados.size;
-  const totalUnidades = Array.from(productosSeleccionados).reduce((sum, prodId) => {
-    const producto = productos.find(p => p.producto_id === prodId);
-    if (!producto) return sum;
-    const cantidad = cantidadesPedir.get(prodId) ?? producto.cantidad_sugerida;
+  // Solo contar productos que están seleccionados Y visibles en los filtros actuales
+  const productosSeleccionadosYFiltrados = productosFiltrados.filter(p =>
+    productosSeleccionados.has(p.producto_id)
+  );
+
+  const totalSeleccionados = productosSeleccionadosYFiltrados.length;
+  const totalUnidades = productosSeleccionadosYFiltrados.reduce((sum, producto) => {
+    const cantidad = cantidadesPedir.get(producto.producto_id) ?? producto.cantidad_sugerida;
     return sum + cantidad;
   }, 0);
 
-  const totalPeso = Array.from(productosSeleccionados).reduce((sum, prodId) => {
-    const producto = productos.find(p => p.producto_id === prodId);
-    if (!producto) return sum;
-    const cantidad = cantidadesPedir.get(prodId) ?? producto.cantidad_sugerida;
+  const totalPeso = productosSeleccionadosYFiltrados.reduce((sum, producto) => {
+    const cantidad = cantidadesPedir.get(producto.producto_id) ?? producto.cantidad_sugerida;
     return sum + (cantidad * producto.peso_kg);
   }, 0);
 

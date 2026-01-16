@@ -144,12 +144,13 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
       if (needsUpdate) {
         const productosActualizados = productos.map(p => {
           // Solo calcular si no está definido, de lo contrario preservar el valor del usuario
-          const pedidoSugerido = p.cantidad_pedida_bultos !== undefined ? p.cantidad_pedida_bultos : calcularPedidoSugerido(p);
+          const yaEditado = p.cantidad_pedida_bultos !== undefined;
+          const pedidoSugerido = yaEditado ? (p.cantidad_pedida_bultos ?? 0) : calcularPedidoSugerido(p);
           return {
             ...p,
             cantidad_pedida_bultos: pedidoSugerido,
-            // Solo preseleccionar si el pedido sugerido es > 0
-            incluido: pedidoSugerido > 0
+            // Preservar incluido si el usuario ya lo editó, de lo contrario auto-seleccionar si tiene déficit
+            incluido: yaEditado ? p.incluido : pedidoSugerido > 0
           };
         });
 
@@ -309,7 +310,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
           ...p,
           // No inicializar cantidad_pedida_bultos aquí - dejar que useEffect lo calcule con calcularPedidoSugerido()
           cantidad_pedida_bultos: undefined,
-          incluido: true,
+          incluido: false, // Iniciar deseleccionado, el useEffect seleccionará los que tienen déficit
           razon_pedido: notasIniciales,
         };
       });
@@ -352,6 +353,24 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
     );
     setProductos(newProductos);
     updateOrderData({ productos: newProductos });
+  };
+
+  // Función para ir al siguiente paso, solo con productos filtrados y seleccionados
+  const handleSiguiente = () => {
+    // Obtener IDs de productos actualmente filtrados
+    const idsFiltrados = new Set(productosFiltrados.map(p => p.codigo_producto));
+
+    // Actualizar productos: solo los que están filtrados Y seleccionados mantienen incluido=true
+    const productosActualizados = productos.map(p => ({
+      ...p,
+      incluido: idsFiltrados.has(p.codigo_producto) ? p.incluido : false
+    }));
+
+    setProductos(productosActualizados);
+    updateOrderData({ productos: productosActualizados });
+
+    // Ir al siguiente paso
+    onNext();
   };
 
   const handleSort = (field: SortField) => {
@@ -1164,7 +1183,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-gray-600">Seleccionados:</span>
                 <span className="text-sm font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded">
-                  {productos.filter(p => p.incluido).length}/{productos.length}
+                  {productosFiltrados.filter(p => p.incluido).length}/{productosFiltrados.length}
                 </span>
               </div>
 
@@ -1172,7 +1191,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-gray-500">Cat:</span>
                 {(() => {
-                  const seleccionados = productos.filter(p => p.incluido);
+                  const seleccionados = productosFiltrados.filter(p => p.incluido);
                   const porCategoria = seleccionados.reduce((acc, p) => {
                     const cat = p.categoria || 'Sin Cat.';
                     acc[cat] = (acc[cat] || 0) + 1;
@@ -1194,7 +1213,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-gray-500">ABC:</span>
                 {(() => {
-                  const seleccionados = productos.filter(p => p.incluido);
+                  const seleccionados = productosFiltrados.filter(p => p.incluido);
                   const top50Count = seleccionados.filter(p => esTop50(p.codigo_producto)).length;
                   const aCount = seleccionados.filter(p => getClasificacionABC(p) === 'A' && !esTop50(p.codigo_producto)).length;
                   const bCount = seleccionados.filter(p => getClasificacionABC(p) === 'B').length;
@@ -1251,9 +1270,15 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                   <th className="sticky left-0 z-30 bg-gray-100 px-2 py-2 text-left" style={{ width: '36px' }}>
                     <input
                       type="checkbox"
-                      checked={productos.every(p => p.incluido)}
+                      checked={productosFiltrados.length > 0 && productosFiltrados.every(p => p.incluido)}
                       onChange={(e) => {
-                        const newProductos = productos.map(p => ({ ...p, incluido: e.target.checked }));
+                        // Solo modificar los productos que están visibles en los filtros actuales
+                        const idsProductosFiltrados = new Set(productosFiltrados.map(p => p.codigo_producto));
+                        const newProductos = productos.map(p =>
+                          idsProductosFiltrados.has(p.codigo_producto)
+                            ? { ...p, incluido: e.target.checked }
+                            : p
+                        );
                         setProductos(newProductos);
                         updateOrderData({ productos: newProductos });
                       }}
@@ -1692,7 +1717,7 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
           ← Atrás
         </button>
         <button
-          onClick={onNext}
+          onClick={handleSiguiente}
           disabled={productosIncluidos.length === 0}
           className="px-6 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
