@@ -59,6 +59,7 @@ from middleware.tenant import TenantMiddleware
 
 # Importar routers
 from routers.pedidos_sugeridos import router as pedidos_sugeridos_router
+from routers.pedidos_multitienda import router as pedidos_multitienda_router
 from routers.generadores_trafico_router import router as generadores_trafico_router
 from routers.config_inventario import router as config_inventario_router
 from routers.pedidos_inter_cedi import router as pedidos_inter_cedi_router
@@ -134,6 +135,7 @@ app.add_middleware(
 
 # Registrar routers
 app.include_router(pedidos_sugeridos_router)
+app.include_router(pedidos_multitienda_router)
 app.include_router(generadores_trafico_router)
 app.include_router(config_inventario_router)
 app.include_router(pedidos_inter_cedi_router)

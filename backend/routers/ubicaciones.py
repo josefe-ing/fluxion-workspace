@@ -438,3 +438,108 @@ async def get_all_almacenes_klk():
     except Exception as e:
         logger.error(f"Error obteniendo almacenes KLK: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@router.get("/ubicaciones/tiendas-por-cedi/{cedi_id}")
+async def get_tiendas_por_cedi(cedi_id: str):
+    """
+    Obtiene las tiendas que son servidas por un CEDI específico.
+    Las tiendas se asignan según la región del CEDI.
+
+    - cedi_caracas -> tiendas de región CARACAS
+    - cedi_seco/cedi_frio/cedi_verde -> tiendas de región VALENCIA
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Primero obtener la región del CEDI
+            cursor.execute(
+                "SELECT region FROM ubicaciones WHERE id = %s AND tipo = 'cedi'",
+                (cedi_id,)
+            )
+            cedi_row = cursor.fetchone()
+
+            if not cedi_row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"CEDI '{cedi_id}' no encontrado"
+                )
+
+            region_cedi = cedi_row[0]
+
+            # Obtener tiendas de la misma región
+            cursor.execute(
+                """
+                SELECT id, nombre, codigo_klk, ciudad, activo
+                FROM ubicaciones
+                WHERE tipo = 'tienda'
+                  AND region = %s
+                  AND activo = true
+                ORDER BY nombre
+                """,
+                (region_cedi,)
+            )
+            tiendas = cursor.fetchall()
+            cursor.close()
+
+            return {
+                "cedi_id": cedi_id,
+                "region": region_cedi,
+                "total_tiendas": len(tiendas),
+                "tiendas": [
+                    {
+                        "id": row[0],
+                        "nombre": row[1],
+                        "codigo_klk": row[2],
+                        "ciudad": row[3],
+                        "activo": row[4]
+                    }
+                    for row in tiendas
+                ]
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo tiendas por CEDI: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@router.get("/ubicaciones/cedis")
+async def get_cedis():
+    """
+    Obtiene todos los CEDIs disponibles.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, nombre, region, ciudad, activo
+                FROM ubicaciones
+                WHERE tipo = 'cedi'
+                  AND activo = true
+                ORDER BY region, nombre
+                """
+            )
+            cedis = cursor.fetchall()
+            cursor.close()
+
+            return {
+                "total": len(cedis),
+                "cedis": [
+                    {
+                        "id": row[0],
+                        "nombre": row[1],
+                        "region": row[2],
+                        "ciudad": row[3],
+                        "activo": row[4]
+                    }
+                    for row in cedis
+                ]
+            }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo CEDIs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")

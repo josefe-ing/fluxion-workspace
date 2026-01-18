@@ -12,6 +12,7 @@ import SalesDashboard from './components/sales/SalesDashboard';
 // Pedidos Sugeridos
 import SuggestedOrder from './components/orders/SuggestedOrder';
 import OrderWizard from './components/orders/OrderWizard';
+import OrderWizardMultiTienda from './components/orders/OrderWizardMultiTienda';
 // import PedidoSugeridoV2Wizard from './components/orders/PedidoSugeridoV2Wizard'; // Modal version, not used as route
 import PedidoInterCediWizard from './components/orders/PedidoInterCediWizard';
 import PedidoApprovalView from './components/orders/PedidoApprovalView';
@@ -54,6 +55,7 @@ function ProtectedRoutes() {
         {/* Pedidos Sugeridos */}
         <Route path="pedidos-sugeridos" element={<SuggestedOrder />} />
         <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} />
+        <Route path="pedidos-sugeridos/nuevo-multi" element={<OrderWizardMultiTienda />} />
         <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
         {/* Pedidos Inter-CEDI */}
         <Route path="pedidos-inter-cedi/nuevo" element={<PedidoInterCediWizard />} />
