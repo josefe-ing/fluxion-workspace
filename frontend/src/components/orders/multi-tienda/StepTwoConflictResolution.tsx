@@ -518,13 +518,14 @@ export default function StepTwoConflictResolution({
                   <th
                     key={tienda.id}
                     className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    colSpan={5}
+                    colSpan={6}
                   >
                     <div className="border-b border-gray-300 pb-1 mb-1">{tienda.nombre}</div>
                     <div className="flex justify-around text-[10px] font-normal normal-case">
                       <span>P75</span>
                       <span>Stk</span>
                       <span>Días</span>
+                      <span>SUG</span>
                       <span>DPD+U</span>
                       <span>Final</span>
                     </div>
@@ -615,17 +616,19 @@ export default function StepTwoConflictResolution({
                       </div>
                     </td>
 
-                    {/* Por cada tienda: P75 | Stk | Días | DPD+U | Final */}
+                    {/* Por cada tienda: P75 | Stk | Días | SUG | DPD+U | Final */}
                     {tiendas.map(tienda => {
                       const asignacion = conflicto.distribucion_dpdu.find(a => a.tienda_id === tienda.id);
-                      if (!asignacion) return <td key={tienda.id} colSpan={5}></td>;
+                      if (!asignacion) return <td key={tienda.id} colSpan={6}></td>;
 
                       const valorDpdu = asignacion.cantidad_asignada_bultos;
                       const valorFinal = getValorFinal(conflicto.codigo_producto, tienda.id, valorDpdu);
                       const fueModificado = ajustesManuales[conflicto.codigo_producto]?.[tienda.id] !== undefined;
+                      // SUG: cantidad que necesita la tienda (en bultos)
+                      const sugBultos = Math.ceil(asignacion.cantidad_necesaria / conflicto.unidades_por_bulto);
 
                       return (
-                        <td key={tienda.id} colSpan={5} className="px-1 py-3">
+                        <td key={tienda.id} colSpan={6} className="px-1 py-3">
                           <div className="flex items-center justify-around gap-1">
                             {/* P75 - bultos y unidades */}
                             <div className="text-center w-12" title="Venta diaria P75">
@@ -652,8 +655,18 @@ export default function StepTwoConflictResolution({
                               {asignacion.dias_stock < 999 ? `${asignacion.dias_stock.toFixed(1)}` : '—'}
                             </span>
 
-                            {/* Sugerido DPD+U */}
-                            <div className="text-center w-10" title="Sugerido por algoritmo DPD+U">
+                            {/* SUG - Sugerido (lo que necesita la tienda) */}
+                            <div className="text-center w-10" title="Cantidad sugerida para la tienda">
+                              <div className="text-xs font-medium text-red-600">
+                                {sugBultos}
+                              </div>
+                              <div className="text-[10px] text-red-400">
+                                {formatNumber(asignacion.cantidad_necesaria)}u
+                              </div>
+                            </div>
+
+                            {/* DPD+U - Asignado por algoritmo */}
+                            <div className="text-center w-10" title="Asignado por algoritmo DPD+U">
                               <div className="text-sm text-orange-600 font-medium">
                                 {valorDpdu}
                               </div>
