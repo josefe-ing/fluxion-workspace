@@ -113,22 +113,23 @@ export default function StepFourConfirmation({
 
     try {
       // Preparar datos para el endpoint
+      // Ensure all required fields have valid defaults to prevent 422 validation errors
       const pedidosParaGuardar: PedidoTiendaParaGuardar[] = pedidos.map((pedido) => ({
         tienda_destino_id: pedido.tienda_id,
         tienda_destino_nombre: pedido.tienda_nombre,
         productos: pedido.productos.map((p) => ({
           codigo_producto: p.codigo_producto,
           descripcion_producto: p.descripcion_producto,
-          categoria: p.categoria,
-          clasificacion_abc: p.clasificacion_abc,
-          unidades_por_bulto: p.unidades_por_bulto,
-          cantidad_pedida_bultos: p.cantidad_sugerida_bultos,
-          cantidad_pedida_unidades: p.cantidad_sugerida_unid,
-          stock_tienda: p.stock_tienda,
-          stock_cedi_origen: p.stock_cedi_origen,
-          prom_p75_unid: p.prom_p75_unid,
-          ajustado_por_dpdu: p.ajustado_por_dpdu,
-          cantidad_original_bultos: p.cantidad_original_bultos,
+          categoria: p.categoria || undefined,
+          clasificacion_abc: p.clasificacion_abc || undefined,
+          unidades_por_bulto: p.unidades_por_bulto || 1,
+          cantidad_pedida_bultos: p.cantidad_sugerida_bultos || 0,
+          cantidad_pedida_unidades: p.cantidad_sugerida_unid || 0,
+          stock_tienda: p.stock_tienda ?? 0,
+          stock_cedi_origen: p.stock_cedi_origen ?? 0,
+          prom_p75_unid: p.prom_p75_unid ?? 0,
+          ajustado_por_dpdu: p.ajustado_por_dpdu ?? false,
+          cantidad_original_bultos: p.cantidad_original_bultos || undefined,
           incluido: true,
         })),
         observaciones: '',
@@ -151,7 +152,20 @@ export default function StepFourConfirmation({
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'Error guardando pedidos');
+        // Handle FastAPI validation errors (422) which come as array
+        let errorMessage = 'Error guardando pedidos';
+        if (Array.isArray(errorData.detail)) {
+          // Extract meaningful messages from validation errors
+          errorMessage = errorData.detail
+            .map((err: { msg?: string; loc?: string[] }) => {
+              const field = err.loc?.slice(-1)[0] || 'campo';
+              return `${field}: ${err.msg || 'inválido'}`;
+            })
+            .join(', ');
+        } else if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        }
+        throw new Error(errorMessage);
       }
 
       const result: GuardarMultiTiendaResponse = await response.json();
