@@ -236,19 +236,25 @@ async def obtener_productos_tienda(
             es_generador_trafico=False
         )
 
-        # Extraer valores del resultado estadístico
-        punto_reorden = resultado.punto_reorden_unid
-        stock_maximo = resultado.stock_maximo_unid
-        stock_seguridad = resultado.stock_seguridad_unid
+        # Extraer valores del resultado estadístico (en unidades)
+        punto_reorden_unid = resultado.punto_reorden_unid
+        stock_maximo_unid = resultado.stock_maximo_unid
+        stock_seguridad_unid = resultado.stock_seguridad_unid
         cantidad_sugerida_unid = resultado.cantidad_sugerida_unid
         cantidad_sugerida_bultos = resultado.cantidad_sugerida_bultos
         tiene_sobrestock = resultado.tiene_sobrestock
 
-        # Calcular días de stock actual (evitar división por cero)
+        # Calcular días de stock actual y convertir niveles a días (como single-store)
         if p75 > 0:
             dias_stock = stock_tienda / p75
+            dias_ss = stock_seguridad_unid / p75
+            dias_rop = punto_reorden_unid / p75
+            dias_max = stock_maximo_unid / p75
         else:
             dias_stock = 999 if stock_tienda > 0 else 0
+            dias_ss = 0
+            dias_rop = 0
+            dias_max = 0
 
         # Determinar si necesita reposición usando el cálculo estadístico
         # Similar a single-store: sugiere si hay cantidad > 0 y hay stock en CEDI
@@ -276,9 +282,14 @@ async def obtener_productos_tienda(
             'stock_tienda': stock_tienda,
             'stock_cedi_origen': stock_cedi,
             'dias_stock': round(dias_stock, 2),
-            'stock_seguridad': stock_seguridad,
-            'punto_reorden': punto_reorden,
-            'stock_maximo': stock_maximo,
+            # Niveles en DÍAS (como single-store)
+            'dias_ss': round(dias_ss, 1),
+            'dias_rop': round(dias_rop, 1),
+            'dias_max': round(dias_max, 1),
+            # También incluir en unidades por si se necesita
+            'stock_seguridad_unid': stock_seguridad_unid,
+            'punto_reorden_unid': punto_reorden_unid,
+            'stock_maximo_unid': stock_maximo_unid,
             'cantidad_necesaria_unid': cantidad_sugerida_unid,
             'cantidad_sugerida_bultos': int(cantidad_sugerida_bultos),
             'cantidad_sugerida_unid': cantidad_sugerida_unid,
