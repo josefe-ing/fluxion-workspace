@@ -530,6 +530,7 @@ export default function StepThreeReviewTabs({
         return {
           ...prod,
           cantidad_sugerida_bultos: cantidadFinal,
+          cantidad_sugerida_unid: cantidadFinal * prod.unidades_por_bulto,
         };
       });
 

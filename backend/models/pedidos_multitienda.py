@@ -215,24 +215,24 @@ class ProductoPedidoAjustado(BaseModel):
     categoria: Optional[str] = None
     clasificacion_abc: Optional[str] = None
 
-    # Cantidades
-    unidades_por_bulto: Decimal
-    cantidad_pedida_bultos: int = Field(..., description="Cantidad final a pedir (bultos)")
-    cantidad_pedida_unidades: Decimal = Field(..., description="Cantidad final a pedir (unidades)")
+    # Cantidades - usando float para mayor compatibilidad con JSON
+    unidades_por_bulto: float = 1
+    cantidad_pedida_bultos: int = Field(0, description="Cantidad final a pedir (bultos)")
+    cantidad_pedida_unidades: float = Field(0, description="Cantidad final a pedir (unidades)")
 
     # Stock al momento del pedido
-    stock_tienda: Decimal
-    stock_cedi_origen: Decimal
+    stock_tienda: float = 0
+    stock_cedi_origen: float = 0
 
     # Métricas
-    prom_p75_unid: Decimal
-    prom_ventas_5dias_unid: Optional[Decimal] = None
-    prom_ventas_20dias_unid: Optional[Decimal] = None
+    prom_p75_unid: float = 0
+    prom_ventas_5dias_unid: Optional[float] = None
+    prom_ventas_20dias_unid: Optional[float] = None
 
     # Parámetros ABC
-    stock_minimo: Optional[Decimal] = None
-    stock_maximo: Optional[Decimal] = None
-    punto_reorden: Optional[Decimal] = None
+    stock_minimo: Optional[float] = None
+    stock_maximo: Optional[float] = None
+    punto_reorden: Optional[float] = None
 
     # DPD+U
     ajustado_por_dpdu: bool = False
