@@ -113,6 +113,10 @@ async def obtener_productos_tienda(
     cursor = conn.cursor()
 
     # Query principal: obtiene productos con ventas, stock y clasificación ABC
+    # IMPORTANTE: Aplica los mismos filtros que el wizard de una sola tienda:
+    # 1. Solo productos activos (p.activo = true)
+    # 2. Excluye productos en productos_excluidos_tienda
+    # 3. Solo productos con clasificación ABC válida (A, B, C, D)
     query = """
         WITH ventas_20dias AS (
             SELECT
@@ -148,6 +152,11 @@ async def obtener_productos_tienda(
             SELECT producto_id, clase_abc, venta_30d
             FROM productos_abc_tienda
             WHERE ubicacion_id = %(tienda)s
+        ),
+        productos_excluidos AS (
+            SELECT producto_id
+            FROM productos_excluidos_tienda
+            WHERE ubicacion_id = %(tienda)s
         )
         SELECT
             p.id as producto_id,
@@ -166,7 +175,11 @@ async def obtener_productos_tienda(
         LEFT JOIN stock_tienda st ON p.id = st.producto_id
         LEFT JOIN stock_cedi sc ON p.id = sc.producto_id
         LEFT JOIN abc_tienda abc ON p.id = abc.producto_id
-        WHERE (COALESCE(v.p75, 0) > 0 OR COALESCE(st.stock, 0) > 0 OR COALESCE(sc.stock, 0) > 0)
+        LEFT JOIN productos_excluidos pe ON p.id = pe.producto_id
+        WHERE p.activo = true
+          AND pe.producto_id IS NULL
+          AND abc.clase_abc IN ('A', 'B', 'C', 'D')
+          AND (COALESCE(v.p75, 0) > 0 OR COALESCE(st.stock, 0) > 0 OR COALESCE(sc.stock, 0) > 0)
         ORDER BY COALESCE(abc.venta_30d, 0) DESC
     """
 
