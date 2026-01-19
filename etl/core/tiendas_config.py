@@ -380,15 +380,16 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_17": TiendaConfig(
         ubicacion_id="tienda_17",
         ubicacion_nombre="ARTIGAS",
-        server_ip="192.168.0.0",  # TODO: Confirmar IP con cliente
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=1433,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
         codigo_deposito="1702",
         sistema_pos="klk",  # Migrado a KLK
-        codigo_almacen_klk="TANT"  # Código de almacén en KLK: ARTIGAS PV
+        codigo_almacen_klk="TANT",  # Código de almacén en KLK: ARTIGAS PV
+        visible_pedidos=True  # ✅ Visible en Pedidos Sugeridos
     ),
 
     "tienda_18": TiendaConfig(

@@ -24,3 +24,8 @@ def is_postgres_mode() -> bool:
 def get_primary_db() -> str:
     """Returns 'postgresql' - the only database mode"""
     return "postgresql"
+
+
+def get_db_mode() -> str:
+    """Returns 'postgresql' - the only database mode (alias for get_primary_db)"""
+    return "postgresql"
