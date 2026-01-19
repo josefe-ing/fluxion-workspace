@@ -6,6 +6,8 @@
  */
 
 import { useState, useMemo } from 'react';
+import { X, Package, TrendingDown, Store, Info } from 'lucide-react';
+import ProductHistoryModal from '../../dashboard/ProductHistoryModal';
 import type {
   OrderDataMultiTienda,
   CalcularMultiTiendaResponse,
@@ -53,6 +55,22 @@ export default function StepTwoConflictResolution({
     // Inicialmente todos seleccionados
     return new Set(conflictos.map(c => c.codigo_producto));
   });
+
+  // Estados para modales
+  const [stockCediModalOpen, setStockCediModalOpen] = useState(false);
+  const [necesitanModalOpen, setNecesitanModalOpen] = useState(false);
+  const [selectedConflicto, setSelectedConflicto] = useState<ConflictoProducto | null>(null);
+
+  // Handlers para abrir modales
+  const handleOpenStockCediModal = (conflicto: ConflictoProducto) => {
+    setSelectedConflicto(conflicto);
+    setStockCediModalOpen(true);
+  };
+
+  const handleOpenNecesitanModal = (conflicto: ConflictoProducto) => {
+    setSelectedConflicto(conflicto);
+    setNecesitanModalOpen(true);
+  };
 
   // Obtener categorías únicas
   const categorias = useMemo(() => {
@@ -596,24 +614,36 @@ export default function StepTwoConflictResolution({
                       )}
                     </td>
 
-                    {/* Stock CEDI */}
+                    {/* Stock CEDI - Clickeable para ver histórico */}
                     <td className="px-4 py-3 text-center">
-                      <div className="text-sm font-bold text-gray-900">
-                        {conflicto.stock_cedi_bultos} blt
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {formatNumber(conflicto.stock_cedi_disponible)} uds
-                      </div>
+                      <button
+                        onClick={() => handleOpenStockCediModal(conflicto)}
+                        className="hover:bg-blue-50 rounded px-2 py-1 transition-colors cursor-pointer"
+                        title="Ver histórico de inventario en CEDI"
+                      >
+                        <div className="text-sm font-bold text-gray-900">
+                          {conflicto.stock_cedi_bultos} blt
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {formatNumber(conflicto.stock_cedi_disponible)} uds
+                        </div>
+                      </button>
                     </td>
 
-                    {/* Necesitan */}
+                    {/* Necesitan - Clickeable para ver desglose */}
                     <td className="px-4 py-3 text-center">
-                      <div className="text-sm font-medium text-red-600">
-                        {Math.ceil(conflicto.necesidad_total_tiendas / conflicto.unidades_por_bulto)} blt
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {formatNumber(conflicto.necesidad_total_tiendas)} uds
-                      </div>
+                      <button
+                        onClick={() => handleOpenNecesitanModal(conflicto)}
+                        className="hover:bg-red-50 rounded px-2 py-1 transition-colors cursor-pointer"
+                        title="Ver desglose de necesidad por tienda"
+                      >
+                        <div className="text-sm font-medium text-red-600">
+                          {Math.ceil(conflicto.necesidad_total_tiendas / conflicto.unidades_por_bulto)} blt
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {formatNumber(conflicto.necesidad_total_tiendas)} uds
+                        </div>
+                      </button>
                     </td>
 
                     {/* Por cada tienda: P75 | Stk | Días | SUG | DPD+U | Final */}
@@ -775,6 +805,192 @@ export default function StepTwoConflictResolution({
           Continuar →
         </button>
       </div>
+
+      {/* Modal de Histórico de Stock CEDI */}
+      {selectedConflicto && (
+        <ProductHistoryModal
+          isOpen={stockCediModalOpen}
+          onClose={() => setStockCediModalOpen(false)}
+          codigoProducto={selectedConflicto.codigo_producto}
+          descripcionProducto={selectedConflicto.descripcion_producto}
+          ubicacionId="cedi_principal"
+        />
+      )}
+
+      {/* Modal de Desglose de Necesidad */}
+      {necesitanModalOpen && selectedConflicto && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-red-50 to-orange-50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-red-100 rounded-lg">
+                    <TrendingDown className="h-5 w-5 text-red-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">
+                      Desglose de Necesidad
+                    </h3>
+                    <p className="text-sm text-gray-600">
+                      {selectedConflicto.descripcion_producto}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setNecesitanModalOpen(false)}
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                >
+                  <X className="h-5 w-5 text-gray-500" />
+                </button>
+              </div>
+            </div>
+
+            {/* Contenido */}
+            <div className="p-6 space-y-6">
+              {/* Info del producto */}
+              <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
+                <Package className="h-8 w-8 text-gray-400" />
+                <div>
+                  <div className="font-medium text-gray-900">{selectedConflicto.codigo_producto}</div>
+                  <div className="text-sm text-gray-500">
+                    {selectedConflicto.unidades_por_bulto} unidades por bulto •
+                    Clasificación {selectedConflicto.clasificacion_abc}
+                  </div>
+                </div>
+              </div>
+
+              {/* Resumen Total */}
+              <div className="p-4 bg-gradient-to-r from-red-100 to-orange-100 rounded-lg border border-red-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Info className="h-5 w-5 text-red-600" />
+                    <span className="font-medium text-red-800">Necesidad Total</span>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold text-red-700">
+                      {Math.ceil(selectedConflicto.necesidad_total_tiendas / selectedConflicto.unidades_por_bulto)} bultos
+                    </div>
+                    <div className="text-sm text-red-600">
+                      {formatNumber(selectedConflicto.necesidad_total_tiendas)} unidades
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Desglose por tienda */}
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+                  <Store className="h-4 w-4" />
+                  Necesidad por Tienda
+                </h4>
+                <div className="space-y-2">
+                  {selectedConflicto.distribucion_dpdu.map(asignacion => {
+                    const tienda = tiendas.find(t => t.id === asignacion.tienda_id);
+                    const necesidadBultos = Math.ceil(asignacion.cantidad_necesaria / selectedConflicto.unidades_por_bulto);
+                    const porcentaje = selectedConflicto.necesidad_total_tiendas > 0
+                      ? (asignacion.cantidad_necesaria / selectedConflicto.necesidad_total_tiendas * 100)
+                      : 0;
+
+                    return (
+                      <div
+                        key={asignacion.tienda_id}
+                        className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                            <Store className="h-4 w-4 text-blue-600" />
+                          </div>
+                          <div>
+                            <div className="font-medium text-gray-900">
+                              {tienda?.nombre || asignacion.tienda_id}
+                            </div>
+                            <div className="text-xs text-gray-500 flex items-center gap-2">
+                              <span>Stock: {formatNumber(asignacion.stock_actual)}u</span>
+                              <span>•</span>
+                              <span>P75: {asignacion.demanda_p75.toFixed(1)}u/día</span>
+                              <span>•</span>
+                              <span className={`font-medium ${
+                                asignacion.dias_stock <= 0.5 ? 'text-red-600' :
+                                asignacion.dias_stock <= 1 ? 'text-orange-600' :
+                                asignacion.dias_stock <= 2 ? 'text-yellow-600' : 'text-green-600'
+                              }`}>
+                                {asignacion.dias_stock.toFixed(1)} días
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-red-600">
+                            {necesidadBultos} blt
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {formatNumber(asignacion.cantidad_necesaria)}u ({porcentaje.toFixed(0)}%)
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Verificación de suma */}
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-blue-700 font-medium">
+                    Suma de necesidades por tienda:
+                  </span>
+                  <span className="font-bold text-blue-800">
+                    {selectedConflicto.distribucion_dpdu.reduce((sum, a) =>
+                      sum + Math.ceil(a.cantidad_necesaria / selectedConflicto.unidades_por_bulto), 0
+                    )} bultos = {formatNumber(
+                      selectedConflicto.distribucion_dpdu.reduce((sum, a) => sum + a.cantidad_necesaria, 0)
+                    )} unidades
+                  </span>
+                </div>
+              </div>
+
+              {/* Stock disponible vs necesidad */}
+              <div className={`p-4 rounded-lg border ${
+                selectedConflicto.stock_cedi_bultos >= Math.ceil(selectedConflicto.necesidad_total_tiendas / selectedConflicto.unidades_por_bulto)
+                  ? 'bg-green-50 border-green-200'
+                  : 'bg-red-50 border-red-200'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium text-gray-900">Stock CEDI disponible</div>
+                    <div className="text-sm text-gray-600">
+                      {selectedConflicto.stock_cedi_bultos} bultos ({formatNumber(selectedConflicto.stock_cedi_disponible)} uds)
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    {selectedConflicto.stock_cedi_bultos >= Math.ceil(selectedConflicto.necesidad_total_tiendas / selectedConflicto.unidades_por_bulto) ? (
+                      <span className="text-green-700 font-medium">✓ Suficiente</span>
+                    ) : (
+                      <div>
+                        <span className="text-red-700 font-medium">✗ Insuficiente</span>
+                        <div className="text-xs text-red-600">
+                          Faltan {Math.ceil(selectedConflicto.necesidad_total_tiendas / selectedConflicto.unidades_por_bulto) - selectedConflicto.stock_cedi_bultos} bultos
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
+              <button
+                onClick={() => setNecesitanModalOpen(false)}
+                className="w-full px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors font-medium"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
