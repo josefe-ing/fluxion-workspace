@@ -8,6 +8,7 @@
 import { useState, useMemo } from 'react';
 import { X, Package, TrendingDown, Store, Info } from 'lucide-react';
 import ProductHistoryModal from '../../dashboard/ProductHistoryModal';
+import ProductSalesModal from '../../sales/ProductSalesModal';
 import type {
   OrderDataMultiTienda,
   CalcularMultiTiendaResponse,
@@ -59,7 +60,10 @@ export default function StepTwoConflictResolution({
   // Estados para modales
   const [stockCediModalOpen, setStockCediModalOpen] = useState(false);
   const [necesitanModalOpen, setNecesitanModalOpen] = useState(false);
+  const [salesModalOpen, setSalesModalOpen] = useState(false);
+  const [stockTiendaModalOpen, setStockTiendaModalOpen] = useState(false);
   const [selectedConflicto, setSelectedConflicto] = useState<ConflictoProducto | null>(null);
+  const [selectedTiendaId, setSelectedTiendaId] = useState<string>('');
 
   // Handlers para abrir modales
   const handleOpenStockCediModal = (conflicto: ConflictoProducto) => {
@@ -70,6 +74,18 @@ export default function StepTwoConflictResolution({
   const handleOpenNecesitanModal = (conflicto: ConflictoProducto) => {
     setSelectedConflicto(conflicto);
     setNecesitanModalOpen(true);
+  };
+
+  const handleOpenSalesModal = (conflicto: ConflictoProducto, tiendaId: string) => {
+    setSelectedConflicto(conflicto);
+    setSelectedTiendaId(tiendaId);
+    setSalesModalOpen(true);
+  };
+
+  const handleOpenStockTiendaModal = (conflicto: ConflictoProducto, tiendaId: string) => {
+    setSelectedConflicto(conflicto);
+    setSelectedTiendaId(tiendaId);
+    setStockTiendaModalOpen(true);
   };
 
   // Obtener categorías únicas
@@ -660,25 +676,33 @@ export default function StepTwoConflictResolution({
                       return (
                         <td key={tienda.id} colSpan={6} className="px-1 py-3">
                           <div className="flex items-center justify-around gap-1">
-                            {/* P75 - bultos y unidades */}
-                            <div className="text-center w-12" title="Venta diaria P75">
+                            {/* P75 - bultos y unidades - Clickeable para ver ventas */}
+                            <button
+                              onClick={() => handleOpenSalesModal(conflicto, tienda.id)}
+                              className="text-center w-12 hover:bg-purple-50 rounded px-1 py-0.5 transition-colors cursor-pointer"
+                              title="Ver análisis de ventas"
+                            >
                               <div className="text-xs font-medium text-purple-600">
                                 {(asignacion.demanda_p75 / conflicto.unidades_por_bulto).toFixed(1)}
                               </div>
                               <div className="text-[10px] text-purple-400">
                                 {asignacion.demanda_p75.toFixed(2).replace('.', ',')}u
                               </div>
-                            </div>
+                            </button>
 
-                            {/* Stock tienda - bultos y unidades */}
-                            <div className="text-center w-12" title="Stock actual tienda">
+                            {/* Stock tienda - bultos y unidades - Clickeable para ver histórico */}
+                            <button
+                              onClick={() => handleOpenStockTiendaModal(conflicto, tienda.id)}
+                              className="text-center w-12 hover:bg-gray-100 rounded px-1 py-0.5 transition-colors cursor-pointer"
+                              title="Ver histórico de inventario"
+                            >
                               <div className="text-xs font-medium text-gray-700">
                                 {(asignacion.stock_actual / conflicto.unidades_por_bulto).toFixed(1).replace('.', ',')}
                               </div>
                               <div className="text-[10px] text-gray-400">
                                 {formatNumber(asignacion.stock_actual)}u
                               </div>
-                            </div>
+                            </button>
 
                             {/* Días stock */}
                             <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${getDiasStockColor(asignacion.dias_stock)}`}>
@@ -814,6 +838,28 @@ export default function StepTwoConflictResolution({
           codigoProducto={selectedConflicto.codigo_producto}
           descripcionProducto={selectedConflicto.descripcion_producto}
           ubicacionId="cedi_principal"
+        />
+      )}
+
+      {/* Modal de Análisis de Ventas (P75) */}
+      {selectedConflicto && (
+        <ProductSalesModal
+          isOpen={salesModalOpen}
+          onClose={() => setSalesModalOpen(false)}
+          codigoProducto={selectedConflicto.codigo_producto}
+          descripcionProducto={selectedConflicto.descripcion_producto}
+          currentUbicacionId={selectedTiendaId}
+        />
+      )}
+
+      {/* Modal de Histórico de Stock Tienda */}
+      {selectedConflicto && selectedTiendaId && (
+        <ProductHistoryModal
+          isOpen={stockTiendaModalOpen}
+          onClose={() => setStockTiendaModalOpen(false)}
+          codigoProducto={selectedConflicto.codigo_producto}
+          descripcionProducto={selectedConflicto.descripcion_producto}
+          ubicacionId={selectedTiendaId}
         />
       )}
 
