@@ -156,7 +156,7 @@ async def obtener_productos_tienda(
         productos_excluidos AS (
             SELECT producto_id
             FROM productos_excluidos_tienda
-            WHERE ubicacion_id = %(tienda)s
+            WHERE tienda_id = %(tienda)s AND activo = TRUE
         )
         SELECT
             p.id as producto_id,
