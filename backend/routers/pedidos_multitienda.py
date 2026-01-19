@@ -36,6 +36,7 @@ from services.algoritmo_dpdu import (
     detectar_conflicto,
     to_dict as asignacion_to_dict,
 )
+from services.calculo_inventario_abc import calcular_inventario_simple
 from db_manager import get_db_connection, get_db_connection_write
 
 logger = logging.getLogger(__name__)
@@ -112,28 +113,44 @@ async def obtener_productos_tienda(
     """
     cursor = conn.cursor()
 
-    # Query principal: obtiene productos con ventas, stock y clasificación ABC
+    # Query principal: obtiene productos con ventas, stock, clasificación ABC y estadísticas
     # IMPORTANTE: Aplica los mismos filtros que el wizard de una sola tienda:
     # 1. Solo productos activos (p.activo = true)
     # 2. Excluye productos en productos_excluidos_tienda
     # 3. Solo productos con clasificación ABC válida (A, B, C, D)
+    # 4. Calcula sigma_demanda y demanda_maxima para cálculo estadístico de inventario
     query = """
-        WITH ventas_20dias AS (
+        WITH ventas_diarias AS (
+            -- Ventas diarias por producto (base para todos los cálculos)
+            SELECT
+                producto_id,
+                DATE(fecha_venta) as fecha,
+                SUM(cantidad_vendida) as cantidad_vendida
+            FROM ventas
+            WHERE ubicacion_id = %(tienda)s
+              AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+              AND fecha_venta < CURRENT_DATE
+            GROUP BY producto_id, DATE(fecha_venta)
+        ),
+        ventas_20dias AS (
             SELECT
                 producto_id,
                 AVG(cantidad_vendida) as prom_20d,
                 PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_vendida) as p75
-            FROM (
-                SELECT
-                    producto_id,
-                    DATE(fecha_venta) as fecha,
-                    SUM(cantidad_vendida) as cantidad_vendida
-                FROM ventas
-                WHERE ubicacion_id = %(tienda)s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
-                  AND fecha_venta < CURRENT_DATE
-                GROUP BY producto_id, DATE(fecha_venta)
-            ) daily
+            FROM ventas_diarias
+            WHERE fecha >= CURRENT_DATE - INTERVAL '20 days'
+            GROUP BY producto_id
+        ),
+        estadisticas_30d AS (
+            -- Sigma y demanda máxima para cálculo estadístico (igual que single-store)
+            SELECT
+                producto_id,
+                CASE
+                    WHEN COUNT(*) <= 1 THEN 0
+                    ELSE COALESCE(STDDEV(cantidad_vendida), 0)
+                END as sigma_demanda,
+                COALESCE(MAX(cantidad_vendida), 0) as demanda_maxima
+            FROM ventas_diarias
             GROUP BY producto_id
         ),
         stock_tienda AS (
@@ -169,9 +186,12 @@ async def obtener_productos_tienda(
             COALESCE(st.stock, 0) as stock_tienda,
             COALESCE(sc.stock, 0) as stock_cedi,
             COALESCE(abc.clase_abc, 'D') as clase_abc,
-            COALESCE(abc.venta_30d, 0) as venta_30d
+            COALESCE(abc.venta_30d, 0) as venta_30d,
+            COALESCE(est.sigma_demanda, 0) as sigma_demanda,
+            COALESCE(est.demanda_maxima, v.p75 * 2, 0) as demanda_maxima
         FROM productos p
         LEFT JOIN ventas_20dias v ON p.id = v.producto_id
+        LEFT JOIN estadisticas_30d est ON p.id = est.producto_id
         LEFT JOIN stock_tienda st ON p.id = st.producto_id
         LEFT JOIN stock_cedi sc ON p.id = sc.producto_id
         LEFT JOIN abc_tienda abc ON p.id = abc.producto_id
@@ -187,16 +207,6 @@ async def obtener_productos_tienda(
     rows = cursor.fetchall()
     cursor.close()
 
-    # Parámetros de stock por clasificación ABC (en días)
-    # ROP = punto de reorden (cuando hay que pedir)
-    # MAX = nivel máximo al que llevar el stock
-    STOCK_PARAMS = {
-        'A': {'ss': 1.5, 'rop': 3, 'max': 5},
-        'B': {'ss': 2, 'rop': 4, 'max': 8},
-        'C': {'ss': 3, 'rop': 6, 'max': 12},
-        'D': {'ss': 4, 'rop': 8, 'max': 15},
-    }
-
     productos = []
     for row in rows:
         producto_id = row[0]
@@ -210,31 +220,48 @@ async def obtener_productos_tienda(
         stock_cedi = float(row[8])
         clase_abc = row[9]
         venta_30d = float(row[10])
+        sigma_demanda = float(row[11])
+        demanda_maxima = float(row[12])
 
-        # Obtener parámetros de stock según ABC
-        params = STOCK_PARAMS.get(clase_abc, STOCK_PARAMS['D'])
-        dias_ss = params['ss']
-        dias_rop = params['rop']
-        dias_max = params['max']
+        # Usar el mismo cálculo estadístico que single-store (calcular_inventario_simple)
+        # Esto garantiza que ambos wizards usen la misma lógica de ROP, SS y MAX
+        resultado = calcular_inventario_simple(
+            demanda_p75=p75,
+            sigma_demanda=sigma_demanda,
+            demanda_maxima=demanda_maxima if demanda_maxima > 0 else p75 * 2,
+            unidades_por_bulto=unidades_por_bulto,
+            stock_actual=stock_tienda,
+            stock_cedi=stock_cedi,
+            clase_abc=clase_abc,
+            es_generador_trafico=False
+        )
+
+        # Extraer valores del resultado estadístico
+        punto_reorden = resultado.punto_reorden_unid
+        stock_maximo = resultado.stock_maximo_unid
+        stock_seguridad = resultado.stock_seguridad_unid
+        cantidad_sugerida_unid = resultado.cantidad_sugerida_unid
+        cantidad_sugerida_bultos = resultado.cantidad_sugerida_bultos
+        tiene_sobrestock = resultado.tiene_sobrestock
 
         # Calcular días de stock actual (evitar división por cero)
         if p75 > 0:
             dias_stock = stock_tienda / p75
         else:
-            # Sin ventas, asumimos stock infinito si hay stock, 0 si no hay
             dias_stock = 999 if stock_tienda > 0 else 0
 
-        # Determinar si el producto NECESITA reposición (está por debajo del ROP)
-        necesita_reposicion = dias_stock <= dias_rop and stock_cedi > 0
+        # Determinar si necesita reposición usando el cálculo estadístico
+        # Similar a single-store: sugiere si hay cantidad > 0 y hay stock en CEDI
+        necesita_reposicion = (
+            cantidad_sugerida_bultos > 0 and
+            stock_cedi > 0 and
+            not tiene_sobrestock
+        )
 
-        # Calcular cantidad sugerida (solo si necesita reposición)
-        if necesita_reposicion and p75 > 0:
-            stock_objetivo = p75 * dias_max
-            cantidad_necesaria = max(0, stock_objetivo - stock_tienda)
-            cantidad_bultos = math.ceil(cantidad_necesaria / unidades_por_bulto) if cantidad_necesaria > 0 else 0
-        else:
-            cantidad_necesaria = 0
-            cantidad_bultos = 0
+        # Si no necesita reposición, forzar cantidades a 0
+        if not necesita_reposicion:
+            cantidad_sugerida_unid = 0
+            cantidad_sugerida_bultos = 0
 
         # Incluir TODOS los productos (sugeridos y no sugeridos)
         productos.append({
@@ -249,13 +276,13 @@ async def obtener_productos_tienda(
             'stock_tienda': stock_tienda,
             'stock_cedi_origen': stock_cedi,
             'dias_stock': round(dias_stock, 2),
-            'dias_ss': dias_ss,
-            'dias_rop': dias_rop,
-            'dias_max': dias_max,
-            'cantidad_necesaria_unid': cantidad_necesaria,
-            'cantidad_sugerida_bultos': cantidad_bultos,
-            'cantidad_sugerida_unid': cantidad_bultos * unidades_por_bulto,
-            'es_sugerido': necesita_reposicion and cantidad_bultos > 0,
+            'stock_seguridad': stock_seguridad,
+            'punto_reorden': punto_reorden,
+            'stock_maximo': stock_maximo,
+            'cantidad_necesaria_unid': cantidad_sugerida_unid,
+            'cantidad_sugerida_bultos': int(cantidad_sugerida_bultos),
+            'cantidad_sugerida_unid': cantidad_sugerida_unid,
+            'es_sugerido': necesita_reposicion,
         })
 
     return productos
