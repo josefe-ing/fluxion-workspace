@@ -41,6 +41,7 @@ interface FiltrosTienda {
   searchTerm: string;
   filterAbc: string;
   filterCategoria: string;
+  filterCuadrante: string;
   filterCedi: 'todos' | 'con_stock' | 'sin_stock';
   filterPrioridad: 'todas' | 'critico' | 'urgente' | 'optimo' | 'exceso';
   filterVista: 'todos' | 'seleccionados' | 'no_seleccionados';
@@ -54,6 +55,7 @@ const defaultFiltros: FiltrosTienda = {
   searchTerm: '',
   filterAbc: 'Todos',
   filterCategoria: 'Todas',
+  filterCuadrante: 'Todos',
   filterCedi: 'todos',
   filterPrioridad: 'todas',
   filterVista: 'seleccionados',
@@ -313,6 +315,13 @@ export default function StepThreeReviewTabs({
     return ['Todas', ...Array.from(cats).sort()];
   }, [activePedido]);
 
+  // Obtener cuadrantes únicos del pedido activo
+  const cuadrantes = useMemo(() => {
+    if (!activePedido) return ['Todos'];
+    const cuads = new Set(activePedido.productos.map(p => p.cuadrante || 'NO ESPECIFICADO'));
+    return ['Todos', ...Array.from(cuads).sort()];
+  }, [activePedido]);
+
   // Filtrar y ordenar productos (usa filtros específicos de la tienda)
   const getFilteredProducts = (productos: ProductoPedidoSimplificado[], tiendaId: string) => {
     const filtros = getFiltrosTienda(tiendaId);
@@ -329,6 +338,9 @@ export default function StepThreeReviewTabs({
 
       // Filtro Categoría
       const matchCat = filtros.filterCategoria === 'Todas' || (p.categoria || 'Sin categoría') === filtros.filterCategoria;
+
+      // Filtro Cuadrante
+      const matchCuadrante = filtros.filterCuadrante === 'Todos' || (p.cuadrante || 'NO ESPECIFICADO') === filtros.filterCuadrante;
 
       // Filtro CEDI
       let matchCedi = true;
@@ -352,7 +364,7 @@ export default function StepThreeReviewTabs({
       if (filtros.filterVista === 'seleccionados') matchVista = estaSeleccionado;
       if (filtros.filterVista === 'no_seleccionados') matchVista = !estaSeleccionado;
 
-      return matchSearch && matchAbc && matchCat && matchCedi && matchAdjusted && matchPrioridad && matchVista;
+      return matchSearch && matchAbc && matchCat && matchCuadrante && matchCedi && matchAdjusted && matchPrioridad && matchVista;
     });
 
     // Ordenar
@@ -817,22 +829,31 @@ export default function StepThreeReviewTabs({
                   </td>
                   {/* SS */}
                   <td
-                    className="bg-orange-50/30 px-1 py-1 text-center text-xs text-gray-600 cursor-pointer hover:bg-orange-100"
-                    title="Ver cálculo Stock de Seguridad"
+                    className="bg-orange-50/30 px-1 py-1 text-center text-xs cursor-pointer hover:bg-orange-100"
+                    title={`SS: ${stockParams.diasSS}d | ${stockParams.ss} bultos`}
                     onClick={() => handleOpenSS(producto)}
-                  >{stockParams.ss}</td>
+                  >
+                    <span className="font-medium text-orange-800 block">{stockParams.diasSS}</span>
+                    <span className="text-[10px] text-gray-400 block">{stockParams.ss}b</span>
+                  </td>
                   {/* ROP */}
                   <td
-                    className="bg-orange-50/30 px-1 py-1 text-center text-xs text-gray-600 cursor-pointer hover:bg-orange-100"
-                    title="Ver cálculo Punto de Reorden"
+                    className="bg-orange-50/30 px-1 py-1 text-center text-xs cursor-pointer hover:bg-orange-100"
+                    title={`ROP: ${stockParams.diasROP}d | ${stockParams.rop} bultos`}
                     onClick={() => handleOpenROP(producto)}
-                  >{stockParams.rop}</td>
+                  >
+                    <span className="font-medium text-orange-800 block">{stockParams.diasROP}</span>
+                    <span className="text-[10px] text-gray-400 block">{stockParams.rop}b</span>
+                  </td>
                   {/* MAX */}
                   <td
-                    className="bg-orange-50/30 px-1 py-1 text-center text-xs text-gray-600 cursor-pointer hover:bg-orange-100"
-                    title="Ver cálculo Stock Máximo"
+                    className="bg-orange-50/30 px-1 py-1 text-center text-xs cursor-pointer hover:bg-orange-100"
+                    title={`MAX: ${stockParams.diasMAX}d | ${stockParams.max} bultos`}
                     onClick={() => handleOpenMAX(producto)}
-                  >{stockParams.max}</td>
+                  >
+                    <span className="font-medium text-orange-800 block">{stockParams.diasMAX}</span>
+                    <span className="text-[10px] text-gray-400 block">{stockParams.max}b</span>
+                  </td>
                   {/* Sugerido */}
                   <td className="bg-orange-50/30 px-1 py-1 text-center border-r border-gray-100">
                     <div className="text-xs font-bold text-orange-600">{producto.cantidad_sugerida_bultos}</div>
