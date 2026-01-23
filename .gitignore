@@ -113,3 +113,6 @@ venv_old_python39/
 # Temporary verification scripts
 check_*.py
 etl/test_*.sh
+
+# Analysis scripts (temporary)
+analisis_*.py
