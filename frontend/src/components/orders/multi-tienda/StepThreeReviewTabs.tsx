@@ -638,7 +638,7 @@ export default function StepThreeReviewTabs({
             <tr className="border-b-2 border-gray-300">
               <th className="bg-gray-200 px-1 py-1 text-center font-bold text-gray-700 text-xs" style={{ width: '32px' }}></th>
               <th className="bg-gray-200 px-1 py-1 text-center font-bold text-gray-700 text-xs" style={{ width: '32px' }}>#</th>
-              <th colSpan={3} className="bg-blue-200 px-2 py-1 text-center font-bold text-blue-900 text-xs uppercase border-r border-blue-300">
+              <th colSpan={4} className="bg-blue-200 px-2 py-1 text-center font-bold text-blue-900 text-xs uppercase border-r border-blue-300">
                 Producto
               </th>
               <th colSpan={2} className="bg-purple-200 px-2 py-1 text-center font-bold text-purple-900 text-xs uppercase border-r border-purple-300">
@@ -969,6 +969,29 @@ export default function StepThreeReviewTabs({
                 <option value="B">B ({contadores.porABC.B})</option>
                 <option value="C">C ({contadores.porABC.C})</option>
                 <option value="D">D ({contadores.porABC.D})</option>
+              </select>
+            </div>
+
+            {/* Filtro Cuadrante */}
+            <div className="flex items-center gap-1">
+              <label className="text-xs font-medium text-gray-600">Cuad:</label>
+              <select
+                value={filtrosActivos.filterCuadrante}
+                onChange={(e) => updateFiltro('filterCuadrante', e.target.value)}
+                className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
+              >
+                {cuadrantes.map(cuad => {
+                  const count = activePedido?.productos.filter(p =>
+                    (p.cuadrante || 'NO ESPECIFICADO') === cuad || cuad === 'Todos'
+                  ).length || 0;
+                  const displayName = cuad.replace('CUADRANTE ', '');
+                  return (
+                    <option key={cuad} value={cuad}>
+                      {cuad === 'Todos' ? `Todos (${activePedido?.productos.length || 0})` :
+                       `${displayName} (${count})`}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
