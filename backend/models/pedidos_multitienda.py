@@ -122,6 +122,7 @@ class ProductoPedidoSimplificado(BaseModel):
     descripcion_producto: str
     categoria: Optional[str] = None
     clasificacion_abc: Optional[str] = None
+    cuadrante: Optional[str] = None
 
     # Cantidades
     unidades_por_bulto: int

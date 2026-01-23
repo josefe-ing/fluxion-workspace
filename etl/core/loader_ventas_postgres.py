@@ -97,14 +97,14 @@ class PostgreSQLVentasLoader:
             upsert_query = """
                 INSERT INTO ventas (
                     numero_factura, fecha_venta, ubicacion_id, almacen_codigo, almacen_nombre,
-                    producto_id, cantidad_vendida, peso_unitario, peso_calculado,
+                    producto_id, cuadrante_producto, cantidad_vendida, peso_unitario, peso_calculado,
                     total_cantidad_por_unidad_medida, unidad_medida_venta, factor_unidad_medida,
                     precio_unitario, costo_unitario, venta_total, costo_total,
                     utilidad_bruta, margen_bruto_pct, fecha_creacion
                 )
                 VALUES (
                     %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s
@@ -115,6 +115,7 @@ class PostgreSQLVentasLoader:
                     almacen_codigo = EXCLUDED.almacen_codigo,
                     almacen_nombre = EXCLUDED.almacen_nombre,
                     producto_id = EXCLUDED.producto_id,
+                    cuadrante_producto = EXCLUDED.cuadrante_producto,
                     cantidad_vendida = EXCLUDED.cantidad_vendida,
                     peso_unitario = EXCLUDED.peso_unitario,
                     peso_calculado = EXCLUDED.peso_calculado,
@@ -190,6 +191,7 @@ class PostgreSQLVentasLoader:
                     cantidad_info.get('codigo_almacen'),
                     cantidad_info.get('nombre_almacen'),
                     codigo_producto,
+                    producto.get('cuadrante_producto'),  # cuadrante del producto
                     cantidad_vendida,
                     peso_unitario,
                     peso_unitario * cantidad_vendida if peso_unitario else 0,  # peso_calculado
