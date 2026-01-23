@@ -1494,7 +1494,13 @@ async def calcular_productos_sugeridos(
                 continue
 
             categoria_producto = (row[3] or '').strip().upper()  # Categoría normalizada para buscar config
-            cantidad_bultos = float(row[9]) if row[9] and row[9] > 0 else 1.0
+
+            # Convertir cantidad_bultos de manera segura
+            try:
+                cantidad_bultos = float(row[9]) if row[9] and float(row[9]) > 0 else 1.0
+            except (ValueError, TypeError):
+                cantidad_bultos = 1.0
+
             unidad_pedido = row[10] or 'Bulto'  # Unidad de pedido: Bulto, Blister, Cesta, etc.
             unidades_por_bulto = int(cantidad_bultos) if cantidad_bultos > 0 else 1
             prom_20d = float(row[13]) if row[13] else 0.0
