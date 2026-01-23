@@ -44,6 +44,7 @@ interface FiltrosTienda {
   filterCuadrante: string;
   filterCedi: 'todos' | 'con_stock' | 'sin_stock';
   filterPrioridad: 'todas' | 'critico' | 'urgente' | 'optimo' | 'exceso';
+  filterDiasStock: 'todos' | '0-1' | '1-2' | '2-4' | '4-5' | '5+';
   filterVista: 'todos' | 'seleccionados' | 'no_seleccionados';
   showOnlyAdjusted: boolean;
   sortField: SortField;
@@ -58,6 +59,7 @@ const defaultFiltros: FiltrosTienda = {
   filterCuadrante: 'Todos',
   filterCedi: 'todos',
   filterPrioridad: 'todas',
+  filterDiasStock: 'todos',
   filterVista: 'seleccionados',
   showOnlyAdjusted: false,
   sortField: 'criticidad',
@@ -357,6 +359,29 @@ export default function StepThreeReviewTabs({
         matchPrioridad = criticidad.nivelNombre === filtros.filterPrioridad;
       }
 
+      // Filtro por Días Stock
+      let matchDiasStock = true;
+      if (filtros.filterDiasStock !== 'todos') {
+        const dias = p.dias_stock;
+        switch (filtros.filterDiasStock) {
+          case '0-1':
+            matchDiasStock = dias >= 0 && dias <= 1;
+            break;
+          case '1-2':
+            matchDiasStock = dias > 1 && dias <= 2;
+            break;
+          case '2-4':
+            matchDiasStock = dias > 2 && dias <= 4;
+            break;
+          case '4-5':
+            matchDiasStock = dias > 4 && dias <= 5;
+            break;
+          case '5+':
+            matchDiasStock = dias > 5;
+            break;
+        }
+      }
+
       // Filtro por Vista (seleccionados/no_seleccionados)
       let matchVista = true;
       const selecciones = getSeleccionesTienda(tiendaId);
@@ -364,7 +389,7 @@ export default function StepThreeReviewTabs({
       if (filtros.filterVista === 'seleccionados') matchVista = estaSeleccionado;
       if (filtros.filterVista === 'no_seleccionados') matchVista = !estaSeleccionado;
 
-      return matchSearch && matchAbc && matchCat && matchCuadrante && matchCedi && matchAdjusted && matchPrioridad && matchVista;
+      return matchSearch && matchAbc && matchCat && matchCuadrante && matchCedi && matchAdjusted && matchPrioridad && matchDiasStock && matchVista;
     });
 
     // Ordenar
@@ -1034,6 +1059,23 @@ export default function StepThreeReviewTabs({
                 <option value="urgente">🟠 Urgente ({activePedido?.productos.filter(p => getCriticidad(p).nivelNombre === 'urgente').length || 0})</option>
                 <option value="optimo">🟢 Óptimo ({activePedido?.productos.filter(p => getCriticidad(p).nivelNombre === 'optimo').length || 0})</option>
                 <option value="exceso">🔵 Exceso ({activePedido?.productos.filter(p => getCriticidad(p).nivelNombre === 'exceso').length || 0})</option>
+              </select>
+            </div>
+
+            {/* Filtro Días Stock */}
+            <div className="flex items-center gap-1">
+              <label className="text-xs font-medium text-gray-600">Días Stock:</label>
+              <select
+                value={filtrosActivos.filterDiasStock}
+                onChange={(e) => updateFiltro('filterDiasStock', e.target.value as 'todos' | '0-1' | '1-2' | '2-4' | '4-5' | '5+')}
+                className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
+              >
+                <option value="todos">Todos ({activePedido?.productos.length || 0})</option>
+                <option value="0-1">0-1 días ({activePedido?.productos.filter(p => p.dias_stock >= 0 && p.dias_stock <= 1).length || 0})</option>
+                <option value="1-2">1-2 días ({activePedido?.productos.filter(p => p.dias_stock > 1 && p.dias_stock <= 2).length || 0})</option>
+                <option value="2-4">2-4 días ({activePedido?.productos.filter(p => p.dias_stock > 2 && p.dias_stock <= 4).length || 0})</option>
+                <option value="4-5">4-5 días ({activePedido?.productos.filter(p => p.dias_stock > 4 && p.dias_stock <= 5).length || 0})</option>
+                <option value="5+">5+ días ({activePedido?.productos.filter(p => p.dias_stock > 5).length || 0})</option>
               </select>
             </div>
 
