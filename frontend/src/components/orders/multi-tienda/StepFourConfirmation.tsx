@@ -41,10 +41,42 @@ export default function StepFourConfirmation({
   // Usar orderData.pedidos_por_tienda que contiene los productos filtrados del paso anterior
   const pedidos = orderData.pedidos_por_tienda || [];
 
+  // Estado para tracking de tiendas seleccionadas (por defecto todas)
+  const [tiendasSeleccionadas, setTiendasSeleccionadas] = useState<Set<string>>(
+    () => new Set(pedidos.map(p => p.tienda_id))
+  );
+
   // Formatear número
   const formatNumber = (num: number): string => {
     return new Intl.NumberFormat('es-VE').format(Math.round(num));
   };
+
+  // Toggle selección de tienda
+  const toggleTienda = (tiendaId: string) => {
+    setTiendasSeleccionadas(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(tiendaId)) {
+        newSet.delete(tiendaId);
+      } else {
+        newSet.add(tiendaId);
+      }
+      return newSet;
+    });
+  };
+
+  // Seleccionar/deseleccionar todas
+  const toggleTodasLasTiendas = () => {
+    if (tiendasSeleccionadas.size === pedidos.length) {
+      // Si todas están seleccionadas, deseleccionar todas
+      setTiendasSeleccionadas(new Set());
+    } else {
+      // Seleccionar todas
+      setTiendasSeleccionadas(new Set(pedidos.map(p => p.tienda_id)));
+    }
+  };
+
+  // Filtrar pedidos solo de tiendas seleccionadas
+  const pedidosSeleccionados = pedidos.filter(p => tiendasSeleccionadas.has(p.tienda_id));
 
   // Exportar pedido de una tienda a Excel
   const exportarExcelTienda = (pedido: PedidoTienda) => {
@@ -110,13 +142,19 @@ export default function StepFourConfirmation({
 
   // Guardar todos los pedidos
   const handleGuardarPedidos = async () => {
+    // Validar que haya al menos una tienda seleccionada
+    if (tiendasSeleccionadas.size === 0) {
+      setSaveError('Debe seleccionar al menos una tienda para crear pedidos');
+      return;
+    }
+
     setSaving(true);
     setSaveError(null);
 
     try {
-      // Preparar datos para el endpoint
+      // Preparar datos para el endpoint - SOLO LAS TIENDAS SELECCIONADAS
       // Ensure all required fields have valid defaults to prevent 422 validation errors
-      const pedidosParaGuardar: PedidoTiendaParaGuardar[] = pedidos.map((pedido) => ({
+      const pedidosParaGuardar: PedidoTiendaParaGuardar[] = pedidosSeleccionados.map((pedido) => ({
         tienda_destino_id: pedido.tienda_id,
         tienda_destino_nombre: pedido.tienda_nombre,
         productos: pedido.productos.map((p) => ({
@@ -358,9 +396,17 @@ export default function StepFourConfirmation({
 
         {/* Cards de tiendas */}
         <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Pedidos a Crear ({pedidos.length})
-          </h3>
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Seleccione Tiendas para Crear Pedidos ({tiendasSeleccionadas.size}/{pedidos.length})
+            </h3>
+            <button
+              onClick={toggleTodasLasTiendas}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900"
+            >
+              {tiendasSeleccionadas.size === pedidos.length ? 'Deseleccionar Todas' : 'Seleccionar Todas'}
+            </button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {pedidos.map((pedido) => {
               // Calcular peso total en toneladas
@@ -370,19 +416,33 @@ export default function StepFourConfirmation({
               }, 0);
               const pesoToneladas = pesoTotalKg / 1000;
 
+              const isSelected = tiendasSeleccionadas.has(pedido.tienda_id);
+
               return (
                 <div
                   key={pedido.tienda_id}
-                  className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
+                  className={`border rounded-lg p-4 transition-all ${
+                    isSelected
+                      ? 'border-green-500 bg-green-50/30'
+                      : 'border-gray-200 bg-white opacity-60'
+                  }`}
                 >
-                  {/* Header con nombre y badge DPD+U */}
-                  <div className="flex justify-between items-center mb-4">
-                    <h4 className="font-semibold text-gray-900 text-lg">{pedido.tienda_nombre}</h4>
-                    {pedido.productos_ajustados_dpdu > 0 && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">
-                        {pedido.productos_ajustados_dpdu} DPD+U
-                      </span>
-                    )}
+                  {/* Checkbox y Header con nombre y badge DPD+U */}
+                  <div className="flex items-start gap-3 mb-4">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleTienda(pedido.tienda_id)}
+                      className="h-5 w-5 text-green-600 focus:ring-green-500 border-gray-300 rounded mt-0.5 cursor-pointer"
+                    />
+                    <div className="flex-1 flex justify-between items-center">
+                      <h4 className="font-semibold text-gray-900 text-lg">{pedido.tienda_nombre}</h4>
+                      {pedido.productos_ajustados_dpdu > 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">
+                          {pedido.productos_ajustados_dpdu} DPD+U
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Productos y Bultos lado a lado - prominentes */}
@@ -424,12 +484,12 @@ export default function StepFourConfirmation({
           </div>
         </div>
 
-        {/* Totales consolidados */}
+        {/* Totales consolidados - SOLO DE TIENDAS SELECCIONADAS */}
         {(() => {
-          // Calcular totales desde los pedidos filtrados
-          const totalProductos = pedidos.reduce((acc, p) => acc + p.total_productos, 0);
-          const totalBultos = pedidos.reduce((acc, p) => acc + p.total_bultos, 0);
-          const totalPesoKg = pedidos.reduce((acc, pedido) => {
+          // Calcular totales desde los pedidos seleccionados únicamente
+          const totalProductos = pedidosSeleccionados.reduce((acc, p) => acc + p.total_productos, 0);
+          const totalBultos = pedidosSeleccionados.reduce((acc, p) => acc + p.total_bultos, 0);
+          const totalPesoKg = pedidosSeleccionados.reduce((acc, pedido) => {
             return acc + pedido.productos.reduce((accP, p) => {
               const unidadesPedido = p.cantidad_sugerida_bultos * p.unidades_por_bulto;
               return accP + (unidadesPedido * (p.peso_kg || 0));
@@ -439,10 +499,12 @@ export default function StepFourConfirmation({
 
           return (
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <h3 className="text-sm font-semibold text-blue-900 mb-3">Totales Consolidados</h3>
+              <h3 className="text-sm font-semibold text-blue-900 mb-3">
+                Totales Consolidados (Tiendas Seleccionadas)
+              </h3>
               <div className="grid grid-cols-4 gap-4 text-center">
                 <div>
-                  <div className="text-3xl font-bold text-blue-900">{pedidos.length}</div>
+                  <div className="text-3xl font-bold text-blue-900">{pedidosSeleccionados.length}</div>
                   <div className="text-xs text-blue-600">Pedidos</div>
                 </div>
                 <div>
@@ -483,26 +545,46 @@ export default function StepFourConfirmation({
         </div>
 
         {/* Aviso */}
-        <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-          <div className="flex">
-            <svg className="h-5 w-5 text-yellow-400 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-yellow-800">Antes de confirmar</h3>
-              <div className="mt-1 text-sm text-yellow-700">
-                <p>
-                  Se crearán {pedidos.length} pedidos independientes en estado <strong>borrador</strong>.
-                  Podrá revisarlos y aprobarlos individualmente desde la lista de pedidos sugeridos.
+        {tiendasSeleccionadas.size > 0 ? (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="flex">
+              <svg className="h-5 w-5 text-yellow-400 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-yellow-800">Antes de confirmar</h3>
+                <div className="mt-1 text-sm text-yellow-700">
+                  <p>
+                    Se crearán <strong>{pedidosSeleccionados.length}</strong> pedidos independientes en estado <strong>borrador</strong>.
+                    Podrá revisarlos y aprobarlos individualmente desde la lista de pedidos sugeridos.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex">
+              <svg className="h-5 w-5 text-red-400 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-800">Ninguna tienda seleccionada</h3>
+                <p className="mt-1 text-sm text-red-700">
+                  Debe seleccionar al menos una tienda para crear pedidos.
                 </p>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Botones de navegación */}
@@ -516,7 +598,7 @@ export default function StepFourConfirmation({
         </button>
         <button
           onClick={handleGuardarPedidos}
-          disabled={saving}
+          disabled={saving || tiendasSeleccionadas.size === 0}
           className="px-8 py-3 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? (
@@ -538,8 +620,10 @@ export default function StepFourConfirmation({
               </svg>
               Guardando...
             </span>
+          ) : tiendasSeleccionadas.size === 0 ? (
+            'Seleccione al menos 1 tienda'
           ) : (
-            `Crear ${pedidos.length} Pedidos`
+            `Crear ${pedidosSeleccionados.length} Pedido${pedidosSeleccionados.length !== 1 ? 's' : ''}`
           )}
         </button>
       </div>
