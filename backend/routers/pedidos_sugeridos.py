@@ -10,7 +10,7 @@ Incluye:
 - Finalizar pedido y generar Excel
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional, Any
 import uuid
 from datetime import datetime, date, timezone
@@ -294,7 +294,7 @@ async def guardar_pedido(
                 dias_cobertura, tipo_pedido, prioridad,
                 observaciones, notas_picking, notas_entrega,
                 usuario_creador, fecha_creacion, version
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, 1)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'), 1)
         """, [
             pedido_id, numero_pedido,
             request.cedi_origen_id, request.cedi_origen_nombre,
@@ -1029,6 +1029,7 @@ class ProductoCalculado(BaseModel):
 @router.post("/calcular", response_model=List[ProductoCalculado])
 async def calcular_productos_sugeridos(
     request: CalcularProductosRequest,
+    cuadrantes: Optional[List[str]] = Query(None, description="Filtrar por cuadrantes"),
     conn: Any = Depends(get_db)
 ):
     """
@@ -1331,6 +1332,7 @@ async def calcular_productos_sugeridos(
                 p.subgrupo,
                 p.marca,
                 p.presentacion,
+                p.cuadrante,
                 COALESCE(p.unidades_por_bulto, 1) as cantidad_bultos,
                 COALESCE(p.unidad_pedido, 'Bulto') as unidad_pedido,
                 COALESCE(p.peso_unitario * 1000, 1000.0) as peso_unidad,  -- Convertir kg a gramos
@@ -1367,18 +1369,27 @@ async def calcular_productos_sugeridos(
             LEFT JOIN p75_referencia p75ref ON p.codigo = p75ref.producto_id
             WHERE p.activo = true
                 AND (v20.total_vendido > 0 OR it.stock_tienda > 0 OR ic.stock_cedi > 0)
-            ORDER BY COALESCE(v20.total_vendido, 0) DESC
         """
 
-        # Ejecutar query con parámetros
-        # NOTA: ABC ahora viene de tabla cache productos_abc_tienda (pre-calculada diariamente)
-        cursor.execute(query, [
+        # Construir parámetros base
+        params = [
             request.tienda_destino,  # ventas_diarias_disponibles
             request.tienda_destino,  # abc_tienda_cache (tabla cache ABC por tienda)
             request.tienda_destino,  # inv_tienda
             request.cedi_origen,     # inv_cedi
             tiendas_ref_ids if tiendas_ref_ids else ['__NONE__']  # tiendas referencia (evitar error si vacío)
-        ])
+        ]
+
+        # Agregar filtro de cuadrantes si se proporciona
+        if cuadrantes and len(cuadrantes) > 0:
+            query += " AND p.cuadrante = ANY(%s)"
+            params.append(cuadrantes)
+
+        # Agregar ORDER BY al final
+        query += " ORDER BY COALESCE(v20.total_vendido, 0) DESC"
+
+        # Ejecutar query con parámetros
+        cursor.execute(query, params)
 
         rows = cursor.fetchall()
 
@@ -1483,21 +1494,21 @@ async def calcular_productos_sugeridos(
                 continue
 
             categoria_producto = (row[3] or '').strip().upper()  # Categoría normalizada para buscar config
-            cantidad_bultos = float(row[8]) if row[8] and row[8] > 0 else 1.0
-            unidad_pedido = row[9] or 'Bulto'  # Unidad de pedido: Bulto, Blister, Cesta, etc.
+            cantidad_bultos = float(row[9]) if row[9] and row[9] > 0 else 1.0
+            unidad_pedido = row[10] or 'Bulto'  # Unidad de pedido: Bulto, Blister, Cesta, etc.
             unidades_por_bulto = int(cantidad_bultos) if cantidad_bultos > 0 else 1
-            prom_20d = float(row[12]) if row[12] else 0.0
-            stock_tienda = float(row[15]) if row[15] else 0.0
-            stock_cedi = float(row[16]) if row[16] else 0.0
-            prom_top3 = float(row[17]) if row[17] else 0.0
-            prom_p75 = float(row[18]) if row[18] else 0.0
-            clase_abc_valor = row[19]  # ABC por ranking de cantidad de SQL
-            sigma_demanda = float(row[20]) if row[20] else 0.0
-            demanda_maxima = float(row[21]) if row[21] else 0.0
-            es_generador_trafico = bool(row[22]) if row[22] else False
+            prom_20d = float(row[13]) if row[13] else 0.0
+            stock_tienda = float(row[16]) if row[16] else 0.0
+            stock_cedi = float(row[17]) if row[17] else 0.0
+            prom_top3 = float(row[18]) if row[18] else 0.0
+            prom_p75 = float(row[19]) if row[19] else 0.0
+            clase_abc_valor = row[20]  # ABC por ranking de cantidad de SQL
+            sigma_demanda = float(row[21]) if row[21] else 0.0
+            demanda_maxima = float(row[22]) if row[22] else 0.0
+            es_generador_trafico = bool(row[23]) if row[23] else False
             # P75 de tiendas de referencia
-            p75_referencia = float(row[23]) if row[23] else 0.0
-            tiendas_referencia_str = row[24]  # String con IDs de tiendas separados por coma
+            p75_referencia = float(row[24]) if row[24] else 0.0
+            tiendas_referencia_str = row[25]  # String con IDs de tiendas separados por coma
 
             # Clasificacion ABC: usar ABC por ranking del SQL si esta disponible
             venta_diaria_bultos = prom_20d / cantidad_bultos if cantidad_bultos > 0 else 0
@@ -1923,10 +1934,11 @@ async def calcular_productos_sugeridos(
                     subgrupo=row[5],
                     marca=row[6],
                     presentacion=row[7],
+                    cuadrante_producto=row[8],
                     cantidad_bultos=cantidad_bultos,
                     unidad_pedido=unidad_pedido,
-                    peso_unidad=float(row[10]) if row[10] else 1000.0,
-                    prom_ventas_5dias_unid=float(row[11]) if row[11] else 0.0,
+                    peso_unidad=float(row[11]) if row[11] else 1000.0,
+                    prom_ventas_5dias_unid=float(row[12]) if row[12] else 0.0,
                     prom_ventas_20dias_unid=prom_20d,
                     prom_top3_unid=prom_top3,
                     prom_p75_unid=p75_usado,  # Usar P75 local o de referencia
@@ -2087,7 +2099,7 @@ async def crear_pedido_v2(
                 tipo_pedido, prioridad,
                 usuario_creador, fecha_creacion,
                 version, metodo_calculo
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, 2, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'), 2, %s)
         """, [
             pedido_id, numero_pedido,
             request.cedi_origen_id, cedi_nombre[0],
@@ -2474,3 +2486,152 @@ async def registrar_llegada(
         conn.rollback()
         logger.error(f"❌ Error registrando llegada: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error registrando llegada: {str(e)}")
+
+
+@router.get("/{pedido_id}/exportar-excel")
+async def exportar_pedido_excel(
+    pedido_id: str,
+    conn: Any = Depends(get_db)
+):
+    """
+    Exporta pedido single-tienda a Excel con columna Cuadrante.
+
+    Formato:
+    - Código | Descripción | Categoría | ABC | Cuadrante | Stock | Sugerido | Pedido
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, PatternFill
+        import io
+        from fastapi.responses import Response
+
+        cursor = conn.cursor()
+
+        # Obtener encabezado del pedido
+        cursor.execute("""
+            SELECT numero_pedido, tienda_destino_nombre, cedi_origen_nombre,
+                   fecha_pedido, estado, dias_cobertura
+            FROM pedidos_sugeridos
+            WHERE id = %s
+        """, [pedido_id])
+
+        pedido_row = cursor.fetchone()
+        if not pedido_row:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+        numero_pedido, tienda_nombre, cedi_nombre, fecha_pedido, estado, dias_cobertura = pedido_row
+
+        # Obtener productos del pedido
+        cursor.execute("""
+            SELECT
+                codigo_producto,
+                descripcion_producto,
+                categoria,
+                clasificacion_abc,
+                cuadrante_producto,
+                cantidad_bultos,
+                stock_tienda,
+                cantidad_sugerida_bultos,
+                cantidad_pedida_bultos,
+                total_unidades
+            FROM pedidos_sugeridos_detalle
+            WHERE pedido_id = %s AND incluido = true
+            ORDER BY clasificacion_abc, descripcion_producto
+        """, [pedido_id])
+
+        rows = cursor.fetchall()
+        cursor.close()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="No hay productos en el pedido")
+
+        # Crear workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Pedido {numero_pedido[:20]}"
+
+        # Título
+        ws.merge_cells('A1:J1')
+        ws['A1'] = f"Pedido: {numero_pedido}"
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        # Información del pedido
+        ws.merge_cells('A2:J2')
+        ws['A2'] = f"Tienda: {tienda_nombre} | CEDI: {cedi_nombre} | Fecha: {fecha_pedido} | Cobertura: {dias_cobertura}d"
+        ws['A2'].font = Font(size=10)
+        ws['A2'].alignment = Alignment(horizontal='center')
+
+        # Headers
+        headers = [
+            'Código', 'Descripción', 'Categoría', 'ABC', 'Cuadrante',
+            'Unid/Bulto', 'Stock', 'Sugerido', 'Pedido', 'Total Unid'
+        ]
+
+        header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+        header_font = Font(bold=True, color='FFFFFF')
+
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=4, column=col_idx, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Colores por clasificación ABC
+        abc_colors = {
+            'A': 'E8F5E9',  # Verde claro
+            'B': 'FFF9C4',  # Amarillo claro
+            'C': 'FFE0B2',  # Naranja claro
+            'D': 'F5F5F5'   # Gris claro
+        }
+
+        # Datos
+        for row_idx, row_data in enumerate(rows, 5):
+            abc = row_data[3] or 'D'
+            fill_color = abc_colors.get(abc, 'FFFFFF')
+            row_fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type='solid')
+
+            data = [
+                row_data[0],   # Código
+                row_data[1],   # Descripción
+                row_data[2],   # Categoría
+                abc,           # ABC
+                row_data[4] or 'NO ESPECIFICADO',  # Cuadrante
+                int(row_data[5]) if row_data[5] else 1,
+                float(row_data[6]) if row_data[6] else 0,
+                float(row_data[7]) if row_data[7] else 0,
+                float(row_data[8]) if row_data[8] else 0,
+                float(row_data[9]) if row_data[9] else 0
+            ]
+
+            for col_idx, value in enumerate(data, 1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.fill = row_fill
+                if col_idx >= 6:  # Números: alinear derecha
+                    cell.alignment = Alignment(horizontal='right')
+
+        # Ajustar anchos
+        column_widths = [12, 40, 20, 6, 15, 10, 12, 15, 15, 15]
+        for i, width in enumerate(column_widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
+
+        # Guardar en memoria
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"{numero_pedido.replace('/', '-')}.xlsx"
+
+        return Response(
+            content=output.read(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl no instalado")
+    except Exception as e:
+        logger.error(f"Error exportando: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")

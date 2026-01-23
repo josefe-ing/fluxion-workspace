@@ -252,8 +252,8 @@ export default function SuggestedOrder() {
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     <div className="text-sm text-gray-700">
-                      {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', { day: 'numeric', month: 'short' }).replace('.', '')}{' '}
-                      {new Date(pedido.fecha_creacion).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                      {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', { day: 'numeric', month: 'short', timeZone: 'America/Caracas' }).replace('.', '')}{' '}
+                      {new Date(pedido.fecha_creacion).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Caracas' })}
                     </div>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">

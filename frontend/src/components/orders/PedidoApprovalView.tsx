@@ -424,11 +424,13 @@ export default function PedidoApprovalView() {
                 Creado: {new Date(pedido.fecha_creacion).toLocaleDateString('es-VE', {
                   day: '2-digit',
                   month: '2-digit',
-                  year: 'numeric'
+                  year: 'numeric',
+                  timeZone: 'America/Caracas'
                 })} {new Date(pedido.fecha_creacion).toLocaleTimeString('es-VE', {
                   hour: '2-digit',
                   minute: '2-digit',
-                  hour12: true
+                  hour12: true,
+                  timeZone: 'America/Caracas'
                 })}
               </p>
             </div>

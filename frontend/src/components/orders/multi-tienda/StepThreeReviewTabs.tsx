@@ -505,13 +505,15 @@ export default function StepThreeReviewTabs({
     });
   }, []);
 
-  // Continuar al siguiente paso con solo productos SELECCIONADOS (por tienda)
+  // Continuar al siguiente paso con solo productos SELECCIONADOS Y VISIBLES (por tienda)
   const handleContinue = useCallback(() => {
-    // Actualizar pedidos_por_tienda con solo los productos SELECCIONADOS de cada tienda
+    // Actualizar pedidos_por_tienda con solo los productos que están VISIBLES (pasan filtros) Y SELECCIONADOS
     const pedidosActualizados = orderData.pedidos_por_tienda.map(pedido => {
       const selecciones = getSeleccionesTienda(pedido.tienda_id);
-      // Filtrar solo productos seleccionados (ignorando otros filtros como ABC, categoría, etc.)
-      const productosSeleccionados = pedido.productos.filter(p => selecciones.has(p.codigo_producto));
+      // Usar getFilteredProducts para respetar los filtros de display (ABC, categoría, etc.)
+      // y luego filtrar solo los seleccionados
+      const productosVisibles = getFilteredProducts(pedido.productos, pedido.tienda_id);
+      const productosSeleccionados = productosVisibles.filter(p => selecciones.has(p.codigo_producto));
 
       // Calcular nuevos totales basados en productos seleccionados
       let totalBultos = 0;
@@ -546,7 +548,7 @@ export default function StepThreeReviewTabs({
 
     updateOrderData({ pedidos_por_tienda: pedidosActualizados });
     onNext();
-  }, [orderData.pedidos_por_tienda, ediciones, seleccionesPorTienda, updateOrderData, onNext]);
+  }, [orderData.pedidos_por_tienda, ediciones, seleccionesPorTienda, filtrosPorTienda, updateOrderData, onNext]);
 
   // Handlers para modales
   const handleOpenSalesModal = (producto: ProductoPedidoSimplificado, tiendaId: string) => {

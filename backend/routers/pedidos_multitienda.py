@@ -8,7 +8,7 @@ Este módulo permite:
 - Guardar múltiples pedidos en una sola transacción
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
@@ -92,7 +92,8 @@ async def obtener_productos_tienda(
     conn,
     cedi_origen: str,
     tienda_destino: str,
-    dias_cobertura: int = 3
+    dias_cobertura: int = 3,
+    filtros: Optional[Dict[str, Any]] = None
 ) -> List[Dict]:
     """
     Obtiene TODOS los productos para una tienda, marcando cuáles necesitan reposición.
@@ -180,6 +181,7 @@ async def obtener_productos_tienda(
             p.codigo,
             p.descripcion,
             p.categoria,
+            p.cuadrante,
             COALESCE(p.unidades_por_bulto, 1) as unidades_por_bulto,
             COALESCE(v.prom_20d, 0) as prom_20d,
             COALESCE(v.p75, 0) as p75,
@@ -200,10 +202,20 @@ async def obtener_productos_tienda(
           AND pe.producto_id IS NULL
           AND abc.clase_abc IN ('A', 'B', 'C', 'D')
           AND (COALESCE(v.p75, 0) > 0 OR COALESCE(st.stock, 0) > 0 OR COALESCE(sc.stock, 0) > 0)
-        ORDER BY COALESCE(abc.venta_30d, 0) DESC
     """
 
-    cursor.execute(query, {'tienda': tienda_destino, 'cedi': cedi_origen})
+    # Construir parámetros
+    params = {'tienda': tienda_destino, 'cedi': cedi_origen}
+
+    # Agregar filtro de cuadrantes si se proporciona
+    if filtros and filtros.get('cuadrantes'):
+        query += " AND p.cuadrante = ANY(%(cuadrantes)s)"
+        params['cuadrantes'] = filtros['cuadrantes']
+
+    # Agregar ORDER BY al final
+    query += " ORDER BY COALESCE(abc.venta_30d, 0) DESC"
+
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     cursor.close()
 
@@ -213,15 +225,16 @@ async def obtener_productos_tienda(
         codigo = row[1]
         descripcion = row[2]
         categoria = row[3]
-        unidades_por_bulto = int(row[4]) or 1
-        prom_20d = float(row[5])
-        p75 = float(row[6])
-        stock_tienda = float(row[7])
-        stock_cedi = float(row[8])
-        clase_abc = row[9]
-        venta_30d = float(row[10])
-        sigma_demanda = float(row[11])
-        demanda_maxima = float(row[12])
+        cuadrante = row[4]
+        unidades_por_bulto = int(row[5]) or 1
+        prom_20d = float(row[6])
+        p75 = float(row[7])
+        stock_tienda = float(row[8])
+        stock_cedi = float(row[9])
+        clase_abc = row[10]
+        venta_30d = float(row[11])
+        sigma_demanda = float(row[12])
+        demanda_maxima = float(row[13])
 
         # Usar el mismo cálculo estadístico que single-store (calcular_inventario_simple)
         # Esto garantiza que ambos wizards usen la misma lógica de ROP, SS y MAX
@@ -275,6 +288,7 @@ async def obtener_productos_tienda(
             'codigo_producto': codigo,
             'descripcion_producto': descripcion,
             'categoria': categoria,
+            'cuadrante': cuadrante,
             'clasificacion_abc': clase_abc,
             'unidades_por_bulto': unidades_por_bulto,
             'prom_p75_unid': p75,
@@ -306,6 +320,7 @@ async def obtener_productos_tienda(
 @router.post("/calcular", response_model=CalcularMultiTiendaResponse)
 async def calcular_pedidos_multitienda(
     request: CalcularMultiTiendaRequest,
+    cuadrantes: Optional[List[str]] = Query(None, description="Filtrar por cuadrantes"),
     conn: Any = Depends(get_db)
 ):
     """
@@ -338,7 +353,8 @@ async def calcular_pedidos_multitienda(
                 conn,
                 request.cedi_origen,
                 tienda.tienda_id,
-                request.dias_cobertura
+                request.dias_cobertura,
+                filtros={'cuadrantes': cuadrantes} if cuadrantes else None
             )
             productos_por_tienda[tienda.tienda_id] = productos
 
@@ -478,6 +494,7 @@ async def calcular_pedidos_multitienda(
                     descripcion_producto=prod['descripcion_producto'],
                     categoria=prod['categoria'],
                     clasificacion_abc=prod['clasificacion_abc'],
+                    cuadrante=prod.get('cuadrante'),
                     unidades_por_bulto=prod['unidades_por_bulto'],
                     cantidad_sugerida_unid=cantidad_final * prod['unidades_por_bulto'],
                     cantidad_sugerida_bultos=cantidad_final,
@@ -602,7 +619,7 @@ async def guardar_pedidos_lote(
                     %s, %s, 1,
                     %s, %s,
                     %s, %s,
-                    %s, CURRENT_TIMESTAMP,
+                    %s, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
                     'borrador', %s, %s,
                     %s,
                     %s, %s, %s, %s,
@@ -626,7 +643,7 @@ async def guardar_pedidos_lote(
                 cursor.execute("""
                     INSERT INTO pedidos_sugeridos_detalle (
                         pedido_id, linea_numero, codigo_producto, descripcion_producto,
-                        categoria, clasificacion_abc,
+                        categoria, clasificacion_abc, cuadrante_producto,
                         cantidad_bultos, cantidad_sugerida_bultos,
                         cantidad_pedida_bultos, cantidad_pedida_unidades, total_unidades,
                         stock_tienda, stock_cedi_origen,
@@ -636,7 +653,7 @@ async def guardar_pedidos_lote(
                         razon_pedido
                     ) VALUES (
                         %s, %s, %s, %s,
-                        %s, %s,
+                        %s, %s, %s,
                         %s, %s,
                         %s, %s, %s,
                         %s, %s,
@@ -647,7 +664,7 @@ async def guardar_pedidos_lote(
                     )
                 """, (
                     pedido_id, linea_num, prod.codigo_producto, prod.descripcion_producto,
-                    prod.categoria, prod.clasificacion_abc,
+                    prod.categoria, prod.clasificacion_abc, prod.cuadrante,
                     prod.unidades_por_bulto, prod.cantidad_pedida_bultos,
                     prod.cantidad_pedida_bultos, prod.cantidad_pedida_unidades, prod.cantidad_pedida_unidades,
                     prod.stock_tienda, prod.stock_cedi_origen,
@@ -710,3 +727,138 @@ async def get_config_dpdu(conn: Any = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error obteniendo config DPD+U: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@router.get("/{pedido_id}/exportar-excel")
+async def exportar_pedido_excel_multitienda(
+    pedido_id: str,
+    conn: Any = Depends(get_db)
+):
+    """
+    Exporta pedido multi-tienda a Excel con columna Cuadrante.
+    Similar a single-tienda con indicador de ajustes DPD+U.
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, PatternFill
+        import io
+        from fastapi.responses import Response
+
+        cursor = conn.cursor()
+
+        # Query similar a single-tienda, agregar grupo_pedido_id y razon_pedido
+        cursor.execute("""
+            SELECT numero_pedido, tienda_destino_nombre, cedi_origen_nombre,
+                   fecha_pedido, estado, dias_cobertura, grupo_pedido_id
+            FROM pedidos_sugeridos
+            WHERE id = %s
+        """, [pedido_id])
+
+        pedido_row = cursor.fetchone()
+        if not pedido_row:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+        numero_pedido, tienda_nombre, cedi_nombre, fecha_pedido, estado, dias_cobertura, grupo_id = pedido_row
+
+        cursor.execute("""
+            SELECT
+                codigo_producto, descripcion_producto, categoria,
+                clasificacion_abc, cuadrante_producto, cantidad_bultos,
+                stock_tienda, cantidad_sugerida_bultos, cantidad_pedida_bultos,
+                total_unidades, razon_pedido
+            FROM pedidos_sugeridos_detalle
+            WHERE pedido_id = %s AND incluido = true
+            ORDER BY clasificacion_abc, descripcion_producto
+        """, [pedido_id])
+
+        rows = cursor.fetchall()
+        cursor.close()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="No hay productos")
+
+        # Crear Excel (código similar a single-tienda)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+
+        # Título con indicador de grupo
+        ws.merge_cells('A1:K1')
+        titulo = f"Pedido Multi-Tienda: {numero_pedido}"
+        if grupo_id:
+            titulo += f" (Grupo: {grupo_id})"
+        ws['A1'] = titulo
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        # Info
+        ws.merge_cells('A2:K2')
+        ws['A2'] = f"Tienda: {tienda_nombre} | CEDI: {cedi_nombre} | Fecha: {fecha_pedido}"
+        ws['A2'].alignment = Alignment(horizontal='center')
+
+        # Headers (agregar columna Observación)
+        headers = [
+            'Código', 'Descripción', 'Categoría', 'ABC', 'Cuadrante',
+            'Unid/Bulto', 'Stock', 'Sugerido', 'Pedido', 'Total', 'Observación'
+        ]
+
+        header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+        header_font = Font(bold=True, color='FFFFFF')
+
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=4, column=col_idx, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center')
+
+        # Colores ABC
+        abc_colors = {'A': 'E8F5E9', 'B': 'FFF9C4', 'C': 'FFE0B2', 'D': 'F5F5F5'}
+
+        # Datos
+        for row_idx, row_data in enumerate(rows, 5):
+            abc = row_data[3] or 'D'
+            razon = row_data[10] or ''
+            observacion = 'Ajustado DPD+U' if 'dpdu' in razon.lower() or 'conflicto' in razon.lower() else ''
+
+            data = [
+                row_data[0], row_data[1], row_data[2], abc,
+                row_data[4] or 'NO ESPECIFICADO',
+                int(row_data[5]) if row_data[5] else 1,
+                float(row_data[6]) if row_data[6] else 0,
+                float(row_data[7]) if row_data[7] else 0,
+                float(row_data[8]) if row_data[8] else 0,
+                float(row_data[9]) if row_data[9] else 0,
+                observacion
+            ]
+
+            for col_idx, value in enumerate(data, 1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.fill = PatternFill(start_color=abc_colors.get(abc, 'FFFFFF'),
+                                       end_color=abc_colors.get(abc, 'FFFFFF'),
+                                       fill_type='solid')
+                if 6 <= col_idx <= 10:
+                    cell.alignment = Alignment(horizontal='right')
+
+        # Anchos
+        column_widths = [12, 35, 18, 6, 15, 10, 10, 12, 12, 12, 20]
+        for i, width in enumerate(column_widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"{numero_pedido.replace('/', '-')}_multitienda.xlsx"
+
+        return Response(
+            content=output.read(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl no instalado")
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
