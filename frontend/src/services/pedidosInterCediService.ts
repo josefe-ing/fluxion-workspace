@@ -42,6 +42,7 @@ export interface ProductoInterCedi {
   grupo?: string;
   marca?: string;
   presentacion?: string;
+  cuadrante?: string;
   clasificacion_abc?: string;
 
   // CEDI Origen

@@ -257,6 +257,7 @@ async def calcular_pedido_inter_cedi(
                 p.grupo,
                 p.marca,
                 p.presentacion,
+                p.cuadrante,
                 COALESCE(p.unidades_por_bulto, 1) as unidades_por_bulto,
                 COALESCE(p.unidad_pedido, 'Bulto') as unidad_pedido,
                 p.peso_unitario,
@@ -498,6 +499,7 @@ async def calcular_pedido_inter_cedi(
                     grupo=row_dict['grupo'],
                     marca=row_dict['marca'],
                     presentacion=row_dict['presentacion'],
+                    cuadrante=row_dict.get('cuadrante'),
                     clasificacion_abc=clase_abc,
 
                     # CEDI Origen

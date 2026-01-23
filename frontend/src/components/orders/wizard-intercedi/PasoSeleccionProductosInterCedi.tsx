@@ -85,6 +85,9 @@ export default function PasoSeleccionProductosInterCedi({
   const [searchTerm, setSearchTerm] = useState('');
   const [filtroCediOrigen, setFiltroCediOrigen] = useState<string>('todos');
   const [filtroABC, setFiltroABC] = useState<string>('todos');
+  const [filtroCuadrante, setFiltroCuadrante] = useState<string>('todos');
+  const [filtroStockValencia, setFiltroStockValencia] = useState<string>('todos'); // 'con_stock' | 'sin_stock' | 'todos'
+  const [filtroStockCaracas, setFiltroStockCaracas] = useState<string>('todos'); // 'con_stock' | 'sin_stock' | 'todos'
   const [sortField, setSortField] = useState<SortField>('prioridad');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [paginaActual, setPaginaActual] = useState(1);
@@ -153,9 +156,39 @@ export default function PasoSeleccionProductosInterCedi({
         return false;
       }
 
+      // Filtro por Cuadrante
+      if (filtroCuadrante !== 'todos') {
+        const cuadranteProducto = p.cuadrante || 'NO ESPECIFICADO';
+        if (cuadranteProducto !== filtroCuadrante) {
+          return false;
+        }
+      }
+
+      // Filtro por Stock en Valencia (Seco, Frío o Verde)
+      if (filtroStockValencia !== 'todos') {
+        const tieneStockEnValencia = p.stock_cedi_origen > 0;
+        if (filtroStockValencia === 'con_stock' && !tieneStockEnValencia) {
+          return false;
+        }
+        if (filtroStockValencia === 'sin_stock' && tieneStockEnValencia) {
+          return false;
+        }
+      }
+
+      // Filtro por Stock en Caracas
+      if (filtroStockCaracas !== 'todos') {
+        const tieneStockEnCaracas = p.stock_actual_cedi > 0;
+        if (filtroStockCaracas === 'con_stock' && !tieneStockEnCaracas) {
+          return false;
+        }
+        if (filtroStockCaracas === 'sin_stock' && tieneStockEnCaracas) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [productos, searchTerm, filtroCediOrigen, filtroABC]);
+  }, [productos, searchTerm, filtroCediOrigen, filtroABC, filtroCuadrante, filtroStockValencia, filtroStockCaracas]);
 
   // Ordenar productos
   const productosOrdenados = useMemo(() => {
@@ -229,6 +262,12 @@ export default function PasoSeleccionProductosInterCedi({
   // Productos agrupados por CEDI para contadores
   const productosAgrupados = useMemo(() => {
     return agruparPorCediOrigen(productos);
+  }, [productos]);
+
+  // Cuadrantes únicos para filtro
+  const cuadrantesUnicos = useMemo(() => {
+    const cuads = new Set(productos.map(p => p.cuadrante || 'NO ESPECIFICADO'));
+    return ['todos', ...Array.from(cuads).sort()];
   }, [productos]);
 
   // Handlers
@@ -375,6 +414,54 @@ export default function PasoSeleccionProductosInterCedi({
               <option value="B">Clase B</option>
               <option value="C">Clase C</option>
               <option value="D">Clase D</option>
+            </select>
+          </div>
+
+          {/* Filtro Cuadrante */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Cuad:</span>
+            <select
+              value={filtroCuadrante}
+              onChange={(e) => { setFiltroCuadrante(e.target.value); setPaginaActual(1); }}
+              className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              {cuadrantesUnicos.map(cuad => {
+                const count = productos.filter(p => (p.cuadrante || 'NO ESPECIFICADO') === cuad || cuad === 'todos').length;
+                const displayName = cuad === 'todos' ? 'Todos' : cuad.replace('CUADRANTE ', '');
+                return (
+                  <option key={cuad} value={cuad}>
+                    {displayName} ({count})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          {/* Filtro Stock Valencia */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Stock VLC:</span>
+            <select
+              value={filtroStockValencia}
+              onChange={(e) => { setFiltroStockValencia(e.target.value); setPaginaActual(1); }}
+              className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="todos">Todos ({productos.length})</option>
+              <option value="con_stock">Con stock ({productos.filter(p => p.stock_cedi_origen > 0).length})</option>
+              <option value="sin_stock">Sin stock ({productos.filter(p => p.stock_cedi_origen === 0).length})</option>
+            </select>
+          </div>
+
+          {/* Filtro Stock Caracas */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Stock CCS:</span>
+            <select
+              value={filtroStockCaracas}
+              onChange={(e) => { setFiltroStockCaracas(e.target.value); setPaginaActual(1); }}
+              className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="todos">Todos ({productos.length})</option>
+              <option value="con_stock">Con stock ({productos.filter(p => p.stock_actual_cedi > 0).length})</option>
+              <option value="sin_stock">Sin stock ({productos.filter(p => p.stock_actual_cedi === 0).length})</option>
             </select>
           </div>
         </div>

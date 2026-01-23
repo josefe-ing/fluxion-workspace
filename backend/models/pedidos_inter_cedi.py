@@ -120,6 +120,7 @@ class ProductoInterCediBase(BaseModel):
     grupo: Optional[str] = None
     marca: Optional[str] = None
     presentacion: Optional[str] = None
+    cuadrante: Optional[str] = None
     clasificacion_abc: Optional[str] = None
 
     # CEDI Origen (quien surte)
