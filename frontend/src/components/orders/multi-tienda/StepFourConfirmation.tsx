@@ -63,6 +63,7 @@ export default function StepFourConfirmation({
         'Descripción': p.descripcion_producto,
         'Categoría': p.categoria || '',
         'ABC': p.clasificacion_abc || '',
+        'Cuadrante': p.cuadrante || 'NO ESPECIFICADO',
         'U/B': p.unidades_por_bulto,
         'P75 Unid/día': Number(p.prom_p75_unid.toFixed(2)),
         'Stock Tienda': p.stock_tienda,
@@ -85,6 +86,7 @@ export default function StepFourConfirmation({
       { wch: 45 },  // Descripción
       { wch: 20 },  // Categoría
       { wch: 5 },   // ABC
+      { wch: 15 },  // Cuadrante
       { wch: 6 },   // U/B
       { wch: 12 },  // P75
       { wch: 12 },  // Stock Tienda
@@ -178,6 +180,28 @@ export default function StepFourConfirmation({
     }
   };
 
+  // Descargar Excel del backend con cuadrante
+  const descargarExcelBackend = async (pedidoId: string, tiendaNombre: string) => {
+    try {
+      const response = await fetch(`${API_URL}/api/pedidos-multitienda/${pedidoId}/exportar-excel`);
+      if (!response.ok) throw new Error('Error descargando Excel');
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const fecha = new Date().toISOString().split('T')[0];
+      a.download = `Pedido_${tiendaNombre.replace(/[^a-zA-Z0-9]/g, '_')}_${fecha}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error descargando Excel:', error);
+      alert('Error al descargar Excel');
+    }
+  };
+
   // Ir a lista de pedidos
   const handleVerPedidos = () => {
     navigate('/pedidos-sugeridos');
@@ -238,6 +262,13 @@ export default function StepFourConfirmation({
                     >
                       {pedido.estado}
                     </span>
+                    <button
+                      onClick={() => descargarExcelBackend(pedido.pedido_id, pedido.tienda_nombre)}
+                      className="px-3 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 text-xs flex items-center gap-1"
+                      title="Descargar Excel con cuadrante"
+                    >
+                      📊 Excel
+                    </button>
                   </div>
                 </div>
               ))}

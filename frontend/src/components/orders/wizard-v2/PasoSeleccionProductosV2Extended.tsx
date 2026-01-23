@@ -398,6 +398,7 @@ export default function PasoSeleccionProductosV2Extended({
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[250px]">Producto</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Matriz</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Cuad</th>
 
               {/* Promedios de Demanda */}
               <th colSpan={4} className="px-4 py-2 text-center text-xs font-semibold text-yellow-700 bg-yellow-50 uppercase tracking-wider border-l-2 border-yellow-200">
@@ -430,6 +431,7 @@ export default function PasoSeleccionProductosV2Extended({
               <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"></th>
             </tr>
             <tr className="bg-gray-50">
+              <th></th>
               <th></th>
               <th></th>
               <th></th>
@@ -511,6 +513,16 @@ export default function PasoSeleccionProductosV2Extended({
                         <MatrizABCXYZBadge matriz={producto.matriz_abc_xyz} size="sm" mostrarPrioridad={false} />
                       </button>
                     </div>
+                  </td>
+
+                  {/* Cuadrante */}
+                  <td className="px-4 py-3 text-center">
+                    <span
+                      className="text-xs font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded"
+                      title={`Cuadrante: ${producto.cuadrante || 'NO ESPECIFICADO'}`}
+                    >
+                      {producto.cuadrante ? producto.cuadrante.replace('CUADRANTE ', '') : 'N/E'}
+                    </span>
                   </td>
 
                   {/* Promedios de Demanda - con fondo amarillo */}

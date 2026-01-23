@@ -94,6 +94,7 @@ export interface ProductoPedidoSimplificado {
   descripcion_producto: string;
   categoria?: string;
   clasificacion_abc?: string;
+  cuadrante?: string;
 
   // Cantidades
   unidades_por_bulto: number;

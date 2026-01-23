@@ -681,7 +681,10 @@ export default function StepThreeReviewTabs({
               <th className="bg-blue-50 px-1 py-1 text-left text-xs font-medium text-gray-600 cursor-pointer hover:bg-blue-100" style={{ minWidth: '180px' }} onClick={() => handleSort('descripcion')}>
                 Descripción <SortIcon field="descripcion" />
               </th>
-              <th className="bg-blue-50 px-1 py-1 text-center text-xs font-medium text-gray-600 border-r border-blue-100 w-12">U/B</th>
+              <th className="bg-blue-50 px-1 py-1 text-center text-xs font-medium text-gray-600 w-12">U/B</th>
+              <th className="bg-blue-50 px-1 py-1 text-center text-xs font-medium text-gray-600 border-r border-blue-100 w-14" title="Cuadrante del producto">
+                CUAD
+              </th>
               {/* VENTAS */}
               <th className="bg-purple-50 px-0 py-1 text-center text-xs font-medium text-gray-600 w-6" title="Ver análisis">📈</th>
               <th className="bg-purple-50 px-1 py-1 text-center text-xs font-medium text-gray-600 cursor-pointer hover:bg-purple-100 border-r border-purple-100 w-12" onClick={() => handleSort('p75')}>
@@ -756,9 +759,18 @@ export default function StepThreeReviewTabs({
                     </span>
                   </td>
                   {/* U/B */}
-                  <td className="bg-blue-50/30 px-1 py-1 text-center border-r border-gray-100">
+                  <td className="bg-blue-50/30 px-1 py-1 text-center">
                     <div className="text-xs font-medium text-gray-700">{upb}</div>
                     <div className="text-[10px] text-gray-400">Bulto</div>
+                  </td>
+                  {/* Cuadrante */}
+                  <td className="bg-blue-50/30 px-1 py-1 text-center border-r border-gray-100">
+                    <span
+                      className="text-[10px] font-semibold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded"
+                      title={`Cuadrante: ${producto.cuadrante || 'NO ESPECIFICADO'}`}
+                    >
+                      {producto.cuadrante ? producto.cuadrante.replace('CUADRANTE ', '') : 'N/E'}
+                    </span>
                   </td>
                   {/* 📈 Ventas */}
                   <td className="bg-purple-50/30 px-0 py-1 text-center">
