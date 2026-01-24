@@ -210,9 +210,9 @@ async def listar_pedidos(
                 tipo_pedido=row[8] or "reposicion",
                 total_productos=row[9] or 0,
                 total_lineas=row[10] or 0,
-                total_bultos=float(row[11]) if row[11] else 0.0,
-                total_unidades=float(row[12]) if row[12] else 0.0,
-                total_peso_kg=float(row[13]) if row[13] else None,
+                total_bultos=safe_float(row[11]),
+                total_unidades=safe_float(row[12]),
+                total_peso_kg=safe_float(row[13]) if row[13] else None,
                 fecha_entrega_solicitada=row[14],
                 fecha_aprobacion=to_venezuela_aware(row[15]),
                 fecha_recepcion=to_venezuela_aware(row[16]),
@@ -223,10 +223,10 @@ async def listar_pedidos(
                 productos_b=row[20] or 0,
                 productos_c=row[21] or 0,
                 productos_d=row[22] or 0,
-                bultos_a=float(row[23]) if row[23] else 0.0,
-                bultos_b=float(row[24]) if row[24] else 0.0,
-                bultos_c=float(row[25]) if row[25] else 0.0,
-                bultos_d=float(row[26]) if row[26] else 0.0
+                bultos_a=safe_float(row[23]),
+                bultos_b=safe_float(row[24]),
+                bultos_c=safe_float(row[25]),
+                bultos_d=safe_float(row[26])
             ))
 
         return pedidos
@@ -481,8 +481,8 @@ async def obtener_pedido(
         # Construir lista de productos
         productos = []
         for idx, prod_row in enumerate(productos_rows):
-            cantidad_bultos = float(prod_row[2]) if prod_row[2] else 1.0
-            cantidad_pedida_bultos = float(prod_row[3]) if prod_row[3] else 0.0
+            cantidad_bultos = safe_float(prod_row[2], default=1.0)
+            cantidad_pedida_bultos = safe_float(prod_row[3])
 
             productos.append({
                 "id": f"{pedido_id}-{idx+1}",
@@ -491,17 +491,17 @@ async def obtener_pedido(
                 "codigo_producto": prod_row[0],
                 "descripcion_producto": prod_row[1],
                 "cantidad_bultos": cantidad_bultos,
-                "cantidad_sugerida_bultos": float(prod_row[5]) if prod_row[5] else 0.0,
-                "cantidad_sugerida_unidades": (float(prod_row[5]) * cantidad_bultos) if prod_row[5] else 0.0,
+                "cantidad_sugerida_bultos": safe_float(prod_row[5]),
+                "cantidad_sugerida_unidades": safe_float(prod_row[5]) * cantidad_bultos,
                 "clasificacion_abc": prod_row[6],
                 "razon_pedido": prod_row[7] or "",
-                "prom_ventas_8sem_unid": float(prod_row[8]) if prod_row[8] else 0.0,
+                "prom_ventas_8sem_unid": safe_float(prod_row[8]),
                 "prom_ventas_8sem_bultos": safe_float(prod_row[9]),
-                "stock_tienda": float(prod_row[10]) if prod_row[10] else 0.0,
-                "stock_total": float(prod_row[11]) if prod_row[11] else 0.0,
+                "stock_tienda": safe_float(prod_row[10]),
+                "stock_total": safe_float(prod_row[11]),
                 "cantidad_pedida_bultos": cantidad_pedida_bultos,
                 "cantidad_pedida_unidades": cantidad_pedida_bultos * cantidad_bultos,
-                "total_unidades": float(prod_row[4]) if prod_row[4] else 0.0,
+                "total_unidades": safe_float(prod_row[4]),
                 "incluido": prod_row[12] if prod_row[12] is not None else True,
                 "fecha_creacion": pedido_row[3],
             })
@@ -1139,8 +1139,8 @@ async def calcular_productos_sugeridos(
             """, [request.tienda_destino])
             for row in cursor.fetchall():
                 limites_inventario[row[0]] = {
-                    'capacidad_maxima': float(row[1]) if row[1] else None,
-                    'minimo_exhibicion': float(row[2]) if row[2] else None,
+                    'capacidad_maxima': safe_float(row[1]) if row[1] else None,
+                    'minimo_exhibicion': safe_float(row[2]) if row[2] else None,
                     'tipo_restriccion': row[3] or 'espacio_fisico',
                     'notas': row[4]
                 }
@@ -1513,17 +1513,17 @@ async def calcular_productos_sugeridos(
 
             unidad_pedido = row[10] or 'Bulto'  # Unidad de pedido: Bulto, Blister, Cesta, etc.
             unidades_por_bulto = int(cantidad_bultos) if cantidad_bultos > 0 else 1
-            prom_20d = float(row[13]) if row[13] else 0.0
-            stock_tienda = float(row[16]) if row[16] else 0.0
-            stock_cedi = float(row[17]) if row[17] else 0.0
-            prom_top3 = float(row[18]) if row[18] else 0.0
-            prom_p75 = float(row[19]) if row[19] else 0.0
+            prom_20d = safe_float(row[13])
+            stock_tienda = safe_float(row[16])
+            stock_cedi = safe_float(row[17])
+            prom_top3 = safe_float(row[18])
+            prom_p75 = safe_float(row[19])
             clase_abc_valor = row[20]  # ABC por ranking de cantidad de SQL
-            sigma_demanda = float(row[21]) if row[21] else 0.0
-            demanda_maxima = float(row[22]) if row[22] else 0.0
+            sigma_demanda = safe_float(row[21])
+            demanda_maxima = safe_float(row[22])
             es_generador_trafico = bool(row[23]) if row[23] else False
             # P75 de tiendas de referencia
-            p75_referencia = float(row[24]) if row[24] else 0.0
+            p75_referencia = safe_float(row[24])
             tiendas_referencia_str = row[25]  # String con IDs de tiendas separados por coma
 
             # Clasificacion ABC: usar ABC por ranking del SQL si esta disponible
@@ -1953,8 +1953,8 @@ async def calcular_productos_sugeridos(
                     cuadrante_producto=row[8],
                     cantidad_bultos=cantidad_bultos,
                     unidad_pedido=unidad_pedido,
-                    peso_unidad=float(row[11]) if row[11] else 1000.0,
-                    prom_ventas_5dias_unid=float(row[12]) if row[12] else 0.0,
+                    peso_unidad=safe_float(row[11], default=1000.0),
+                    prom_ventas_5dias_unid=safe_float(row[12]),
                     prom_ventas_20dias_unid=prom_20d,
                     prom_top3_unid=prom_top3,
                     prom_p75_unid=p75_usado,  # Usar P75 local o de referencia
