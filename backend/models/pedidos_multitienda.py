@@ -215,6 +215,7 @@ class ProductoPedidoAjustado(BaseModel):
     descripcion_producto: str
     categoria: Optional[str] = None
     clasificacion_abc: Optional[str] = None
+    cuadrante: Optional[str] = None
 
     # Cantidades - usando float para mayor compatibilidad con JSON
     unidades_por_bulto: float = 1
