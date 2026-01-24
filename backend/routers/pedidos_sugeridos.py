@@ -53,6 +53,17 @@ from services.calculo_inventario_abc import (
 
 logger = logging.getLogger(__name__)
 
+
+def safe_float(value, default=0.0):
+    """Safely convert a value to float, handling invalid strings like 'Bulto'"""
+    if value is None or value == '':
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 router = APIRouter(prefix="/api/pedidos-sugeridos", tags=["Pedidos Sugeridos - Workflow"])
 
 
@@ -485,7 +496,7 @@ async def obtener_pedido(
                 "clasificacion_abc": prod_row[6],
                 "razon_pedido": prod_row[7] or "",
                 "prom_ventas_8sem_unid": float(prod_row[8]) if prod_row[8] else 0.0,
-                "prom_ventas_8sem_bultos": float(prod_row[9]) if prod_row[9] else 0.0,
+                "prom_ventas_8sem_bultos": safe_float(prod_row[9]),
                 "stock_tienda": float(prod_row[10]) if prod_row[10] else 0.0,
                 "stock_total": float(prod_row[11]) if prod_row[11] else 0.0,
                 "cantidad_pedida_bultos": cantidad_pedida_bultos,
@@ -1496,9 +1507,8 @@ async def calcular_productos_sugeridos(
             categoria_producto = (row[3] or '').strip().upper()  # Categoría normalizada para buscar config
 
             # Convertir cantidad_bultos de manera segura
-            try:
-                cantidad_bultos = float(row[9]) if row[9] and float(row[9]) > 0 else 1.0
-            except (ValueError, TypeError):
+            cantidad_bultos = safe_float(row[9], default=1.0)
+            if cantidad_bultos <= 0:
                 cantidad_bultos = 1.0
 
             unidad_pedido = row[10] or 'Bulto'  # Unidad de pedido: Bulto, Blister, Cesta, etc.
