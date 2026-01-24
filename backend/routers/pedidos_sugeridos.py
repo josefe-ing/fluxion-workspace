@@ -2021,8 +2021,8 @@ async def calcular_productos_sugeridos(
                     presentacion=row[7],
                     cantidad_bultos=cantidad_bultos,
                     unidad_pedido=unidad_pedido,
-                    peso_unidad=float(row[10]) if row[10] else 1000.0,
-                    prom_ventas_5dias_unid=float(row[11]) if row[11] else 0.0,
+                    peso_unidad=safe_float(row[11], default=1000.0),
+                    prom_ventas_5dias_unid=safe_float(row[12]),
                     prom_ventas_20dias_unid=prom_20d,
                     prom_top3_unid=prom_top3,
                     prom_p75_unid=prom_p75,
@@ -2061,7 +2061,9 @@ async def calcular_productos_sugeridos(
         return productos
 
     except Exception as e:
+        import traceback
         logger.error(f"❌ Error calculando productos sugeridos: {str(e)}")
+        logger.error(f"Traceback completo:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error calculando productos: {str(e)}")
 
 
