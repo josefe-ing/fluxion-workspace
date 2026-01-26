@@ -119,17 +119,40 @@ class PostgreSQLInventarioLoader:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # UPSERT: INSERT ... ON CONFLICT DO UPDATE
-            # Solo columnas que existen en PostgreSQL
-            upsert_query = """
+            # Preparar datos para batch insert
+            batch_data = []
+            for _, row in df.iterrows():
+                nombre = row.get('nombre') or row.get('descripcion', '')
+                codigo = row.get('codigo')
+                batch_data.append((
+                    codigo,  # id
+                    codigo,  # codigo
+                    row.get('codigo_barras'),
+                    nombre,
+                    row.get('descripcion'),
+                    row.get('marca'),
+                    row.get('modelo'),
+                    row.get('categoria'),
+                    row.get('grupo'),  # Mapeado a grupo_articulo
+                    row.get('subgrupo'),
+                    row.get('activo', True),
+                    row.get('updated_at', datetime.now())
+                ))
+
+            # De-duplicar por codigo (índice 1)
+            seen = {}
+            for record in batch_data:
+                seen[record[1]] = record
+            batch_data = list(seen.values())
+
+            # Batch insert con execute_values
+            from psycopg2.extras import execute_values
+            batch_upsert_query = """
                 INSERT INTO productos (
                     id, codigo, codigo_barras, nombre, descripcion, marca, modelo,
                     categoria, grupo_articulo, subgrupo, activo, fecha_actualizacion
                 )
-                VALUES (
-                    %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s
-                )
+                VALUES %s
                 ON CONFLICT (codigo) DO UPDATE SET
                     id = EXCLUDED.id,
                     codigo_barras = EXCLUDED.codigo_barras,
@@ -144,28 +167,41 @@ class PostgreSQLInventarioLoader:
                     fecha_actualizacion = EXCLUDED.fecha_actualizacion
             """
 
-            records_loaded = 0
-            for _, row in df.iterrows():
-                # Usar descripcion como nombre si no existe nombre
-                nombre = row.get('nombre') or row.get('descripcion', '')
-                # Usar codigo como id (ambos son únicos)
-                codigo = row.get('codigo')
+            # Query individual para fallback
+            individual_query = """
+                INSERT INTO productos (
+                    id, codigo, codigo_barras, nombre, descripcion, marca, modelo,
+                    categoria, grupo_articulo, subgrupo, activo, fecha_actualizacion
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (codigo) DO UPDATE SET
+                    id = EXCLUDED.id,
+                    codigo_barras = EXCLUDED.codigo_barras,
+                    nombre = EXCLUDED.nombre,
+                    descripcion = EXCLUDED.descripcion,
+                    marca = EXCLUDED.marca,
+                    modelo = EXCLUDED.modelo,
+                    categoria = EXCLUDED.categoria,
+                    grupo_articulo = EXCLUDED.grupo_articulo,
+                    subgrupo = EXCLUDED.subgrupo,
+                    activo = EXCLUDED.activo,
+                    fecha_actualizacion = EXCLUDED.fecha_actualizacion
+            """
 
-                cursor.execute(upsert_query, (
-                    codigo,  # id
-                    codigo,  # codigo
-                    row.get('codigo_barras'),
-                    nombre,
-                    row.get('descripcion'),
-                    row.get('marca'),
-                    row.get('modelo'),
-                    row.get('categoria'),
-                    row.get('grupo'),  # Mapeado a grupo_articulo
-                    row.get('subgrupo'),
-                    row.get('activo', True),
-                    row.get('updated_at', datetime.now())
-                ))
-                records_loaded += 1
+            try:
+                execute_values(cursor, batch_upsert_query, batch_data, page_size=1000)
+                records_loaded = len(batch_data)
+            except Exception as e:
+                self.logger.error(f"Error en batch insert productos: {e}")
+                conn.rollback()
+                # Fallback individual
+                records_loaded = 0
+                for record in batch_data:
+                    try:
+                        cursor.execute(individual_query, record)
+                        records_loaded += 1
+                    except Exception:
+                        pass
 
             conn.commit()
             cursor.close()
@@ -387,28 +423,18 @@ class PostgreSQLInventarioLoader:
             deleted = cursor.rowcount
             self.logger.info(f"   🗑️ {deleted} registros anteriores eliminados")
 
-            # PASO 5: Insertar productos y stock
-            productos_insertados = 0
-            stock_insertado = 0
+            # PASO 5: Preparar datos para batch insert
+            productos_data = []
+            stock_data = []
 
             for _, row in df.iterrows():
                 codigo_producto = row.get('codigo_producto')
                 if not codigo_producto:
                     continue
 
-                # 5a: Upsert producto
-                # Usar descripcion_producto, o fallback a 'Producto {codigo}'
+                # Datos para productos
                 nombre_producto = row.get('descripcion_producto') or f'Producto {codigo_producto}'
-                cursor.execute("""
-                    INSERT INTO productos (id, codigo, nombre, descripcion, categoria, marca, activo)
-                    VALUES (%s, %s, %s, %s, %s, %s, TRUE)
-                    ON CONFLICT (codigo) DO UPDATE SET
-                        nombre = EXCLUDED.nombre,
-                        descripcion = EXCLUDED.descripcion,
-                        categoria = COALESCE(EXCLUDED.categoria, productos.categoria),
-                        marca = COALESCE(EXCLUDED.marca, productos.marca),
-                        fecha_actualizacion = CURRENT_TIMESTAMP
-                """, (
+                productos_data.append((
                     codigo_producto,  # id = codigo
                     codigo_producto,
                     nombre_producto,
@@ -416,28 +442,100 @@ class PostgreSQLInventarioLoader:
                     row.get('categoria'),
                     row.get('marca')
                 ))
-                productos_insertados += 1
 
-                # 5b: Insert stock
+                # Datos para stock
                 cantidad = row.get('cantidad_actual', 0) or 0
                 fecha_extraccion = row.get('fecha_extraccion', datetime.now())
-
-                cursor.execute("""
-                    INSERT INTO inventario_actual (
-                        ubicacion_id, producto_id, almacen_codigo, cantidad, fecha_actualizacion
-                    )
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (ubicacion_id, producto_id, almacen_codigo) DO UPDATE SET
-                        cantidad = EXCLUDED.cantidad,
-                        fecha_actualizacion = EXCLUDED.fecha_actualizacion
-                """, (
+                stock_data.append((
                     ubicacion_id,
                     codigo_producto,
                     almacen_codigo,
                     cantidad,
                     fecha_extraccion
                 ))
-                stock_insertado += 1
+
+            # De-duplicar por codigo (productos) y por key compuesta (stock)
+            seen_productos = {}
+            for p in productos_data:
+                seen_productos[p[0]] = p  # key = codigo
+            productos_data = list(seen_productos.values())
+
+            seen_stock = {}
+            for s in stock_data:
+                key = (s[0], s[1], s[2])  # ubicacion_id, producto_id, almacen_codigo
+                seen_stock[key] = s
+            stock_data = list(seen_stock.values())
+
+            # PASO 5a: Batch insert productos
+            from psycopg2.extras import execute_values
+            try:
+                productos_query = """
+                    INSERT INTO productos (id, codigo, nombre, descripcion, categoria, marca, activo)
+                    VALUES %s
+                    ON CONFLICT (codigo) DO UPDATE SET
+                        nombre = EXCLUDED.nombre,
+                        descripcion = EXCLUDED.descripcion,
+                        categoria = COALESCE(EXCLUDED.categoria, productos.categoria),
+                        marca = COALESCE(EXCLUDED.marca, productos.marca),
+                        fecha_actualizacion = CURRENT_TIMESTAMP
+                """
+                # Agregar activo=TRUE a cada tupla
+                productos_with_activo = [p + (True,) for p in productos_data]
+                execute_values(cursor, productos_query, productos_with_activo, page_size=1000)
+                productos_insertados = len(productos_data)
+            except Exception as e:
+                self.logger.error(f"Error en batch insert productos: {e}")
+                conn.rollback()
+                # Fallback individual
+                productos_insertados = 0
+                for p in productos_data:
+                    try:
+                        cursor.execute("""
+                            INSERT INTO productos (id, codigo, nombre, descripcion, categoria, marca, activo)
+                            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+                            ON CONFLICT (codigo) DO UPDATE SET
+                                nombre = EXCLUDED.nombre,
+                                descripcion = EXCLUDED.descripcion,
+                                categoria = COALESCE(EXCLUDED.categoria, productos.categoria),
+                                marca = COALESCE(EXCLUDED.marca, productos.marca),
+                                fecha_actualizacion = CURRENT_TIMESTAMP
+                        """, p)
+                        productos_insertados += 1
+                    except Exception:
+                        pass
+
+            # PASO 5b: Batch insert stock
+            try:
+                stock_query = """
+                    INSERT INTO inventario_actual (
+                        ubicacion_id, producto_id, almacen_codigo, cantidad, fecha_actualizacion
+                    )
+                    VALUES %s
+                    ON CONFLICT (ubicacion_id, producto_id, almacen_codigo) DO UPDATE SET
+                        cantidad = EXCLUDED.cantidad,
+                        fecha_actualizacion = EXCLUDED.fecha_actualizacion
+                """
+                execute_values(cursor, stock_query, stock_data, page_size=1000)
+                stock_insertado = len(stock_data)
+            except Exception as e:
+                self.logger.error(f"Error en batch insert stock: {e}")
+                conn.rollback()
+                # Fallback individual
+                stock_insertado = 0
+                for s in stock_data:
+                    try:
+                        cursor.execute("""
+                            INSERT INTO inventario_actual (
+                                ubicacion_id, producto_id, almacen_codigo, cantidad, fecha_actualizacion
+                            )
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (ubicacion_id, producto_id, almacen_codigo) DO UPDATE SET
+                                cantidad = EXCLUDED.cantidad,
+                                fecha_actualizacion = EXCLUDED.fecha_actualizacion
+                        """, s)
+                        stock_insertado += 1
+                    except Exception:
+                        pass
 
             conn.commit()
             cursor.close()
