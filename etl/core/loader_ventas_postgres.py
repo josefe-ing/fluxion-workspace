@@ -174,13 +174,27 @@ class PostgreSQLVentasLoader:
                 margen_pct = (utilidad_bruta / venta_total * 100) if venta_total > 0 else 0
 
                 # Mapear ubicacion_id de tienda_codigo (SUC001 -> tienda_01)
+                # Mapeo completo de todas las 19 tiendas KLK
                 ubicacion_map = {
-                    'SUC001': 'tienda_01',
-                    'SUC002': 'tienda_08',
-                    'SUC003': 'tienda_17',
-                    'SUC004': 'tienda_18',
-                    'SUC005': 'tienda_20',
-                    'SUC006': 'tienda_15',
+                    'SUC001': 'tienda_01',   # PERIFERICO
+                    'SUC002': 'tienda_08',   # BOSQUE
+                    'SUC003': 'tienda_17',   # ARTIGAS
+                    'SUC004': 'tienda_18',   # PARAISO
+                    'SUC005': 'tienda_20',   # TAZAJAL
+                    'SUC006': 'tienda_15',   # ISABELICA
+                    'SUC007': 'tienda_02',   # AV. BOLIVAR
+                    'SUC008': 'tienda_03',   # MAÑONGO
+                    'SUC009': 'tienda_10',   # FERIAS
+                    'SUC010': 'tienda_16',   # TOCUYITO
+                    'SUC011': 'tienda_19',   # GUIGUE
+                    'SUC012': 'tienda_11',   # FLOR AMARILLO
+                    'SUC013': 'tienda_07',   # CENTRO
+                    'SUC014': 'tienda_04',   # SAN DIEGO
+                    'SUC015': 'tienda_09',   # GUACARA
+                    'SUC016': 'tienda_12',   # PARAPARAL
+                    'SUC017': 'tienda_06',   # NAGUANAGUA
+                    'SUC018': 'tienda_05',   # VIVIENDA
+                    'SUC019': 'tienda_13',   # PARAMACAY
                 }
                 ubicacion_id = ubicacion_map.get(tienda_codigo, tienda_codigo)
 
