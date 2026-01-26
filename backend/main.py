@@ -3997,19 +3997,19 @@ async def get_stock(
                     -- Parámetros de inventario en DÍAS (basados en config de tienda)
                     -- SS = lead_time (stock mínimo para cubrir tiempo de entrega)
                     lead_time as dias_ss,
-                    -- ROP = lead_time * 1.5 (punto de reorden con margen)
-                    lead_time * 1.5 as dias_rop,
-                    -- MAX = dias_cobertura_objetivo (de la configuración por ABC)
-                    dias_cobertura_objetivo as dias_max,
+                    -- ROP = lead_time + (dias_cobertura / 2) (punto medio entre SS y MAX)
+                    lead_time + (dias_cobertura_objetivo / 2.0) as dias_rop,
+                    -- MAX = lead_time + dias_cobertura (cobertura total objetivo)
+                    lead_time + dias_cobertura_objetivo as dias_max,
                     -- Calcular parámetros de inventario en UNIDADES
                     CASE WHEN demanda_p75 > 0 THEN
                         demanda_p75 * lead_time
                     ELSE 0 END as stock_seguridad,
                     CASE WHEN demanda_p75 > 0 THEN
-                        demanda_p75 * lead_time * 1.5
+                        demanda_p75 * (lead_time + dias_cobertura_objetivo / 2.0)
                     ELSE 0 END as punto_reorden,
                     CASE WHEN demanda_p75 > 0 THEN
-                        demanda_p75 * dias_cobertura_objetivo
+                        demanda_p75 * (lead_time + dias_cobertura_objetivo)
                     ELSE 0 END as stock_maximo,
                     -- Días de cobertura actual
                     CASE WHEN demanda_p75 > 0 THEN
