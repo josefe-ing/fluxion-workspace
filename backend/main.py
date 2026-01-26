@@ -330,6 +330,12 @@ class StockResponse(BaseModel):
     clase_abc: Optional[str] = None  # A, B, C, SIN_VENTAS
     rank_ventas: Optional[int] = None  # Posición por ventas en la tienda
     velocidad_venta: Optional[str] = None  # SIN_VENTAS, BAJA, MEDIA, ALTA, MUY_ALTA
+    # Parámetros de inventario en días (para visualización)
+    dias_ss: Optional[float] = None  # Días de stock de seguridad
+    dias_rop: Optional[float] = None  # Días de punto de reorden
+    dias_max: Optional[float] = None  # Días de stock máximo
+    # Stock en CEDI de origen
+    stock_cedi: Optional[float] = None  # Stock disponible en el CEDI de la región
 
 class PaginationMetadata(BaseModel):
     total_items: int
@@ -3777,6 +3783,7 @@ async def get_stock(
     clase_abc: Optional[str] = None,
     top_ventas: Optional[int] = None,
     velocidad_venta: Optional[str] = None,
+    stock_cedi_filter: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
     search: Optional[str] = None,
@@ -3793,6 +3800,7 @@ async def get_stock(
     - Clasificación de producto (FANTASMA, ANOMALIA, DORMIDO, ACTIVO)
     - Clasificación ABC (A, B, C, SIN_VENTAS)
     - Ranking por ventas en la tienda
+    - Stock disponible en CEDI de la región
 
     Args:
         ubicacion_id: Filtrar por ID de ubicación (requerido para métricas avanzadas)
@@ -3803,6 +3811,7 @@ async def get_stock(
         clase_abc: A, B, C, SIN_VENTAS
         top_ventas: Top N productos por ventas (50, 100, 200)
         velocidad_venta: SIN_VENTAS, BAJA (1-5/mes), MEDIA (6-15/mes), ALTA (16-30/mes), MUY_ALTA (>30/mes)
+        stock_cedi_filter: CON_STOCK (>0 en CEDI), SIN_STOCK (=0 en CEDI)
         page: Número de página
         page_size: Items por página
         search: Buscar por código o descripción
@@ -3896,6 +3905,26 @@ async def get_stock(
                   AND fecha_venta >= CURRENT_DATE - INTERVAL '60 days'
                 GROUP BY producto_id
             ),
+            cedi_region AS (
+                -- Determinar el CEDI de la región de la tienda
+                SELECT
+                    CASE
+                        WHEN u.region = 'CARACAS' THEN 'cedi_caracas'
+                        WHEN u.region = 'VALENCIA' THEN 'cedi_verde'
+                        ELSE 'cedi_caracas'
+                    END as cedi_id
+                FROM ubicaciones u
+                WHERE u.id = %s
+            ),
+            stock_cedi AS (
+                -- Stock disponible en el CEDI de la región
+                SELECT
+                    ia.producto_id,
+                    SUM(ia.cantidad) as cantidad_cedi
+                FROM inventario_actual ia
+                WHERE ia.ubicacion_id = (SELECT cedi_id FROM cedi_region)
+                GROUP BY ia.producto_id
+            ),
             abc_tienda AS (
                 -- Clasificación ABC de la tienda
                 SELECT
@@ -3949,6 +3978,8 @@ async def get_stock(
                     COALESCE(v30.total_30d, 0) as ventas_30d,
                     COALESCE(v14.total_14d, 0) as ventas_14d,
                     COALESCE(v60.total_60d, 0) as ventas_60d,
+                    -- Stock en CEDI
+                    COALESCE(sc.cantidad_cedi, 0) as stock_cedi,
                     -- Metadata
                     TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion
                 FROM inventario_actual ia
@@ -3960,6 +3991,7 @@ async def get_stock(
                 LEFT JOIN config_abc cfg ON cfg.clasificacion_abc = abc.clase_abc
                 LEFT JOIN ventas_30d v30 ON v30.producto_id = ia.producto_id
                 LEFT JOIN ventas_14d v14 ON v14.producto_id = ia.producto_id
+                LEFT JOIN stock_cedi sc ON sc.producto_id = ia.producto_id
                 WHERE {base_where}
             ),
             calculated AS (
@@ -3999,6 +4031,16 @@ async def get_stock(
             final AS (
                 SELECT
                     *,
+                    -- Parámetros de inventario en DÍAS (para visualización)
+                    CASE WHEN demanda_p75 > 0 THEN
+                        stock_seguridad / demanda_p75
+                    ELSE NULL END as dias_ss,
+                    CASE WHEN demanda_p75 > 0 THEN
+                        punto_reorden / demanda_p75
+                    ELSE NULL END as dias_rop,
+                    CASE WHEN demanda_p75 > 0 THEN
+                        stock_maximo / demanda_p75
+                    ELSE NULL END as dias_max,
                     -- Estado de criticidad basado en SS, ROP, MAX
                     CASE
                         WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
@@ -4020,16 +4062,16 @@ async def get_stock(
             WHERE 1=1
             """
 
-            # Params para los CTEs (ubicacion_id se usa 6 veces en CTEs)
+            # Params para los CTEs (ubicacion_id se usa 7 veces en CTEs)
             # Luego base_params puede agregar más (ubicacion_id, almacen, categoria, search)
             query_params = []
             if ubicacion_id:
-                # 6 veces para los CTEs: ventas_20d, ventas_30d, ventas_14d, ventas_60d, abc_tienda, config_abc
-                query_params = [ubicacion_id] * 6 + base_params
+                # 7 veces para los CTEs: ventas_20d, ventas_30d, ventas_14d, ventas_60d, cedi_region, abc_tienda, config_abc
+                query_params = [ubicacion_id] * 7 + base_params
             else:
                 # Sin ubicacion_id, los CTEs de ventas no funcionan bien
                 # Usamos un valor que no matchea nada para evitar errores SQL
-                query_params = ['__none__'] * 6 + base_params
+                query_params = ['__none__'] * 7 + base_params
 
             # Filtros adicionales sobre campos calculados
             filter_params = []
@@ -4052,6 +4094,12 @@ async def get_stock(
             if velocidad_venta:
                 main_query += " AND velocidad_venta = %s"
                 filter_params.append(velocidad_venta)
+
+            if stock_cedi_filter:
+                if stock_cedi_filter == 'CON_STOCK':
+                    main_query += " AND stock_cedi > 0"
+                elif stock_cedi_filter == 'SIN_STOCK':
+                    main_query += " AND stock_cedi <= 0"
 
             # Count query
             count_query = f"SELECT COUNT(*) FROM ({main_query}) as counted"
@@ -4135,7 +4183,13 @@ async def get_stock(
                 clasificacion_producto=row_dict.get('clasificacion_producto'),
                 clase_abc=row_dict.get('clase_abc'),
                 rank_ventas=row_dict.get('rank_ventas'),
-                velocidad_venta=row_dict.get('velocidad_venta')
+                velocidad_venta=row_dict.get('velocidad_venta'),
+                # Parámetros de inventario en días
+                dias_ss=row_dict.get('dias_ss'),
+                dias_rop=row_dict.get('dias_rop'),
+                dias_max=row_dict.get('dias_max'),
+                # Stock en CEDI
+                stock_cedi=row_dict.get('stock_cedi')
             ))
 
         pagination = PaginationMetadata(

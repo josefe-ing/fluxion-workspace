@@ -36,6 +36,12 @@ interface StockItem {
   clase_abc: string | null;
   rank_ventas: number | null;
   velocidad_venta: string | null;
+  // Parámetros de inventario en días
+  dias_ss: number | null;
+  dias_rop: number | null;
+  dias_max: number | null;
+  // Stock en CEDI
+  stock_cedi: number | null;
 }
 
 interface PaginationMetadata {
@@ -108,6 +114,7 @@ export default function InventoryDashboard() {
   const [selectedClaseABC, setSelectedClaseABC] = useState<string>('all');
   const [selectedTopVentas, setSelectedTopVentas] = useState<string>('all');
   const [selectedVelocidadVenta, setSelectedVelocidadVenta] = useState<string>('all');
+  const [selectedStockCediFilter, setSelectedStockCediFilter] = useState<string>('all');
 
   // Paginación
   const [currentPage, setCurrentPage] = useState(1);
@@ -156,12 +163,12 @@ export default function InventoryDashboard() {
     loadStock();
   }, [selectedUbicacion, selectedAlmacen, selectedCategoria, currentPage, debouncedSearchTerm,
       sortBy, sortOrder, selectedEstadoCriticidad, selectedClasificacionProducto,
-      selectedClaseABC, selectedTopVentas, selectedVelocidadVenta]);
+      selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter]);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [selectedUbicacion, selectedCategoria, debouncedSearchTerm, selectedEstadoCriticidad,
-      selectedClasificacionProducto, selectedClaseABC, selectedTopVentas, selectedVelocidadVenta]);
+      selectedClasificacionProducto, selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter]);
 
   const loadUbicaciones = async () => {
     try {
@@ -222,6 +229,7 @@ export default function InventoryDashboard() {
       if (selectedClaseABC !== 'all') params.clase_abc = selectedClaseABC;
       if (selectedTopVentas !== 'all') params.top_ventas = parseInt(selectedTopVentas);
       if (selectedVelocidadVenta !== 'all') params.velocidad_venta = selectedVelocidadVenta;
+      if (selectedStockCediFilter !== 'all') params.stock_cedi_filter = selectedStockCediFilter;
 
       const response = await http.get('/api/stock', { params });
       const { data, pagination: paginationData } = response.data as PaginatedStockResponse;
@@ -272,6 +280,7 @@ export default function InventoryDashboard() {
       if (selectedClaseABC !== 'all') params.clase_abc = selectedClaseABC;
       if (selectedTopVentas !== 'all') params.top_ventas = parseInt(selectedTopVentas);
       if (selectedVelocidadVenta !== 'all') params.velocidad_venta = selectedVelocidadVenta;
+      if (selectedStockCediFilter !== 'all') params.stock_cedi_filter = selectedStockCediFilter;
 
       const response = await http.get('/api/stock', { params });
       const { data } = response.data as PaginatedStockResponse;
@@ -281,11 +290,13 @@ export default function InventoryDashboard() {
         'Artículo': item.descripcion_producto,
         'Categoría': item.categoria,
         'Stock': item.stock_actual ?? 0,
+        'Stock CEDI': item.stock_cedi ?? 0,
         'P75/día': item.demanda_p75 !== null ? Math.round(item.demanda_p75 * 10) / 10 : 0,
-        'Ventas 60d': item.ventas_60d ?? 0,
         'Días Stock': item.dias_cobertura_actual !== null ? Math.round(item.dias_cobertura_actual * 10) / 10 : '-',
+        'Días SS': item.dias_ss !== null ? Math.round(item.dias_ss * 10) / 10 : '-',
+        'Días ROP': item.dias_rop !== null ? Math.round(item.dias_rop * 10) / 10 : '-',
+        'Días MAX': item.dias_max !== null ? Math.round(item.dias_max * 10) / 10 : '-',
         'Estado': item.estado_criticidad || '-',
-        'Clasificación': item.clasificacion_producto || '-',
         'ABC': item.clase_abc || '-',
         'Top': item.rank_ventas || '-',
       }));
@@ -294,7 +305,8 @@ export default function InventoryDashboard() {
       const ws = XLSX.utils.json_to_sheet(excelData);
       ws['!cols'] = [
         { wch: 12 }, { wch: 45 }, { wch: 18 }, { wch: 10 }, { wch: 10 },
-        { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 8 }
+        { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+        { wch: 12 }, { wch: 8 }, { wch: 8 }
       ];
       XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
       const fecha = new Date().toISOString().split('T')[0];
@@ -327,23 +339,6 @@ export default function InventoryDashboard() {
     );
   };
 
-  const renderClasificacionProducto = (clasificacion: string | null) => {
-    const estilos: Record<string, string> = {
-      'FANTASMA': 'bg-purple-100 text-purple-800',
-      'ANOMALIA': 'bg-red-100 text-red-800',
-      'DORMIDO': 'bg-yellow-100 text-yellow-800',
-      'ACTIVO': 'bg-green-100 text-green-800',
-    };
-    const icons: Record<string, string> = { 'FANTASMA': '👻', 'ANOMALIA': '⚠️', 'DORMIDO': '😴', 'ACTIVO': '✓' };
-    if (!clasificacion) return <span className="text-gray-400">-</span>;
-    return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${estilos[clasificacion] || 'bg-gray-100 text-gray-600'}`}>
-        <span className="mr-1">{icons[clasificacion]}</span>
-        {clasificacion.charAt(0) + clasificacion.slice(1).toLowerCase()}
-      </span>
-    );
-  };
-
   const renderClaseABC = (clase: string | null) => {
     const estilos: Record<string, string> = {
       'A': 'bg-green-600 text-white',
@@ -356,6 +351,58 @@ export default function InventoryDashboard() {
       <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${estilos[clase] || 'bg-gray-200 text-gray-600'}`}>
         {clase === 'SIN_VENTAS' ? '-' : clase}
       </span>
+    );
+  };
+
+  // Indicador visual compacto de nivel de inventario
+  const renderInventoryLevelIndicator = (item: StockItem) => {
+    const dias = item.dias_cobertura_actual;
+    const ss = item.dias_ss;
+    const rop = item.dias_rop;
+    const max = item.dias_max;
+
+    // Si no hay datos, mostrar placeholder
+    if (dias === null || ss === null || rop === null || max === null) {
+      return <span className="text-gray-400 text-xs">-</span>;
+    }
+
+    // Calcular la escala para el indicador visual
+    const scaleMax = Math.max(max * 1.5, dias * 1.1);
+    const toPercent = (val: number) => Math.min(100, Math.max(0, (val / scaleMax) * 100));
+
+    const ssPercent = toPercent(ss);
+    const ropPercent = toPercent(rop);
+    const maxPercent = toPercent(max);
+    const diasPercent = toPercent(dias);
+
+    // Determinar color según posición
+    let statusColor = 'bg-green-500'; // Óptimo (entre ROP y MAX)
+    if (dias <= 0) {
+      statusColor = 'bg-red-600';
+    } else if (dias <= ss) {
+      statusColor = 'bg-red-500';
+    } else if (dias <= rop) {
+      statusColor = 'bg-orange-500';
+    } else if (dias > max) {
+      statusColor = 'bg-blue-500';
+    }
+
+    return (
+      <div className="w-full h-2.5 relative bg-gray-100 rounded-full overflow-visible" title={`Actual: ${formatNumber(dias, 1)}d | SS: ${formatNumber(ss, 1)}d | ROP: ${formatNumber(rop, 1)}d | MAX: ${formatNumber(max, 1)}d`}>
+        {/* Zonas de color de fondo */}
+        <div className="absolute h-full bg-red-200 rounded-l-full" style={{ left: 0, width: `${ssPercent}%` }} />
+        <div className="absolute h-full bg-orange-200" style={{ left: `${ssPercent}%`, width: `${ropPercent - ssPercent}%` }} />
+        <div className="absolute h-full bg-green-200" style={{ left: `${ropPercent}%`, width: `${maxPercent - ropPercent}%` }} />
+        <div className="absolute h-full bg-blue-200 rounded-r-full" style={{ left: `${maxPercent}%`, width: `${100 - maxPercent}%` }} />
+
+        {/* Marcadores SS, ROP, MAX */}
+        <div className="absolute w-px h-3.5 bg-red-600 -top-0.5 z-10" style={{ left: `${ssPercent}%` }} />
+        <div className="absolute w-px h-3.5 bg-orange-600 -top-0.5 z-10" style={{ left: `${ropPercent}%` }} />
+        <div className="absolute w-px h-3.5 bg-green-700 -top-0.5 z-10" style={{ left: `${maxPercent}%` }} />
+
+        {/* Indicador de posición actual */}
+        <div className={`absolute w-2 h-2 ${statusColor} rounded-full border border-white shadow-sm top-0`} style={{ left: `calc(${diasPercent}% - 4px)` }} />
+      </div>
     );
   };
 
@@ -496,6 +543,18 @@ export default function InventoryDashboard() {
             </select>
           </div>
           <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Stock CEDI</label>
+            <select
+              value={selectedStockCediFilter}
+              onChange={(e) => setSelectedStockCediFilter(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todos</option>
+              <option value="CON_STOCK">Con stock</option>
+              <option value="SIN_STOCK">Sin stock</option>
+            </select>
+          </div>
+          <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Clasificación</label>
             <select
               value={selectedClasificacionProducto}
@@ -574,7 +633,7 @@ export default function InventoryDashboard() {
           </div>
           {(selectedEstadoCriticidad !== 'all' || selectedClasificacionProducto !== 'all' ||
             selectedClaseABC !== 'all' || selectedTopVentas !== 'all' || selectedVelocidadVenta !== 'all' ||
-            selectedCategoria !== 'all' || debouncedSearchTerm) && (
+            selectedCategoria !== 'all' || selectedStockCediFilter !== 'all' || debouncedSearchTerm) && (
             <span className="text-xs text-gray-500 italic">(filtrado)</span>
           )}
         </div>
@@ -613,13 +672,29 @@ export default function InventoryDashboard() {
               </ul>
             </div>
             <div>
+              <h4 className="font-semibold text-gray-700 mb-2">Indicador de Nivel (SS/ROP/MAX)</h4>
+              <ul className="space-y-1 text-gray-600">
+                <li><span className="inline-block w-20 font-medium text-red-600">SS</span> Stock de Seguridad - mínimo para evitar quiebres</li>
+                <li><span className="inline-block w-20 font-medium text-orange-600">ROP</span> Punto de Reorden - momento de reabastecer</li>
+                <li><span className="inline-block w-20 font-medium text-green-700">MAX</span> Stock Máximo - límite superior recomendado</li>
+              </ul>
+              <div className="mt-2 pt-2 border-t border-gray-200">
+                <p className="text-xs text-gray-500">La barra muestra la posición actual (círculo) vs los umbrales:</p>
+                <div className="flex gap-2 mt-1 text-xs">
+                  <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded">Bajo SS = Crítico</span>
+                  <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">SS-ROP = Urgente</span>
+                  <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded">ROP-MAX = Óptimo</span>
+                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">Sobre MAX = Exceso</span>
+                </div>
+              </div>
+            </div>
+            <div>
               <h4 className="font-semibold text-gray-700 mb-2">Otras Métricas</h4>
               <ul className="space-y-1 text-gray-600">
-                <li><span className="inline-block w-20 font-medium">ABC</span> Clasificación por volumen de venta (A=top 80%, B=siguiente 15%, C=resto)</li>
+                <li><span className="inline-block w-20 font-medium">ABC</span> Clasificación por volumen de venta (A=top 50, B=51-200, C=resto)</li>
                 <li><span className="inline-block w-20 font-medium">Top #</span> Ranking por ventas en esta tienda</li>
                 <li><span className="inline-block w-20 font-medium">P75/día</span> Demanda diaria (percentil 75, últimos 20 días)</li>
                 <li><span className="inline-block w-20 font-medium">Días</span> Días de cobertura con stock actual</li>
-                <li><span className="inline-block w-20 font-medium">Velocidad</span> Ritmo de venta mensual del producto</li>
               </ul>
             </div>
           </div>
@@ -643,13 +718,20 @@ export default function InventoryDashboard() {
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('stock')}>
                     Stock {sortBy === 'stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">
+                    <span title="Stock disponible en CEDI de la región">CEDI</span>
+                  </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">P75/día</th>
-                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Vtas 60d</th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('dias_stock')}>
                     Días {sortBy === 'dias_stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-red-500 uppercase" title="Stock de Seguridad (días)">SS</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-orange-500 uppercase" title="Punto de Reorden (días)">ROP</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-green-600 uppercase" title="Stock Máximo (días)">MAX</th>
+                  <th className="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24" title="Indicador visual de nivel">
+                    Nivel
+                  </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Estado</th>
-                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Clasif.</th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">ABC</th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('rank_ventas')}>
                     Top {sortBy === 'rank_ventas' && <span>{sortOrder === 'asc' ? '↑' : '↓'}</span>}
@@ -659,22 +741,24 @@ export default function InventoryDashboard() {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {stockData.length === 0 ? (
-                  <tr><td colSpan={11} className="px-6 py-12 text-center text-gray-500">No se encontraron productos</td></tr>
+                  <tr><td colSpan={14} className="px-6 py-12 text-center text-gray-500">No se encontraron productos</td></tr>
                 ) : (
                   stockData.map((item) => (
                     <tr key={`${item.producto_id}-${item.ubicacion_id}`} className="hover:bg-gray-50">
                       <td className="px-3 py-2 font-medium text-gray-900">{item.codigo_producto}</td>
-                      <td className="px-3 py-2 text-gray-900 max-w-[200px] truncate" title={item.descripcion_producto}>{item.descripcion_producto}</td>
+                      <td className="px-3 py-2 text-gray-900 max-w-[180px] truncate" title={item.descripcion_producto}>{item.descripcion_producto}</td>
                       <td className="px-3 py-2 text-center">
                         <span className={`font-semibold ${(item.stock_actual ?? 0) <= 0 ? 'text-red-600' : 'text-gray-900'}`}>
                           {formatInteger(item.stock_actual)}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-center text-gray-600">
-                        {item.demanda_p75 !== null && item.demanda_p75 > 0 ? formatNumber(item.demanda_p75, 1) : '-'}
+                      <td className="px-3 py-2 text-center">
+                        <span className={`font-medium ${(item.stock_cedi ?? 0) <= 0 ? 'text-red-500' : 'text-green-600'}`}>
+                          {formatInteger(item.stock_cedi)}
+                        </span>
                       </td>
                       <td className="px-3 py-2 text-center text-gray-600">
-                        {item.ventas_60d !== null && item.ventas_60d > 0 ? formatInteger(item.ventas_60d) : '-'}
+                        {item.demanda_p75 !== null && item.demanda_p75 > 0 ? formatNumber(item.demanda_p75, 1) : '-'}
                       </td>
                       <td className="px-3 py-2 text-center">
                         <span className={`font-medium ${
@@ -686,8 +770,11 @@ export default function InventoryDashboard() {
                           {item.dias_cobertura_actual !== null ? (item.dias_cobertura_actual > 999 ? '999+' : formatNumber(item.dias_cobertura_actual, 1)) : '-'}
                         </span>
                       </td>
+                      <td className="px-2 py-2 text-center text-xs text-red-600">{item.dias_ss !== null ? formatNumber(item.dias_ss, 1) : '-'}</td>
+                      <td className="px-2 py-2 text-center text-xs text-orange-600">{item.dias_rop !== null ? formatNumber(item.dias_rop, 1) : '-'}</td>
+                      <td className="px-2 py-2 text-center text-xs text-green-600">{item.dias_max !== null ? formatNumber(item.dias_max, 0) : '-'}</td>
+                      <td className="px-2 py-2 w-24">{renderInventoryLevelIndicator(item)}</td>
                       <td className="px-3 py-2 text-center">{renderEstadoCriticidad(item.estado_criticidad)}</td>
-                      <td className="px-3 py-2 text-center">{renderClasificacionProducto(item.clasificacion_producto)}</td>
                       <td className="px-3 py-2 text-center">{renderClaseABC(item.clase_abc)}</td>
                       <td className="px-3 py-2 text-center text-gray-600">{item.rank_ventas ? `#${item.rank_ventas}` : '-'}</td>
                       <td className="px-3 py-2 text-center">
