@@ -221,15 +221,72 @@ class PostgreSQLVentasLoader:
                     datetime.now()
                 ))
 
-            # Ejecutar batch upsert
+            # De-duplicar batch_data por numero_factura_unico (índice 0)
+            # El API KLK a veces retorna líneas duplicadas en el mismo response
+            # execute_values falla con "ON CONFLICT cannot affect row a second time"
+            original_count = len(batch_data)
+            seen = {}
             for record in batch_data:
-                try:
-                    cursor.execute(upsert_query, record)
-                    records_loaded += 1
-                except Exception as e:
-                    self.logger.warning(f"Error insertando registro: {e}")
-                    conn.rollback()
-                    duplicates_skipped += 1
+                seen[record[0]] = record  # Mantener última ocurrencia
+            batch_data = list(seen.values())
+            duplicates_in_batch = original_count - len(batch_data)
+            if duplicates_in_batch > 0:
+                self.logger.info(f"   ⚠️ {duplicates_in_batch} duplicados en batch removidos antes de insertar")
+
+            # Ejecutar batch upsert usando execute_values para mejor rendimiento
+            # y menor probabilidad de deadlocks (un solo INSERT en lugar de N)
+            try:
+                from psycopg2.extras import execute_values
+
+                # execute_values requiere la query con %s como placeholder para VALUES
+                batch_upsert_query = """
+                    INSERT INTO ventas (
+                        numero_factura, fecha_venta, ubicacion_id, almacen_codigo, almacen_nombre,
+                        producto_id, cuadrante_producto, cantidad_vendida, peso_unitario, peso_calculado,
+                        total_cantidad_por_unidad_medida, unidad_medida_venta, factor_unidad_medida,
+                        precio_unitario, costo_unitario, venta_total, costo_total,
+                        utilidad_bruta, margen_bruto_pct, fecha_creacion
+                    )
+                    VALUES %s
+                    ON CONFLICT (numero_factura) DO UPDATE SET
+                        fecha_venta = EXCLUDED.fecha_venta,
+                        ubicacion_id = EXCLUDED.ubicacion_id,
+                        almacen_codigo = EXCLUDED.almacen_codigo,
+                        almacen_nombre = EXCLUDED.almacen_nombre,
+                        producto_id = EXCLUDED.producto_id,
+                        cuadrante_producto = EXCLUDED.cuadrante_producto,
+                        cantidad_vendida = EXCLUDED.cantidad_vendida,
+                        peso_unitario = EXCLUDED.peso_unitario,
+                        peso_calculado = EXCLUDED.peso_calculado,
+                        total_cantidad_por_unidad_medida = EXCLUDED.total_cantidad_por_unidad_medida,
+                        unidad_medida_venta = EXCLUDED.unidad_medida_venta,
+                        factor_unidad_medida = EXCLUDED.factor_unidad_medida,
+                        precio_unitario = EXCLUDED.precio_unitario,
+                        costo_unitario = EXCLUDED.costo_unitario,
+                        venta_total = EXCLUDED.venta_total,
+                        costo_total = EXCLUDED.costo_total,
+                        utilidad_bruta = EXCLUDED.utilidad_bruta,
+                        margen_bruto_pct = EXCLUDED.margen_bruto_pct,
+                        fecha_creacion = EXCLUDED.fecha_creacion
+                """
+
+                # Ejecutar en batches de 1000 registros para evitar queries muy grandes
+                execute_values(cursor, batch_upsert_query, batch_data, page_size=1000)
+                records_loaded = len(batch_data)
+
+            except Exception as e:
+                self.logger.error(f"Error en batch insert: {e}")
+                conn.rollback()
+                # Fallback: insertar uno por uno si batch falla
+                self.logger.warning("Intentando fallback con inserciones individuales...")
+                for record in batch_data:
+                    try:
+                        cursor.execute(upsert_query, record)
+                        records_loaded += 1
+                    except Exception as e2:
+                        self.logger.warning(f"Error insertando registro: {e2}")
+                        conn.rollback()
+                        duplicates_skipped += 1
 
             conn.commit()
             cursor.close()
