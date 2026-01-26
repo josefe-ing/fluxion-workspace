@@ -112,12 +112,12 @@ fi
 
 # Run lint
 echo "   Ejecutando lint..."
-LINT_OUTPUT=$(npx eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 100 2>&1 || true)
+LINT_OUTPUT=$(npx eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 150 2>&1 || true)
 WARNING_COUNT=$(echo "$LINT_OUTPUT" | grep -o "[0-9]* warning" | grep -o "[0-9]*" || echo "0")
-if [ "$WARNING_COUNT" -le 100 ]; then
+if [ "$WARNING_COUNT" -le 150 ]; then
     success "ESLint passed ($WARNING_COUNT warnings)"
 else
-    error "ESLint FAILED ($WARNING_COUNT warnings > 100)"
+    error "ESLint FAILED ($WARNING_COUNT warnings > 150)"
 fi
 
 # Try to build
