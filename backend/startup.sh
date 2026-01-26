@@ -2,8 +2,8 @@
 set -e
 
 echo "🔍 STARTUP BEGIN - $(date)"
-echo "📊 Container memory limit: 8GB (8192 MiB)"
-echo "🖥️  Container CPU: 2 vCPU"
+echo "📊 Container memory limit: 2GB (2048 MiB)"
+echo "🖥️  Container CPU: 1 vCPU"
 echo ""
 
 # PostgreSQL-only architecture (DuckDB removed Dec 2025)
@@ -21,6 +21,9 @@ echo "✅ auto_bootstrap_admin() ENABLED - authentication tables will be initial
 echo "📊 Expected RAM usage: ~1-2GB (FastAPI + PostgreSQL connection)"
 echo ""
 
+# Workers configured via CDK (UVICORN_WORKERS env var), fallback to 2 if not set
+WORKERS=${UVICORN_WORKERS:-2}
+
 # Start the application
-echo "▶️  Starting Uvicorn server on port 8001..."
-exec uvicorn main:app --host 0.0.0.0 --port 8001 --workers 1
+echo "▶️  Starting Uvicorn server on port 8001 with $WORKERS workers..."
+exec uvicorn main:app --host 0.0.0.0 --port 8001 --workers $WORKERS

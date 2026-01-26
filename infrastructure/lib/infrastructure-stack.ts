@@ -551,12 +551,17 @@ PersistentKeepalive = 25`),
     // ========================================
     // 6. Backend Task Definition (Fargate - PostgreSQL only)
     // ========================================
+    // Backend resource configuration (Option C: 2 tasks × 1 vCPU × 2 workers = 4 concurrent + HA)
+    const backendCpu = 1024;  // 1 vCPU
+    const backendMemory = 2048;  // 2GB
+    const backendWorkers = (backendCpu / 1024) * 2;  // 2 workers per vCPU for I/O bound apps
+
     const backendTask = new ecs.FargateTaskDefinition(
       this,
       'FluxionBackendTask',
       {
-        memoryLimitMiB: 2048,  // 2GB - sufficient for FastAPI + PostgreSQL connections (reduced from 4GB after DuckDB removal)
-        cpu: 1024,  // 1 vCPU - sufficient for API workload without DuckDB
+        memoryLimitMiB: backendMemory,
+        cpu: backendCpu,
         // EFS volumes REMOVED - DuckDB eliminated Dec 2025
       }
     );
@@ -599,6 +604,9 @@ PersistentKeepalive = 25`),
         ECS_CLUSTER_NAME: cluster.clusterName,
         // ETL task definition ARN will be set after etlTask is created
 
+        // Uvicorn workers - configured from CPU allocation above
+        UVICORN_WORKERS: backendWorkers.toString(),
+
         // PostgreSQL v2.0 Configuration - Backend reads from REPLICA
         // This separates read traffic (users) from write traffic (ETLs)
         POSTGRES_HOST: dbReadReplica.dbInstanceEndpointAddress,  // READ REPLICA for queries
@@ -622,13 +630,13 @@ PersistentKeepalive = 25`),
       serviceName: 'fluxion-backend',  // Short, readable service name
       cluster,
       taskDefinition: backendTask,
-      desiredCount: 1,
+      desiredCount: 2,  // 2 tasks for high availability and zero-downtime deploys
       platformVersion: ecs.FargatePlatformVersion.LATEST,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       assignPublicIp: false,
-      minHealthyPercent: 0, // Allow stopping old task before starting new one (only 1 task)
-      maxHealthyPercent: 100, // Only 1 task at a time
-      healthCheckGracePeriod: cdk.Duration.seconds(600), // 10 minutes - allow time for DB download
+      minHealthyPercent: 50,  // Keep at least 1 task healthy during deployments
+      maxHealthyPercent: 200, // Allow up to 4 tasks during rolling deployment
+      healthCheckGracePeriod: cdk.Duration.seconds(120), // 2 minutes - PostgreSQL connects fast
       enableExecuteCommand: true, // Enable ECS Exec for debugging and operations
     });
 
