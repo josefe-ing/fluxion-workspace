@@ -5,13 +5,13 @@ Fecha: 2025-10-02
 """
 
 import argparse
-import asyncio
 import sys
 import time
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Agregar el directorio core al path
 sys.path.append(str(Path(__file__).parent / 'core'))
@@ -493,13 +493,32 @@ class MultiTiendaETL:
             logger.error(f"   ❌ Error cargando productos KLK: {e}")
             return 0
 
-    def ejecutar_todas_las_tiendas(self, paralelo: bool = False) -> List[Dict[str, Any]]:
-        """Ejecuta el ETL para todas las tiendas activas"""
+    def ejecutar_todas_las_tiendas(self, paralelo: bool = True, max_workers: int = 3) -> List[Dict[str, Any]]:
+        """
+        Ejecuta el ETL para todas las tiendas activas.
+
+        Args:
+            paralelo: Si True, ejecuta tiendas KLK en paralelo (default: True)
+            max_workers: Número de workers para paralelización KLK (default: 3)
+                        3 workers es óptimo basado en benchmarks del servidor KLK
+        """
         etl_start_time = datetime.now()
         tiendas_activas = get_tiendas_activas()
 
+        # Separar tiendas por sistema POS
+        tiendas_klk = []
+        tiendas_stellar = []
+        for tienda_id, config in tiendas_activas.items():
+            sistema_pos = getattr(config, 'sistema_pos', 'stellar')
+            if sistema_pos == 'klk':
+                tiendas_klk.append(tienda_id)
+            else:
+                tiendas_stellar.append(tienda_id)
+
         logger.info(f"\n🚀 INICIANDO ETL MULTI-TIENDA")
         logger.info(f"   📊 Tiendas activas: {len(tiendas_activas)}")
+        logger.info(f"   🔷 KLK: {len(tiendas_klk)} tiendas {'(paralelo ' + str(max_workers) + ' workers)' if paralelo else '(secuencial)'}")
+        logger.info(f"   🔶 Stellar: {len(tiendas_stellar)} tiendas (secuencial)")
         logger.info("=" * 60)
 
         # Registrar inicio de ejecución
@@ -507,15 +526,62 @@ class MultiTiendaETL:
 
         resultados = []
 
-        if paralelo:
-            # TODO: Implementar ejecución en paralelo con asyncio
-            logger.warning("⚠️ Ejecución en paralelo aún no implementada, ejecutando secuencialmente")
+        # ===== FASE 1: Tiendas KLK (paralelo o secuencial) =====
+        if tiendas_klk:
+            logger.info(f"\n📦 FASE 1: Procesando {len(tiendas_klk)} tiendas KLK...")
 
-        # Ejecución secuencial
-        for tienda_id in tiendas_activas:
-            resultado = self.ejecutar_etl_tienda(tienda_id)
-            resultados.append(resultado)
+            if paralelo and len(tiendas_klk) > 1:
+                # Ejecución paralela con ThreadPoolExecutor
+                logger.info(f"   🔄 Modo paralelo: {max_workers} workers")
+                klk_start = time.time()
+
+                with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='KLK') as executor:
+                    # Enviar todas las tiendas KLK al pool
+                    futures = {
+                        executor.submit(self.ejecutar_etl_tienda, tienda_id): tienda_id
+                        for tienda_id in tiendas_klk
+                    }
+
+                    # Recolectar resultados a medida que terminan
+                    for future in as_completed(futures):
+                        tienda_id = futures[future]
+                        try:
+                            resultado = future.result()
+                            resultados.append(resultado)
+                            status = "✅" if resultado.get("success") else "❌"
+                            logger.info(f"   {status} {resultado['nombre']}: {resultado.get('registros', 0)} registros ({resultado.get('tiempo_proceso', 0):.1f}s)")
+                        except Exception as e:
+                            logger.error(f"   ❌ Error en {tienda_id}: {e}")
+                            resultados.append({
+                                "tienda_id": tienda_id,
+                                "nombre": tienda_id,
+                                "success": False,
+                                "message": str(e),
+                                "registros": 0
+                            })
+
+                klk_elapsed = time.time() - klk_start
+                logger.info(f"   ⏱️ Fase KLK completada en {klk_elapsed:.1f}s")
+            else:
+                # Ejecución secuencial
+                for tienda_id in tiendas_klk:
+                    resultado = self.ejecutar_etl_tienda(tienda_id)
+                    resultados.append(resultado)
+
             logger.info("-" * 40)
+
+        # ===== FASE 2: Tiendas Stellar (siempre secuencial) =====
+        if tiendas_stellar:
+            logger.info(f"\n📦 FASE 2: Procesando {len(tiendas_stellar)} tiendas Stellar (secuencial)...")
+            stellar_start = time.time()
+
+            for tienda_id in tiendas_stellar:
+                resultado = self.ejecutar_etl_tienda(tienda_id)
+                resultados.append(resultado)
+                logger.info("-" * 40)
+
+            stellar_elapsed = time.time() - stellar_start
+            logger.info(f"   ⏱️ Fase Stellar completada en {stellar_elapsed:.1f}s")
 
         etl_end_time = datetime.now()
 
@@ -594,7 +660,8 @@ def main():
     parser.add_argument('--tiendas', nargs='+', help='Lista de IDs de tiendas (ej: tienda_01 tienda_08 cedi_seco)')
     parser.add_argument('--todas', action='store_true', help='Ejecutar para todas las tiendas activas')
     parser.add_argument('--listar', action='store_true', help='Listar tiendas configuradas')
-    parser.add_argument('--paralelo', action='store_true', help='Ejecutar en paralelo (experimental)')
+    parser.add_argument('--secuencial', action='store_true', help='Forzar ejecución secuencial (desactiva paralelización)')
+    parser.add_argument('--workers', type=int, default=3, help='Número de workers para tiendas KLK (default: 3)')
 
     args = parser.parse_args()
 
@@ -661,7 +728,9 @@ def main():
 
     elif args.todas:
         # Ejecutar todas las tiendas activas
-        resultados = etl.ejecutar_todas_las_tiendas(paralelo=args.paralelo)
+        # Por defecto paralelo=True, usar --secuencial para desactivar
+        paralelo = not args.secuencial
+        resultados = etl.ejecutar_todas_las_tiendas(paralelo=paralelo, max_workers=args.workers)
         etl.generar_resumen(resultados)
         # Cache refresh moved to separate EventBridge scheduler
 

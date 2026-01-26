@@ -28,13 +28,27 @@ class KLKVentasAPIConfig:
 
 
 # Mapeo de tienda_id a código de sucursal KLK
+# Actualizado: 2025-01-26 - Todas las tiendas migradas a KLK
 TIENDA_TO_SUCURSAL = {
     "tienda_01": "SUC001",  # PERIFERICO
+    "tienda_02": "SUC007",  # AV. BOLIVAR
+    "tienda_03": "SUC008",  # MAÑONGO
+    "tienda_04": "SUC014",  # SAN DIEGO
+    "tienda_05": "SUC018",  # VIVIENDA
+    "tienda_06": "SUC017",  # NAGUANAGUA
+    "tienda_07": "SUC013",  # CENTRO
     "tienda_08": "SUC002",  # BOSQUE
+    "tienda_09": "SUC015",  # GUACARA
+    "tienda_10": "SUC009",  # FERIAS
+    "tienda_11": "SUC012",  # FLOR AMARILLO
+    "tienda_12": "SUC016",  # PARAPARAL
+    "tienda_13": "SUC019",  # PARAMACAY (antes NAGUANAGUA III)
+    "tienda_15": "SUC006",  # ISABELICA
+    "tienda_16": "SUC010",  # TOCUYITO
     "tienda_17": "SUC003",  # ARTIGAS
     "tienda_18": "SUC004",  # PARAISO
+    "tienda_19": "SUC011",  # GUIGUE
     "tienda_20": "SUC005",  # TAZAJAL
-    "tienda_15": "SUC006",  # ISABELICA
 }
 
 

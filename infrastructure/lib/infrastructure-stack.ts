@@ -833,7 +833,7 @@ PersistentKeepalive = 25`),
           containerName: 'etl',
           command: [
             'python', 'etl_inventario.py',
-            '--tiendas', 'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10', 'tienda_11', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_17', 'tienda_18', 'tienda_19', 'tienda_20', 'cedi_seco', 'cedi_frio', 'cedi_verde', 'cedi_caracas'
+            '--todas'  // Todas las tiendas activas (19 tiendas KLK + 4 CEDIs)
           ]
         }],
         // Prevent concurrent executions
@@ -993,20 +993,23 @@ PersistentKeepalive = 25`),
     // EFS mount point REMOVED - DuckDB eliminated Dec 2025
 
     // ========================================
-    // 11. Ventas ETL Scheduled Rule (Every 3 hours)
+    // 11. Ventas ETL Scheduled Rule (Every 1 hour)
     // ========================================
-    // Runs unified ventas sync for ALL stores (KLK + Stellar) - similar to inventario
+    // Runs unified ventas sync for ALL stores (100% KLK after migration)
     // Script auto-detects sistema_pos for each tienda
-    // Changed from 30min to 3h intervals to prevent task accumulation when Stellar stores are slow
-    // ETL has concurrency protection - will skip if another instance is running
-    // Schedule: 10am, 1pm, 4pm, 7pm, 10pm, 1am (Venezuela time)
+    // Executes at XX:00 every hour, but ONLY between 6am-11pm Venezuela time
+    // Venezuela = UTC-4, so:
+    //   6am Venezuela = 10:00 UTC
+    //   11pm Venezuela = 03:00 UTC (next day)
+    // Hours in UTC: 10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2 (6am-11pm Venezuela)
+    // With parallelization (3 workers), all 19 tiendas complete in ~7-8 minutes
     const ventasSyncRule = new events.Rule(this, 'FluxionVentasSync30Min', {
       schedule: events.Schedule.cron({
-        minute: '0',  // Run at the top of each scheduled hour
-        hour: '10,13,16,19,22,1',  // 10am, 1pm, 4pm, 7pm, 10pm, 1am Venezuela (UTC-4 = 14,17,20,23,2,5 UTC)
+        minute: '0',  // Run at the top of each hour
+        hour: '10-23,0-2',  // 6am-11pm Venezuela time (UTC-4)
         weekDay: '*',
       }),
-      description: 'Sync ventas every 3 hours (10am, 1pm, 4pm, 7pm, 10pm, 1am Venezuela) for all stores - PostgreSQL',
+      description: 'Sync ventas every 1 hour (6am-11pm Venezuela) for all stores - PostgreSQL',
       ruleName: 'fluxion-ventas-sync-30min',  // Keep name for backwards compatibility
       enabled: true,
     });
@@ -1024,12 +1027,11 @@ PersistentKeepalive = 25`),
           containerName: 'etl',
           command: [
             'python', 'etl_ventas_postgres.py',
-            '--tiendas', 'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10', 'tienda_11', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_17', 'tienda_18', 'tienda_19', 'tienda_20'
-            // Script unificado detecta sistema_pos (klk/stellar) automáticamente
+            '--todas'  // Todas las tiendas activas (19 tiendas, 100% KLK)
           ]
         }],
         // Prevent concurrent executions
-        maxEventAge: cdk.Duration.minutes(25),  // Discard if older than 25 min (avoid overlap)
+        maxEventAge: cdk.Duration.minutes(50),  // Discard if older than 50 min (avoid overlap)
         retryAttempts: 1,  // Retry once if task launch fails
       })
     );
@@ -1064,7 +1066,7 @@ PersistentKeepalive = 25`),
           containerName: 'ventas-etl',
           command: [
             'python', 'etl_ventas_postgres.py',
-            '--tiendas', 'tienda_01', 'tienda_02', 'tienda_03', 'tienda_04', 'tienda_05', 'tienda_06', 'tienda_07', 'tienda_08', 'tienda_09', 'tienda_10', 'tienda_12', 'tienda_13', 'tienda_15', 'tienda_16', 'tienda_17', 'tienda_18', 'tienda_19', 'tienda_20',
+            '--todas',  // Todas las tiendas activas (19 tiendas, 100% KLK)
             '--recovery-mode'  // Modo recuperación: procesa día anterior completo
           ]
         }],

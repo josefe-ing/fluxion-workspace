@@ -126,6 +126,40 @@ ALMACENES_KLK: Dict[str, List[AlmacenKLK]] = {
     "cedi_caracas": [
         AlmacenKLK(codigo="PCDICS", nombre="PRINCIPAL", tipo="principal", incluir_en_deficit=True),
     ],
+    # Tiendas migradas a KLK (2025)
+    "tienda_04": [
+        AlmacenKLK(codigo="TSDGO", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_05": [
+        AlmacenKLK(codigo="TVDAS", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_06": [
+        AlmacenKLK(codigo="TNGN01", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_07": [
+        AlmacenKLK(codigo="TCTO", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_09": [
+        AlmacenKLK(codigo="TGUAC", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_10": [
+        AlmacenKLK(codigo="TFER", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_11": [
+        AlmacenKLK(codigo="TFAMA", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_12": [
+        AlmacenKLK(codigo="TPPRAL", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_13": [
+        AlmacenKLK(codigo="TPMCY", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_16": [
+        AlmacenKLK(codigo="TTCYTO", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
+    "tienda_19": [
+        AlmacenKLK(codigo="TGGE", nombre="PISO DE VENTA", tipo="piso_venta", incluir_en_deficit=True),
+    ],
 }
 
 
@@ -230,49 +264,61 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_04": TiendaConfig(
         ubicacion_id="tienda_04",
         ubicacion_nombre="SAN DIEGO",
-        server_ip="192.168.140.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=14348,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="0402"
+        codigo_deposito="0402",
+        sistema_pos="klk",
+        codigo_almacen_klk="TSDGO",
+        visible_pedidos=True
     ),
 
     "tienda_05": TiendaConfig(
         ubicacion_id="tienda_05",
         ubicacion_nombre="VIVIENDA",
-        server_ip="192.168.80.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=14348,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="0502"
+        codigo_deposito="0502",
+        sistema_pos="klk",
+        codigo_almacen_klk="TVDAS",
+        visible_pedidos=True
     ),
 
     "tienda_06": TiendaConfig(
         ubicacion_id="tienda_06",
         ubicacion_nombre="NAGUANAGUA",
-        server_ip="192.168.40.53",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=14348,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="0602"
+        codigo_deposito="0602",
+        sistema_pos="klk",
+        codigo_almacen_klk="TNGN01",
+        visible_pedidos=True
     ),
 
     "tienda_07": TiendaConfig(
         ubicacion_id="tienda_07",
         ubicacion_nombre="CENTRO",
-        server_ip="192.168.130.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=14348,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="0702"
+        codigo_deposito="0702",
+        sistema_pos="klk",
+        codigo_almacen_klk="TCTO",
+        visible_pedidos=True
     ),
 
     "tienda_08": TiendaConfig(
@@ -293,61 +339,76 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_09": TiendaConfig(
         ubicacion_id="tienda_09",
         ubicacion_nombre="GUACARA",
-        server_ip="192.168.120.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=14348,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="0902"
+        codigo_deposito="0902",
+        sistema_pos="klk",
+        codigo_almacen_klk="TGUAC",
+        visible_pedidos=True
     ),
 
     "tienda_10": TiendaConfig(
         ubicacion_id="tienda_10",
         ubicacion_nombre="FERIAS",
-        server_ip="192.168.70.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=14348,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="1002"
+        codigo_deposito="1002",
+        sistema_pos="klk",
+        codigo_almacen_klk="TFER",
+        visible_pedidos=True
     ),
 
     "tienda_11": TiendaConfig(
         ubicacion_id="tienda_11",
         ubicacion_nombre="FLOR AMARILLO",
-        server_ip="192.168.160.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=14348,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="1102"
+        codigo_deposito="1102",
+        sistema_pos="klk",
+        codigo_almacen_klk="TFAMA",
+        visible_pedidos=True
     ),
 
     "tienda_12": TiendaConfig(
         ubicacion_id="tienda_12",
         ubicacion_nombre="PARAPARAL",
-        server_ip="192.168.170.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=1433,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="1202"
+        codigo_deposito="1202",
+        sistema_pos="klk",
+        codigo_almacen_klk="TPPRAL",
+        visible_pedidos=True
     ),
 
     "tienda_13": TiendaConfig(
         ubicacion_id="tienda_13",
-        ubicacion_nombre="NAGUANAGUA III",
-        server_ip="192.168.190.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=14348,
+        ubicacion_nombre="PARAMACAY",  # Renombrado de NAGUANAGUA III
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="1302"
+        codigo_deposito="1302",
+        sistema_pos="klk",
+        codigo_almacen_klk="TPMCY",
+        visible_pedidos=True
     ),
 
     "tienda_15": TiendaConfig(
@@ -368,13 +429,16 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_16": TiendaConfig(
         ubicacion_id="tienda_16",
         ubicacion_nombre="TOCUYITO",
-        server_ip="192.168.110.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=1433,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="1602"
+        codigo_deposito="1602",
+        sistema_pos="klk",
+        codigo_almacen_klk="TTCYTO",
+        visible_pedidos=True
     ),
 
     "tienda_17": TiendaConfig(
@@ -410,13 +474,16 @@ TIENDAS_CONFIG: Dict[str, TiendaConfig] = {
     "tienda_19": TiendaConfig(
         ubicacion_id="tienda_19",
         ubicacion_nombre="GUIGUE",
-        server_ip="192.168.210.10",  # VPC routing handles WireGuard automatically
-        database_name="VAD10",
-        username=get_sql_user(),
-        password=get_sql_pass(),
-        port=1433,
+        server_ip="",  # No necesita IP - se conecta via KLK API
+        database_name="",
+        username="",
+        password="",
+        port=0,
         activo=True,
-        codigo_deposito="1902"
+        codigo_deposito="1902",
+        sistema_pos="klk",
+        codigo_almacen_klk="TGGE",
+        visible_pedidos=True
     ),
 
     "tienda_20": TiendaConfig(

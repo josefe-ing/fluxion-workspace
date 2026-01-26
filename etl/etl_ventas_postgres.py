@@ -30,8 +30,10 @@ sys.path.insert(0, str(CORE_DIR))
 
 import os
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Set DB_MODE to postgresql BEFORE any other imports
 os.environ['DB_MODE'] = 'postgresql'
@@ -691,17 +693,78 @@ class VentasETLPostgres:
 
             self.logger.info(f"{'='*70}\n")
 
-        # Procesar cada tienda
-        tiendas_results = []
-        for tienda_id, config in tiendas.items():
-            self.stats['tiendas_procesadas'] += 1
-            resultado = self.procesar_tienda(config, fecha_desde, fecha_hasta)
-            tiendas_results.append(resultado)
+        # Separar tiendas por sistema POS
+        tiendas_klk = {k: v for k, v in tiendas.items() if self._get_sistema_pos(k) == 'klk'}
+        tiendas_stellar = {k: v for k, v in tiendas.items() if self._get_sistema_pos(k) == 'stellar'}
 
-            if resultado['success']:
-                self.stats['tiendas_exitosas'] += 1
-            else:
-                self.stats['tiendas_fallidas'] += 1
+        self.logger.info(f"\n{'='*70}")
+        self.logger.info(f"PROCESANDO TIENDAS (KLK: {len(tiendas_klk)} paralelo, Stellar: {len(tiendas_stellar)} secuencial)")
+        self.logger.info(f"{'='*70}")
+
+        tiendas_results = []
+
+        # ===== FASE 1: Tiendas KLK (paralelo con 3 workers) =====
+        if tiendas_klk:
+            self.logger.info(f"\n📦 FASE 1: Procesando {len(tiendas_klk)} tiendas KLK (3 workers paralelo)...")
+            klk_start = time.time()
+
+            # Función wrapper para procesar tienda y manejar stats
+            def process_klk_tienda(tienda_item):
+                tienda_id, config = tienda_item
+                return self.procesar_tienda(config, fecha_desde, fecha_hasta)
+
+            with ThreadPoolExecutor(max_workers=3, thread_name_prefix='KLK-Ventas') as executor:
+                futures = {
+                    executor.submit(process_klk_tienda, item): item[0]
+                    for item in tiendas_klk.items()
+                }
+
+                for future in as_completed(futures):
+                    tienda_id = futures[future]
+                    try:
+                        resultado = future.result()
+                        tiendas_results.append(resultado)
+                        self.stats['tiendas_procesadas'] += 1
+
+                        if resultado['success']:
+                            self.stats['tiendas_exitosas'] += 1
+                            status = "✅"
+                        else:
+                            self.stats['tiendas_fallidas'] += 1
+                            status = "❌"
+
+                        self.logger.info(f"   {status} {resultado['tienda_nombre']}: {resultado.get('ventas_cargadas', 0):,} ventas")
+                    except Exception as e:
+                        self.logger.error(f"   ❌ Error en {tienda_id}: {e}")
+                        self.stats['tiendas_procesadas'] += 1
+                        self.stats['tiendas_fallidas'] += 1
+                        tiendas_results.append({
+                            'tienda_id': tienda_id,
+                            'tienda_nombre': tienda_id,
+                            'success': False,
+                            'error': str(e)
+                        })
+
+            klk_elapsed = time.time() - klk_start
+            self.logger.info(f"   ⏱️ Fase KLK completada en {klk_elapsed:.1f}s")
+
+        # ===== FASE 2: Tiendas Stellar (secuencial) =====
+        if tiendas_stellar:
+            self.logger.info(f"\n📦 FASE 2: Procesando {len(tiendas_stellar)} tiendas Stellar (secuencial)...")
+            stellar_start = time.time()
+
+            for tienda_id, config in tiendas_stellar.items():
+                self.stats['tiendas_procesadas'] += 1
+                resultado = self.procesar_tienda(config, fecha_desde, fecha_hasta)
+                tiendas_results.append(resultado)
+
+                if resultado['success']:
+                    self.stats['tiendas_exitosas'] += 1
+                else:
+                    self.stats['tiendas_fallidas'] += 1
+
+            stellar_elapsed = time.time() - stellar_start
+            self.logger.info(f"   ⏱️ Fase Stellar completada en {stellar_elapsed:.1f}s")
 
         # Resumen final
         self.stats['fin'] = datetime.now()
