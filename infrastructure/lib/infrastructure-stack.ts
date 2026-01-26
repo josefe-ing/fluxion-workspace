@@ -1172,10 +1172,10 @@ PersistentKeepalive = 25`),
 
     const cacheRefreshRule = new events.Rule(this, 'ProductosCacheRefresh', {
       ruleName: 'fluxion-productos-cache-refresh',
-      description: 'Refresh productos_analisis_cache every 6 hours (5:00, 11:00, 17:00, 23:00 VE)',
+      description: 'Refresh productos_analisis_cache every 6 hours (5:30, 11:30, 17:30, 23:30 VE)',
       schedule: events.Schedule.cron({
-        minute: '0',
-        hour: '9,15,21,3',  // 5:00, 11:00, 17:00, 23:00 Venezuela (UTC-4)
+        minute: '30',
+        hour: '9,15,21,3',  // 5:30, 11:30, 17:30, 23:30 Venezuela (UTC-4) - 30min after ETLs
         day: '*',
         month: '*',
         year: '*',
