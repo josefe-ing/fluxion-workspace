@@ -36,7 +36,12 @@ from services.algoritmo_dpdu import (
     detectar_conflicto,
     to_dict as asignacion_to_dict,
 )
-from services.calculo_inventario_abc import calcular_inventario_simple
+from services.calculo_inventario_abc import (
+    calcular_inventario_simple,
+    ConfigTiendaABC,
+    set_config_tienda,
+    LEAD_TIME_DEFAULT
+)
 from db_manager import get_db_connection, get_db_connection_write
 
 logger = logging.getLogger(__name__)
@@ -86,6 +91,51 @@ async def obtener_config_dpdu(conn) -> ConfigDPDU:
 
     # Valores por defecto si no existe configuración
     return ConfigDPDU()
+
+
+async def cargar_config_tienda(conn, tienda_id: str) -> ConfigTiendaABC:
+    """
+    Carga la configuración ABC específica de una tienda desde config_parametros_abc_tienda.
+    Si no existe configuración, retorna valores por defecto.
+
+    IMPORTANTE: Esta función también llama a set_config_tienda() para aplicar
+    la configuración globalmente, asegurando que calcular_inventario_simple()
+    use los parámetros correctos.
+    """
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT lead_time_override, dias_cobertura_a, dias_cobertura_b,
+                   dias_cobertura_c, clase_d_dias_cobertura
+            FROM config_parametros_abc_tienda
+            WHERE tienda_id = %s AND activo = true
+        """, [tienda_id])
+        config_row = cursor.fetchone()
+
+        if config_row:
+            config = ConfigTiendaABC(
+                lead_time=float(config_row[0]) if config_row[0] else LEAD_TIME_DEFAULT,
+                dias_cobertura_a=int(config_row[1]) if config_row[1] else 7,
+                dias_cobertura_b=int(config_row[2]) if config_row[2] else 14,
+                dias_cobertura_c=int(config_row[3]) if config_row[3] else 21,
+                dias_cobertura_d=int(config_row[4]) if config_row[4] else 30
+            )
+            set_config_tienda(config)
+            logger.info(f"📋 Config tienda {tienda_id} aplicada: LT={config.lead_time}, A={config.dias_cobertura_a}d, B={config.dias_cobertura_b}d, C={config.dias_cobertura_c}d, D={config.dias_cobertura_d}d")
+            return config
+        else:
+            # Usar defaults
+            config = ConfigTiendaABC()
+            set_config_tienda(config)
+            logger.info(f"📋 Usando configuración ABC por defecto para {tienda_id}")
+            return config
+    except Exception as e:
+        logger.warning(f"No se pudo cargar config tienda {tienda_id}: {e}. Usando defaults.")
+        config = ConfigTiendaABC()
+        set_config_tienda(config)
+        return config
+    finally:
+        cursor.close()
 
 
 async def obtener_productos_tienda(
@@ -190,7 +240,8 @@ async def obtener_productos_tienda(
             COALESCE(abc.clase_abc, 'D') as clase_abc,
             COALESCE(abc.venta_30d, 0) as venta_30d,
             COALESCE(est.sigma_demanda, 0) as sigma_demanda,
-            COALESCE(est.demanda_maxima, v.p75 * 2, 0) as demanda_maxima
+            COALESCE(est.demanda_maxima, v.p75 * 2, 0) as demanda_maxima,
+            COALESCE(p.es_generador_trafico, false) as es_generador_trafico
         FROM productos p
         LEFT JOIN ventas_20dias v ON p.id = v.producto_id
         LEFT JOIN estadisticas_30d est ON p.id = est.producto_id
@@ -217,6 +268,49 @@ async def obtener_productos_tienda(
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
+
+    # Cargar límites de capacidad para esta tienda (igual que single-store)
+    limites_capacidad = {}  # {codigo_producto: {capacidad_maxima, minimo_exhibicion}}
+    try:
+        cursor.execute("""
+            SELECT producto_codigo, capacidad_maxima_unidades, minimo_exhibicion_unidades,
+                   tipo_restriccion
+            FROM capacidad_almacenamiento_producto
+            WHERE tienda_id = %s AND activo = true
+        """, [tienda_destino])
+        for lim_row in cursor.fetchall():
+            limites_capacidad[lim_row[0]] = {
+                'capacidad_maxima': float(lim_row[1]) if lim_row[1] else None,
+                'minimo_exhibicion': float(lim_row[2]) if lim_row[2] else None,
+                'tipo_restriccion': lim_row[3] or 'espacio_fisico'
+            }
+        if limites_capacidad:
+            logger.info(f"📦 Límites de capacidad cargados para {tienda_destino}: {len(limites_capacidad)} productos")
+    except Exception as e:
+        logger.warning(f"No se pudo cargar límites de capacidad para {tienda_destino}: {e}")
+
+    # Cargar configuración de cobertura por categoría (perecederos, etc.)
+    config_cobertura_categoria = {}
+    try:
+        cursor.execute("""
+            SELECT categoria_normalizada, dias_cobertura_a, dias_cobertura_b,
+                   dias_cobertura_c, dias_cobertura_d
+            FROM config_cobertura_categoria
+            WHERE activo = true
+        """)
+        for cat_row in cursor.fetchall():
+            cat_norm = (cat_row[0] or '').strip().upper()
+            config_cobertura_categoria[cat_norm] = {
+                'A': cat_row[1] if cat_row[1] is not None else 7,
+                'B': cat_row[2] if cat_row[2] is not None else 14,
+                'C': cat_row[3] if cat_row[3] is not None else 21,
+                'D': cat_row[4] if cat_row[4] is not None else 30
+            }
+        if config_cobertura_categoria:
+            logger.info(f"🥬 Coberturas por categoría cargadas: {list(config_cobertura_categoria.keys())}")
+    except Exception as e:
+        logger.warning(f"No se pudo cargar config cobertura por categoría: {e}")
+
     cursor.close()
 
     productos = []
@@ -235,6 +329,15 @@ async def obtener_productos_tienda(
         venta_30d = float(row[11])
         sigma_demanda = float(row[12])
         demanda_maxima = float(row[13])
+        es_generador_trafico = bool(row[14]) if row[14] else False
+
+        # Determinar override de días de cobertura por categoría (perecederos)
+        dias_cobertura_override = None
+        if categoria:
+            cat_norm = categoria.strip().upper()
+            if cat_norm in config_cobertura_categoria:
+                # Usar días de cobertura específicos para esta categoría según clase ABC
+                dias_cobertura_override = config_cobertura_categoria[cat_norm].get(clase_abc)
 
         # Usar el mismo cálculo estadístico que single-store (calcular_inventario_simple)
         # Esto garantiza que ambos wizards usen la misma lógica de ROP, SS y MAX
@@ -246,7 +349,8 @@ async def obtener_productos_tienda(
             stock_actual=stock_tienda,
             stock_cedi=stock_cedi,
             clase_abc=clase_abc,
-            es_generador_trafico=False
+            es_generador_trafico=es_generador_trafico,
+            dias_cobertura_override=dias_cobertura_override
         )
 
         # Extraer valores del resultado estadístico (en unidades)
@@ -281,6 +385,46 @@ async def obtener_productos_tienda(
         if not necesita_reposicion:
             cantidad_sugerida_unid = 0
             cantidad_sugerida_bultos = 0
+
+        # Aplicar límites de inventario (igual que single-store)
+        # Orden: 1) Mínimo exhibición, 2) Capacidad máxima
+        limite_info = limites_capacidad.get(codigo)
+        if limite_info and not tiene_sobrestock:
+            # 1. MÍNIMO DE EXHIBICIÓN: elevar cantidad si es necesario para exhibición
+            minimo_exhibicion = limite_info.get('minimo_exhibicion')
+            if minimo_exhibicion and minimo_exhibicion > 0:
+                # Calcular cuántas unidades necesitamos para alcanzar el mínimo de exhibición
+                unidades_necesarias_exhibicion = max(0, minimo_exhibicion - stock_tienda)
+
+                if unidades_necesarias_exhibicion > cantidad_sugerida_unid:
+                    cantidad_antes_minimo = cantidad_sugerida_unid
+                    cantidad_sugerida_unid = unidades_necesarias_exhibicion
+                    cantidad_sugerida_bultos = math.ceil(unidades_necesarias_exhibicion / unidades_por_bulto) if unidades_por_bulto > 0 else 0
+
+                    logger.info(
+                        f"📊 {codigo} ({tienda_destino}): Elevado por mínimo exhibición. "
+                        f"Original: {cantidad_antes_minimo:.0f} → Elevado: {cantidad_sugerida_unid:.0f} unid "
+                        f"(Mín exhibición: {minimo_exhibicion:.0f}, Stock: {stock_tienda:.0f})"
+                    )
+
+            # 2. CAPACIDAD MÁXIMA: no exceder el espacio disponible
+            capacidad_maxima = limite_info.get('capacidad_maxima')
+            if capacidad_maxima and capacidad_maxima > 0:
+                # Espacio disponible = capacidad máxima - stock actual
+                espacio_disponible = max(0, capacidad_maxima - stock_tienda)
+
+                # Si la cantidad sugerida excede el espacio disponible, ajustar
+                if cantidad_sugerida_unid > espacio_disponible:
+                    cantidad_antes_cap = cantidad_sugerida_unid
+                    cantidad_sugerida_unid = espacio_disponible
+                    cantidad_sugerida_bultos = math.ceil(espacio_disponible / unidades_por_bulto) if unidades_por_bulto > 0 else 0
+
+                    tipo_restriccion = limite_info.get('tipo_restriccion', 'espacio_fisico')
+                    logger.info(
+                        f"⚠️ {codigo} ({tienda_destino}): Ajustado por capacidad de {tipo_restriccion}. "
+                        f"Original: {cantidad_antes_cap:.0f} → Ajustado: {cantidad_sugerida_unid:.0f} unid "
+                        f"(Cap. máx: {capacidad_maxima:.0f}, Stock: {stock_tienda:.0f}, Disponible: {espacio_disponible:.0f})"
+                    )
 
         # Incluir TODOS los productos (sugeridos y no sugeridos)
         productos.append({
@@ -347,8 +491,13 @@ async def calcular_pedidos_multitienda(
         config_dpdu = await obtener_config_dpdu(conn)
 
         # Calcular productos para cada tienda
+        # IMPORTANTE: Cargar configuración ABC de cada tienda ANTES de calcular
+        # Esto asegura que se usen los parámetros correctos (lead_time, dias_cobertura)
         productos_por_tienda: Dict[str, List[Dict]] = {}
         for tienda in request.tiendas_destino:
+            # Cargar y aplicar configuración específica de la tienda
+            await cargar_config_tienda(conn, tienda.tienda_id)
+
             productos = await obtener_productos_tienda(
                 conn,
                 request.cedi_origen,

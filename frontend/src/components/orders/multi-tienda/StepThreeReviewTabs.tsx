@@ -75,6 +75,17 @@ export default function StepThreeReviewTabs({
 }: Props) {
   const [activeTab, setActiveTab] = useState(0);
 
+  // Estado para controlar navegación después de actualizar datos
+  const [pendingNavigation, setPendingNavigation] = useState(false);
+
+  // Efecto para navegar DESPUÉS de que el estado se haya actualizado
+  useEffect(() => {
+    if (pendingNavigation) {
+      setPendingNavigation(false);
+      onNext();
+    }
+  }, [pendingNavigation, onNext]);
+
   // Filtros independientes por tienda (keyed by tienda_id)
   const [filtrosPorTienda, setFiltrosPorTienda] = useState<Record<string, FiltrosTienda>>({});
 
@@ -584,8 +595,10 @@ export default function StepThreeReviewTabs({
     });
 
     updateOrderData({ pedidos_por_tienda: pedidosActualizados });
-    onNext();
-  }, [orderData.pedidos_por_tienda, ediciones, seleccionesPorTienda, filtrosPorTienda, updateOrderData, onNext]);
+    // Usar setPendingNavigation en lugar de onNext() directo para asegurar
+    // que el estado se actualice ANTES de navegar al siguiente paso
+    setPendingNavigation(true);
+  }, [orderData.pedidos_por_tienda, ediciones, seleccionesPorTienda, filtrosPorTienda, updateOrderData]);
 
   // Handlers para modales
   const handleOpenSalesModal = (producto: ProductoPedidoSimplificado, tiendaId: string) => {
