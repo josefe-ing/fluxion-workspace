@@ -6,8 +6,9 @@ import {
   RefreshCw,
   AlertCircle,
   ChevronRight,
+  BarChart2,
 } from 'lucide-react';
-import { biService, StoreRanking, StoreKPIs } from '../../services/biService';
+import { biService, StoreRanking, StoreKPIs, StoreABCAnalysis } from '../../services/biService';
 
 type MetricType = 'gmroi' | 'ventas' | 'rotacion' | 'stock';
 
@@ -40,6 +41,7 @@ export default function StoreAnalysis() {
   const [ranking, setRanking] = useState<StoreRanking[] | null>(null);
   const [selectedStore, setSelectedStore] = useState<string | null>(null);
   const [storeKPIs, setStoreKPIs] = useState<StoreKPIs | null>(null);
+  const [abcAnalysis, setAbcAnalysis] = useState<StoreABCAnalysis | null>(null);
   const [loadingKPIs, setLoadingKPIs] = useState(false);
 
   const loadRanking = async () => {
@@ -47,7 +49,15 @@ export default function StoreAnalysis() {
       setLoading(true);
       setError(null);
       const data = await biService.getStoresRanking(selectedMetric);
-      setRanking(data);
+      // El endpoint retorna un objeto con { metric, promedio, tiendas }
+      // Extraemos solo el array de tiendas
+      if (data && Array.isArray(data)) {
+        setRanking(data);
+      } else if (data && (data as any).tiendas) {
+        setRanking((data as any).tiendas);
+      } else {
+        setRanking([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error cargando datos');
     } finally {
@@ -58,10 +68,14 @@ export default function StoreAnalysis() {
   const loadStoreKPIs = async (ubicacionId: string) => {
     try {
       setLoadingKPIs(true);
-      const data = await biService.getStoreKPIs(ubicacionId);
-      setStoreKPIs(data);
+      const [kpisData, abcData] = await Promise.all([
+        biService.getStoreKPIs(ubicacionId),
+        biService.getStoreABCAnalysis(ubicacionId),
+      ]);
+      setStoreKPIs(kpisData);
+      setAbcAnalysis(abcData);
     } catch (err) {
-      console.error('Error loading store KPIs:', err);
+      console.error('Error loading store data:', err);
     } finally {
       setLoadingKPIs(false);
     }
@@ -76,6 +90,7 @@ export default function StoreAnalysis() {
       loadStoreKPIs(selectedStore);
     } else {
       setStoreKPIs(null);
+      setAbcAnalysis(null);
     }
   }, [selectedStore]);
 
@@ -331,6 +346,112 @@ export default function StoreAnalysis() {
                     )}
                   </div>
                 </div>
+
+                {/* Análisis ABC */}
+                {abcAnalysis && abcAnalysis.clasificaciones.length > 0 && (
+                  <div className="pt-4 border-t border-gray-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <BarChart2 className="w-4 h-4 text-indigo-600" />
+                      <p className="text-sm font-medium text-gray-700">
+                        Clasificación ABC
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      {abcAnalysis.clasificaciones.map((clasif) => {
+                        const colorClasses = {
+                          A: 'bg-green-100 text-green-700 border-green-300',
+                          B: 'bg-blue-100 text-blue-700 border-blue-300',
+                          C: 'bg-yellow-100 text-yellow-700 border-yellow-300',
+                          D: 'bg-gray-100 text-gray-700 border-gray-300',
+                        }[clasif.clase] || 'bg-gray-100 text-gray-700 border-gray-300';
+
+                        return (
+                          <div key={clasif.clase} className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span
+                                className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold border ${colorClasses}`}
+                              >
+                                {clasif.clase}
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                {clasif.cantidad_productos} productos
+                              </span>
+                            </div>
+
+                            {/* Barra de % Ventas */}
+                            <div>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-xs text-gray-600">
+                                  % Ventas
+                                </span>
+                                <span className="text-xs font-medium text-gray-900">
+                                  {clasif.pct_ventas.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full ${
+                                    {
+                                      A: 'bg-green-500',
+                                      B: 'bg-blue-500',
+                                      C: 'bg-yellow-500',
+                                      D: 'bg-gray-400',
+                                    }[clasif.clase]
+                                  }`}
+                                  style={{ width: `${Math.min(clasif.pct_ventas, 100)}%` }}
+                                ></div>
+                              </div>
+                            </div>
+
+                            {/* Barra de % Productos */}
+                            <div>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-xs text-gray-600">
+                                  % Productos
+                                </span>
+                                <span className="text-xs font-medium text-gray-900">
+                                  {clasif.pct_productos.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full ${
+                                    {
+                                      A: 'bg-green-400',
+                                      B: 'bg-blue-400',
+                                      C: 'bg-yellow-400',
+                                      D: 'bg-gray-300',
+                                    }[clasif.clase]
+                                  }`}
+                                  style={{ width: `${Math.min(clasif.pct_productos, 100)}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Resumen rápido */}
+                    <div className="mt-3 pt-3 border-t border-gray-200">
+                      <div className="text-xs text-gray-500 space-y-1">
+                        <p>
+                          <strong>A:</strong> Alta rotación (top productos)
+                        </p>
+                        <p>
+                          <strong>B:</strong> Rotación media
+                        </p>
+                        <p>
+                          <strong>C:</strong> Rotación baja
+                        </p>
+                        <p>
+                          <strong>D:</strong> Muy baja rotación
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : null}
           </div>

@@ -37,12 +37,18 @@ const getAuthHeaders = () => {
 const http = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async get(url: string, options?: { params?: Record<string, any> }) {
-    const queryParams = options?.params
-      ? '?' + new URLSearchParams(options.params).toString()
+    // Filter out undefined/null values from params
+    const cleanParams = options?.params
+      ? Object.fromEntries(
+          Object.entries(options.params).filter(([_, v]) => v !== undefined && v !== null)
+        )
+      : {};
+
+    const queryParams = Object.keys(cleanParams).length > 0
+      ? '?' + new URLSearchParams(cleanParams).toString()
       : '';
 
     const fullUrl = `${API_BASE_URL}${url}${queryParams}`;
-    console.log('🌐 HTTP GET:', fullUrl);
 
     const response = await fetch(fullUrl, {
       headers: getAuthHeaders(),
@@ -60,15 +66,12 @@ const http = {
     }
 
     const data = await response.json();
-    console.log('✅ Response:', data);
-
     return { data };
   },
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async post(url: string, body: any) {
     const fullUrl = `${API_BASE_URL}${url}`;
-    console.log('🌐 HTTP POST:', fullUrl);
 
     const response = await fetch(fullUrl, {
       method: 'POST',
@@ -94,7 +97,6 @@ const http = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async put(url: string, body: any) {
     const fullUrl = `${API_BASE_URL}${url}`;
-    console.log('🌐 HTTP PUT:', fullUrl);
 
     const response = await fetch(fullUrl, {
       method: 'PUT',
@@ -119,7 +121,6 @@ const http = {
 
   async delete(url: string) {
     const fullUrl = `${API_BASE_URL}${url}`;
-    console.log('🌐 HTTP DELETE:', fullUrl);
 
     const response = await fetch(fullUrl, {
       method: 'DELETE',

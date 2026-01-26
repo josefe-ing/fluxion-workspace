@@ -1,22 +1,21 @@
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  TrendingUp,
   Store,
   Package,
   DollarSign,
   Map,
   BarChart3,
   ArrowLeftRight,
+  LayoutDashboard,
 } from 'lucide-react';
-import FluxionImpact from './FluxionImpact';
-import StoreAnalysis from './StoreAnalysis';
 import ProductAnalysis from './ProductAnalysis';
 import Profitability from './Profitability';
 import CoverageDistribution from './CoverageDistribution';
-import CompararTiendas from './CompararTiendas';
+import { StoresDashboard, StoreDetailView, CompareStoresView, StoresRankingView } from './stores';
+import ABCAnalysisView from './products/ABCAnalysisView';
 
-type TabId = 'impact' | 'stores' | 'products' | 'profitability' | 'coverage' | 'compare';
+type TabId = 'network' | 'store-detail' | 'stores' | 'products' | 'abc' | 'profitability' | 'coverage' | 'compare';
 
 interface Tab {
   id: TabId;
@@ -27,10 +26,16 @@ interface Tab {
 
 const tabs: Tab[] = [
   {
-    id: 'impact',
-    label: 'Fluxion Impact',
-    icon: TrendingUp,
-    description: 'ROI del sistema y capital liberado',
+    id: 'network',
+    label: 'Dashboard de Red',
+    icon: LayoutDashboard,
+    description: 'KPIs consolidados de todas las tiendas',
+  },
+  {
+    id: 'store-detail',
+    label: 'Detalle de Tienda',
+    icon: Store,
+    description: 'Análisis profundo por tienda individual',
   },
   {
     id: 'compare',
@@ -40,8 +45,8 @@ const tabs: Tab[] = [
   },
   {
     id: 'stores',
-    label: 'Por Tienda',
-    icon: Store,
+    label: 'Ranking Tiendas',
+    icon: BarChart3,
     description: 'Análisis comparativo de tiendas',
   },
   {
@@ -49,6 +54,12 @@ const tabs: Tab[] = [
     label: 'Por Producto',
     icon: Package,
     description: 'Matriz GMROI/Rotación',
+  },
+  {
+    id: 'abc',
+    label: 'Análisis ABC',
+    icon: BarChart3,
+    description: 'Clasificación ABC consolidada',
   },
   {
     id: 'profitability',
@@ -66,7 +77,7 @@ const tabs: Tab[] = [
 
 export default function BusinessIntelligence() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = (searchParams.get('tab') as TabId) || 'impact';
+  const activeTab = (searchParams.get('tab') as TabId) || 'network';
 
   const handleTabChange = (tabId: TabId) => {
     setSearchParams({ tab: tabId });
@@ -74,20 +85,24 @@ export default function BusinessIntelligence() {
 
   const renderTabContent = () => {
     switch (activeTab) {
-      case 'impact':
-        return <FluxionImpact />;
+      case 'network':
+        return <StoresDashboard />;
+      case 'store-detail':
+        return <StoreDetailView />;
       case 'compare':
-        return <CompararTiendas />;
+        return <CompareStoresView />;
       case 'stores':
-        return <StoreAnalysis />;
+        return <StoresRankingView />;
       case 'products':
         return <ProductAnalysis />;
+      case 'abc':
+        return <ABCAnalysisView />;
       case 'profitability':
         return <Profitability />;
       case 'coverage':
         return <CoverageDistribution />;
       default:
-        return <FluxionImpact />;
+        return <StoresDashboard />;
     }
   };
 

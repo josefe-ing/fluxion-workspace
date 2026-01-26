@@ -80,15 +80,52 @@ export interface StoreRanking {
   rank?: number;
   vs_promedio?: number;
   fill_rate?: number;
-  promedio?: number;
-  tiendas?: StoreRankingItem[];
 }
 
-export interface StoreRankingItem {
+export interface StoreRankingResponse {
+  metric: string;
+  promedio: number;
+  tiendas: StoreRanking[];
+}
+
+// ABC Analysis Types
+export interface ABCClasificacion {
+  clase: string;
+  cantidad_productos: number;
+  ventas_total: number;
+  tickets_total?: number;
+  utilidad_total?: number;
+  unidades_vendidas?: number;
+  pct_productos: number;
+  pct_ventas: number;
+  margen_pct?: number;
+  venta_promedio_producto?: number;
+  unidades_promedio_producto?: number;
+}
+
+export interface StoreABCAnalysis {
   ubicacion_id: string;
-  nombre: string;
-  valor: number;
-  ranking: number;
+  clasificaciones: ABCClasificacion[];
+}
+
+export interface ABCConsolidatedResponse {
+  clasificaciones: ABCClasificacion[];
+  categorias_abc: {
+    categoria: string;
+    clase: string;
+    cantidad_productos: number;
+    ventas_total: number;
+    utilidad_total: number;
+    unidades_vendidas: number;
+    margen_pct: number;
+    venta_promedio_producto: number;
+  }[];
+  filtro?: {
+    tipo: 'global' | 'tienda' | 'region';
+    ubicacion_id?: string | null;
+    ubicacion_nombre?: string | null;
+    region?: string | null;
+  };
 }
 
 // Product Matrix Types
@@ -218,10 +255,15 @@ export const biService = {
     return response.data;
   },
 
+  async getStoreABCAnalysis(ubicacionId: string): Promise<StoreABCAnalysis> {
+    const response = await http.get(`/bi/store/${ubicacionId}/abc-analysis`);
+    return response.data;
+  },
+
   async getStoresRanking(
     metric: 'gmroi' | 'ventas' | 'rotacion' | 'stock' = 'gmroi',
     region?: string
-  ): Promise<StoreRanking[]> {
+  ): Promise<StoreRankingResponse> {
     const response = await http.get('/bi/stores/ranking', {
       params: { metric, region },
     });
@@ -229,6 +271,13 @@ export const biService = {
   },
 
   // === Product Matrix Endpoints ===
+  async getProductsABCConsolidated(filters?: { ubicacion_id?: string; region?: string }): Promise<ABCConsolidatedResponse> {
+    const response = await http.get('/bi/products/abc-consolidated', {
+      params: filters,
+    });
+    return response.data;
+  },
+
   async getProductsMatrix(filters?: { categoria?: string }): Promise<ProductMatrix> {
     const response = await http.get('/bi/products/matrix', {
       params: filters,
@@ -307,6 +356,80 @@ export const biService = {
     const response = await http.post('/bi/admin/refresh-views', {});
     return response.data;
   },
+
+  // === New BI Stores Endpoints ===
+  async getNetworkKPIs(params: {
+    fecha_inicio: string;
+    fecha_fin: string;
+    comparar_con?: 'anterior' | 'ano_anterior';
+    region?: string;
+  }): Promise<NetworkKPIsResponse> {
+    const response = await http.get('/bi/stores/network/kpis', { params });
+    return response.data;
+  },
+
+  async getStoreEvolution(params: {
+    ubicacion_id: string;
+    fecha_inicio: string;
+    fecha_fin: string;
+  }): Promise<StoreEvolutionResponse> {
+    const { ubicacion_id, ...queryParams } = params;
+    const response = await http.get(`/bi/stores/${ubicacion_id}/evolution`, {
+      params: queryParams,
+    });
+    return response.data;
+  },
+
+  async getHourlyHeatmap(params: {
+    ubicacion_id: string;
+    dias?: number;
+  }): Promise<HourlyHeatmapResponse> {
+    const { ubicacion_id, ...queryParams } = params;
+    const response = await http.get(`/bi/stores/${ubicacion_id}/hourly-heatmap`, {
+      params: queryParams,
+    });
+    return response.data;
+  },
+
+  async getStoreCategories(params: {
+    ubicacion_id: string;
+    fecha_inicio: string;
+    fecha_fin: string;
+    top?: number;
+  }): Promise<StoreCategoriesResponse> {
+    const { ubicacion_id, ...queryParams } = params;
+    const response = await http.get(`/bi/stores/${ubicacion_id}/categories`, {
+      params: queryParams,
+    });
+    return response.data;
+  },
+
+  async getTicketDistribution(params: {
+    ubicacion_id: string;
+    fecha_inicio: string;
+    fecha_fin: string;
+  }): Promise<TicketDistributionResponse> {
+    const { ubicacion_id, ...queryParams } = params;
+    const response = await http.get(`/bi/stores/${ubicacion_id}/ticket-distribution`, {
+      params: queryParams,
+    });
+    return response.data;
+  },
+
+  async compareMultiStores(params: {
+    store_ids: string[];
+    fecha_inicio: string;
+    fecha_fin: string;
+  }): Promise<CompareMultiStoresResponse> {
+    const response = await http.get('/bi/stores/compare-multi', {
+      params: {
+        store_ids: params.store_ids.join(','),
+        fecha_inicio: params.fecha_inicio,
+        fecha_fin: params.fecha_fin,
+      },
+    });
+    return response.data;
+  },
 };
 
 // Compare Stores Types
@@ -375,4 +498,191 @@ export interface ProductoParcial {
   num_tiendas_con: number;
   num_tiendas_sin: number;
   venta_promedio_donde_existe: number;
+}
+
+// ============ New BI Stores Types ============
+
+// Network KPIs Types
+export interface NetworkKPIsResponse {
+  periodo_actual: PeriodoMetrics;
+  periodo_comparacion: PeriodoMetrics;
+  variacion: VariacionMetrics;
+  metadata: {
+    fecha_inicio: string;
+    fecha_fin: string;
+    fecha_inicio_comp: string;
+    fecha_fin_comp: string;
+    comparar_con: 'anterior' | 'ano_anterior';
+    region: string | null;
+    dias_periodo: number;
+  };
+}
+
+export interface PeriodoMetrics {
+  ventas_total: number;
+  tickets: number;
+  ticket_promedio: number;
+  margen_pct: number;
+  items_totales: number;
+}
+
+export interface VariacionMetrics {
+  ventas_pct: number;
+  tickets_pct: number;
+  ticket_promedio_pct: number;
+  margen_pct: number;
+  items_totales_pct: number;
+}
+
+// Store Evolution Types
+export interface StoreEvolutionResponse {
+  tienda: {
+    ubicacion_id: string;
+    nombre: string;
+    region: string;
+  };
+  evolution: EvolutionDay[];
+  promedio_red: EvolutionDayAvg[];
+  totales: {
+    ventas: number;
+    tickets: number;
+    ticket_promedio: number;
+    margen_pct: number;
+  };
+  metadata: {
+    fecha_inicio: string;
+    fecha_fin: string;
+    dias_totales: number;
+  };
+}
+
+export interface EvolutionDay {
+  fecha: string;
+  ventas: number;
+  tickets: number;
+  ticket_promedio: number;
+  items_vendidos: number;
+  margen_pct: number;
+}
+
+export interface EvolutionDayAvg {
+  fecha: string;
+  ventas_promedio: number;
+}
+
+// Hourly Heatmap Types
+export interface HourlyHeatmapResponse {
+  tienda: {
+    ubicacion_id: string;
+    nombre: string;
+  };
+  heatmap: HeatmapCell[];
+  hora_pico: {
+    dia_semana: number;
+    dia_nombre: string;
+    hora: number;
+    ventas: number;
+  } | null;
+  metadata: {
+    dias_analizados: number;
+    total_ventas: number;
+  };
+}
+
+export interface HeatmapCell {
+  dia_semana: number;
+  dia_nombre: string;
+  hora: number;
+  ventas: number;
+  tickets: number;
+  pct_total: number;
+}
+
+// Store Categories Types
+export interface StoreCategoriesResponse {
+  tienda: {
+    ubicacion_id: string;
+    nombre: string;
+  };
+  categorias: StoreCategory[];
+  totales: {
+    ventas_total: number;
+    categorias_activas: number;
+  };
+  metadata: {
+    fecha_inicio: string;
+    fecha_fin: string;
+    top: number;
+  };
+}
+
+export interface StoreCategory {
+  categoria: string;
+  ventas_total: number;
+  pct_ventas: number;
+  margen_pct: number;
+  productos_vendidos: number;
+  tickets: number;
+}
+
+// Ticket Distribution Types
+export interface TicketDistributionResponse {
+  tienda: {
+    ubicacion_id: string;
+    nombre: string;
+  };
+  distribucion: TicketRange[];
+  totales: {
+    total_tickets: number;
+    total_ventas: number;
+    ticket_promedio_general: number;
+  };
+  metadata: {
+    fecha_inicio: string;
+    fecha_fin: string;
+  };
+}
+
+export interface TicketRange {
+  rango: string;
+  rango_min: number;
+  rango_max: number | null;
+  cantidad_tickets: number;
+  pct_tickets: number;
+  ventas_total: number;
+  pct_ventas: number;
+  ticket_promedio: number;
+}
+
+// Compare Multi Stores Types
+export interface CompareMultiStoresResponse {
+  stores: MultiStoreData[];
+  comparacion: {
+    mejor_ventas: string;
+    mejor_margen: string;
+    mejor_ticket_promedio: string;
+  };
+  metadata: {
+    fecha_inicio: string;
+    fecha_fin: string;
+    tiendas_comparadas: number;
+  };
+}
+
+export interface MultiStoreData {
+  ubicacion_id: string;
+  nombre: string;
+  region: string;
+  metrics: {
+    ventas_total: number;
+    tickets: number;
+    ticket_promedio: number;
+    items_totales: number;
+    items_por_ticket: number;
+    margen_pct: number;
+    top_categoria: {
+      nombre: string;
+      ventas: number;
+    } | null;
+  };
 }

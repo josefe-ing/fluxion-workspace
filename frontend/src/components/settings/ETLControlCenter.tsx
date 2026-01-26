@@ -70,6 +70,18 @@ export default function ETLControlCenter() {
               </div>
             </div>
           </Link>
+          <Link
+            to="/administrador/exclusiones-inter-cedi"
+            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-amber-400 hover:shadow-md transition-all group"
+          >
+            <div className="flex items-center space-x-3">
+              <span className="text-2xl">🚫</span>
+              <div>
+                <div className="font-medium text-gray-900 group-hover:text-amber-600">Exclusiones Inter-CEDI</div>
+                <div className="text-xs text-gray-500">Productos excluidos de pedidos entre CEDIs</div>
+              </div>
+            </div>
+          </Link>
         </div>
 
         {/* Panels Stack */}
