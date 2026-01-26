@@ -3935,14 +3935,14 @@ async def get_stock(
                 WHERE ubicacion_id = %s
             ),
             config_abc AS (
-                -- Configuración de multiplicadores por clase ABC
+                -- Configuración de días de cobertura por tienda (de config_parametros_abc_tienda)
                 SELECT
-                    clasificacion_abc,
-                    stock_min_multiplicador,
-                    stock_seg_multiplicador,
-                    stock_max_multiplicador,
-                    lead_time_dias
-                FROM config_inventario_tienda
+                    COALESCE(lead_time_override, 1.5) as lead_time,
+                    COALESCE(dias_cobertura_a, 7) as dias_cob_a,
+                    COALESCE(dias_cobertura_b, 14) as dias_cob_b,
+                    COALESCE(dias_cobertura_c, 21) as dias_cob_c,
+                    COALESCE(clase_d_dias_cobertura, 30) as dias_cob_d
+                FROM config_parametros_abc_tienda
                 WHERE tienda_id = %s AND activo = true
             ),
             stock_data AS (
@@ -3963,17 +3963,15 @@ async def get_stock(
                     -- Clase ABC y ranking
                     COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
                     abc.rank_cantidad as rank_ventas,
-                    -- Configuración ABC (usar defaults si no hay config específica)
-                    COALESCE(cfg.stock_min_multiplicador, 1.5) as stock_min_mult,
-                    COALESCE(cfg.stock_seg_multiplicador, 1.0) as stock_seg_mult,
-                    COALESCE(cfg.stock_max_multiplicador,
-                        CASE COALESCE(abc.clase_abc, 'C')
-                            WHEN 'A' THEN 5
-                            WHEN 'B' THEN 10
-                            ELSE 20
-                        END
-                    ) as stock_max_mult,
-                    COALESCE(cfg.lead_time_dias, 1.5) as lead_time,
+                    -- Configuración ABC desde config_parametros_abc_tienda
+                    COALESCE((SELECT lead_time FROM config_abc), 1.5) as lead_time,
+                    -- Días de cobertura MAX según clase ABC (esto es el stock_max_mult en días)
+                    CASE COALESCE(abc.clase_abc, 'C')
+                        WHEN 'A' THEN COALESCE((SELECT dias_cob_a FROM config_abc), 7)
+                        WHEN 'B' THEN COALESCE((SELECT dias_cob_b FROM config_abc), 14)
+                        WHEN 'C' THEN COALESCE((SELECT dias_cob_c FROM config_abc), 21)
+                        ELSE COALESCE((SELECT dias_cob_d FROM config_abc), 30)
+                    END as dias_cobertura_objetivo,
                     -- Ventas para clasificación producto
                     COALESCE(v30.total_30d, 0) as ventas_30d,
                     COALESCE(v14.total_14d, 0) as ventas_14d,
@@ -3988,7 +3986,6 @@ async def get_stock(
                 LEFT JOIN demanda_p75 dp ON dp.producto_id = ia.producto_id
                 LEFT JOIN abc_tienda abc ON abc.producto_id = ia.producto_id
                 LEFT JOIN ventas_60d v60 ON v60.producto_id = ia.producto_id
-                LEFT JOIN config_abc cfg ON cfg.clasificacion_abc = abc.clase_abc
                 LEFT JOIN ventas_30d v30 ON v30.producto_id = ia.producto_id
                 LEFT JOIN ventas_14d v14 ON v14.producto_id = ia.producto_id
                 LEFT JOIN stock_cedi sc ON sc.producto_id = ia.producto_id
@@ -3997,17 +3994,24 @@ async def get_stock(
             calculated AS (
                 SELECT
                     *,
-                    -- Calcular parámetros de inventario
+                    -- Parámetros de inventario en DÍAS (basados en config de tienda)
+                    -- SS = lead_time (stock mínimo para cubrir tiempo de entrega)
+                    lead_time as dias_ss,
+                    -- ROP = lead_time * 1.5 (punto de reorden con margen)
+                    lead_time * 1.5 as dias_rop,
+                    -- MAX = dias_cobertura_objetivo (de la configuración por ABC)
+                    dias_cobertura_objetivo as dias_max,
+                    -- Calcular parámetros de inventario en UNIDADES
                     CASE WHEN demanda_p75 > 0 THEN
-                        demanda_p75 * lead_time + (1.65 * sigma_demanda * SQRT(lead_time))
+                        demanda_p75 * lead_time
                     ELSE 0 END as stock_seguridad,
                     CASE WHEN demanda_p75 > 0 THEN
-                        demanda_p75 * lead_time * stock_min_mult + (1.65 * sigma_demanda * SQRT(lead_time))
+                        demanda_p75 * lead_time * 1.5
                     ELSE 0 END as punto_reorden,
                     CASE WHEN demanda_p75 > 0 THEN
-                        demanda_p75 * stock_max_mult
+                        demanda_p75 * dias_cobertura_objetivo
                     ELSE 0 END as stock_maximo,
-                    -- Días de cobertura
+                    -- Días de cobertura actual
                     CASE WHEN demanda_p75 > 0 THEN
                         stock_actual / demanda_p75
                     ELSE NULL END as dias_cobertura_actual,
@@ -4031,16 +4035,6 @@ async def get_stock(
             final AS (
                 SELECT
                     *,
-                    -- Parámetros de inventario en DÍAS (para visualización)
-                    CASE WHEN demanda_p75 > 0 THEN
-                        stock_seguridad / demanda_p75
-                    ELSE NULL END as dias_ss,
-                    CASE WHEN demanda_p75 > 0 THEN
-                        punto_reorden / demanda_p75
-                    ELSE NULL END as dias_rop,
-                    CASE WHEN demanda_p75 > 0 THEN
-                        stock_maximo / demanda_p75
-                    ELSE NULL END as dias_max,
                     -- Estado de criticidad basado en SS, ROP, MAX
                     CASE
                         WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
