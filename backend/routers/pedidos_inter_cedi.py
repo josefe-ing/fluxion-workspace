@@ -292,6 +292,20 @@ async def calcular_pedido_inter_cedi(
 
         logger.info(f"📊 Encontrados {len(rows)} productos con demanda regional")
 
+        # 3.0.1 Cargar productos excluidos para este CEDI destino
+        try:
+            cursor.execute("""
+                SELECT codigo_producto
+                FROM productos_excluidos_inter_cedi
+                WHERE cedi_destino_id = %s AND activo = TRUE
+            """, [request.cedi_destino_id])
+            codigos_excluidos_intercedi = {row[0] for row in cursor.fetchall()}
+            if codigos_excluidos_intercedi:
+                logger.info(f"🚫 {len(codigos_excluidos_intercedi)} productos excluidos de inter-CEDI")
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudieron cargar exclusiones inter-CEDI (tabla puede no existir): {e}")
+            codigos_excluidos_intercedi = set()
+
         # 3.1 Obtener desglose de P75 por tienda para cada producto
         query_p75_tienda = """
             WITH ventas_30d AS (
@@ -393,6 +407,11 @@ async def calcular_pedido_inter_cedi(
 
             producto_id = row_dict['producto_id']
             codigo = row_dict['codigo']
+
+            # Saltar productos excluidos
+            if codigo in codigos_excluidos_intercedi:
+                continue
+
             cedi_origen_id = row_dict['cedi_origen_id'] or 'cedi_seco'
             unidades_por_bulto = Decimal(str(row_dict['unidades_por_bulto'] or 1))
             if unidades_por_bulto <= 0:
