@@ -9,6 +9,8 @@ interface Usuario {
   activo: boolean;
   created_at: string | null;
   ultimo_login: string | null;
+  rol_id: string | null;
+  rol_nombre: string | null;
 }
 
 interface NuevoUsuario {
@@ -16,21 +18,48 @@ interface NuevoUsuario {
   password: string;
   nombre_completo: string;
   email: string;
+  rol_id: string;
+  tiendas_asignadas: string[];
 }
+
+interface Rol {
+  id: string;
+  nombre: string;
+  descripcion: string;
+}
+
+interface Ubicacion {
+  ubicacion_id: string;
+  nombre: string;
+}
+
+const ROLES: Rol[] = [
+  { id: 'visualizador', nombre: 'Visualizador', descripcion: 'Solo lectura de dashboards' },
+  { id: 'gerente_tienda', nombre: 'Gerente de Tienda', descripcion: 'Gestión de tiendas asignadas' },
+  { id: 'gestor_abastecimiento', nombre: 'Gestor de Abastecimiento', descripcion: 'Creación de pedidos para todas las tiendas' },
+  { id: 'gerente_general', nombre: 'Gerente General', descripcion: 'Visualización y pedidos de todas las tiendas' },
+  { id: 'super_admin', nombre: 'Super Admin', descripcion: 'Acceso completo al sistema' }
+];
 
 export default function UsuariosAdmin() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showEditRoleModal, setShowEditRoleModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<Usuario | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [editRolId, setEditRolId] = useState('');
+  const [editTiendasAsignadas, setEditTiendasAsignadas] = useState<string[]>([]);
   const [nuevoUsuario, setNuevoUsuario] = useState<NuevoUsuario>({
     username: '',
     password: '',
     nombre_completo: '',
-    email: ''
+    email: '',
+    rol_id: 'gestor_abastecimiento',
+    tiendas_asignadas: []
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +67,7 @@ export default function UsuariosAdmin() {
 
   useEffect(() => {
     loadUsuarios();
+    loadUbicaciones();
   }, []);
 
   const loadUsuarios = async () => {
@@ -53,6 +83,15 @@ export default function UsuariosAdmin() {
     }
   };
 
+  const loadUbicaciones = async () => {
+    try {
+      const response = await http.get('/ubicaciones');
+      setUbicaciones(response.data);
+    } catch (error) {
+      console.error('Error cargando ubicaciones:', error);
+    }
+  };
+
   const handleCreateUser = async () => {
     try {
       setSaving(true);
@@ -60,7 +99,14 @@ export default function UsuariosAdmin() {
       await http.post('/api/auth/register', nuevoUsuario);
       setSuccess(`Usuario "${nuevoUsuario.username}" creado exitosamente`);
       setShowCreateModal(false);
-      setNuevoUsuario({ username: '', password: '', nombre_completo: '', email: '' });
+      setNuevoUsuario({
+        username: '',
+        password: '',
+        nombre_completo: '',
+        email: '',
+        rol_id: 'gestor_abastecimiento',
+        tiendas_asignadas: []
+      });
       await loadUsuarios();
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error creando usuario');
@@ -88,6 +134,28 @@ export default function UsuariosAdmin() {
     }
   };
 
+  const handleUpdateRole = async () => {
+    if (!selectedUser) return;
+    try {
+      setSaving(true);
+      setError(null);
+      await http.put(`/api/auth/users/${selectedUser.id}/role`, {
+        rol_id: editRolId,
+        tiendas_asignadas: editRolId === 'gerente_tienda' ? editTiendasAsignadas : []
+      });
+      setSuccess(`Rol de "${selectedUser.username}" actualizado`);
+      setShowEditRoleModal(false);
+      setSelectedUser(null);
+      setEditRolId('');
+      setEditTiendasAsignadas([]);
+      await loadUsuarios();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Error actualizando rol');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDeleteUser = async () => {
     if (!selectedUser) return;
     try {
@@ -105,6 +173,24 @@ export default function UsuariosAdmin() {
     }
   };
 
+  const toggleTienda = (ubicacionId: string, isNewUser: boolean = false) => {
+    if (isNewUser) {
+      const current = nuevoUsuario.tiendas_asignadas;
+      setNuevoUsuario({
+        ...nuevoUsuario,
+        tiendas_asignadas: current.includes(ubicacionId)
+          ? current.filter(id => id !== ubicacionId)
+          : [...current, ubicacionId]
+      });
+    } else {
+      setEditTiendasAsignadas(prev =>
+        prev.includes(ubicacionId)
+          ? prev.filter(id => id !== ubicacionId)
+          : [...prev, ubicacionId]
+      );
+    }
+  };
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString('es-VE', {
@@ -114,6 +200,17 @@ export default function UsuariosAdmin() {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const getRolBadgeColor = (rolId: string | null) => {
+    switch (rolId) {
+      case 'super_admin': return 'bg-purple-100 text-purple-800';
+      case 'gerente_general': return 'bg-blue-100 text-blue-800';
+      case 'gestor_abastecimiento': return 'bg-green-100 text-green-800';
+      case 'gerente_tienda': return 'bg-yellow-100 text-yellow-800';
+      case 'visualizador': return 'bg-gray-100 text-gray-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
   };
 
   // Auto-hide messages after 3 seconds
@@ -182,6 +279,9 @@ export default function UsuariosAdmin() {
                 Email
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Rol
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Estado
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -215,6 +315,11 @@ export default function UsuariosAdmin() {
                   {usuario.email || '-'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${getRolBadgeColor(usuario.rol_id)}`}>
+                    {usuario.rol_nombre || 'Sin rol'}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`px-2 py-1 text-xs font-medium rounded-full ${
                     usuario.activo
                       ? 'bg-green-100 text-green-800'
@@ -230,6 +335,20 @@ export default function UsuariosAdmin() {
                   {formatDate(usuario.ultimo_login)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <button
+                    onClick={() => {
+                      setSelectedUser(usuario);
+                      setEditRolId(usuario.rol_id || 'visualizador');
+                      setEditTiendasAsignadas([]);
+                      setShowEditRoleModal(true);
+                    }}
+                    className="text-indigo-600 hover:text-indigo-900 mr-4"
+                    title="Editar rol"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                  </button>
                   <button
                     onClick={() => {
                       setSelectedUser(usuario);
@@ -266,7 +385,7 @@ export default function UsuariosAdmin() {
       {/* Create User Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Crear Nuevo Usuario</h2>
             <div className="space-y-4">
               <div>
@@ -309,12 +428,60 @@ export default function UsuariosAdmin() {
                   placeholder="usuario@empresa.com"
                 />
               </div>
+
+              {/* Rol Selector */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rol</label>
+                <select
+                  value={nuevoUsuario.rol_id}
+                  onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, rol_id: e.target.value, tiendas_asignadas: [] })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {ROLES.map(rol => (
+                    <option key={rol.id} value={rol.id}>
+                      {rol.nombre} - {rol.descripcion}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Tiendas Asignadas - Solo visible para Gerente de Tienda */}
+              {nuevoUsuario.rol_id === 'gerente_tienda' && (
+                <div className="border-t pt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Tiendas Asignadas (Requerido para Gerente de Tienda)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-3">
+                    {ubicaciones.map(ubicacion => (
+                      <label key={ubicacion.ubicacion_id} className="flex items-center space-x-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={nuevoUsuario.tiendas_asignadas.includes(ubicacion.ubicacion_id)}
+                          onChange={() => toggleTienda(ubicacion.ubicacion_id, true)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-gray-700">{ubicacion.nombre}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {nuevoUsuario.tiendas_asignadas.length === 0 && (
+                    <p className="text-sm text-red-600 mt-1">Debes asignar al menos una tienda</p>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => {
                   setShowCreateModal(false);
-                  setNuevoUsuario({ username: '', password: '', nombre_completo: '', email: '' });
+                  setNuevoUsuario({
+                    username: '',
+                    password: '',
+                    nombre_completo: '',
+                    email: '',
+                    rol_id: 'gestor_abastecimiento',
+                    tiendas_asignadas: []
+                  });
                 }}
                 className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
               >
@@ -322,10 +489,96 @@ export default function UsuariosAdmin() {
               </button>
               <button
                 onClick={handleCreateUser}
-                disabled={saving || !nuevoUsuario.username || !nuevoUsuario.password}
+                disabled={
+                  saving ||
+                  !nuevoUsuario.username ||
+                  !nuevoUsuario.password ||
+                  (nuevoUsuario.rol_id === 'gerente_tienda' && nuevoUsuario.tiendas_asignadas.length === 0)
+                }
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? 'Creando...' : 'Crear Usuario'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Role Modal */}
+      {showEditRoleModal && selectedUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Editar Rol de Usuario</h2>
+            <p className="text-gray-600 mb-4">
+              Modificar rol de <strong>{selectedUser.username}</strong>
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rol</label>
+                <select
+                  value={editRolId}
+                  onChange={(e) => {
+                    setEditRolId(e.target.value);
+                    if (e.target.value !== 'gerente_tienda') {
+                      setEditTiendasAsignadas([]);
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {ROLES.map(rol => (
+                    <option key={rol.id} value={rol.id}>
+                      {rol.nombre} - {rol.descripcion}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Tiendas Asignadas - Solo visible para Gerente de Tienda */}
+              {editRolId === 'gerente_tienda' && (
+                <div className="border-t pt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Tiendas Asignadas (Requerido para Gerente de Tienda)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-3">
+                    {ubicaciones.map(ubicacion => (
+                      <label key={ubicacion.ubicacion_id} className="flex items-center space-x-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={editTiendasAsignadas.includes(ubicacion.ubicacion_id)}
+                          onChange={() => toggleTienda(ubicacion.ubicacion_id, false)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-gray-700">{ubicacion.nombre}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {editTiendasAsignadas.length === 0 && (
+                    <p className="text-sm text-red-600 mt-1">Debes asignar al menos una tienda</p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowEditRoleModal(false);
+                  setSelectedUser(null);
+                  setEditRolId('');
+                  setEditTiendasAsignadas([]);
+                }}
+                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleUpdateRole}
+                disabled={
+                  saving ||
+                  (editRolId === 'gerente_tienda' && editTiendasAsignadas.length === 0)
+                }
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? 'Guardando...' : 'Actualizar Rol'}
               </button>
             </div>
           </div>

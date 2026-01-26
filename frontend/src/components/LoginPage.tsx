@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 interface LoginPageProps {
-  onLoginSuccess: (token: string, username: string) => void;
+  onLoginSuccess: (token: string, username: string, nombreCompleto?: string, rolId?: string, tiendasAsignadas?: string[]) => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
@@ -44,15 +44,27 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
       const data = await response.json();
 
-      // Guardar token en localStorage
+      // Guardar token y datos del usuario en localStorage
       localStorage.setItem('auth_token', data.access_token);
       localStorage.setItem('username', data.username);
       if (data.nombre_completo) {
         localStorage.setItem('nombre_completo', data.nombre_completo);
       }
+      if (data.rol_id) {
+        localStorage.setItem('rol_id', data.rol_id);
+      }
+      if (data.tiendas_asignadas) {
+        localStorage.setItem('tiendas_asignadas', JSON.stringify(data.tiendas_asignadas));
+      }
 
-      // Notificar éxito
-      onLoginSuccess(data.access_token, data.username);
+      // Notificar éxito con todos los datos
+      onLoginSuccess(
+        data.access_token,
+        data.username,
+        data.nombre_completo,
+        data.rol_id,
+        data.tiendas_asignadas
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al iniciar sesión');
     } finally {

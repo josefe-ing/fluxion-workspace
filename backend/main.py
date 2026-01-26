@@ -42,13 +42,18 @@ from auth import (
     LoginRequest,
     TokenResponse,
     Usuario,
+    UsuarioConRol,
     CreateUserRequest,
     authenticate_user,
     create_access_token,
     create_user,
     verify_token,
     ACCESS_TOKEN_EXPIRE_MINUTES,
-    auto_bootstrap_admin
+    auto_bootstrap_admin,
+    require_super_admin,
+    require_gerente_general_or_above,
+    require_gerente_or_above,
+    get_current_user
 )
 
 # Importar ETL Scheduler
@@ -65,7 +70,9 @@ from routers.config_inventario import router as config_inventario_router
 from routers.pedidos_inter_cedi import router as pedidos_inter_cedi_router
 from routers.emergencias import router as emergencias_router
 from routers.productos_excluidos import router as productos_excluidos_router
+from routers.productos_excluidos_inter_cedi import router as productos_excluidos_inter_cedi_router
 from routers.business_intelligence import router as business_intelligence_router
+from routers.bi_stores import router as bi_stores_router
 from routers.ubicaciones import router as ubicaciones_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
@@ -141,7 +148,9 @@ app.include_router(config_inventario_router)
 app.include_router(pedidos_inter_cedi_router)
 app.include_router(emergencias_router)
 app.include_router(productos_excluidos_router)
+app.include_router(productos_excluidos_inter_cedi_router)
 app.include_router(business_intelligence_router)
+app.include_router(bi_stores_router)
 app.include_router(ubicaciones_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
@@ -945,11 +954,13 @@ async def login(request: LoginRequest):
         access_token=access_token,
         token_type="bearer",
         username=user.username,
-        nombre_completo=user.nombre_completo
+        nombre_completo=user.nombre_completo,
+        rol_id=user.rol_id,
+        tiendas_asignadas=user.tiendas_asignadas
     )
 
-@app.get("/api/auth/me", response_model=Usuario, tags=["Autenticación"])
-async def get_current_user(current_user: Usuario = Depends(verify_token)):
+@app.get("/api/auth/me", response_model=UsuarioConRol, tags=["Autenticación"])
+async def get_current_user_info(current_user: UsuarioConRol = Depends(verify_token)):
     """
     Obtiene información del usuario autenticado actual
     Requiere token JWT válido
@@ -965,19 +976,21 @@ async def logout():
     return {"message": "Logout exitoso"}
 
 @app.post("/api/auth/register", response_model=Usuario, tags=["Autenticación"])
-async def register(request: CreateUserRequest, current_user: Usuario = Depends(verify_token)):
+async def register(request: CreateUserRequest, current_user: UsuarioConRol = Depends(require_super_admin)):
     """
-    Crea un nuevo usuario (requiere autenticación)
-    Solo usuarios autenticados pueden crear nuevos usuarios
+    Crea un nuevo usuario - SOLO SUPER ADMIN
+    Solo super admin puede crear nuevos usuarios
     """
     new_user = create_user(
         username=request.username,
         password=request.password,
         nombre_completo=request.nombre_completo,
-        email=request.email
+        email=request.email,
+        rol_id=request.rol_id,
+        tiendas_asignadas=request.tiendas_asignadas
     )
 
-    logger.info(f"Usuario '{new_user.username}' creado por '{current_user.username}'")
+    logger.info(f"Usuario '{new_user.username}' creado por '{current_user.username}' con rol '{request.rol_id}'")
     return new_user
 
 
@@ -994,10 +1007,17 @@ class UsuarioAdmin(BaseModel):
     activo: bool
     created_at: Optional[datetime] = None
     ultimo_login: Optional[datetime] = None
+    rol_id: Optional[str] = None
+    rol_nombre: Optional[str] = None
 
 class ChangePasswordRequest(BaseModel):
     """Request para cambiar contraseña"""
     new_password: str
+
+class UpdateRoleRequest(BaseModel):
+    """Request para actualizar rol de usuario"""
+    rol_id: str
+    tiendas_asignadas: Optional[List[str]] = []
 
 class UpdateUserRequest(BaseModel):
     """Request para actualizar usuario"""
@@ -1006,15 +1026,17 @@ class UpdateUserRequest(BaseModel):
     activo: Optional[bool] = None
 
 @app.get("/api/auth/users", response_model=List[UsuarioAdmin], tags=["Administración Usuarios"])
-async def list_users(current_user: Usuario = Depends(verify_token)):
-    """Lista todos los usuarios del sistema"""
+async def list_users(current_user: UsuarioConRol = Depends(require_super_admin)):
+    """Lista todos los usuarios del sistema - SOLO SUPER ADMIN"""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, username, nombre_completo, email, activo, created_at, ultimo_login
-                FROM usuarios
-                ORDER BY created_at DESC
+                SELECT u.id, u.username, u.nombre_completo, u.email, u.activo, u.created_at, u.ultimo_login,
+                       u.rol_id, r.nombre as rol_nombre
+                FROM usuarios u
+                LEFT JOIN roles r ON u.rol_id = r.id
+                ORDER BY u.created_at DESC
             """)
             rows = cursor.fetchall()
             cursor.close()
@@ -1027,7 +1049,9 @@ async def list_users(current_user: Usuario = Depends(verify_token)):
                     email=row[3],
                     activo=row[4],
                     created_at=row[5],
-                    ultimo_login=row[6]
+                    ultimo_login=row[6],
+                    rol_id=row[7],
+                    rol_nombre=row[8]
                 )
                 for row in rows
             ]
@@ -1036,8 +1060,8 @@ async def list_users(current_user: Usuario = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/auth/users/{user_id}", response_model=UsuarioAdmin, tags=["Administración Usuarios"])
-async def update_user(user_id: str, request: UpdateUserRequest, current_user: Usuario = Depends(verify_token)):
-    """Actualiza datos de un usuario"""
+async def update_user(user_id: str, request: UpdateUserRequest, current_user: UsuarioConRol = Depends(require_super_admin)):
+    """Actualiza datos de un usuario - SOLO SUPER ADMIN"""
     try:
         with get_db_connection_write() as conn:
             cursor = conn.cursor()
@@ -1096,8 +1120,8 @@ async def update_user(user_id: str, request: UpdateUserRequest, current_user: Us
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/auth/users/{user_id}/password", tags=["Administración Usuarios"])
-async def change_user_password(user_id: str, request: ChangePasswordRequest, current_user: Usuario = Depends(verify_token)):
-    """Cambia la contraseña de un usuario"""
+async def change_user_password(user_id: str, request: ChangePasswordRequest, current_user: UsuarioConRol = Depends(require_super_admin)):
+    """Cambia la contraseña de un usuario - SOLO SUPER ADMIN"""
     from auth import get_password_hash
 
     try:
@@ -1132,9 +1156,55 @@ async def change_user_password(user_id: str, request: ChangePasswordRequest, cur
         logger.error(f"Error cambiando contraseña: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.put("/api/auth/users/{user_id}/role", tags=["Administración Usuarios"])
+async def update_user_role(user_id: str, request: UpdateRoleRequest, current_user: UsuarioConRol = Depends(require_super_admin)):
+    """Actualiza el rol y tiendas asignadas de un usuario - SOLO SUPER ADMIN"""
+    try:
+        with get_db_connection_write() as conn:
+            cursor = conn.cursor()
+
+            # Verificar que el usuario existe
+            cursor.execute("SELECT username FROM usuarios WHERE id = %s", (user_id,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.close()
+                raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+            target_username = row[0]
+
+            # Actualizar rol
+            cursor.execute("""
+                UPDATE usuarios
+                SET rol_id = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (request.rol_id, user_id))
+
+            # Limpiar tiendas asignadas existentes
+            cursor.execute("DELETE FROM usuarios_tiendas WHERE usuario_id = %s", (user_id,))
+
+            # Si es gerente_tienda, insertar nuevas tiendas asignadas
+            if request.rol_id == 'gerente_tienda' and request.tiendas_asignadas:
+                for ubicacion_id in request.tiendas_asignadas:
+                    cursor.execute("""
+                        INSERT INTO usuarios_tiendas (usuario_id, ubicacion_id, activo, asignado_por)
+                        VALUES (%s, %s, %s, %s)
+                    """, (user_id, ubicacion_id, True, current_user.id))
+
+            conn.commit()
+            cursor.close()
+
+            logger.info(f"Rol de '{target_username}' actualizado a '{request.rol_id}' por '{current_user.username}'")
+
+            return {"message": f"Rol de '{target_username}' actualizado exitosamente"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error actualizando rol: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/api/auth/users/{user_id}", tags=["Administración Usuarios"])
-async def delete_user(user_id: str, current_user: Usuario = Depends(verify_token)):
-    """Elimina un usuario (soft delete - lo desactiva)"""
+async def delete_user(user_id: str, current_user: UsuarioConRol = Depends(require_super_admin)):
+    """Elimina un usuario (soft delete - lo desactiva) - SOLO SUPER ADMIN"""
     try:
         # No permitir auto-eliminación
         if user_id == current_user.id:

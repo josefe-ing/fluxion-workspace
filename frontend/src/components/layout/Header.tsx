@@ -3,15 +3,39 @@ import { useAuth } from '../../contexts/AuthContext';
 
 export default function Header() {
   const location = useLocation();
-  const { logout } = useAuth();
+  const { logout, hasRole, nombreCompleto, username } = useAuth();
 
   const navItems = [
-    { path: '/pedidos-sugeridos', label: 'Pedidos' },
-    { path: '/inventarios', label: 'Inventarios' },
-    { path: '/ventas', label: 'Ventas' },
-    { path: '/productos', label: 'Productos' },
-    { path: '/emergencias', label: 'Emergencias' },
-    { path: '/bi', label: 'BI' },
+    {
+      path: '/pedidos-sugeridos',
+      label: 'Pedidos',
+      roles: ['gerente_tienda', 'gestor_abastecimiento', 'gerente_general', 'super_admin']
+    },
+    {
+      path: '/inventarios',
+      label: 'Inventarios',
+      roles: ['visualizador', 'gerente_tienda', 'gestor_abastecimiento', 'gerente_general', 'super_admin']
+    },
+    {
+      path: '/ventas',
+      label: 'Ventas',
+      roles: ['visualizador', 'gerente_tienda', 'gestor_abastecimiento', 'gerente_general', 'super_admin']
+    },
+    {
+      path: '/productos',
+      label: 'Productos',
+      roles: ['visualizador', 'gerente_tienda', 'gestor_abastecimiento', 'gerente_general', 'super_admin']
+    },
+    {
+      path: '/emergencias',
+      label: 'Emergencias',
+      roles: ['gerente_tienda', 'gestor_abastecimiento', 'gerente_general', 'super_admin']
+    },
+    {
+      path: '/bi',
+      label: 'BI',
+      roles: ['super_admin'] // ⚠️ CRÍTICO: Solo super_admin
+    },
   ];
 
   const isActive = (path: string) => {
@@ -51,29 +75,39 @@ export default function Header() {
 
           {/* Navigation */}
           <nav className="flex space-x-8">
-            {navItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`px-3 py-2 text-sm font-medium transition-colors ${
-                  isActive(item.path)
-                    ? 'text-gray-900 border-b-2 border-gray-900'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
+            {navItems
+              .filter(item => hasRole(item.roles))
+              .map((item) => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`px-3 py-2 text-sm font-medium transition-colors ${
+                    isActive(item.path)
+                      ? 'text-gray-900 border-b-2 border-gray-900'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
           </nav>
 
           {/* User menu */}
           <div className="flex items-center space-x-4">
-            <Link
-              to="/administrador"
-              className="text-sm text-gray-500 hover:text-gray-700 font-medium transition-colors"
-            >
-              Administrador
-            </Link>
+            <span className="text-sm text-gray-600 font-medium">
+              {nombreCompleto || username}
+            </span>
+
+            {/* Administrador - Solo visible para super_admin ⚠️ CRÍTICO */}
+            {hasRole(['super_admin']) && (
+              <Link
+                to="/administrador"
+                className="text-sm text-gray-500 hover:text-gray-700 font-medium transition-colors"
+              >
+                Administrador
+              </Link>
+            )}
+
             <button
               onClick={logout}
               className="text-sm text-gray-500 hover:text-gray-700 font-medium transition-colors"

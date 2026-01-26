@@ -21,6 +21,7 @@ import ETLControlCenter from './components/settings/ETLControlCenter';
 import ConfiguracionABC from './components/admin/ConfiguracionABC';
 import GeneradoresTrafico from './components/admin/GeneradoresTrafico';
 import UsuariosAdmin from './components/admin/UsuariosAdmin';
+import ExclusionesInterCedi from './components/admin/ExclusionesInterCedi';
 // DEPRECADOS: Comentados para futura eliminación
 // import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
 // import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
@@ -33,6 +34,52 @@ import AnalisisMaestro from './components/productos/AnalisisMaestro';
 import ProductosLayout from './components/productos/ProductosLayout';
 import EmergenciasDashboard from './components/emergencias/EmergenciasDashboard';
 import BusinessIntelligence from './components/bi/BusinessIntelligence';
+
+// Role-Based Route Protection Component
+function RoleProtectedRoute({
+  children,
+  allowedRoles
+}: {
+  children: React.ReactNode;
+  allowedRoles: string[];
+}) {
+  const { hasRole } = useAuth();
+
+  if (!hasRole(allowedRoles)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="max-w-md w-full bg-white shadow-lg rounded-lg p-8 text-center">
+          <div className="mb-4">
+            <svg
+              className="mx-auto h-12 w-12 text-red-500"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">
+            Acceso Denegado
+          </h2>
+          <p className="text-gray-600 mb-6">
+            No tienes permisos para acceder a esta sección del sistema.
+          </p>
+          <p className="text-sm text-gray-500">
+            Si crees que deberías tener acceso, contacta al administrador.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
 
 // Protected Routes Component
 function ProtectedRoutes() {
@@ -52,23 +99,111 @@ function ProtectedRoutes() {
         <Route path="dashboard/:ubicacionId" element={<InventoryDashboard />} />
         <Route path="ventas" element={<SalesSummary />} />
         <Route path="ventas/:ubicacionId" element={<SalesDashboard />} />
-        {/* Pedidos Sugeridos */}
-        <Route path="pedidos-sugeridos" element={<SuggestedOrder />} />
-        <Route path="pedidos-sugeridos/nuevo" element={<OrderWizard />} />
-        <Route path="pedidos-sugeridos/nuevo-multi" element={<OrderWizardMultiTienda />} />
-        <Route path="pedidos-sugeridos/:pedidoId/aprobar" element={<PedidoApprovalView />} />
+        {/* Pedidos Sugeridos - Protegido para Gerentes y superiores */}
+        <Route
+          path="pedidos-sugeridos"
+          element={
+            <RoleProtectedRoute allowedRoles={['gerente_tienda', 'gestor_abastecimiento', 'gerente_general', 'super_admin']}>
+              <SuggestedOrder />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="pedidos-sugeridos/nuevo"
+          element={
+            <RoleProtectedRoute allowedRoles={['gerente_tienda', 'gestor_abastecimiento', 'gerente_general', 'super_admin']}>
+              <OrderWizard />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="pedidos-sugeridos/nuevo-multi"
+          element={
+            <RoleProtectedRoute allowedRoles={['gestor_abastecimiento', 'gerente_general', 'super_admin']}>
+              <OrderWizardMultiTienda />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="pedidos-sugeridos/:pedidoId/aprobar"
+          element={
+            <RoleProtectedRoute allowedRoles={['gerente_tienda', 'gestor_abastecimiento', 'gerente_general', 'super_admin']}>
+              <PedidoApprovalView />
+            </RoleProtectedRoute>
+          }
+        />
         {/* Pedidos Inter-CEDI */}
         <Route path="pedidos-inter-cedi/nuevo" element={<PedidoInterCediWizard />} />
         {/* Emergencias de Inventario */}
         <Route path="emergencias" element={<EmergenciasDashboard />} />
-        {/* Business Intelligence */}
-        <Route path="bi" element={<BusinessIntelligence />} />
-        <Route path="bi/:tab" element={<BusinessIntelligence />} />
-        <Route path="administrador" element={<ETLControlCenter />} />
-        <Route path="administrador/ventas/cobertura" element={<SalesCoverageCalendar />} />
-        <Route path="administrador/parametros-abc" element={<ConfiguracionABC />} />
-        <Route path="administrador/generadores-trafico" element={<GeneradoresTrafico />} />
-        <Route path="administrador/usuarios" element={<UsuariosAdmin />} />
+
+        {/* Business Intelligence - SOLO SUPER ADMIN ⚠️ CRÍTICO */}
+        <Route
+          path="bi"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <BusinessIntelligence />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="bi/:tab"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <BusinessIntelligence />
+            </RoleProtectedRoute>
+          }
+        />
+
+        {/* Administrador - SOLO SUPER ADMIN ⚠️ CRÍTICO */}
+        <Route
+          path="administrador"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <ETLControlCenter />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="administrador/ventas/cobertura"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <SalesCoverageCalendar />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="administrador/parametros-abc"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <ConfiguracionABC />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="administrador/generadores-trafico"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <GeneradoresTrafico />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="administrador/usuarios"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <UsuariosAdmin />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="administrador/exclusiones-inter-cedi"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <ExclusionesInterCedi />
+            </RoleProtectedRoute>
+          }
+        />
         {/* DEPRECADOS: Redirigir rutas antiguas al nuevo panel */}
         <Route path="administrador/config-inventario" element={<Navigate to="/administrador/parametros-abc" replace />} />
         <Route path="administrador/conjuntos" element={<Navigate to="/administrador/parametros-abc" replace />} />

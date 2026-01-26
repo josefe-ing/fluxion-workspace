@@ -9,6 +9,7 @@ from typing import Optional, List, Any
 import logging
 
 from db_manager import get_db_connection
+from auth import require_super_admin, UsuarioConRol
 from services.bi_calculations import (
     clasificar_producto_matriz,
     calcular_reduccion_stock,
@@ -32,7 +33,10 @@ def get_db():
 # =============================================================================
 
 @router.get("/impact/summary")
-async def get_impact_summary(conn: Any = Depends(get_db)):
+async def get_impact_summary(
+    current_user: UsuarioConRol = Depends(require_super_admin),
+    conn: Any = Depends(get_db)
+):
     """
     Resumen ejecutivo del impacto de Fluxion.
 
@@ -158,7 +162,10 @@ async def get_impact_summary(conn: Any = Depends(get_db)):
 
 
 @router.get("/impact/by-store")
-async def get_impact_by_store(conn: Any = Depends(get_db)):
+async def get_impact_by_store(
+    current_user: UsuarioConRol = Depends(require_super_admin),
+    conn: Any = Depends(get_db)
+):
     """
     Ranking de tiendas por reducción de inventario.
     """
@@ -224,6 +231,7 @@ async def get_impact_by_store(conn: Any = Depends(get_db)):
 @router.get("/store/{ubicacion_id}/kpis")
 async def get_store_kpis(
     ubicacion_id: str,
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -338,11 +346,90 @@ async def get_store_kpis(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/store/{ubicacion_id}/abc-analysis")
+async def get_store_abc_analysis(
+    ubicacion_id: str,
+    current_user: UsuarioConRol = Depends(require_super_admin),
+    conn: Any = Depends(get_db)
+):
+    """
+    Análisis de clasificación ABC para una tienda específica.
+
+    Retorna:
+    - Distribución de ventas por clase ABC (% ventas)
+    - Distribución de productos por clase ABC (% cantidad)
+    - Métricas agregadas por cada clase (ventas, margen, etc.)
+    """
+    try:
+        cursor = conn.cursor()
+
+        # Obtener distribución ABC desde productos_abc_tienda
+        cursor.execute("""
+            WITH abc_stats AS (
+                SELECT
+                    COALESCE(clase_abc, 'D') as clase,
+                    COUNT(*) as cantidad_productos,
+                    SUM(venta_30d) as ventas_total,
+                    SUM(tickets_30d) as tickets_total
+                FROM productos_abc_tienda
+                WHERE ubicacion_id = %s
+                    AND venta_30d > 0
+                GROUP BY clase_abc
+            ),
+            totales AS (
+                SELECT
+                    SUM(cantidad_productos) as total_productos,
+                    SUM(ventas_total) as total_ventas
+                FROM abc_stats
+            )
+            SELECT
+                abc.clase,
+                abc.cantidad_productos,
+                abc.ventas_total,
+                abc.tickets_total,
+                ROUND((abc.cantidad_productos::decimal / NULLIF(t.total_productos, 0)) * 100, 2) as pct_productos,
+                ROUND((abc.ventas_total / NULLIF(t.total_ventas, 0)) * 100, 2) as pct_ventas
+            FROM abc_stats abc
+            CROSS JOIN totales t
+            ORDER BY
+                CASE abc.clase
+                    WHEN 'A' THEN 1
+                    WHEN 'B' THEN 2
+                    WHEN 'C' THEN 3
+                    WHEN 'D' THEN 4
+                    ELSE 5
+                END
+        """, (ubicacion_id,))
+
+        clasificaciones = []
+        for row in cursor.fetchall():
+            clasificaciones.append({
+                "clase": row[0],
+                "cantidad_productos": int(row[1]) if row[1] else 0,
+                "ventas_total": float(row[2]) if row[2] else 0,
+                "tickets_total": int(row[3]) if row[3] else 0,
+                "pct_productos": float(row[4]) if row[4] else 0,
+                "pct_ventas": float(row[5]) if row[5] else 0
+            })
+
+        cursor.close()
+
+        return {
+            "ubicacion_id": ubicacion_id,
+            "clasificaciones": clasificaciones
+        }
+
+    except Exception as e:
+        logger.error(f"Error en get_store_abc_analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/store/{ubicacion_id}/top-bottom-products")
 async def get_store_top_bottom_products(
     ubicacion_id: str,
     metric: str = Query("gmroi", regex="^(gmroi|ventas|rotacion)$"),
     limit: int = Query(10, ge=1, le=50),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -436,6 +523,7 @@ async def get_store_top_bottom_products(
 @router.get("/stores/ranking")
 async def get_stores_ranking(
     metric: str = Query("gmroi", regex="^(gmroi|ventas|rotacion|stock)$"),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -517,11 +605,157 @@ async def get_stores_ranking(
 # ANÁLISIS POR PRODUCTO
 # =============================================================================
 
+@router.get("/products/abc-consolidated")
+async def get_products_abc_consolidated(
+    current_user: UsuarioConRol = Depends(require_super_admin),
+    conn: Any = Depends(get_db)
+):
+    """
+    Análisis ABC consolidado de toda la red.
+
+    Retorna:
+    - Distribución de ventas por clasificación ABC (% ventas, % productos)
+    - Métricas agregadas por clasificación (ventas, margen, velocidad)
+    - Análisis por categoría y clasificación combinados
+    """
+    try:
+        cursor = conn.cursor()
+
+        # Análisis ABC consolidado
+        cursor.execute("""
+            WITH abc_stats AS (
+                SELECT
+                    COALESCE(abc.clase_abc, 'D') as clase,
+                    COUNT(DISTINCT p.id) as cantidad_productos,
+                    SUM(v.venta_total) as ventas_total,
+                    SUM(v.utilidad_bruta) as utilidad_total,
+                    SUM(v.cantidad_vendida) as unidades_vendidas,
+                    COUNT(DISTINCT v.numero_factura) as tickets_total
+                FROM ventas v
+                JOIN productos p ON v.producto_id = p.id
+                LEFT JOIN productos_abc_tienda abc ON v.producto_id = abc.producto_id
+                    AND v.ubicacion_id = abc.ubicacion_id
+                WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY clase_abc
+            ),
+            totales AS (
+                SELECT
+                    SUM(cantidad_productos) as total_productos,
+                    SUM(ventas_total) as total_ventas,
+                    SUM(unidades_vendidas) as total_unidades,
+                    SUM(tickets_total) as total_tickets
+                FROM abc_stats
+            )
+            SELECT
+                abc.clase,
+                abc.cantidad_productos,
+                abc.ventas_total,
+                abc.utilidad_total,
+                abc.unidades_vendidas,
+                abc.tickets_total,
+                ROUND((abc.cantidad_productos::decimal / NULLIF(t.total_productos, 0)) * 100, 2) as pct_productos,
+                ROUND((abc.ventas_total / NULLIF(t.total_ventas, 0)) * 100, 2) as pct_ventas,
+                ROUND((abc.utilidad_total / NULLIF(abc.ventas_total, 0)) * 100, 2) as margen_pct,
+                ROUND(abc.ventas_total / NULLIF(abc.cantidad_productos, 0), 2) as venta_promedio_producto,
+                ROUND(abc.unidades_vendidas / NULLIF(abc.cantidad_productos, 0), 2) as unidades_promedio_producto
+            FROM abc_stats abc
+            CROSS JOIN totales t
+            ORDER BY
+                CASE abc.clase
+                    WHEN 'A' THEN 1
+                    WHEN 'B' THEN 2
+                    WHEN 'C' THEN 3
+                    WHEN 'D' THEN 4
+                    ELSE 5
+                END
+        """)
+
+        clasificaciones = []
+        for row in cursor.fetchall():
+            clasificaciones.append({
+                "clase": row[0],
+                "cantidad_productos": int(row[1]) if row[1] else 0,
+                "ventas_total": round(float(row[2]), 2) if row[2] else 0,
+                "utilidad_total": round(float(row[3]), 2) if row[3] else 0,
+                "unidades_vendidas": int(row[4]) if row[4] else 0,
+                "tickets_total": int(row[5]) if row[5] else 0,
+                "pct_productos": float(row[6]) if row[6] else 0,
+                "pct_ventas": float(row[7]) if row[7] else 0,
+                "margen_pct": float(row[8]) if row[8] else 0,
+                "venta_promedio_producto": float(row[9]) if row[9] else 0,
+                "unidades_promedio_producto": float(row[10]) if row[10] else 0
+            })
+
+        # Análisis por categoría y clasificación
+        cursor.execute("""
+            WITH cat_abc_stats AS (
+                SELECT
+                    p.categoria,
+                    COALESCE(abc.clase_abc, 'D') as clase,
+                    COUNT(DISTINCT p.id) as cantidad_productos,
+                    SUM(v.venta_total) as ventas_total,
+                    SUM(v.utilidad_bruta) as utilidad_total,
+                    SUM(v.cantidad_vendida) as unidades_vendidas
+                FROM ventas v
+                JOIN productos p ON v.producto_id = p.id
+                LEFT JOIN productos_abc_tienda abc ON v.producto_id = abc.producto_id
+                    AND v.ubicacion_id = abc.ubicacion_id
+                WHERE v.fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                    AND p.categoria IS NOT NULL
+                    AND p.categoria != 'SIN CATEGORIA'
+                GROUP BY p.categoria, clase_abc
+            )
+            SELECT
+                categoria,
+                clase,
+                cantidad_productos,
+                ventas_total,
+                utilidad_total,
+                unidades_vendidas,
+                ROUND((utilidad_total / NULLIF(ventas_total, 0)) * 100, 2) as margen_pct,
+                ROUND(ventas_total / NULLIF(cantidad_productos, 0), 2) as venta_promedio_producto
+            FROM cat_abc_stats
+            ORDER BY categoria,
+                CASE clase
+                    WHEN 'A' THEN 1
+                    WHEN 'B' THEN 2
+                    WHEN 'C' THEN 3
+                    WHEN 'D' THEN 4
+                    ELSE 5
+                END
+        """)
+
+        categorias_abc = []
+        for row in cursor.fetchall():
+            categorias_abc.append({
+                "categoria": row[0],
+                "clase": row[1],
+                "cantidad_productos": int(row[2]) if row[2] else 0,
+                "ventas_total": round(float(row[3]), 2) if row[3] else 0,
+                "utilidad_total": round(float(row[4]), 2) if row[4] else 0,
+                "unidades_vendidas": int(row[5]) if row[5] else 0,
+                "margen_pct": float(row[6]) if row[6] else 0,
+                "venta_promedio_producto": float(row[7]) if row[7] else 0
+            })
+
+        cursor.close()
+
+        return {
+            "clasificaciones": clasificaciones,
+            "categorias_abc": categorias_abc
+        }
+
+    except Exception as e:
+        logger.error(f"Error en get_products_abc_consolidated: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/products/matrix")
 async def get_products_matrix(
     ubicacion_id: Optional[str] = None,
     categoria: Optional[str] = None,
     limit: int = Query(500, ge=1, le=2000),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -605,6 +839,7 @@ async def get_products_matrix(
 async def get_products_stars(
     ubicacion_id: Optional[str] = None,
     limit: int = Query(20, ge=1, le=100),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -664,6 +899,7 @@ async def get_products_stars(
 async def get_products_eliminate(
     ubicacion_id: Optional[str] = None,
     limit: int = Query(20, ge=1, le=100),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -724,7 +960,10 @@ async def get_products_eliminate(
 # =============================================================================
 
 @router.get("/profitability/by-category")
-async def get_profitability_by_category(conn: Any = Depends(get_db)):
+async def get_profitability_by_category(
+    current_user: UsuarioConRol = Depends(require_super_admin),
+    conn: Any = Depends(get_db)
+):
     """
     Margen y GMROI por categoría (seco/frio/verde).
     """
@@ -773,6 +1012,7 @@ async def get_profitability_by_category(conn: Any = Depends(get_db)):
 async def get_profitability_top_products(
     metric: str = Query("utilidad_total", regex="^(utilidad_total|margen_pct|gmroi)$"),
     limit: int = Query(20, ge=1, le=100),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -829,7 +1069,10 @@ async def get_profitability_top_products(
 # =============================================================================
 
 @router.get("/coverage/summary")
-async def get_coverage_summary(conn: Any = Depends(get_db)):
+async def get_coverage_summary(
+    current_user: UsuarioConRol = Depends(require_super_admin),
+    conn: Any = Depends(get_db)
+):
     """
     Resumen de cobertura de productos.
     """
@@ -884,6 +1127,7 @@ async def get_coverage_summary(conn: Any = Depends(get_db)):
 async def get_low_coverage_products(
     region: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -944,6 +1188,7 @@ async def get_trapped_in_cedi(
     region: Optional[str] = None,
     umbral_bajo_stock: int = Query(UMBRAL_STOCK_BAJO, ge=0, le=100),
     limit: int = Query(50, ge=1, le=200),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -1006,7 +1251,10 @@ async def get_trapped_in_cedi(
 
 
 @router.get("/coverage/store-gaps")
-async def get_store_gaps(conn: Any = Depends(get_db)):
+async def get_store_gaps(
+    current_user: UsuarioConRol = Depends(require_super_admin),
+    conn: Any = Depends(get_db)
+):
     """
     Tiendas con huecos de catálogo vs promedio de la red.
     """
@@ -1069,6 +1317,7 @@ async def get_store_gaps(conn: Any = Depends(get_db)):
 @router.get("/stores/compare")
 async def compare_stores(
     store_ids: str = Query(..., description="IDs de tiendas separados por coma (ej: tienda_17,tienda_18)"),
+    current_user: UsuarioConRol = Depends(require_super_admin),
     conn: Any = Depends(get_db)
 ):
     """
@@ -1263,7 +1512,10 @@ async def compare_stores(
 # =============================================================================
 
 @router.post("/admin/refresh-views")
-async def refresh_bi_views(conn: Any = Depends(get_db)):
+async def refresh_bi_views(
+    current_user: UsuarioConRol = Depends(require_super_admin),
+    conn: Any = Depends(get_db)
+):
     """
     Refresca todas las vistas materializadas de BI.
     """
