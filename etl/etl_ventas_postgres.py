@@ -10,8 +10,9 @@ Modo de operacion:
 - Deduplicacion por numero_factura (UPSERT con ON CONFLICT)
 
 Uso:
-  python etl_ventas_postgres.py --tiendas tienda_01 tienda_03 tienda_08
-  python etl_ventas_postgres.py  # Sin args = ultimos 30 min, todas las tiendas activas
+  python etl_ventas_postgres.py --todas                              # Todas las tiendas activas
+  python etl_ventas_postgres.py --tiendas tienda_01 tienda_03        # Tiendas específicas
+  python etl_ventas_postgres.py                                      # Default = todas las tiendas activas
 
 Modo Recuperacion (para llenar gaps de datos):
   python etl_ventas_postgres.py --recovery-mode                    # Procesa dia anterior completo
@@ -419,7 +420,7 @@ class VentasETLPostgres:
                 tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
                 return {
                     'tienda_id': tienda_id,
-                    'nombre': tienda_nombre,
+                    'tienda_nombre': tienda_nombre,
                     'sistema': 'KLK',
                     'success': True,
                     'registros': 0,
@@ -435,7 +436,7 @@ class VentasETLPostgres:
                 tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
                 return {
                     'tienda_id': tienda_id,
-                    'nombre': tienda_nombre,
+                    'tienda_nombre': tienda_nombre,
                     'sistema': 'KLK',
                     'success': True,
                     'registros': 0,
@@ -461,7 +462,7 @@ class VentasETLPostgres:
             tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
             return {
                 'tienda_id': tienda_id,
-                'nombre': tienda_nombre,
+                'tienda_nombre': tienda_nombre,
                 'sistema': 'KLK',
                 'success': True,
                 'registros': registros_cargados,
@@ -474,7 +475,7 @@ class VentasETLPostgres:
             tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
             return {
                 'tienda_id': tienda_id,
-                'nombre': tienda_nombre,
+                'tienda_nombre': tienda_nombre,
                 'sistema': 'KLK',
                 'success': False,
                 'registros': 0,
@@ -515,7 +516,7 @@ class VentasETLPostgres:
                 tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
                 return {
                     'tienda_id': tienda_id,
-                    'nombre': tienda_nombre,
+                    'tienda_nombre': tienda_nombre,
                     'sistema': 'Stellar',
                     'success': True,
                     'registros': 0,
@@ -532,7 +533,7 @@ class VentasETLPostgres:
                 tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
                 return {
                     'tienda_id': tienda_id,
-                    'nombre': tienda_nombre,
+                    'tienda_nombre': tienda_nombre,
                     'sistema': 'Stellar',
                     'success': False,
                     'registros': 0,
@@ -560,7 +561,7 @@ class VentasETLPostgres:
             tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
             return {
                 'tienda_id': tienda_id,
-                'nombre': tienda_nombre,
+                'tienda_nombre': tienda_nombre,
                 'sistema': 'Stellar',
                 'success': True,
                 'registros': registros_cargados,
@@ -573,7 +574,7 @@ class VentasETLPostgres:
             tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
             return {
                 'tienda_id': tienda_id,
-                'nombre': tienda_nombre,
+                'tienda_nombre': tienda_nombre,
                 'sistema': 'Stellar',
                 'success': False,
                 'registros': 0,
@@ -822,7 +823,9 @@ def main():
     parser.add_argument('--dry-run', action='store_true',
                        help='Ejecuta sin cargar datos')
     parser.add_argument('--tiendas', nargs='+',
-                       help='IDs de tiendas a procesar (ej: tienda_01 tienda_03). Si no se especifica, procesa todas')
+                       help='IDs de tiendas a procesar (ej: tienda_01 tienda_03)')
+    parser.add_argument('--todas', action='store_true',
+                       help='Ejecutar para todas las tiendas activas (solo tiendas, no CEDIs)')
     parser.add_argument('--minutos', type=int, default=30,
                        help='Minutos hacia atras para extraer (default: 30)')
     parser.add_argument('--fecha-desde', type=str,
@@ -841,6 +844,19 @@ def main():
                        help='Desactiva la recuperacion automatica de gaps')
 
     args = parser.parse_args()
+
+    # Determinar tiendas a procesar
+    if args.todas:
+        # --todas: procesar todas las tiendas activas (solo tiendas, no CEDIs)
+        tiendas_a_procesar = None  # None = todas las tiendas activas (el método ejecutar lo maneja)
+        print("\n📍 Modo: --todas (todas las tiendas activas)")
+    elif args.tiendas:
+        tiendas_a_procesar = args.tiendas
+        print(f"\n📍 Modo: tiendas específicas: {', '.join(args.tiendas)}")
+    else:
+        # Default: todas las tiendas activas (para backwards compatibility)
+        tiendas_a_procesar = None
+        print("\n📍 Modo: default (todas las tiendas activas)")
 
     # Determinar si hacer auto-recovery de gaps
     auto_gap_recovery = args.auto_gap_recovery and not args.no_gap_recovery
@@ -939,7 +955,7 @@ def main():
                 'gaps_recuperados': 0
             }
 
-            exitoso = etl.ejecutar(tienda_ids=args.tiendas, fecha_desde=chunk_start, fecha_hasta=chunk_end)
+            exitoso = etl.ejecutar(tienda_ids=tiendas_a_procesar, fecha_desde=chunk_start, fecha_hasta=chunk_end)
 
             if exitoso:
                 total_exitosos += 1
@@ -959,7 +975,7 @@ def main():
         # Modo normal: ejecutar una sola vez
         # auto_gap_recovery solo aplica si no hay fechas manuales especificadas
         etl = VentasETLPostgres(dry_run=args.dry_run, minutos_atras=args.minutos, auto_gap_recovery=auto_gap_recovery)
-        exitoso = etl.ejecutar(tienda_ids=args.tiendas, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
+        exitoso = etl.ejecutar(tienda_ids=tiendas_a_procesar, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
         sys.exit(0 if exitoso else 1)
 
 
