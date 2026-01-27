@@ -246,7 +246,7 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
             {viewMode === 'ab' ? 'Productos A+B' : 'Todos los productos'}
           </div>
           <div className={`text-4xl font-bold ${getHealthColor(currentHealthScore)}`}>
-            {currentHealthScore}%
+            {currentHealthScore.toFixed(1)}%
           </div>
           <div className="text-xs text-gray-600 mt-1">Salud del inventario</div>
 
@@ -254,7 +254,7 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
           <div className="w-full mt-3 bg-gray-200 rounded-full h-2.5">
             <div
               className={`h-2.5 rounded-full transition-all ${getHealthBgColor(currentHealthScore)}`}
-              style={{ width: `${currentHealthScore}%` }}
+              style={{ width: `${Math.min(currentHealthScore, 100)}%` }}
             ></div>
           </div>
 
