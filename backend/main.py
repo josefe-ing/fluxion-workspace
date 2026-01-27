@@ -4241,6 +4241,249 @@ async def get_stock(
 
 
 # ============================================================================
+# ENDPOINT SALUD DEL INVENTARIO (Health Dashboard)
+# ============================================================================
+
+class InventoryHealthByABC(BaseModel):
+    """Estadísticas de salud por clase ABC"""
+    clase: str  # A, B, C, D, SIN_VENTAS
+    total: int
+    critico: int
+    urgente: int
+    optimo: int
+    exceso: int
+    sin_demanda: int
+    health_score: float  # Porcentaje de productos en estado óptimo o exceso
+
+class InventoryHealthResponse(BaseModel):
+    """Respuesta completa de salud del inventario"""
+    ubicacion_id: str
+    ubicacion_nombre: str
+    total_productos: int
+    # Estadísticas globales
+    global_critico: int
+    global_urgente: int
+    global_optimo: int
+    global_exceso: int
+    global_sin_demanda: int
+    global_health_score: float
+    # Desglose A+B (productos prioritarios ~75% facturación)
+    ab_total: int
+    ab_critico: int
+    ab_urgente: int
+    ab_optimo: int
+    ab_exceso: int
+    ab_sin_demanda: int
+    ab_health_score: float
+    # Desglose por clase ABC
+    by_abc: List[InventoryHealthByABC]
+
+@app.get("/api/stock/health/{ubicacion_id}", response_model=InventoryHealthResponse, tags=["Inventario"])
+async def get_inventory_health(ubicacion_id: str):
+    """
+    Obtiene estadísticas de salud del inventario para una ubicación.
+
+    Retorna:
+    - Distribución de estados (Crítico, Urgente, Óptimo, Exceso, Sin demanda)
+    - Desglose por clasificación ABC
+    - Health score (% de productos en estado óptimo o mejor)
+    - Énfasis en productos A+B que representan ~75% de la facturación
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Query para obtener estadísticas por ABC y Estado
+            health_query = """
+            WITH ventas_20d AS (
+                SELECT
+                    producto_id,
+                    DATE(fecha_venta) as fecha,
+                    SUM(cantidad_vendida) as total_dia
+                FROM ventas
+                WHERE ubicacion_id = %s
+                  AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
+                  AND fecha_venta < CURRENT_DATE
+                GROUP BY producto_id, DATE(fecha_venta)
+            ),
+            demanda_p75 AS (
+                SELECT
+                    producto_id,
+                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75
+                FROM ventas_20d
+                GROUP BY producto_id
+            ),
+            abc_tienda AS (
+                SELECT producto_id, clase_abc
+                FROM productos_abc_tienda
+                WHERE ubicacion_id = %s
+            ),
+            config_abc AS (
+                SELECT
+                    COALESCE(lead_time_override, 1.5) as lead_time,
+                    COALESCE(dias_cobertura_a, 7) as dias_cob_a,
+                    COALESCE(dias_cobertura_b, 14) as dias_cob_b,
+                    COALESCE(dias_cobertura_c, 21) as dias_cob_c,
+                    COALESCE(clase_d_dias_cobertura, 30) as dias_cob_d
+                FROM config_parametros_abc_tienda
+                WHERE tienda_id = %s AND activo = true
+            ),
+            stock_with_params AS (
+                SELECT
+                    ia.producto_id,
+                    ia.cantidad as stock_actual,
+                    COALESCE(dp.p75, 0) as demanda_p75,
+                    COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
+                    COALESCE((SELECT lead_time FROM config_abc), 1.5) as lead_time,
+                    CASE COALESCE(abc.clase_abc, 'C')
+                        WHEN 'A' THEN COALESCE((SELECT dias_cob_a FROM config_abc), 7)
+                        WHEN 'B' THEN COALESCE((SELECT dias_cob_b FROM config_abc), 14)
+                        WHEN 'C' THEN COALESCE((SELECT dias_cob_c FROM config_abc), 21)
+                        ELSE COALESCE((SELECT dias_cob_d FROM config_abc), 30)
+                    END as dias_cobertura_objetivo
+                FROM inventario_actual ia
+                INNER JOIN productos p ON ia.producto_id = p.id AND p.activo = true
+                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id AND u.activo = true
+                LEFT JOIN demanda_p75 dp ON dp.producto_id = ia.producto_id
+                LEFT JOIN abc_tienda abc ON abc.producto_id = ia.producto_id
+                WHERE ia.ubicacion_id = %s
+            ),
+            calculated AS (
+                SELECT
+                    producto_id,
+                    stock_actual,
+                    demanda_p75,
+                    clase_abc,
+                    -- Calcular SS, ROP, MAX en unidades
+                    CASE WHEN demanda_p75 > 0 THEN demanda_p75 * lead_time ELSE 0 END as stock_seguridad,
+                    CASE WHEN demanda_p75 > 0 THEN demanda_p75 * (lead_time + dias_cobertura_objetivo / 2.0) ELSE 0 END as punto_reorden,
+                    CASE WHEN demanda_p75 > 0 THEN demanda_p75 * (lead_time + dias_cobertura_objetivo) ELSE 0 END as stock_maximo
+                FROM stock_with_params
+            ),
+            with_estado AS (
+                SELECT
+                    clase_abc,
+                    CASE
+                        WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
+                        WHEN stock_actual <= stock_seguridad THEN 'CRITICO'
+                        WHEN stock_actual <= punto_reorden THEN 'URGENTE'
+                        WHEN stock_actual <= stock_maximo THEN 'OPTIMO'
+                        ELSE 'EXCESO'
+                    END as estado_criticidad
+                FROM calculated
+            )
+            SELECT
+                clase_abc,
+                COUNT(*) as total,
+                SUM(CASE WHEN estado_criticidad = 'CRITICO' THEN 1 ELSE 0 END) as critico,
+                SUM(CASE WHEN estado_criticidad = 'URGENTE' THEN 1 ELSE 0 END) as urgente,
+                SUM(CASE WHEN estado_criticidad = 'OPTIMO' THEN 1 ELSE 0 END) as optimo,
+                SUM(CASE WHEN estado_criticidad = 'EXCESO' THEN 1 ELSE 0 END) as exceso,
+                SUM(CASE WHEN estado_criticidad = 'SIN_DEMANDA' THEN 1 ELSE 0 END) as sin_demanda
+            FROM with_estado
+            GROUP BY clase_abc
+            ORDER BY
+                CASE clase_abc
+                    WHEN 'A' THEN 1
+                    WHEN 'B' THEN 2
+                    WHEN 'C' THEN 3
+                    WHEN 'D' THEN 4
+                    ELSE 5
+                END
+            """
+
+            cursor.execute(health_query, (ubicacion_id, ubicacion_id, ubicacion_id, ubicacion_id))
+            results = cursor.fetchall()
+
+            # Obtener nombre de ubicación
+            cursor.execute("SELECT nombre FROM ubicaciones WHERE id = %s", (ubicacion_id,))
+            ubicacion_row = cursor.fetchone()
+            ubicacion_nombre = ubicacion_row[0] if ubicacion_row else ubicacion_id
+
+            cursor.close()
+
+        # Procesar resultados
+        by_abc = []
+        global_total = 0
+        global_critico = 0
+        global_urgente = 0
+        global_optimo = 0
+        global_exceso = 0
+        global_sin_demanda = 0
+
+        ab_total = 0
+        ab_critico = 0
+        ab_urgente = 0
+        ab_optimo = 0
+        ab_exceso = 0
+        ab_sin_demanda = 0
+
+        for row in results:
+            clase, total, critico, urgente, optimo, exceso, sin_demanda = row
+
+            # Calcular health score para esta clase (óptimo + exceso) / total
+            health_score = ((optimo + exceso) / total * 100) if total > 0 else 0
+
+            by_abc.append(InventoryHealthByABC(
+                clase=clase,
+                total=total,
+                critico=critico,
+                urgente=urgente,
+                optimo=optimo,
+                exceso=exceso,
+                sin_demanda=sin_demanda,
+                health_score=round(health_score, 1)
+            ))
+
+            # Acumular totales globales
+            global_total += total
+            global_critico += critico
+            global_urgente += urgente
+            global_optimo += optimo
+            global_exceso += exceso
+            global_sin_demanda += sin_demanda
+
+            # Acumular A+B
+            if clase in ('A', 'B'):
+                ab_total += total
+                ab_critico += critico
+                ab_urgente += urgente
+                ab_optimo += optimo
+                ab_exceso += exceso
+                ab_sin_demanda += sin_demanda
+
+        # Calcular health scores
+        global_health_score = ((global_optimo + global_exceso) / global_total * 100) if global_total > 0 else 0
+        ab_health_score = ((ab_optimo + ab_exceso) / ab_total * 100) if ab_total > 0 else 0
+
+        return InventoryHealthResponse(
+            ubicacion_id=ubicacion_id,
+            ubicacion_nombre=ubicacion_nombre,
+            total_productos=global_total,
+            global_critico=global_critico,
+            global_urgente=global_urgente,
+            global_optimo=global_optimo,
+            global_exceso=global_exceso,
+            global_sin_demanda=global_sin_demanda,
+            global_health_score=round(global_health_score, 1),
+            ab_total=ab_total,
+            ab_critico=ab_critico,
+            ab_urgente=ab_urgente,
+            ab_optimo=ab_optimo,
+            ab_exceso=ab_exceso,
+            ab_sin_demanda=ab_sin_demanda,
+            ab_health_score=round(ab_health_score, 1),
+            by_abc=by_abc
+        )
+
+    except Exception as e:
+        logger.error(f"Error obteniendo salud del inventario: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+# ============================================================================
 # ENDPOINTS CENTRO DE COMANDO DE CORRECCIÓN (Auditoría de Inventario)
 # ============================================================================
 

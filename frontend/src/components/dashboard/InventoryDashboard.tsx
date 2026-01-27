@@ -4,6 +4,7 @@ import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 import ProductHistoryModal from './ProductHistoryModal';
 import CentroComandoCorreccionModal from './CentroComandoCorreccionModal';
+import InventoryHealthChart from './InventoryHealthChart';
 import * as XLSX from 'xlsx';
 
 interface StockItem {
@@ -507,6 +508,11 @@ export default function InventoryDashboard() {
           <p className="text-xl font-bold text-green-600">{formatInteger(stats.activos)}</p>
         </div>
       </div>
+
+      {/* Gráfico de Salud del Inventario - Solo visible cuando hay una ubicación seleccionada */}
+      {selectedUbicacion && selectedUbicacion !== 'all' && (
+        <InventoryHealthChart ubicacionId={selectedUbicacion} />
+      )}
 
       {/* Filtros compactos */}
       <div className="bg-white rounded-lg border border-gray-200 p-3">
