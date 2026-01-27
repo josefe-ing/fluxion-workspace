@@ -50,18 +50,24 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'ab' | 'all'>('ab'); // Default to A+B view
+  const [excludeSinDemanda, setExcludeSinDemanda] = useState(true); // Por defecto excluir sin demanda
+  const [stockCediFilter, setStockCediFilter] = useState<'all' | 'CON_STOCK' | 'SIN_STOCK'>('CON_STOCK'); // Por defecto solo con stock en CEDI
 
   useEffect(() => {
     if (ubicacionId) {
       loadHealthData();
     }
-  }, [ubicacionId]);
+  }, [ubicacionId, stockCediFilter]);
 
   const loadHealthData = async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await http.get(`/api/stock/health/${ubicacionId}`);
+      const params: Record<string, string> = {};
+      if (stockCediFilter !== 'all') {
+        params.stock_cedi_filter = stockCediFilter;
+      }
+      const response = await http.get(`/api/stock/health/${ubicacionId}`, { params });
       setHealthData(response.data);
     } catch (err) {
       console.error('Error loading health data:', err);
@@ -92,19 +98,36 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
     );
   }
 
-  // Prepare data for pie chart (A+B or All)
-  const pieData = viewMode === 'ab' ? [
-    { name: 'Crítico', value: healthData.ab_critico, color: COLORS.critico },
-    { name: 'Urgente', value: healthData.ab_urgente, color: COLORS.urgente },
-    { name: 'Óptimo', value: healthData.ab_optimo, color: COLORS.optimo },
-    { name: 'Exceso', value: healthData.ab_exceso, color: COLORS.exceso },
-    { name: 'Sin demanda', value: healthData.ab_sin_demanda, color: COLORS.sin_demanda },
-  ] : [
-    { name: 'Crítico', value: healthData.global_critico, color: COLORS.critico },
-    { name: 'Urgente', value: healthData.global_urgente, color: COLORS.urgente },
-    { name: 'Óptimo', value: healthData.global_optimo, color: COLORS.optimo },
-    { name: 'Exceso', value: healthData.global_exceso, color: COLORS.exceso },
-    { name: 'Sin demanda', value: healthData.global_sin_demanda, color: COLORS.sin_demanda },
+  // Get base values depending on view mode
+  const baseData = viewMode === 'ab' ? {
+    critico: healthData.ab_critico,
+    urgente: healthData.ab_urgente,
+    optimo: healthData.ab_optimo,
+    exceso: healthData.ab_exceso,
+    sin_demanda: healthData.ab_sin_demanda,
+    total: healthData.ab_total,
+  } : {
+    critico: healthData.global_critico,
+    urgente: healthData.global_urgente,
+    optimo: healthData.global_optimo,
+    exceso: healthData.global_exceso,
+    sin_demanda: healthData.global_sin_demanda,
+    total: healthData.total_productos,
+  };
+
+  // Calculate adjusted values when excluding sin demanda
+  const adjustedTotal = excludeSinDemanda ? baseData.total - baseData.sin_demanda : baseData.total;
+  const adjustedHealthScore = adjustedTotal > 0
+    ? ((baseData.optimo + baseData.exceso) / adjustedTotal * 100)
+    : 0;
+
+  // Prepare data for pie chart
+  const pieData = [
+    { name: 'Crítico', value: baseData.critico, color: COLORS.critico },
+    { name: 'Urgente', value: baseData.urgente, color: COLORS.urgente },
+    { name: 'Óptimo', value: baseData.optimo, color: COLORS.optimo },
+    { name: 'Exceso', value: baseData.exceso, color: COLORS.exceso },
+    ...(!excludeSinDemanda ? [{ name: 'Sin demanda', value: baseData.sin_demanda, color: COLORS.sin_demanda }] : []),
   ];
 
   // Filter out zero values for cleaner chart
@@ -121,10 +144,10 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
       Exceso: abc.exceso,
     }));
 
-  const currentHealthScore = viewMode === 'ab' ? healthData.ab_health_score : healthData.global_health_score;
-  const currentTotal = viewMode === 'ab' ? healthData.ab_total : healthData.total_productos;
-  const currentCritico = viewMode === 'ab' ? healthData.ab_critico : healthData.global_critico;
-  const currentUrgente = viewMode === 'ab' ? healthData.ab_urgente : healthData.global_urgente;
+  const currentHealthScore = adjustedHealthScore;
+  const currentTotal = adjustedTotal;
+  const currentCritico = baseData.critico;
+  const currentUrgente = baseData.urgente;
 
   // Health score color
   const getHealthColor = (score: number) => {
@@ -147,29 +170,71 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
           <h3 className="text-lg font-semibold text-gray-800">Salud del Inventario</h3>
           <p className="text-xs text-gray-500">Distribución por estado de criticidad</p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">Ver:</span>
-          <div className="flex rounded-lg overflow-hidden border border-gray-300">
-            <button
-              onClick={() => setViewMode('ab')}
-              className={`px-3 py-1 text-xs font-medium transition-colors ${
-                viewMode === 'ab'
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              A+B (Prioritarios)
-            </button>
-            <button
-              onClick={() => setViewMode('all')}
-              className={`px-3 py-1 text-xs font-medium transition-colors ${
-                viewMode === 'all'
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              Todos
-            </button>
+        <div className="flex items-center gap-4">
+          {/* Filtro Stock CEDI */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">CEDI:</span>
+            <div className="flex rounded-lg overflow-hidden border border-gray-300">
+              <button
+                onClick={() => setStockCediFilter('CON_STOCK')}
+                className={`px-2 py-1 text-xs font-medium transition-colors ${
+                  stockCediFilter === 'CON_STOCK'
+                    ? 'bg-green-600 text-white'
+                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+                title="Solo productos con stock disponible en CEDI"
+              >
+                Con stock
+              </button>
+              <button
+                onClick={() => setStockCediFilter('all')}
+                className={`px-2 py-1 text-xs font-medium transition-colors ${
+                  stockCediFilter === 'all'
+                    ? 'bg-gray-600 text-white'
+                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+                title="Todos los productos"
+              >
+                Todos
+              </button>
+            </div>
+          </div>
+
+          {/* Toggle excluir sin demanda */}
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={excludeSinDemanda}
+              onChange={(e) => setExcludeSinDemanda(e.target.checked)}
+              className="w-3.5 h-3.5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+            />
+            <span className="text-xs text-gray-600">Excluir sin demanda</span>
+          </label>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Ver:</span>
+            <div className="flex rounded-lg overflow-hidden border border-gray-300">
+              <button
+                onClick={() => setViewMode('ab')}
+                className={`px-3 py-1 text-xs font-medium transition-colors ${
+                  viewMode === 'ab'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                A+B (Prioritarios)
+              </button>
+              <button
+                onClick={() => setViewMode('all')}
+                className={`px-3 py-1 text-xs font-medium transition-colors ${
+                  viewMode === 'all'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Todos
+              </button>
+            </div>
           </div>
         </div>
       </div>

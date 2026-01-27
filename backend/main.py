@@ -4279,7 +4279,10 @@ class InventoryHealthResponse(BaseModel):
     by_abc: List[InventoryHealthByABC]
 
 @app.get("/api/stock/health/{ubicacion_id}", response_model=InventoryHealthResponse, tags=["Inventario"])
-async def get_inventory_health(ubicacion_id: str):
+async def get_inventory_health(
+    ubicacion_id: str,
+    stock_cedi_filter: Optional[str] = None  # CON_STOCK, SIN_STOCK, or None for all
+):
     """
     Obtiene estadísticas de salud del inventario para una ubicación.
 
@@ -4288,6 +4291,9 @@ async def get_inventory_health(ubicacion_id: str):
     - Desglose por clasificación ABC
     - Health score (% de productos en estado óptimo o mejor)
     - Énfasis en productos A+B que representan ~75% de la facturación
+
+    Args:
+        stock_cedi_filter: CON_STOCK (solo productos con stock en CEDI), SIN_STOCK, o None para todos
     """
     try:
         with get_db_connection() as conn:
@@ -4328,6 +4334,26 @@ async def get_inventory_health(ubicacion_id: str):
                 FROM config_parametros_abc_tienda
                 WHERE tienda_id = %s AND activo = true
             ),
+            cedi_region AS (
+                -- Determinar el CEDI de la región de la tienda
+                SELECT
+                    CASE
+                        WHEN u.region = 'CARACAS' THEN 'cedi_caracas'
+                        WHEN u.region = 'VALENCIA' THEN 'cedi_verde'
+                        ELSE 'cedi_caracas'
+                    END as cedi_id
+                FROM ubicaciones u
+                WHERE u.id = %s
+            ),
+            stock_cedi AS (
+                -- Stock disponible en el CEDI de la región
+                SELECT
+                    ia.producto_id,
+                    SUM(ia.cantidad) as cantidad_cedi
+                FROM inventario_actual ia
+                WHERE ia.ubicacion_id = (SELECT cedi_id FROM cedi_region)
+                GROUP BY ia.producto_id
+            ),
             stock_with_params AS (
                 SELECT
                     ia.producto_id,
@@ -4340,12 +4366,14 @@ async def get_inventory_health(ubicacion_id: str):
                         WHEN 'B' THEN COALESCE((SELECT dias_cob_b FROM config_abc), 14)
                         WHEN 'C' THEN COALESCE((SELECT dias_cob_c FROM config_abc), 21)
                         ELSE COALESCE((SELECT dias_cob_d FROM config_abc), 30)
-                    END as dias_cobertura_objetivo
+                    END as dias_cobertura_objetivo,
+                    COALESCE(sc.cantidad_cedi, 0) as stock_cedi
                 FROM inventario_actual ia
                 INNER JOIN productos p ON ia.producto_id = p.id AND p.activo = true
                 INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id AND u.activo = true
                 LEFT JOIN demanda_p75 dp ON dp.producto_id = ia.producto_id
                 LEFT JOIN abc_tienda abc ON abc.producto_id = ia.producto_id
+                LEFT JOIN stock_cedi sc ON sc.producto_id = ia.producto_id
                 WHERE ia.ubicacion_id = %s
             ),
             calculated AS (
@@ -4354,6 +4382,7 @@ async def get_inventory_health(ubicacion_id: str):
                     stock_actual,
                     demanda_p75,
                     clase_abc,
+                    stock_cedi,
                     -- Calcular SS, ROP, MAX en unidades
                     CASE WHEN demanda_p75 > 0 THEN demanda_p75 * lead_time ELSE 0 END as stock_seguridad,
                     CASE WHEN demanda_p75 > 0 THEN demanda_p75 * (lead_time + dias_cobertura_objetivo / 2.0) ELSE 0 END as punto_reorden,
@@ -4363,6 +4392,7 @@ async def get_inventory_health(ubicacion_id: str):
             with_estado AS (
                 SELECT
                     clase_abc,
+                    stock_cedi,
                     CASE
                         WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
                         WHEN stock_actual <= stock_seguridad THEN 'CRITICO'
@@ -4371,6 +4401,12 @@ async def get_inventory_health(ubicacion_id: str):
                         ELSE 'EXCESO'
                     END as estado_criticidad
                 FROM calculated
+            ),
+            filtered AS (
+                SELECT clase_abc, estado_criticidad
+                FROM with_estado
+                WHERE 1=1
+                {cedi_filter}
             )
             SELECT
                 clase_abc,
@@ -4380,7 +4416,7 @@ async def get_inventory_health(ubicacion_id: str):
                 SUM(CASE WHEN estado_criticidad = 'OPTIMO' THEN 1 ELSE 0 END) as optimo,
                 SUM(CASE WHEN estado_criticidad = 'EXCESO' THEN 1 ELSE 0 END) as exceso,
                 SUM(CASE WHEN estado_criticidad = 'SIN_DEMANDA' THEN 1 ELSE 0 END) as sin_demanda
-            FROM with_estado
+            FROM filtered
             GROUP BY clase_abc
             ORDER BY
                 CASE clase_abc
@@ -4392,7 +4428,17 @@ async def get_inventory_health(ubicacion_id: str):
                 END
             """
 
-            cursor.execute(health_query, (ubicacion_id, ubicacion_id, ubicacion_id, ubicacion_id))
+            # Apply CEDI filter
+            cedi_filter_sql = ""
+            if stock_cedi_filter == 'CON_STOCK':
+                cedi_filter_sql = "AND stock_cedi > 0"
+            elif stock_cedi_filter == 'SIN_STOCK':
+                cedi_filter_sql = "AND stock_cedi <= 0"
+
+            health_query = health_query.format(cedi_filter=cedi_filter_sql)
+
+            # 5 params: ventas_20d, abc_tienda, config_abc, cedi_region, stock_with_params
+            cursor.execute(health_query, (ubicacion_id, ubicacion_id, ubicacion_id, ubicacion_id, ubicacion_id))
             results = cursor.fetchall()
 
             # Obtener nombre de ubicación
