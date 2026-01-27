@@ -8009,6 +8009,7 @@ async def get_ventas_summary_regional(dias: int = 30):
             cursor = conn.cursor()
 
             # Calcular fecha de inicio (hace N días)
+            tz_vzla = ZoneInfo("America/Caracas")
             fecha_limite = (datetime.now(tz_vzla) - timedelta(days=dias)).strftime('%Y-%m-%d')
 
             # Query principal con métricas de ventas por ubicación (OPTIMIZADO)
