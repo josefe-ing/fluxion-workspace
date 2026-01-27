@@ -587,6 +587,7 @@ export default function InventoryDashboard() {
               <option value="A">A</option>
               <option value="B">B</option>
               <option value="C">C</option>
+              <option value="D">D</option>
               <option value="SIN_VENTAS">Sin ventas</option>
             </select>
           </div>
