@@ -10,6 +10,7 @@ interface VentasDetail {
   codigo_producto: string;
   descripcion_producto: string;
   categoria: string;
+  marca: string | null;
   cantidad_total: number;
   promedio_diario: number;
   promedio_mismo_dia_semana: number;
@@ -18,6 +19,11 @@ interface VentasDetail {
   cantidad_bultos: number | null;
   total_bultos: number | null;
   promedio_bultos_diario: number | null;
+  venta_total: number | null;
+  clase_abc: string | null;
+  rank_ventas: number | null;
+  velocidad_venta: string | null;
+  stock_actual: number | null;
 }
 
 interface PaginationMetadata {
@@ -50,6 +56,9 @@ export default function SalesDashboard() {
 
   // Filtros
   const [selectedCategoria, setSelectedCategoria] = useState<string>('');
+  const [selectedMarca, setSelectedMarca] = useState<string>('');
+  const [selectedClaseABC, setSelectedClaseABC] = useState<string>('');
+  const [selectedVelocidad, setSelectedVelocidad] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [fechaInicio, setFechaInicio] = useState('');
@@ -243,6 +252,45 @@ export default function SalesDashboard() {
   // Los datos de ventasData ya vienen filtrados y paginados del servidor
   const currentItems = ventasData;
   const totalPages = pagination?.total_pages || 1;
+
+  // Función para renderizar badge de clasificación ABC
+  const renderClaseABC = (clase: string | null) => {
+    const estilos: Record<string, string> = {
+      'A': 'bg-green-600 text-white',
+      'B': 'bg-yellow-500 text-white',
+      'C': 'bg-gray-500 text-white',
+    };
+    if (!clase) return <span className="text-gray-400">-</span>;
+    return (
+      <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${estilos[clase] || 'bg-gray-200 text-gray-600'}`}>
+        {clase}
+      </span>
+    );
+  };
+
+  // Función para renderizar badge de velocidad
+  const renderVelocidad = (velocidad: string | null) => {
+    const estilos: Record<string, string> = {
+      'MUY_ALTA': 'bg-green-100 text-green-800 border-green-200',
+      'ALTA': 'bg-blue-100 text-blue-800 border-blue-200',
+      'MEDIA': 'bg-yellow-100 text-yellow-800 border-yellow-200',
+      'BAJA': 'bg-orange-100 text-orange-800 border-orange-200',
+      'SIN_VENTAS': 'bg-gray-100 text-gray-600 border-gray-200',
+    };
+    const labels: Record<string, string> = {
+      'MUY_ALTA': 'Muy Alta',
+      'ALTA': 'Alta',
+      'MEDIA': 'Media',
+      'BAJA': 'Baja',
+      'SIN_VENTAS': 'Sin',
+    };
+    if (!velocidad) return <span className="text-gray-400">-</span>;
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${estilos[velocidad] || 'bg-gray-100 text-gray-600'}`}>
+        {labels[velocidad] || velocidad}
+      </span>
+    );
+  };
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -471,6 +519,62 @@ export default function SalesDashboard() {
           </div>
         </div>
 
+        {/* Cuarta fila: Filtros avanzados (Marca, ABC, Velocidad) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-gray-200">
+          {/* Marca */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Marca</label>
+            <input
+              type="text"
+              placeholder="Filtrar por marca..."
+              value={selectedMarca}
+              onChange={(e) => {
+                setSelectedMarca(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Clasificación ABC */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Clasificación ABC</label>
+            <select
+              value={selectedClaseABC}
+              onChange={(e) => {
+                setSelectedClaseABC(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Todas</option>
+              <option value="A">A - Top 50</option>
+              <option value="B">B - Top 51-200</option>
+              <option value="C">C - Resto</option>
+            </select>
+          </div>
+
+          {/* Velocidad de Venta */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Velocidad de Venta</label>
+            <select
+              value={selectedVelocidad}
+              onChange={(e) => {
+                setSelectedVelocidad(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Todas</option>
+              <option value="MUY_ALTA">Muy Alta (+30/mes)</option>
+              <option value="ALTA">Alta (16-30/mes)</option>
+              <option value="MEDIA">Media (6-15/mes)</option>
+              <option value="BAJA">Baja (1-5/mes)</option>
+              <option value="SIN_VENTAS">Sin Ventas</option>
+            </select>
+          </div>
+        </div>
+
         {/* Indicador de rango de fechas actual */}
         <div className="pt-2 border-t border-gray-200">
           <p className="text-sm text-gray-600">
@@ -498,31 +602,37 @@ export default function SalesDashboard() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Código
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Descripción
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Categoría
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Marca
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      ABC
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Rank
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Cant. Total
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Prom. Diario
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Prom/Día
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Bultos
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Velocidad
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Total Bultos
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Stock
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Prom. Bultos/Día
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       % Total
                     </th>
                   </tr>
@@ -530,7 +640,7 @@ export default function SalesDashboard() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {currentItems.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-6 py-12 text-center text-sm text-gray-500">
+                      <td colSpan={11} className="px-6 py-12 text-center text-sm text-gray-500">
                         No se encontraron ventas con los filtros seleccionados
                       </td>
                     </tr>
@@ -541,31 +651,43 @@ export default function SalesDashboard() {
                         className="hover:bg-blue-50 cursor-pointer transition-colors"
                         onClick={() => handleProductClick(item.codigo_producto, item.descripcion_producto)}
                       >
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-blue-600">
                           {item.codigo_producto}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
+                        <td className="px-4 py-3 text-sm text-gray-900 max-w-xs truncate" title={item.descripcion_producto}>
                           {item.descripcion_producto}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                           {item.categoria}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-gray-900">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {item.marca || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {renderClaseABC(item.clase_abc)}
+                        </td>
+                        <td className="px-4 py-3 text-center text-sm text-gray-600">
+                          {item.rank_ventas ? `#${item.rank_ventas}` : '-'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-semibold text-gray-900">
                           {Math.round(item.cantidad_total).toLocaleString()}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-blue-600">
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-blue-600 font-medium">
                           {item.promedio_diario.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-600">
-                          {item.cantidad_bultos ? Math.round(item.cantidad_bultos).toLocaleString() : '-'}
+                        <td className="px-4 py-3 text-center">
+                          {renderVelocidad(item.velocidad_venta)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-orange-600">
-                          {item.total_bultos ? item.total_bultos.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '-'}
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm">
+                          <span className={`font-medium ${
+                            !item.stock_actual || item.stock_actual === 0 ? 'text-red-600' :
+                            item.stock_actual < item.promedio_diario * 3 ? 'text-yellow-600' :
+                            'text-green-600'
+                          }`}>
+                            {item.stock_actual !== null && item.stock_actual !== undefined ? Math.round(item.stock_actual).toLocaleString() : '-'}
+                          </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-purple-600">
-                          {item.promedio_bultos_diario ? item.promedio_bultos_diario.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '-'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-500">
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-500">
                           {item.porcentaje_total.toFixed(2)}%
                         </td>
                       </tr>
