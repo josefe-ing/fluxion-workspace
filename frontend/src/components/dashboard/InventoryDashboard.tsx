@@ -29,6 +29,8 @@ interface StockItem {
   fecha_extraccion: string | null;
   peso_producto_kg: number | null;
   peso_total_kg: number | null;
+  volumen_producto_m3: number | null;
+  volumen_total_m3: number | null;
   // Nuevos campos
   demanda_p75: number | null;
   ventas_60d: number | null;
@@ -295,6 +297,8 @@ export default function InventoryDashboard() {
         'Artículo': item.descripcion_producto,
         'Categoría': item.categoria,
         'Stock': item.stock_actual ?? 0,
+        'Peso (kg)': item.peso_total_kg !== null ? Math.round(item.peso_total_kg * 100) / 100 : '-',
+        'Vol. (L)': item.volumen_total_m3 !== null ? Math.round(item.volumen_total_m3 * 1000 * 100) / 100 : '-',
         'Stock CEDI': item.stock_cedi ?? 0,
         'P75/día': item.demanda_p75 !== null ? Math.round(item.demanda_p75 * 10) / 10 : 0,
         'Días Stock': item.dias_cobertura_actual !== null ? Math.round(item.dias_cobertura_actual * 10) / 10 : '-',
@@ -346,6 +350,25 @@ export default function InventoryDashboard() {
         {labels[estado] || estado}
       </span>
     );
+  };
+
+  // Formato inteligente para peso (kg o toneladas)
+  const formatPeso = (pesoKg: number | null): string => {
+    if (pesoKg === null || pesoKg === 0) return '-';
+    if (pesoKg >= 1000) {
+      return `${formatNumber(pesoKg / 1000, 1)} t`;
+    }
+    return `${formatNumber(pesoKg, 1)} kg`;
+  };
+
+  // Formato inteligente para volumen (litros o m³)
+  const formatVolumen = (volumenM3: number | null): string => {
+    if (volumenM3 === null || volumenM3 === 0) return '-';
+    const litros = volumenM3 * 1000;
+    if (litros >= 1000) {
+      return `${formatNumber(volumenM3, 1)} m³`;
+    }
+    return `${formatNumber(litros, 0)} L`;
   };
 
   const renderClaseABC = (clase: string | null) => {
@@ -736,6 +759,12 @@ export default function InventoryDashboard() {
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('stock')}>
                     Stock {sortBy === 'stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Peso total del stock (unitario × cantidad)">
+                    Peso
+                  </th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Volumen total del stock (unitario × cantidad)">
+                    Vol.
+                  </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">
                     <span title="Stock disponible en CEDI de la región">CEDI</span>
                   </th>
@@ -759,7 +788,7 @@ export default function InventoryDashboard() {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {stockData.length === 0 ? (
-                  <tr><td colSpan={14} className="px-6 py-12 text-center text-gray-500">No se encontraron productos</td></tr>
+                  <tr><td colSpan={16} className="px-6 py-12 text-center text-gray-500">No se encontraron productos</td></tr>
                 ) : (
                   stockData.map((item) => (
                     <tr key={`${item.producto_id}-${item.ubicacion_id}`} className="hover:bg-gray-50">
@@ -769,6 +798,12 @@ export default function InventoryDashboard() {
                         <span className={`font-semibold ${(item.stock_actual ?? 0) <= 0 ? 'text-red-600' : 'text-gray-900'}`}>
                           {formatInteger(item.stock_actual)}
                         </span>
+                      </td>
+                      <td className="px-3 py-2 text-center text-xs text-gray-600" title={item.peso_producto_kg ? `${formatNumber(item.peso_producto_kg, 2)} kg/ud` : ''}>
+                        {formatPeso(item.peso_total_kg)}
+                      </td>
+                      <td className="px-3 py-2 text-center text-xs text-gray-600" title={item.volumen_producto_m3 ? `${formatNumber(item.volumen_producto_m3 * 1000, 2)} L/ud` : ''}>
+                        {formatVolumen(item.volumen_total_m3)}
                       </td>
                       <td className="px-3 py-2 text-center">
                         <span className={`font-medium ${(item.stock_cedi ?? 0) <= 0 ? 'text-red-500' : 'text-green-600'}`}>

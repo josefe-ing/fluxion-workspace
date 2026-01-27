@@ -322,6 +322,8 @@ class StockResponse(BaseModel):
     fecha_extraccion: Optional[str]  # Fecha de última actualización
     peso_producto_kg: Optional[float]  # Peso unitario en kilogramos
     peso_total_kg: Optional[float]  # Peso total del stock en kilogramos
+    volumen_producto_m3: Optional[float]  # Volumen unitario en m³
+    volumen_total_m3: Optional[float]  # Volumen total del stock en m³
     # Nuevos campos para análisis de inventario
     demanda_p75: Optional[float] = None  # Demanda diaria P75 (últimos 20 días)
     ventas_60d: Optional[float] = None  # Ventas acumuladas últimos 60 días
@@ -3966,6 +3968,9 @@ async def get_stock(
                     COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
                     COALESCE(p.marca, '') as marca,
                     ia.cantidad as stock_actual,
+                    -- Peso y volumen del producto
+                    COALESCE(p.peso_unitario, 0) as peso_unitario_kg,
+                    COALESCE(p.volumen_unitario, 0) as volumen_unitario_m3,
                     -- Demanda P75
                     COALESCE(dp.p75, 0) as demanda_p75,
                     COALESCE(dp.sigma_demanda, 0) as sigma_demanda,
@@ -4182,8 +4187,10 @@ async def get_stock(
                 dias_cobertura_actual=row_dict.get('dias_cobertura_actual'),
                 es_producto_estrella=False,
                 fecha_extraccion=row_dict['fecha_extraccion'],
-                peso_producto_kg=None,
-                peso_total_kg=None,
+                peso_producto_kg=row_dict.get('peso_unitario_kg'),
+                peso_total_kg=(row_dict.get('peso_unitario_kg') or 0) * (row_dict.get('stock_actual') or 0) if row_dict.get('peso_unitario_kg') else None,
+                volumen_producto_m3=row_dict.get('volumen_unitario_m3'),
+                volumen_total_m3=(row_dict.get('volumen_unitario_m3') or 0) * (row_dict.get('stock_actual') or 0) if row_dict.get('volumen_unitario_m3') else None,
                 # Nuevos campos
                 demanda_p75=row_dict.get('demanda_p75'),
                 ventas_60d=row_dict.get('ventas_60d'),
@@ -4249,6 +4256,8 @@ class InventoryHealthByABC(BaseModel):
     exceso: int
     sin_demanda: int
     health_score: float  # Porcentaje de productos en estado óptimo o exceso
+    peso_total_kg: float = 0  # Peso total del stock en kg
+    volumen_total_m3: float = 0  # Volumen total del stock en m³
 
 class InventoryHealthResponse(BaseModel):
     """Respuesta completa de salud del inventario"""
@@ -4357,7 +4366,10 @@ async def get_inventory_health(
                         WHEN 'C' THEN COALESCE((SELECT dias_cob_c FROM config_abc), 21)
                         ELSE COALESCE((SELECT dias_cob_d FROM config_abc), 30)
                     END as dias_cobertura_objetivo,
-                    COALESCE(sc.cantidad_cedi, 0) as stock_cedi
+                    COALESCE(sc.cantidad_cedi, 0) as stock_cedi,
+                    -- Peso y volumen total (unitario × stock)
+                    ia.cantidad * COALESCE(p.peso_unitario, 0) as peso_total_kg,
+                    ia.cantidad * COALESCE(p.volumen_unitario, 0) as volumen_total_m3
                 FROM inventario_actual ia
                 INNER JOIN productos p ON ia.producto_id = p.id AND p.activo = true
                 INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id AND u.activo = true
@@ -4373,6 +4385,8 @@ async def get_inventory_health(
                     demanda_p75,
                     clase_abc,
                     stock_cedi,
+                    peso_total_kg,
+                    volumen_total_m3,
                     -- Calcular SS, ROP, MAX en unidades
                     CASE WHEN demanda_p75 > 0 THEN demanda_p75 * lead_time ELSE 0 END as stock_seguridad,
                     CASE WHEN demanda_p75 > 0 THEN demanda_p75 * (lead_time + dias_cobertura_objetivo / 2.0) ELSE 0 END as punto_reorden,
@@ -4383,6 +4397,8 @@ async def get_inventory_health(
                 SELECT
                     clase_abc,
                     stock_cedi,
+                    peso_total_kg,
+                    volumen_total_m3,
                     CASE
                         WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
                         WHEN stock_actual <= stock_seguridad THEN 'CRITICO'
@@ -4393,7 +4409,7 @@ async def get_inventory_health(
                 FROM calculated
             ),
             filtered AS (
-                SELECT clase_abc, estado_criticidad
+                SELECT clase_abc, estado_criticidad, peso_total_kg, volumen_total_m3
                 FROM with_estado
                 WHERE 1=1
                 {cedi_filter}
@@ -4405,7 +4421,9 @@ async def get_inventory_health(
                 SUM(CASE WHEN estado_criticidad = 'URGENTE' THEN 1 ELSE 0 END) as urgente,
                 SUM(CASE WHEN estado_criticidad = 'OPTIMO' THEN 1 ELSE 0 END) as optimo,
                 SUM(CASE WHEN estado_criticidad = 'EXCESO' THEN 1 ELSE 0 END) as exceso,
-                SUM(CASE WHEN estado_criticidad = 'SIN_DEMANDA' THEN 1 ELSE 0 END) as sin_demanda
+                SUM(CASE WHEN estado_criticidad = 'SIN_DEMANDA' THEN 1 ELSE 0 END) as sin_demanda,
+                SUM(peso_total_kg) as peso_total_kg,
+                SUM(volumen_total_m3) as volumen_total_m3
             FROM filtered
             GROUP BY clase_abc
             ORDER BY
@@ -4455,7 +4473,7 @@ async def get_inventory_health(
         ab_sin_demanda = 0
 
         for row in results:
-            clase, total, critico, urgente, optimo, exceso, sin_demanda = row
+            clase, total, critico, urgente, optimo, exceso, sin_demanda, peso_kg, volumen_m3 = row
 
             # Calcular health score para esta clase (óptimo + exceso) / total
             health_score = ((optimo + exceso) / total * 100) if total > 0 else 0
@@ -4468,7 +4486,9 @@ async def get_inventory_health(
                 optimo=optimo,
                 exceso=exceso,
                 sin_demanda=sin_demanda,
-                health_score=round(health_score, 1)
+                health_score=round(health_score, 1),
+                peso_total_kg=round(float(peso_kg or 0), 2),
+                volumen_total_m3=round(float(volumen_m3 or 0), 4)
             ))
 
             # Acumular totales globales

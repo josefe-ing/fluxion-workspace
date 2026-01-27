@@ -11,6 +11,8 @@ interface HealthByABC {
   exceso: number;
   sin_demanda: number;
   health_score: number;
+  peso_total_kg: number;
+  volumen_total_m3: number;
 }
 
 interface InventoryHealthData {
@@ -160,6 +162,25 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
     if (score >= 70) return 'bg-green-500';
     if (score >= 50) return 'bg-yellow-500';
     return 'bg-red-500';
+  };
+
+  // Formato inteligente para peso (kg o toneladas)
+  const formatPeso = (pesoKg: number): string => {
+    if (pesoKg === 0) return '-';
+    if (pesoKg >= 1000) {
+      return `${(pesoKg / 1000).toFixed(1)} t`;
+    }
+    return `${pesoKg.toFixed(0)} kg`;
+  };
+
+  // Formato inteligente para volumen (litros o m³)
+  const formatVolumen = (volumenM3: number): string => {
+    if (volumenM3 === 0) return '-';
+    const litros = volumenM3 * 1000;
+    if (litros >= 1000) {
+      return `${volumenM3.toFixed(1)} m³`;
+    }
+    return `${litros.toFixed(0)} L`;
   };
 
   return (
@@ -359,6 +380,37 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
           </p>
         </div>
       )}
+
+      {/* Peso y Volumen por Clase ABC */}
+      <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+        {healthData.by_abc
+          .filter(abc => abc.clase !== 'SIN_VENTAS')
+          .map((abc) => (
+            <div key={abc.clase} className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+              <div className="flex items-center justify-between mb-1">
+                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+                  abc.clase === 'A' ? 'bg-green-600 text-white' :
+                  abc.clase === 'B' ? 'bg-yellow-500 text-white' :
+                  abc.clase === 'C' ? 'bg-gray-500 text-white' :
+                  'bg-gray-300 text-gray-700'
+                }`}>
+                  {abc.clase}
+                </span>
+                <span className="text-xs text-gray-500">{abc.total.toLocaleString()} prod.</span>
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Peso:</span>
+                  <span className="font-medium text-gray-700">{formatPeso(abc.peso_total_kg)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Volumen:</span>
+                  <span className="font-medium text-gray-700">{formatVolumen(abc.volumen_total_m3)}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+      </div>
     </div>
   );
 }
