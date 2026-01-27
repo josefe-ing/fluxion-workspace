@@ -3909,24 +3909,19 @@ async def get_stock(
                   AND fecha_venta >= CURRENT_DATE - INTERVAL '60 days'
                 GROUP BY producto_id
             ),
-            cedi_region AS (
-                -- Determinar el CEDI de la región de la tienda
-                SELECT
-                    CASE
-                        WHEN u.region = 'CARACAS' THEN 'cedi_caracas'
-                        WHEN u.region = 'VALENCIA' THEN 'cedi_verde'
-                        ELSE 'cedi_caracas'
-                    END as cedi_id
-                FROM ubicaciones u
-                WHERE u.id = %s
+            tienda_region AS (
+                -- Obtener la región de la tienda
+                SELECT region FROM ubicaciones WHERE id = %s
             ),
             stock_cedi AS (
-                -- Stock disponible en el CEDI de la región
+                -- Stock disponible en TODOS los CEDIs de la misma región
                 SELECT
                     ia.producto_id,
                     SUM(ia.cantidad) as cantidad_cedi
                 FROM inventario_actual ia
-                WHERE ia.ubicacion_id = (SELECT cedi_id FROM cedi_region)
+                INNER JOIN ubicaciones cedi ON cedi.id = ia.ubicacion_id
+                WHERE cedi.tipo = 'cedi'
+                  AND cedi.region = (SELECT region FROM tienda_region)
                 GROUP BY ia.producto_id
             ),
             abc_tienda AS (
@@ -4334,24 +4329,19 @@ async def get_inventory_health(
                 FROM config_parametros_abc_tienda
                 WHERE tienda_id = %s AND activo = true
             ),
-            cedi_region AS (
-                -- Determinar el CEDI de la región de la tienda
-                SELECT
-                    CASE
-                        WHEN u.region = 'CARACAS' THEN 'cedi_caracas'
-                        WHEN u.region = 'VALENCIA' THEN 'cedi_verde'
-                        ELSE 'cedi_caracas'
-                    END as cedi_id
-                FROM ubicaciones u
-                WHERE u.id = %s
+            tienda_region AS (
+                -- Obtener la región de la tienda
+                SELECT region FROM ubicaciones WHERE id = %s
             ),
             stock_cedi AS (
-                -- Stock disponible en el CEDI de la región
+                -- Stock disponible en TODOS los CEDIs de la misma región
                 SELECT
                     ia.producto_id,
                     SUM(ia.cantidad) as cantidad_cedi
                 FROM inventario_actual ia
-                WHERE ia.ubicacion_id = (SELECT cedi_id FROM cedi_region)
+                INNER JOIN ubicaciones cedi ON cedi.id = ia.ubicacion_id
+                WHERE cedi.tipo = 'cedi'
+                  AND cedi.region = (SELECT region FROM tienda_region)
                 GROUP BY ia.producto_id
             ),
             stock_with_params AS (
