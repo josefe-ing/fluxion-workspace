@@ -7996,16 +7996,22 @@ async def get_ventas_summary():
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @app.get("/api/ventas/summary-regional", response_model=List[VentasRegionSummary], tags=["Ventas"])
-async def get_ventas_summary_regional():
+async def get_ventas_summary_regional(dias: int = 30):
     """
     Obtiene resumen de ventas agrupado por región (CARACAS / VALENCIA).
     Similar al endpoint de inventarios pero con métricas de ventas.
+
+    Args:
+        dias: Número de días hacia atrás para analizar (default: 30)
     """
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Query principal con métricas de ventas por ubicación
+            # Calcular fecha de inicio (hace N días)
+            fecha_limite = (datetime.now(tz_vzla) - timedelta(days=dias)).strftime('%Y-%m-%d')
+
+            # Query principal con métricas de ventas por ubicación (OPTIMIZADO)
             query = """
                 WITH ventas_summary AS (
                     SELECT
@@ -8017,17 +8023,12 @@ async def get_ventas_summary_regional():
                         COUNT(DISTINCT v.producto_id) as productos_unicos,
                         SUM(v.cantidad_vendida) as unidades_vendidas,
                         MIN(v.fecha_venta) as primera_venta,
-                        MAX(v.fecha_venta) as ultima_venta
+                        MAX(v.fecha_venta) as ultima_venta,
+                        COUNT(DISTINCT DATE(v.fecha_venta)) as dias_con_ventas
                     FROM ventas v
                     LEFT JOIN ubicaciones u ON v.ubicacion_id = u.id
+                    WHERE v.fecha_venta >= %s::timestamp
                     GROUP BY v.ubicacion_id, u.nombre, u.tipo, u.region
-                ),
-                ventas_diarias AS (
-                    SELECT
-                        ubicacion_id,
-                        COUNT(DISTINCT DATE(fecha_venta)) as dias_con_ventas
-                    FROM ventas
-                    GROUP BY ubicacion_id
                 )
                 SELECT
                     vs.region,
@@ -8038,18 +8039,17 @@ async def get_ventas_summary_regional():
                     vs.productos_unicos,
                     vs.unidades_vendidas,
                     CASE
-                        WHEN vd.dias_con_ventas > 0
-                        THEN vs.unidades_vendidas::float / vd.dias_con_ventas
+                        WHEN vs.dias_con_ventas > 0
+                        THEN vs.unidades_vendidas::float / vs.dias_con_ventas
                         ELSE NULL
                     END as promedio_unidades_diarias,
                     TO_CHAR(vs.primera_venta, 'YYYY-MM-DD HH24:MI') as primera_venta,
                     TO_CHAR(vs.ultima_venta, 'YYYY-MM-DD HH24:MI') as ultima_venta
                 FROM ventas_summary vs
-                LEFT JOIN ventas_diarias vd ON vs.ubicacion_id = vd.ubicacion_id
                 ORDER BY vs.region, vs.ubicacion_nombre
             """
 
-            cursor.execute(query)
+            cursor.execute(query, [fecha_limite])
             rows = cursor.fetchall()
             cursor.close()
 
