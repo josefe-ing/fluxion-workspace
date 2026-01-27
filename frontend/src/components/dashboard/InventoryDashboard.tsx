@@ -110,10 +110,12 @@ export default function InventoryDashboard() {
   const [selectedUbicacion, setSelectedUbicacion] = useState<string>(ubicacionId || 'tienda_08');
   const [selectedAlmacen, _setSelectedAlmacen] = useState<string | null>(almacenParam);
   const [selectedCategoria, setSelectedCategoria] = useState<string>('all');
+  const [selectedMarca, setSelectedMarca] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState<string>('');
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
   const [categorias, setCategorias] = useState<string[]>([]);
+  const [marcas, setMarcas] = useState<string[]>([]);
 
   // Nuevos filtros
   const [selectedEstadoCriticidad, setSelectedEstadoCriticidad] = useState<string>('all');
@@ -156,6 +158,7 @@ export default function InventoryDashboard() {
   useEffect(() => {
     loadUbicaciones();
     loadCategorias();
+    loadMarcas();
   }, []);
 
   useEffect(() => {
@@ -168,13 +171,13 @@ export default function InventoryDashboard() {
 
   useEffect(() => {
     loadStock();
-  }, [selectedUbicacion, selectedAlmacen, selectedCategoria, currentPage, debouncedSearchTerm,
+  }, [selectedUbicacion, selectedAlmacen, selectedCategoria, selectedMarca, currentPage, debouncedSearchTerm,
       sortBy, sortOrder, selectedEstadoCriticidad, selectedClasificacionProducto,
       selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedUbicacion, selectedCategoria, debouncedSearchTerm, selectedEstadoCriticidad,
+  }, [selectedUbicacion, selectedCategoria, selectedMarca, debouncedSearchTerm, selectedEstadoCriticidad,
       selectedClasificacionProducto, selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter]);
 
   const loadUbicaciones = async () => {
@@ -192,6 +195,15 @@ export default function InventoryDashboard() {
       setCategorias(response.data);
     } catch (error) {
       console.error('Error cargando categorías:', error);
+    }
+  };
+
+  const loadMarcas = async () => {
+    try {
+      const response = await http.get('/api/marcas');
+      setMarcas(response.data);
+    } catch (error) {
+      console.error('Error cargando marcas:', error);
     }
   };
 
@@ -230,6 +242,7 @@ export default function InventoryDashboard() {
       if (selectedUbicacion !== 'all') params.ubicacion_id = selectedUbicacion;
       if (selectedAlmacen) params.almacen_codigo = selectedAlmacen;
       if (selectedCategoria !== 'all') params.categoria = selectedCategoria;
+      if (selectedMarca !== 'all') params.marca = selectedMarca;
       if (debouncedSearchTerm) params.search = debouncedSearchTerm;
       if (selectedEstadoCriticidad !== 'all') params.estado_criticidad = selectedEstadoCriticidad;
       if (selectedClasificacionProducto !== 'all') params.clasificacion_producto = selectedClasificacionProducto;
@@ -281,6 +294,7 @@ export default function InventoryDashboard() {
       if (selectedUbicacion !== 'all') params.ubicacion_id = selectedUbicacion;
       if (selectedAlmacen) params.almacen_codigo = selectedAlmacen;
       if (selectedCategoria !== 'all') params.categoria = selectedCategoria;
+      if (selectedMarca !== 'all') params.marca = selectedMarca;
       if (debouncedSearchTerm) params.search = debouncedSearchTerm;
       if (selectedEstadoCriticidad !== 'all') params.estado_criticidad = selectedEstadoCriticidad;
       if (selectedClasificacionProducto !== 'all') params.clasificacion_producto = selectedClasificacionProducto;
@@ -352,22 +366,15 @@ export default function InventoryDashboard() {
     );
   };
 
-  // Formato inteligente para peso (kg o toneladas)
+  // Formato con unidades fijas
   const formatPeso = (pesoKg: number | null): string => {
     if (pesoKg === null || pesoKg === 0) return '-';
-    if (pesoKg >= 1000) {
-      return `${formatNumber(pesoKg / 1000, 1)} t`;
-    }
     return `${formatNumber(pesoKg, 1)} kg`;
   };
 
-  // Formato inteligente para volumen (litros o m³)
   const formatVolumen = (volumenM3: number | null): string => {
     if (volumenM3 === null || volumenM3 === 0) return '-';
     const litros = volumenM3 * 1000;
-    if (litros >= 1000) {
-      return `${formatNumber(volumenM3, 1)} m³`;
-    }
     return `${formatNumber(litros, 0)} L`;
   };
 
@@ -539,7 +546,7 @@ export default function InventoryDashboard() {
 
       {/* Filtros compactos */}
       <div className="bg-white rounded-lg border border-gray-200 p-3">
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Ubicación</label>
             <select
@@ -562,6 +569,17 @@ export default function InventoryDashboard() {
             >
               <option value="all">Todas</option>
               {categorias.map((cat) => (<option key={cat} value={cat}>{cat}</option>))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Marca</label>
+            <select
+              value={selectedMarca}
+              onChange={(e) => setSelectedMarca(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todas</option>
+              {marcas.map((marca) => (<option key={marca} value={marca}>{marca}</option>))}
             </select>
           </div>
           <div>
@@ -671,7 +689,7 @@ export default function InventoryDashboard() {
           </div>
           {(selectedEstadoCriticidad !== 'all' || selectedClasificacionProducto !== 'all' ||
             selectedClaseABC !== 'all' || selectedTopVentas !== 'all' || selectedVelocidadVenta !== 'all' ||
-            selectedCategoria !== 'all' || selectedStockCediFilter !== 'all' || debouncedSearchTerm) && (
+            selectedCategoria !== 'all' || selectedMarca !== 'all' || selectedStockCediFilter !== 'all' || debouncedSearchTerm) && (
             <span className="text-xs text-gray-500 italic">(filtrado)</span>
           )}
         </div>
@@ -759,11 +777,11 @@ export default function InventoryDashboard() {
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('stock')}>
                     Stock {sortBy === 'stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
-                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Peso total del stock (unitario × cantidad)">
-                    Peso
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" title="Peso total del stock (unitario × cantidad)" onClick={() => handleSort('peso')}>
+                    Peso {sortBy === 'peso' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
-                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Volumen total del stock (unitario × cantidad)">
-                    Vol.
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" title="Volumen total del stock (unitario × cantidad)" onClick={() => handleSort('volumen')}>
+                    Vol. {sortBy === 'volumen' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">
                     <span title="Stock disponible en CEDI de la región">CEDI</span>

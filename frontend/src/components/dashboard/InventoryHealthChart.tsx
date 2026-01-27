@@ -164,22 +164,15 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
     return 'bg-red-500';
   };
 
-  // Formato inteligente para peso (kg o toneladas)
+  // Formato con unidades fijas
   const formatPeso = (pesoKg: number): string => {
     if (pesoKg === 0) return '-';
-    if (pesoKg >= 1000) {
-      return `${(pesoKg / 1000).toFixed(1)} t`;
-    }
     return `${pesoKg.toFixed(0)} kg`;
   };
 
-  // Formato inteligente para volumen (litros o m³)
   const formatVolumen = (volumenM3: number): string => {
     if (volumenM3 === 0) return '-';
     const litros = volumenM3 * 1000;
-    if (litros >= 1000) {
-      return `${volumenM3.toFixed(1)} m³`;
-    }
     return `${litros.toFixed(0)} L`;
   };
 

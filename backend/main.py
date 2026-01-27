@@ -1722,6 +1722,33 @@ async def get_categorias():
         logger.error(f"Error obteniendo categorías: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
+@app.get("/api/marcas", tags=["Productos"])
+async def get_marcas():
+    """
+    Obtiene todas las marcas de productos
+    """
+    try:
+        query = """
+            SELECT DISTINCT marca
+            FROM productos
+            WHERE activo = true
+                AND marca IS NOT NULL
+                AND marca != ''
+            ORDER BY marca
+        """
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query)
+            result = cursor.fetchall()
+            cursor.close()
+
+            return [row[0] for row in result]
+
+    except Exception as e:
+        logger.error(f"Error obteniendo marcas: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 # =====================================================================================
 # HELPERS PARA CÁLCULO ABC-XYZ ON-DEMAND (PostgreSQL)
 # =====================================================================================
@@ -3784,6 +3811,7 @@ async def get_stock(
     ubicacion_id: Optional[str] = None,
     almacen_codigo: Optional[str] = None,
     categoria: Optional[str] = None,
+    marca: Optional[str] = None,
     estado_criticidad: Optional[str] = None,
     clasificacion_producto: Optional[str] = None,
     clase_abc: Optional[str] = None,
@@ -3812,6 +3840,7 @@ async def get_stock(
         ubicacion_id: Filtrar por ID de ubicación (requerido para métricas avanzadas)
         almacen_codigo: Filtrar por código de almacén
         categoria: Filtrar por categoría
+        marca: Filtrar por marca
         estado_criticidad: CRITICO, URGENTE, OPTIMO, EXCESO, SIN_DEMANDA
         clasificacion_producto: FANTASMA, ANOMALIA, DORMIDO, ACTIVO
         clase_abc: A, B, C, SIN_VENTAS
@@ -3848,6 +3877,10 @@ async def get_stock(
             if categoria:
                 base_where += " AND p.categoria = %s"
                 base_params.append(categoria)
+
+            if marca:
+                base_where += " AND p.marca = %s"
+                base_params.append(marca)
 
             if search:
                 search_term = f"%{search}%"
@@ -4148,7 +4181,9 @@ async def get_stock(
                 order_field = 'rank_ventas'
                 order_direction = 'ASC' if sort_order == 'asc' else 'ASC'  # Default ASC for rank
             elif sort_by == 'peso':
-                order_field = 'stock_actual'  # No tenemos peso, usar stock
+                order_field = 'peso_unitario_kg'
+            elif sort_by == 'volumen':
+                order_field = 'volumen_unitario_m3'
             elif sort_by == 'stock':
                 order_field = 'stock_actual'
 
