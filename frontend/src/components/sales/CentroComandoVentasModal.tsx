@@ -24,7 +24,14 @@ interface AgotadoVisualItem {
   horas_sin_vender: number;
   factor_alerta: number;
   ultima_venta: UltimaVentaInfo | null;
+  clase_abc: string | null;
+  ventas_otras_tiendas_region: number;
+  se_vende_en_region: boolean;
+  score_criticidad: number;
   prioridad: number; // 1 = crítico, 2 = alto, 3 = medio
+  stock_en_ultima_venta: number | null;
+  diagnostico: string; // EXHIBICION, AGOTAMIENTO, REGIONAL, REPOSICION, INDETERMINADO
+  diagnostico_detalle: string;
 }
 
 interface AgotadoVisualResponse {
@@ -92,9 +99,52 @@ const getFactorColor = (factor: number): string => {
   return 'text-yellow-600';
 };
 
+const getDiagnosticoConfig = (diagnostico: string) => {
+  switch (diagnostico) {
+    case 'EXHIBICION':
+      return {
+        icon: '🔴',
+        label: 'Exhibición',
+        color: 'bg-red-100 text-red-800 border-red-300',
+        tooltip: 'Problema de exhibición: producto disponible pero no visible'
+      };
+    case 'AGOTAMIENTO':
+      return {
+        icon: '🟡',
+        label: 'Agotado',
+        color: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+        tooltip: 'Agotamiento previo, producto recién repuesto'
+      };
+    case 'REPOSICION':
+      return {
+        icon: '🟠',
+        label: 'Reponer',
+        color: 'bg-orange-100 text-orange-800 border-orange-300',
+        tooltip: 'Stock bajo, necesita reposición urgente'
+      };
+    case 'REGIONAL':
+      return {
+        icon: '🔵',
+        label: 'Regional',
+        color: 'bg-blue-100 text-blue-800 border-blue-300',
+        tooltip: 'No se vende en ninguna tienda de la región'
+      };
+    default:
+      return {
+        icon: '⚪',
+        label: 'Análisis',
+        color: 'bg-gray-100 text-gray-700 border-gray-300',
+        tooltip: 'Requiere análisis adicional'
+      };
+  }
+};
+
 // ============================================================================
 // COMPONENT
 // ============================================================================
+
+type SortField = 'codigo' | 'stock' | 'factor' | 'sin_vender' | 'prioridad' | 'categoria' | 'criticidad' | 'abc' | 'ventas_region';
+type SortOrder = 'asc' | 'desc';
 
 export default function CentroComandoVentasModal({
   isOpen,
@@ -106,8 +156,19 @@ export default function CentroComandoVentasModal({
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AgotadoVisualResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Filtros
   const [filterPrioridad, setFilterPrioridad] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterCategoria, setFilterCategoria] = useState<string>('');
+  const [filterStockMin, setFilterStockMin] = useState<number | null>(null);
+  const [filterFactorMin, setFilterFactorMin] = useState<number | null>(null);
+  const [filterABC, setFilterABC] = useState<string>('');
+  const [filterSeVendeRegion, setFilterSeVendeRegion] = useState<boolean | null>(null);
+
+  // Sorting - Por defecto ordenar por tiempo sin vender (mayor a menor)
+  const [sortField, setSortField] = useState<SortField>('sin_vender');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   // Cargar datos al abrir el modal
   useEffect(() => {
@@ -136,23 +197,134 @@ export default function CentroComandoVentasModal({
     }
   };
 
-  // Filtrar items
-  const filteredItems = data?.items.filter(item => {
-    // Filtro por prioridad
-    if (filterPrioridad !== null && item.prioridad !== filterPrioridad) {
-      return false;
+  // Función para manejar sorting
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle order si es el mismo campo
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Nuevo campo, default a desc
+      setSortField(field);
+      setSortOrder('desc');
     }
-    // Filtro por búsqueda
-    if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      return (
-        item.codigo_producto.toLowerCase().includes(search) ||
-        item.descripcion_producto.toLowerCase().includes(search) ||
-        (item.categoria?.toLowerCase().includes(search) ?? false)
-      );
-    }
-    return true;
-  }) || [];
+  };
+
+  // Obtener categorías únicas
+  const categorias = Array.from(new Set(data?.items.map(item => item.categoria).filter(Boolean))) as string[];
+
+  // Filtrar y ordenar items
+  const filteredAndSortedItems = (() => {
+    if (!data) return [];
+
+    let items = data.items.filter(item => {
+      // Filtro por prioridad
+      if (filterPrioridad !== null && item.prioridad !== filterPrioridad) {
+        return false;
+      }
+      // Filtro por búsqueda
+      if (searchTerm) {
+        const search = searchTerm.toLowerCase();
+        if (!(
+          item.codigo_producto.toLowerCase().includes(search) ||
+          item.descripcion_producto.toLowerCase().includes(search) ||
+          (item.categoria?.toLowerCase().includes(search) ?? false)
+        )) {
+          return false;
+        }
+      }
+      // Filtro por categoría
+      if (filterCategoria && item.categoria !== filterCategoria) {
+        return false;
+      }
+      // Filtro por stock mínimo
+      if (filterStockMin !== null && item.stock_actual < filterStockMin) {
+        return false;
+      }
+      // Filtro por factor mínimo
+      if (filterFactorMin !== null && item.factor_alerta < filterFactorMin) {
+        return false;
+      }
+      // Filtro por ABC
+      if (filterABC && item.clase_abc !== filterABC) {
+        return false;
+      }
+      // Filtro por se vende en región
+      if (filterSeVendeRegion !== null && item.se_vende_en_region !== filterSeVendeRegion) {
+        return false;
+      }
+      return true;
+    });
+
+    // Ordenar
+    items.sort((a, b) => {
+      let aVal: any;
+      let bVal: any;
+
+      switch (sortField) {
+        case 'codigo':
+          aVal = a.codigo_producto;
+          bVal = b.codigo_producto;
+          break;
+        case 'stock':
+          aVal = a.stock_actual;
+          bVal = b.stock_actual;
+          break;
+        case 'factor':
+          aVal = a.factor_alerta;
+          bVal = b.factor_alerta;
+          break;
+        case 'sin_vender':
+          aVal = a.horas_sin_vender;
+          bVal = b.horas_sin_vender;
+          break;
+        case 'prioridad':
+          aVal = a.prioridad;
+          bVal = b.prioridad;
+          break;
+        case 'categoria':
+          aVal = a.categoria || '';
+          bVal = b.categoria || '';
+          break;
+        case 'criticidad':
+          aVal = a.score_criticidad;
+          bVal = b.score_criticidad;
+          break;
+        case 'abc':
+          // A=3, B=2, C=1, SIN_VENTAS=0
+          aVal = a.clase_abc === 'A' ? 3 : a.clase_abc === 'B' ? 2 : a.clase_abc === 'C' ? 1 : 0;
+          bVal = b.clase_abc === 'A' ? 3 : b.clase_abc === 'B' ? 2 : b.clase_abc === 'C' ? 1 : 0;
+          break;
+        case 'ventas_region':
+          aVal = a.ventas_otras_tiendas_region;
+          bVal = b.ventas_otras_tiendas_region;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return items;
+  })();
+
+  // Calcular estadísticas por categoría
+  const estatsPorCategoria = (() => {
+    if (!data) return [];
+    const grouped = filteredAndSortedItems.reduce((acc, item) => {
+      const cat = item.categoria || 'Sin Categoría';
+      if (!acc[cat]) {
+        acc[cat] = { categoria: cat, count: 0, criticos: 0, totalStock: 0 };
+      }
+      acc[cat].count++;
+      if (item.prioridad === 1) acc[cat].criticos++;
+      acc[cat].totalStock += item.stock_actual;
+      return acc;
+    }, {} as Record<string, { categoria: string; count: number; criticos: number; totalStock: number }>);
+    return Object.values(grouped).sort((a, b) => b.count - a.count);
+  })();
 
   if (!isOpen) return null;
 
@@ -272,71 +444,227 @@ export default function CentroComandoVentasModal({
                 </div>
               </div>
 
+              {/* Estadísticas por Categoría */}
+              {estatsPorCategoria.length > 0 && (
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-blue-900 mb-3">Distribución por Categoría</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {estatsPorCategoria.slice(0, 8).map((stat) => (
+                      <div
+                        key={stat.categoria}
+                        className="bg-white rounded-lg p-3 border border-blue-100 cursor-pointer hover:bg-blue-50 transition-colors"
+                        onClick={() => setFilterCategoria(filterCategoria === stat.categoria ? '' : stat.categoria)}
+                      >
+                        <p className="text-xs text-gray-600 truncate" title={stat.categoria}>{stat.categoria}</p>
+                        <div className="flex items-baseline gap-2 mt-1">
+                          <p className="text-lg font-bold text-blue-900">{stat.count}</p>
+                          {stat.criticos > 0 && (
+                            <span className="text-xs font-semibold text-red-600">({stat.criticos} críticos)</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500">{formatInteger(stat.totalStock)} unid.</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Filtros */}
-              <div className="flex flex-wrap gap-4 items-center">
-                {/* Búsqueda */}
-                <div className="flex-1 min-w-[200px]">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="Buscar producto..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
-                    <svg className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              <div className="space-y-4">
+                {/* Primera fila: Búsqueda y Prioridad */}
+                <div className="flex flex-wrap gap-4 items-center">
+                  {/* Búsqueda */}
+                  <div className="flex-1 min-w-[200px]">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Buscar producto..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <svg className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Filtro por prioridad */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setFilterPrioridad(null)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        filterPrioridad === null
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      Todas
+                    </button>
+                    <button
+                      onClick={() => setFilterPrioridad(1)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        filterPrioridad === 1
+                          ? 'bg-red-600 text-white'
+                          : 'bg-red-100 text-red-700 hover:bg-red-200'
+                      }`}
+                    >
+                      Críticas
+                    </button>
+                    <button
+                      onClick={() => setFilterPrioridad(2)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        filterPrioridad === 2
+                          ? 'bg-orange-600 text-white'
+                          : 'bg-orange-100 text-orange-700 hover:bg-orange-200'
+                      }`}
+                    >
+                      Altas
+                    </button>
+                    <button
+                      onClick={() => setFilterPrioridad(3)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        filterPrioridad === 3
+                          ? 'bg-yellow-600 text-white'
+                          : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+                      }`}
+                    >
+                      Medias
+                    </button>
+                  </div>
+
+                  {/* Botón de exportar */}
+                  <button
+                    onClick={() => {
+                      const csv = [
+                        ['Código', 'Descripción', 'Categoría', 'Stock', 'Factor', 'Horas Sin Vender', 'Prioridad'].join(','),
+                        ...filteredAndSortedItems.map(item => [
+                          item.codigo_producto,
+                          `"${item.descripcion_producto}"`,
+                          item.categoria || '',
+                          item.stock_actual,
+                          item.factor_alerta,
+                          item.horas_sin_vender,
+                          getPrioridadLabel(item.prioridad)
+                        ].join(','))
+                      ].join('\n');
+                      const blob = new Blob([csv], { type: 'text/csv' });
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `agotados-visuales-${ubicacionId}-${new Date().toISOString().split('T')[0]}.csv`;
+                      a.click();
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
+                    Exportar CSV
+                  </button>
+                </div>
+
+                {/* Segunda fila: Filtros adicionales */}
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  {/* Categoría */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Categoría</label>
+                    <select
+                      value={filterCategoria}
+                      onChange={(e) => setFilterCategoria(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="">Todas</option>
+                      {categorias.map((cat) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* ABC */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Clasificación ABC</label>
+                    <select
+                      value={filterABC}
+                      onChange={(e) => setFilterABC(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="">Todas</option>
+                      <option value="A">A - Alta rotación</option>
+                      <option value="B">B - Media rotación</option>
+                      <option value="C">C - Baja rotación</option>
+                    </select>
+                  </div>
+
+                  {/* Stock mínimo */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Stock Mínimo</label>
+                    <input
+                      type="number"
+                      placeholder="Ej: 10"
+                      value={filterStockMin || ''}
+                      onChange={(e) => setFilterStockMin(e.target.value ? parseInt(e.target.value) : null)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+
+                  {/* Factor mínimo */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Factor Mínimo</label>
+                    <select
+                      value={filterFactorMin || ''}
+                      onChange={(e) => setFilterFactorMin(e.target.value ? parseFloat(e.target.value) : null)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="">Todos</option>
+                      <option value="2">&gt;2x</option>
+                      <option value="3">&gt;3x</option>
+                      <option value="4">&gt;4x</option>
+                      <option value="5">&gt;5x</option>
+                    </select>
+                  </div>
+
+                  {/* Se vende en región */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Comparación Regional</label>
+                    <select
+                      value={filterSeVendeRegion === null ? '' : String(filterSeVendeRegion)}
+                      onChange={(e) => setFilterSeVendeRegion(e.target.value === '' ? null : e.target.value === 'true')}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="">Todos</option>
+                      <option value="true">Se vende en región</option>
+                      <option value="false">No se vende en región</option>
+                    </select>
                   </div>
                 </div>
 
-                {/* Filtro por prioridad */}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setFilterPrioridad(null)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                      filterPrioridad === null
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    Todas
-                  </button>
-                  <button
-                    onClick={() => setFilterPrioridad(1)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                      filterPrioridad === 1
-                        ? 'bg-red-600 text-white'
-                        : 'bg-red-100 text-red-700 hover:bg-red-200'
-                    }`}
-                  >
-                    Críticas
-                  </button>
-                  <button
-                    onClick={() => setFilterPrioridad(2)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                      filterPrioridad === 2
-                        ? 'bg-orange-600 text-white'
-                        : 'bg-orange-100 text-orange-700 hover:bg-orange-200'
-                    }`}
-                  >
-                    Altas
-                  </button>
-                  <button
-                    onClick={() => setFilterPrioridad(3)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                      filterPrioridad === 3
-                        ? 'bg-yellow-600 text-white'
-                        : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
-                    }`}
-                  >
-                    Medias
-                  </button>
+                {/* Contador de resultados */}
+                <div className="flex items-center justify-between text-sm">
+                  <p className="text-gray-600">
+                    Mostrando <span className="font-semibold text-gray-900">{filteredAndSortedItems.length}</span> de <span className="font-semibold">{data.total_alertas}</span> alertas
+                  </p>
+                  {(filterPrioridad !== null || searchTerm || filterCategoria || filterStockMin !== null || filterFactorMin !== null || filterABC || filterSeVendeRegion !== null) && (
+                    <button
+                      onClick={() => {
+                        setFilterPrioridad(null);
+                        setSearchTerm('');
+                        setFilterCategoria('');
+                        setFilterStockMin(null);
+                        setFilterFactorMin(null);
+                        setFilterABC('');
+                        setFilterSeVendeRegion(null);
+                      }}
+                      className="text-purple-600 hover:text-purple-700 font-medium"
+                    >
+                      Limpiar filtros
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Tabla de productos */}
-              {filteredItems.length === 0 ? (
+              {filteredAndSortedItems.length === 0 ? (
                 <div className="text-center py-12">
                   <svg className="h-16 w-16 mx-auto text-green-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -352,80 +680,201 @@ export default function CentroComandoVentasModal({
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Stock</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Vel. Normal</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Sin Vender</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Factor</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Última Venta</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Prioridad</th>
+                        <th
+                          className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => handleSort('codigo')}
+                        >
+                          <div className="flex items-center gap-1">
+                            Producto
+                            {sortField === 'codigo' && (
+                              <svg className={`h-3 w-3 ${sortOrder === 'asc' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            )}
+                          </div>
+                        </th>
+                        <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">
+                          Diagnóstico
+                        </th>
+                        <th
+                          className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => handleSort('abc')}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            ABC
+                            {sortField === 'abc' && (
+                              <svg className={`h-3 w-3 ${sortOrder === 'asc' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            )}
+                          </div>
+                        </th>
+                        <th
+                          className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => handleSort('stock')}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            Stock
+                            {sortField === 'stock' && (
+                              <svg className={`h-3 w-3 ${sortOrder === 'asc' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            )}
+                          </div>
+                        </th>
+                        <th
+                          className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => handleSort('ventas_region')}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            Otras Tiendas
+                            {sortField === 'ventas_region' && (
+                              <svg className={`h-3 w-3 ${sortOrder === 'asc' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            )}
+                          </div>
+                        </th>
+                        <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Vtas/Día</th>
+                        <th
+                          className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => handleSort('sin_vender')}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            Sin Vender
+                            {sortField === 'sin_vender' && (
+                              <svg className={`h-3 w-3 ${sortOrder === 'asc' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            )}
+                          </div>
+                        </th>
+                        <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Última Venta</th>
+                        <th
+                          className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => handleSort('prioridad')}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            Prioridad
+                            {sortField === 'prioridad' && (
+                              <svg className={`h-3 w-3 ${sortOrder === 'asc' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            )}
+                          </div>
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {filteredItems.map((item) => (
+                      {filteredAndSortedItems.map((item) => (
                         <tr key={item.producto_id} className="hover:bg-gray-50">
                           {/* Producto */}
-                          <td className="px-4 py-4">
+                          <td className="px-3 py-2">
                             <div>
-                              <p className="text-sm font-medium text-gray-900">{item.codigo_producto}</p>
-                              <p className="text-xs text-gray-500 truncate max-w-[200px]" title={item.descripcion_producto}>
+                              <p className="text-xs font-medium text-gray-900">{item.codigo_producto}</p>
+                              <p className="text-xs text-gray-500 truncate max-w-[180px]" title={item.descripcion_producto}>
                                 {item.descripcion_producto}
                               </p>
                               {item.categoria && (
-                                <span className="inline-block mt-1 px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">
+                                <span className="inline-block mt-0.5 px-1.5 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">
                                   {item.categoria}
                                 </span>
                               )}
                             </div>
                           </td>
 
+                          {/* Diagnóstico */}
+                          <td className="px-3 py-2 text-center">
+                            <div className="flex flex-col items-center gap-1">
+                              <span
+                                className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold border ${getDiagnosticoConfig(item.diagnostico).color}`}
+                                title={item.diagnostico_detalle}
+                              >
+                                <span className="mr-1">{getDiagnosticoConfig(item.diagnostico).icon}</span>
+                                {getDiagnosticoConfig(item.diagnostico).label}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* ABC */}
+                          <td className="px-3 py-2 text-center">
+                            {item.clase_abc ? (
+                              <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+                                item.clase_abc === 'A' ? 'bg-green-600 text-white' :
+                                item.clase_abc === 'B' ? 'bg-yellow-500 text-white' :
+                                'bg-gray-500 text-white'
+                              }`}>
+                                {item.clase_abc}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-xs">-</span>
+                            )}
+                          </td>
+
                           {/* Stock */}
-                          <td className="px-4 py-4 text-center">
-                            <span className="text-lg font-bold text-green-600">
+                          <td className="px-3 py-2 text-center">
+                            <span className={`text-sm font-bold ${
+                              item.stock_actual >= 100 ? 'text-green-600' :
+                              item.stock_actual >= 50 ? 'text-yellow-600' :
+                              'text-orange-600'
+                            }`}>
                               {formatInteger(item.stock_actual)}
                             </span>
-                            <p className="text-xs text-gray-400">unidades</p>
                           </td>
 
-                          {/* Velocidad Normal */}
-                          <td className="px-4 py-4 text-center">
-                            <span className="text-sm font-medium text-gray-700">
-                              1 cada {formatHoras(item.promedio_horas_entre_ventas)}
-                            </span>
-                            <p className="text-xs text-gray-400">
-                              {item.ventas_ultimas_2_semanas} ventas/2sem
-                            </p>
+                          {/* Otras Tiendas (Región) */}
+                          <td className="px-3 py-2 text-center">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className={`text-sm font-bold ${
+                                item.ventas_otras_tiendas_region >= 20 ? 'text-red-600' :
+                                item.ventas_otras_tiendas_region > 0 ? 'text-orange-600' :
+                                'text-gray-400'
+                              }`}>
+                                {item.ventas_otras_tiendas_region}
+                              </span>
+                              {item.se_vende_en_region && (
+                                <span className="inline-flex px-1.5 py-0.5 bg-red-100 text-red-700 text-xs rounded font-medium">
+                                  ⚠ Local
+                                </span>
+                              )}
+                            </div>
                           </td>
 
-                          {/* Sin Vender */}
-                          <td className="px-4 py-4 text-center">
-                            <span className={`text-lg font-bold ${getFactorColor(item.factor_alerta)}`}>
+                          {/* Velocidad (Ventas por día) */}
+                          <td className="px-3 py-2 text-center">
+                            <div className="text-sm font-medium text-gray-700">
+                              {(item.ventas_ultimas_2_semanas / 14).toFixed(1)}/día
+                            </div>
+                            <div className="text-xs text-gray-400">
+                              {item.ventas_ultimas_2_semanas} en 2sem
+                            </div>
+                          </td>
+
+                          {/* Tiempo Sin Vender */}
+                          <td className="px-3 py-2 text-center">
+                            <div className={`text-base font-bold ${getFactorColor(item.factor_alerta)}`}>
                               {formatHoras(item.horas_sin_vender)}
-                            </span>
-                          </td>
-
-                          {/* Factor */}
-                          <td className="px-4 py-4 text-center">
-                            <span className={`text-2xl font-bold ${getFactorColor(item.factor_alerta)}`}>
+                            </div>
+                            <div className={`text-xs ${getFactorColor(item.factor_alerta)}`}>
                               {item.factor_alerta}x
-                            </span>
+                            </div>
                           </td>
 
                           {/* Última Venta */}
-                          <td className="px-4 py-4 text-center">
+                          <td className="px-3 py-2 text-center">
                             {item.ultima_venta ? (
-                              <div>
-                                <p className="text-sm text-gray-700">{item.ultima_venta.fecha_venta}</p>
-                                <p className="text-xs text-gray-500">{item.ultima_venta.hora}</p>
+                              <div className="text-xs">
+                                <div className="text-gray-700">{item.ultima_venta.fecha_venta}</div>
+                                <div className="text-gray-500">{item.ultima_venta.hora}</div>
                               </div>
                             ) : (
-                              <span className="text-gray-400">-</span>
+                              <span className="text-gray-400 text-xs">-</span>
                             )}
                           </td>
 
                           {/* Prioridad */}
-                          <td className="px-4 py-4 text-center">
-                            <span className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold border ${getPrioridadColor(item.prioridad)}`}>
+                          <td className="px-3 py-2 text-center">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold border ${getPrioridadColor(item.prioridad)}`}>
                               {getPrioridadLabel(item.prioridad)}
                             </span>
                           </td>

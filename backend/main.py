@@ -520,8 +520,17 @@ class AgotadoVisualItem(BaseModel):
     factor_alerta: float  # horas_sin_vender / promedio_horas_entre_ventas
     # Última venta registrada
     ultima_venta: Optional[UltimaVentaInfo]
-    # Prioridad (más alto = más urgente)
-    prioridad: int  # 1 = crítico (>4x), 2 = alto (>3x), 3 = medio (>2x)
+    # Clasificación y comparación regional
+    clase_abc: Optional[str]  # A, B, C, SIN_VENTAS
+    ventas_otras_tiendas_region: int  # Ventas en otras tiendas de la misma región
+    se_vende_en_region: bool  # True si se vende en al menos 1 tienda de la región
+    # Score de criticidad y prioridad
+    score_criticidad: float  # Score ponderado (0-100)
+    prioridad: int  # 1 = crítico, 2 = alto, 3 = medio
+    # Diagnóstico de causa raíz
+    stock_en_ultima_venta: Optional[float]  # Stock que había cuando se vendió por última vez
+    diagnostico: str  # EXHIBICION, AGOTAMIENTO, REGIONAL, INDETERMINADO
+    diagnostico_detalle: str  # Explicación del diagnóstico
 
 
 class AgotadoVisualResponse(BaseModel):
@@ -777,10 +786,31 @@ class VentasSummaryResponse(BaseModel):
     primera_venta: Optional[str]
     ultima_venta: Optional[str]
 
+class VentasRegionalDetail(BaseModel):
+    ubicacion_id: str
+    ubicacion_nombre: str
+    tipo: str
+    total_transacciones: int
+    productos_unicos: int
+    unidades_vendidas: float
+    promedio_unidades_diarias: Optional[float]
+    primera_venta: Optional[str]
+    ultima_venta: Optional[str]
+
+class VentasRegionSummary(BaseModel):
+    region: str
+    total_ubicaciones: int
+    total_transacciones: int
+    total_productos_unicos: int
+    total_unidades_vendidas: float
+    promedio_unidades_diarias: Optional[float]
+    ubicaciones: List[VentasRegionalDetail]
+
 class VentasDetailResponse(BaseModel):
     codigo_producto: str
     descripcion_producto: str
     categoria: str
+    marca: Optional[str]
     cantidad_total: float
     promedio_diario: float
     promedio_mismo_dia_semana: float
@@ -789,6 +819,11 @@ class VentasDetailResponse(BaseModel):
     cantidad_bultos: Optional[float]  # Unidades por bulto
     total_bultos: Optional[float]  # Total vendido en bultos
     promedio_bultos_diario: Optional[float]  # Promedio diario en bultos
+    venta_total: Optional[float]  # Venta total en dinero
+    clase_abc: Optional[str]  # Clasificación ABC
+    rank_ventas: Optional[int]  # Ranking por ventas
+    velocidad_venta: Optional[str]  # Velocidad de venta (BAJA, MEDIA, ALTA, MUY_ALTA)
+    stock_actual: Optional[float]  # Stock disponible actualmente
 
 class PaginatedVentasResponse(BaseModel):
     data: List[VentasDetailResponse]
@@ -5127,9 +5162,14 @@ async def get_agotados_visuales(
             # El promedio entre ventas se calcula sobre el período total
             # pero las horas sin vender se calculan considerando horarios de operación
 
+            # Obtener región de la ubicación actual
+            cursor.execute("SELECT region FROM ubicaciones WHERE id = %s", [ubicacion_id])
+            region_row = cursor.fetchone()
+            region_actual = region_row[0] if region_row and region_row[0] else 'VALENCIA'
+
             query = f"""
                 WITH ventas_periodo AS (
-                    -- Ventas de cada producto en últimas 2 semanas
+                    -- Ventas de cada producto en últimas 2 semanas EN ESTA TIENDA
                     SELECT
                         v.producto_id,
                         COUNT(*) as total_ventas,
@@ -5141,6 +5181,18 @@ async def get_agotados_visuales(
                       {almacen_filter_ventas}
                     GROUP BY v.producto_id
                     HAVING COUNT(*) >= %s  -- Mínimo de ventas para considerar
+                ),
+                ventas_otras_tiendas AS (
+                    -- Ventas del mismo producto en OTRAS tiendas de la MISMA REGIÓN
+                    SELECT
+                        v.producto_id,
+                        COUNT(*) as ventas_otras_tiendas
+                    FROM ventas v
+                    INNER JOIN ubicaciones u ON v.ubicacion_id = u.id
+                    WHERE v.ubicacion_id != %s
+                      AND COALESCE(u.region, 'VALENCIA') = %s
+                      AND v.fecha_venta >= %s
+                    GROUP BY v.producto_id
                 ),
                 velocidad_venta AS (
                     -- Calcular velocidad promedio (horas de OPERACIÓN entre ventas)
@@ -5154,6 +5206,18 @@ async def get_agotados_visuales(
                         EXTRACT(EPOCH FROM (%s::timestamp - vp.ultima_venta)) / 86400.0 * %s as horas_sin_vender
                     FROM ventas_periodo vp
                     WHERE vp.total_ventas > 1  -- Necesitamos al menos 2 ventas para calcular intervalo
+                ),
+                stock_historico AS (
+                    -- Stock que había en el momento de la última venta (o el más cercano)
+                    SELECT DISTINCT ON (vv.producto_id)
+                        vv.producto_id,
+                        ih.cantidad as stock_en_ultima_venta
+                    FROM velocidad_venta vv
+                    LEFT JOIN inventario_historico ih
+                        ON ih.producto_id = vv.producto_id
+                        AND ih.ubicacion_id = %s
+                        AND ih.fecha_snapshot <= vv.ultima_venta
+                    ORDER BY vv.producto_id, ih.fecha_snapshot DESC
                 )
                 SELECT
                     ia.producto_id,
@@ -5164,10 +5228,16 @@ async def get_agotados_visuales(
                     vv.total_ventas as ventas_ultimas_2_semanas,
                     COALESCE(vv.promedio_horas_entre_ventas, 0) as promedio_horas_entre_ventas,
                     COALESCE(vv.horas_sin_vender, 0) as horas_sin_vender,
-                    vv.ultima_venta
+                    vv.ultima_venta,
+                    COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
+                    COALESCE(vot.ventas_otras_tiendas, 0) as ventas_otras_tiendas,
+                    sh.stock_en_ultima_venta
                 FROM inventario_actual ia
                 INNER JOIN productos p ON ia.producto_id = p.id
                 INNER JOIN velocidad_venta vv ON vv.producto_id = ia.producto_id
+                LEFT JOIN productos_abc_tienda abc ON abc.ubicacion_id = ia.ubicacion_id AND abc.producto_id = ia.producto_id
+                LEFT JOIN ventas_otras_tiendas vot ON vot.producto_id = ia.producto_id
+                LEFT JOIN stock_historico sh ON sh.producto_id = ia.producto_id
                 WHERE ia.ubicacion_id = %s
                   AND ia.cantidad > 0  -- Solo productos con stock positivo
                   AND p.activo = true
@@ -5175,7 +5245,33 @@ async def get_agotados_visuales(
                   AND vv.promedio_horas_entre_ventas <= %s  -- Excluir baja rotación
                   AND vv.horas_sin_vender >= (%s * vv.promedio_horas_entre_ventas)  -- Factor de alerta
                   {almacen_filter}
-                ORDER BY (vv.horas_sin_vender / NULLIF(vv.promedio_horas_entre_ventas, 1)) DESC
+                ORDER BY
+                    -- Score de criticidad compuesto
+                    (
+                        -- Factor temporal (40pts)
+                        LEAST((vv.horas_sin_vender / NULLIF(vv.promedio_horas_entre_ventas, 1)) * 10, 40) +
+                        -- ABC (30pts)
+                        CASE COALESCE(abc.clase_abc, 'SIN_VENTAS')
+                            WHEN 'A' THEN 30
+                            WHEN 'B' THEN 20
+                            WHEN 'C' THEN 10
+                            ELSE 0
+                        END +
+                        -- Stock alto (15pts)
+                        CASE
+                            WHEN ia.cantidad >= 100 THEN 15
+                            WHEN ia.cantidad >= 50 THEN 10
+                            WHEN ia.cantidad >= 20 THEN 5
+                            ELSE 0
+                        END +
+                        -- Se vende en otras tiendas (15pts)
+                        CASE
+                            WHEN COALESCE(vot.ventas_otras_tiendas, 0) >= 20 THEN 15
+                            WHEN COALESCE(vot.ventas_otras_tiendas, 0) >= 10 THEN 10
+                            WHEN COALESCE(vot.ventas_otras_tiendas, 0) >= 5 THEN 5
+                            ELSE 0
+                        END
+                    ) DESC
                 LIMIT 100
             """
 
@@ -5184,16 +5280,20 @@ async def get_agotados_visuales(
                 params = [
                     ubicacion_id, hace_2_semanas, almacen_codigo,  # ventas_periodo
                     min_ventas_historicas,  # HAVING
+                    ubicacion_id, region_actual, hace_2_semanas,  # ventas_otras_tiendas
                     ahora, horas_operacion_diarias,  # velocidad_venta: promedio
                     ahora, horas_operacion_diarias,  # velocidad_venta: sin vender
+                    ubicacion_id,  # stock_historico
                     ubicacion_id, max_horas_entre_ventas, factor_minimo, almacen_codigo  # SELECT principal
                 ]
             else:
                 params = [
                     ubicacion_id, hace_2_semanas,  # ventas_periodo
                     min_ventas_historicas,  # HAVING
+                    ubicacion_id, region_actual, hace_2_semanas,  # ventas_otras_tiendas
                     ahora, horas_operacion_diarias,  # velocidad_venta: promedio
                     ahora, horas_operacion_diarias,  # velocidad_venta: sin vender
+                    ubicacion_id,  # stock_historico
                     ubicacion_id, max_horas_entre_ventas, factor_minimo  # SELECT principal
                 ]
 
@@ -5206,21 +5306,114 @@ async def get_agotados_visuales(
             alertas_medias = 0
 
             for row in rows:
-                producto_id, codigo, descripcion, categoria, stock, ventas_2sem, prom_horas, horas_sin, ultima_venta_ts = row
+                producto_id, codigo, descripcion, categoria, stock, ventas_2sem, prom_horas, horas_sin, ultima_venta_ts, clase_abc, ventas_otras_tiendas, stock_en_ultima_venta = row
+
+                # Convertir Decimal a float para evitar errores de tipo
+                stock = float(stock) if stock else 0.0
+                prom_horas = float(prom_horas) if prom_horas else 0.0
+                horas_sin = float(horas_sin) if horas_sin else 0.0
+                ventas_otras_tiendas = int(ventas_otras_tiendas) if ventas_otras_tiendas else 0
+                stock_en_ultima_venta = float(stock_en_ultima_venta) if stock_en_ultima_venta else None
 
                 # Calcular factor de alerta
-                factor = horas_sin / prom_horas if prom_horas > 0 else 0
+                factor = horas_sin / prom_horas if prom_horas > 0 else 0.0
 
-                # Determinar prioridad
-                if factor >= 4:
+                # Calcular SCORE DE CRITICIDAD INTELIGENTE (0-100)
+                score = 0.0
+
+                # 1. Factor temporal (0-40 puntos)
+                score += min(factor * 10, 40)
+
+                # 2. Clasificación ABC (0-30 puntos)
+                if clase_abc == 'A':
+                    score += 30  # Producto A sin vender es MUY crítico
+                elif clase_abc == 'B':
+                    score += 20
+                elif clase_abc == 'C':
+                    score += 10
+                # SIN_VENTAS: 0 puntos
+
+                # 3. Stock disponible (0-15 puntos) - Más stock sin vender = más crítico
+                if stock >= 100:
+                    score += 15  # Mucho stock sin vender sugiere problema de exhibición
+                elif stock >= 50:
+                    score += 10
+                elif stock >= 20:
+                    score += 5
+
+                # 4. Comparación regional (0-15 puntos) - Si se vende en otras tiendas pero no aquí = CRÍTICO
+                se_vende_en_region = ventas_otras_tiendas > 0
+                if se_vende_en_region:
+                    if ventas_otras_tiendas >= 20:
+                        score += 15  # Se vende mucho en otras tiendas = problema LOCAL
+                    elif ventas_otras_tiendas >= 10:
+                        score += 10
+                    elif ventas_otras_tiendas >= 5:
+                        score += 5
+
+                # Determinar prioridad basada en score
+                if score >= 70:
                     prioridad = 1  # Crítico
                     alertas_criticas += 1
-                elif factor >= 3:
+                elif score >= 50:
                     prioridad = 2  # Alto
                     alertas_altas += 1
                 else:
                     prioridad = 3  # Medio
                     alertas_medias += 1
+
+                # ========================================
+                # DIAGNÓSTICO DE CAUSA RAÍZ
+                # ========================================
+                diagnostico = "INDETERMINADO"
+                diagnostico_detalle = ""
+
+                if stock_en_ultima_venta is not None:
+                    cambio_stock = stock - stock_en_ultima_venta
+
+                    # 1. PROBLEMA DE EXHIBICIÓN (más crítico)
+                    # Stock alto + se mantuvo/subió + se vende en región = producto está pero no se muestra
+                    if stock >= 50 and cambio_stock >= 0 and se_vende_en_region:
+                        diagnostico = "EXHIBICION"
+                        diagnostico_detalle = f"Stock alto ({int(stock)} unidades) y estable. Se vende en otras {ventas_otras_tiendas} tiendas de la región. Probable problema de exhibición o ubicación en tienda."
+
+                    # 2. AGOTAMIENTO PREVIO + REPOSICIÓN
+                    # Stock subió significativamente = hubo reposición después de agotamiento
+                    elif cambio_stock > 20 and stock_en_ultima_venta < 20:
+                        diagnostico = "AGOTAMIENTO"
+                        diagnostico_detalle = f"Stock subió de {int(stock_en_ultima_venta)} a {int(stock)} unidades. Hubo agotamiento previo, producto recién repuesto."
+
+                    # 3. PROBLEMA REGIONAL
+                    # Stock alto pero NO se vende en ninguna tienda = problema del producto en sí
+                    elif stock >= 50 and not se_vende_en_region:
+                        diagnostico = "REGIONAL"
+                        diagnostico_detalle = f"Stock alto ({int(stock)} unidades) pero no se vende en ninguna tienda de la región. Posible producto descatalogado o problema regional."
+
+                    # 4. STOCK BAJO + NO REPONE
+                    # Stock bajo y bajó o se mantuvo bajo = problema de reposición
+                    elif stock < 30 and stock_en_ultima_venta < 30:
+                        diagnostico = "REPOSICION"
+                        diagnostico_detalle = f"Stock bajo ({int(stock)} unidades) sin reposición. Necesita pedido urgente."
+
+                    # 5. CASO GENERAL
+                    else:
+                        if se_vende_en_region:
+                            diagnostico = "EXHIBICION"
+                            diagnostico_detalle = f"Stock actual: {int(stock)} unidades. Se vende en {ventas_otras_tiendas} otras tiendas. Revisar exhibición."
+                        else:
+                            diagnostico = "INDETERMINADO"
+                            diagnostico_detalle = f"Stock actual: {int(stock)} unidades. Requiere análisis detallado."
+                else:
+                    # Sin datos históricos de stock
+                    if se_vende_en_region and stock >= 50:
+                        diagnostico = "EXHIBICION"
+                        diagnostico_detalle = f"Stock alto ({int(stock)} unidades) y se vende en {ventas_otras_tiendas} otras tiendas. Probable problema de exhibición (sin datos históricos)."
+                    elif stock < 20:
+                        diagnostico = "REPOSICION"
+                        diagnostico_detalle = f"Stock bajo ({int(stock)} unidades). Necesita reposición."
+                    else:
+                        diagnostico = "INDETERMINADO"
+                        diagnostico_detalle = f"Stock actual: {int(stock)} unidades. Sin historial para diagnóstico preciso."
 
                 # Obtener info de última venta
                 ultima_venta_info = None
@@ -5248,13 +5441,20 @@ async def get_agotados_visuales(
                     codigo_producto=codigo,
                     descripcion_producto=descripcion,
                     categoria=categoria,
-                    stock_actual=float(stock),
+                    stock_actual=stock,
                     ventas_ultimas_2_semanas=ventas_2sem,
                     promedio_horas_entre_ventas=round(prom_horas, 1),
                     horas_sin_vender=round(horas_sin, 1),
                     factor_alerta=round(factor, 1),
                     ultima_venta=ultima_venta_info,
-                    prioridad=prioridad
+                    clase_abc=clase_abc,
+                    ventas_otras_tiendas_region=ventas_otras_tiendas,
+                    se_vende_en_region=se_vende_en_region,
+                    score_criticidad=round(score, 1),
+                    prioridad=prioridad,
+                    stock_en_ultima_venta=stock_en_ultima_venta,
+                    diagnostico=diagnostico,
+                    diagnostico_detalle=diagnostico_detalle
                 ))
 
             cursor.close()
@@ -7795,6 +7995,123 @@ async def get_ventas_summary():
         logger.error(f"Error obteniendo resumen de ventas: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
+@app.get("/api/ventas/summary-regional", response_model=List[VentasRegionSummary], tags=["Ventas"])
+async def get_ventas_summary_regional():
+    """
+    Obtiene resumen de ventas agrupado por región (CARACAS / VALENCIA).
+    Similar al endpoint de inventarios pero con métricas de ventas.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Query principal con métricas de ventas por ubicación
+            query = """
+                WITH ventas_summary AS (
+                    SELECT
+                        v.ubicacion_id,
+                        COALESCE(u.nombre, v.ubicacion_id) as ubicacion_nombre,
+                        COALESCE(u.tipo, 'tienda') as tipo,
+                        COALESCE(u.region, 'VALENCIA') as region,
+                        COUNT(*) as total_transacciones,
+                        COUNT(DISTINCT v.producto_id) as productos_unicos,
+                        SUM(v.cantidad_vendida) as unidades_vendidas,
+                        MIN(v.fecha_venta) as primera_venta,
+                        MAX(v.fecha_venta) as ultima_venta
+                    FROM ventas v
+                    LEFT JOIN ubicaciones u ON v.ubicacion_id = u.id
+                    GROUP BY v.ubicacion_id, u.nombre, u.tipo, u.region
+                ),
+                ventas_diarias AS (
+                    SELECT
+                        ubicacion_id,
+                        COUNT(DISTINCT DATE(fecha_venta)) as dias_con_ventas
+                    FROM ventas
+                    GROUP BY ubicacion_id
+                )
+                SELECT
+                    vs.region,
+                    vs.ubicacion_id,
+                    vs.ubicacion_nombre,
+                    vs.tipo,
+                    vs.total_transacciones,
+                    vs.productos_unicos,
+                    vs.unidades_vendidas,
+                    CASE
+                        WHEN vd.dias_con_ventas > 0
+                        THEN vs.unidades_vendidas::float / vd.dias_con_ventas
+                        ELSE NULL
+                    END as promedio_unidades_diarias,
+                    TO_CHAR(vs.primera_venta, 'YYYY-MM-DD HH24:MI') as primera_venta,
+                    TO_CHAR(vs.ultima_venta, 'YYYY-MM-DD HH24:MI') as ultima_venta
+                FROM ventas_summary vs
+                LEFT JOIN ventas_diarias vd ON vs.ubicacion_id = vd.ubicacion_id
+                ORDER BY vs.region, vs.ubicacion_nombre
+            """
+
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            cursor.close()
+
+            # Agrupar por región
+            regions_data: Dict[str, List[VentasRegionalDetail]] = {}
+
+            for row in rows:
+                region = row[0]
+
+                if region not in regions_data:
+                    regions_data[region] = []
+
+                detail = VentasRegionalDetail(
+                    ubicacion_id=row[1],
+                    ubicacion_nombre=row[2] or row[1],  # Fallback to ubicacion_id if nombre is None
+                    tipo=row[3],
+                    total_transacciones=row[4] or 0,
+                    productos_unicos=row[5] or 0,
+                    unidades_vendidas=row[6] or 0,
+                    promedio_unidades_diarias=round(row[7], 1) if row[7] else None,
+                    primera_venta=row[8],
+                    ultima_venta=row[9]
+                )
+                regions_data[region].append(detail)
+
+            # Construir respuesta con agregados por región
+            result = []
+            for region, ubicaciones in regions_data.items():
+                total_transacciones = sum(u.total_transacciones for u in ubicaciones)
+                total_unidades_vendidas = sum(u.unidades_vendidas for u in ubicaciones)
+
+                # Promedio ponderado de unidades diarias
+                promedios_validos = [u.promedio_unidades_diarias for u in ubicaciones if u.promedio_unidades_diarias is not None]
+                promedio_regional = round(sum(promedios_validos) / len(promedios_validos), 1) if promedios_validos else None
+
+                # Productos únicos totales (sin duplicados)
+                productos_unicos_set = set()
+                for u in ubicaciones:
+                    productos_unicos_set.add(u.ubicacion_id)  # Simplified version, in production would track actual unique products
+
+                region_summary = VentasRegionSummary(
+                    region=region,
+                    total_ubicaciones=len(ubicaciones),
+                    total_transacciones=total_transacciones,
+                    total_productos_unicos=sum(u.productos_unicos for u in ubicaciones),
+                    total_unidades_vendidas=total_unidades_vendidas,
+                    promedio_unidades_diarias=promedio_regional,
+                    ubicaciones=ubicaciones
+                )
+                result.append(region_summary)
+
+            # Ordenar: VALENCIA primero, luego CARACAS
+            result.sort(key=lambda r: (0 if r.region == 'VALENCIA' else 1, r.region))
+
+            return result
+
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen regional de ventas: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 @app.get("/api/ventas/gaps", tags=["Ventas"], deprecated=True)
 async def get_ventas_gaps():
     """
@@ -7910,10 +8227,13 @@ async def get_ventas_detail(
             order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
             order_by = 'cantidad_total' if sort_by in ['cantidad_total', None] else 'cantidad_total'
 
-            # Construir parámetros finales (incluyendo categoría si se especificó)
+            # Construir parámetros finales (incluyendo categoría y ubicacion_id para stock)
             final_params = params.copy()
             if categoria:
                 final_params.append(categoria)
+
+            # Agregar ubicacion_id para el LEFT JOIN de stock actual
+            final_params.append(ubicacion_id if ubicacion_id else '')
 
             main_query = f"""
                 WITH ventas_filtradas AS (
@@ -7947,11 +8267,24 @@ async def get_ventas_detail(
                         PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as p75_unidades
                     FROM ventas_diarias
                     GROUP BY producto_id
+                ),
+                -- Calcular ranking de ventas y clasificación ABC
+                ranking_ventas AS (
+                    SELECT
+                        producto_id,
+                        ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) as rank_ventas,
+                        CASE
+                            WHEN ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) <= 50 THEN 'A'
+                            WHEN ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) <= 200 THEN 'B'
+                            ELSE 'C'
+                        END as clase_abc
+                    FROM producto_stats
                 )
                 SELECT
                     ps.producto_id,
                     COALESCE(p.descripcion, ps.producto_id) as descripcion,
                     COALESCE(p.categoria, 'Sin categoría') as categoria,
+                    p.marca as marca,
                     ps.cantidad_total,
                     ps.cantidad_total / {dias_distintos}::float as promedio_diario,
                     0 as promedio_mismo_dia_semana,
@@ -7959,11 +8292,25 @@ async def get_ventas_detail(
                     (ps.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
                     COALESCE(p.unidades_por_bulto, 1) as cantidad_bultos,
                     ps.cantidad_total / NULLIF(COALESCE(p.unidades_por_bulto, 1), 0) as total_bultos,
-                    COALESCE(p75.p75_unidades, ps.cantidad_total / {dias_distintos}::float) / NULLIF(COALESCE(p.unidades_por_bulto, 1), 0) as promedio_bultos_diario
+                    COALESCE(p75.p75_unidades, ps.cantidad_total / {dias_distintos}::float) / NULLIF(COALESCE(p.unidades_por_bulto, 1), 0) as promedio_bultos_diario,
+                    ps.venta_total_sum as venta_total,
+                    rv.clase_abc,
+                    rv.rank_ventas,
+                    CASE
+                        WHEN ps.cantidad_total / {dias_distintos}::float = 0 THEN 'SIN_VENTAS'
+                        WHEN ps.cantidad_total / {dias_distintos}::float * 30 < 5 THEN 'BAJA'
+                        WHEN ps.cantidad_total / {dias_distintos}::float * 30 < 15 THEN 'MEDIA'
+                        WHEN ps.cantidad_total / {dias_distintos}::float * 30 < 30 THEN 'ALTA'
+                        ELSE 'MUY_ALTA'
+                    END as velocidad_venta,
+                    ia.cantidad as stock_actual
                 FROM producto_stats ps
                 CROSS JOIN totales t
                 LEFT JOIN productos p ON ps.producto_id = p.codigo
                 LEFT JOIN p75_stats p75 ON ps.producto_id = p75.producto_id
+                LEFT JOIN ranking_ventas rv ON ps.producto_id = rv.producto_id
+                LEFT JOIN inventario_actual ia ON ps.producto_id = ia.producto_id
+                    AND ia.ubicacion_id = %s
                 WHERE 1=1 {categoria_filter}
                 ORDER BY {order_by} {order_direction}
                 LIMIT %s OFFSET %s
@@ -7977,14 +8324,20 @@ async def get_ventas_detail(
                     codigo_producto=row[0],
                     descripcion_producto=row[1],
                     categoria=row[2],
-                    cantidad_total=float(row[3]) if row[3] else 0,
-                    promedio_diario=float(row[4]) if row[4] else 0,
-                    promedio_mismo_dia_semana=float(row[5]) if row[5] else 0,
-                    comparacion_ano_anterior=float(row[6]) if row[6] else None,
-                    porcentaje_total=float(row[7]) if row[7] else 0,
-                    cantidad_bultos=float(row[8]) if row[8] else None,
-                    total_bultos=float(row[9]) if row[9] else None,
-                    promedio_bultos_diario=float(row[10]) if row[10] else None
+                    marca=row[3],
+                    cantidad_total=float(row[4]) if row[4] else 0,
+                    promedio_diario=float(row[5]) if row[5] else 0,
+                    promedio_mismo_dia_semana=float(row[6]) if row[6] else 0,
+                    comparacion_ano_anterior=float(row[7]) if row[7] else None,
+                    porcentaje_total=float(row[8]) if row[8] else 0,
+                    cantidad_bultos=float(row[9]) if row[9] else None,
+                    total_bultos=float(row[10]) if row[10] else None,
+                    promedio_bultos_diario=float(row[11]) if row[11] else None,
+                    venta_total=float(row[12]) if row[12] else None,
+                    clase_abc=row[13],
+                    rank_ventas=int(row[14]) if row[14] else None,
+                    velocidad_venta=row[15],
+                    stock_actual=float(row[16]) if row[16] else None
                 )
                 for row in result
             ]
