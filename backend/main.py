@@ -336,6 +336,10 @@ class StockResponse(BaseModel):
     dias_max: Optional[float] = None  # Días de stock máximo
     # Stock en CEDI de origen
     stock_cedi: Optional[float] = None  # Stock disponible en el CEDI de la región
+    # Límites forzados por configuración
+    limite_min_forzado: Optional[float] = None  # Mínimo exhibición (unidades)
+    limite_max_forzado: Optional[float] = None  # Capacidad máxima (unidades)
+    tipo_limite: Optional[str] = None  # Tipo: congelador, refrigerador, etc.
 
 class PaginationMetadata(BaseModel):
     total_items: int
@@ -3945,6 +3949,16 @@ async def get_stock(
                 FROM config_parametros_abc_tienda
                 WHERE tienda_id = %s AND activo = true
             ),
+            limites_forzados AS (
+                -- Límites forzados por configuración (capacidad máxima y mínimo exhibición)
+                SELECT
+                    producto_codigo,
+                    capacidad_maxima_unidades as limite_max_forzado,
+                    minimo_exhibicion_unidades as limite_min_forzado,
+                    tipo_restriccion as tipo_limite
+                FROM capacidad_almacenamiento_producto
+                WHERE tienda_id = %s AND activo = true
+            ),
             stock_data AS (
                 SELECT
                     ia.ubicacion_id,
@@ -3978,6 +3992,10 @@ async def get_stock(
                     COALESCE(v60.total_60d, 0) as ventas_60d,
                     -- Stock en CEDI
                     COALESCE(sc.cantidad_cedi, 0) as stock_cedi,
+                    -- Límites forzados por configuración
+                    lf.limite_min_forzado,
+                    lf.limite_max_forzado,
+                    lf.tipo_limite,
                     -- Metadata
                     TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion
                 FROM inventario_actual ia
@@ -3989,6 +4007,7 @@ async def get_stock(
                 LEFT JOIN ventas_30d v30 ON v30.producto_id = ia.producto_id
                 LEFT JOIN ventas_14d v14 ON v14.producto_id = ia.producto_id
                 LEFT JOIN stock_cedi sc ON sc.producto_id = ia.producto_id
+                LEFT JOIN limites_forzados lf ON lf.producto_codigo = p.codigo
                 WHERE {base_where}
             ),
             calculated AS (
@@ -4056,16 +4075,16 @@ async def get_stock(
             WHERE 1=1
             """
 
-            # Params para los CTEs (ubicacion_id se usa 7 veces en CTEs)
+            # Params para los CTEs (ubicacion_id se usa 8 veces en CTEs)
             # Luego base_params puede agregar más (ubicacion_id, almacen, categoria, search)
             query_params = []
             if ubicacion_id:
-                # 7 veces para los CTEs: ventas_20d, ventas_30d, ventas_14d, ventas_60d, cedi_region, abc_tienda, config_abc
-                query_params = [ubicacion_id] * 7 + base_params
+                # 8 veces para los CTEs: ventas_20d, ventas_30d, ventas_14d, ventas_60d, cedi_region, abc_tienda, config_abc, limites_forzados
+                query_params = [ubicacion_id] * 8 + base_params
             else:
                 # Sin ubicacion_id, los CTEs de ventas no funcionan bien
                 # Usamos un valor que no matchea nada para evitar errores SQL
-                query_params = ['__none__'] * 7 + base_params
+                query_params = ['__none__'] * 8 + base_params
 
             # Filtros adicionales sobre campos calculados
             filter_params = []
@@ -4183,7 +4202,11 @@ async def get_stock(
                 dias_rop=row_dict.get('dias_rop'),
                 dias_max=row_dict.get('dias_max'),
                 # Stock en CEDI
-                stock_cedi=row_dict.get('stock_cedi')
+                stock_cedi=row_dict.get('stock_cedi'),
+                # Límites forzados por configuración
+                limite_min_forzado=row_dict.get('limite_min_forzado'),
+                limite_max_forzado=row_dict.get('limite_max_forzado'),
+                tipo_limite=row_dict.get('tipo_limite')
             ))
 
         pagination = PaginationMetadata(

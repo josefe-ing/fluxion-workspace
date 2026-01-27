@@ -42,6 +42,10 @@ interface StockItem {
   dias_max: number | null;
   // Stock en CEDI
   stock_cedi: number | null;
+  // Límites forzados por configuración
+  limite_min_forzado: number | null;
+  limite_max_forzado: number | null;
+  tipo_limite: string | null;
 }
 
 interface PaginationMetadata {
@@ -296,6 +300,9 @@ export default function InventoryDashboard() {
         'Días SS': item.dias_ss !== null ? Math.round(item.dias_ss * 10) / 10 : '-',
         'Días ROP': item.dias_rop !== null ? Math.round(item.dias_rop * 10) / 10 : '-',
         'Días MAX': item.dias_max !== null ? Math.round(item.dias_max * 10) / 10 : '-',
+        'Mín. Exhibición': item.limite_min_forzado ?? '-',
+        'Cap. Máxima': item.limite_max_forzado ?? '-',
+        'Tipo Límite': item.tipo_limite ?? '-',
         'Estado': item.estado_criticidad || '-',
         'ABC': item.clase_abc || '-',
         'Top': item.rank_ventas || '-',
@@ -306,6 +313,7 @@ export default function InventoryDashboard() {
       ws['!cols'] = [
         { wch: 12 }, { wch: 45 }, { wch: 18 }, { wch: 10 }, { wch: 10 },
         { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+        { wch: 12 }, { wch: 12 }, { wch: 12 },
         { wch: 12 }, { wch: 8 }, { wch: 8 }
       ];
       XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
@@ -696,6 +704,9 @@ export default function InventoryDashboard() {
                 <li><span className="inline-block w-20 font-medium">P75/día</span> Demanda diaria (percentil 75, últimos 20 días)</li>
                 <li><span className="inline-block w-20 font-medium">Días</span> Días de cobertura con stock actual</li>
               </ul>
+              <div className="mt-2 pt-2 border-t border-gray-200">
+                <p className="text-xs text-gray-500"><span className="text-purple-600">🔒</span> = Límite forzado configurado (pasa el cursor para ver detalle)</p>
+              </div>
             </div>
           </div>
         </div>
@@ -770,9 +781,33 @@ export default function InventoryDashboard() {
                           {item.dias_cobertura_actual !== null ? (item.dias_cobertura_actual > 999 ? '999+' : formatNumber(item.dias_cobertura_actual, 1)) : '-'}
                         </span>
                       </td>
-                      <td className="px-2 py-2 text-center text-xs text-red-600">{item.dias_ss !== null ? formatNumber(item.dias_ss, 1) : '-'}</td>
+                      <td className="px-2 py-2 text-center text-xs text-red-600">
+                        <div className="flex items-center justify-center gap-0.5">
+                          {item.dias_ss !== null ? formatNumber(item.dias_ss, 1) : '-'}
+                          {item.limite_min_forzado && (
+                            <span
+                              className="text-purple-600 cursor-help"
+                              title={`Mín. exhibición forzado: ${formatInteger(item.limite_min_forzado)} uds${item.tipo_limite ? ` (${item.tipo_limite})` : ''}`}
+                            >
+                              🔒
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-2 py-2 text-center text-xs text-orange-600">{item.dias_rop !== null ? formatNumber(item.dias_rop, 1) : '-'}</td>
-                      <td className="px-2 py-2 text-center text-xs text-green-600">{item.dias_max !== null ? formatNumber(item.dias_max, 0) : '-'}</td>
+                      <td className="px-2 py-2 text-center text-xs text-green-600">
+                        <div className="flex items-center justify-center gap-0.5">
+                          {item.dias_max !== null ? formatNumber(item.dias_max, 0) : '-'}
+                          {item.limite_max_forzado && (
+                            <span
+                              className="text-purple-600 cursor-help"
+                              title={`Cap. máxima forzada: ${formatInteger(item.limite_max_forzado)} uds${item.tipo_limite ? ` (${item.tipo_limite})` : ''}`}
+                            >
+                              🔒
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-2 py-2 w-24">{renderInventoryLevelIndicator(item)}</td>
                       <td className="px-3 py-2 text-center">{renderEstadoCriticidad(item.estado_criticidad)}</td>
                       <td className="px-3 py-2 text-center">{renderClaseABC(item.clase_abc)}</td>
