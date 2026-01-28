@@ -401,6 +401,11 @@ export default function StepTwoConflictResolution({
     return seleccionados.length > 0 && seleccionados.length < conflictosFiltrados.length;
   }, [conflictosFiltrados, productosSeleccionados]);
 
+  // Contar productos seleccionados que están visibles (después de filtros)
+  const productosVisiblesSeleccionados = useMemo(() => {
+    return conflictosFiltrados.filter(c => productosSeleccionados.has(c.codigo_producto)).length;
+  }, [conflictosFiltrados, productosSeleccionados]);
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="bg-white rounded-lg border border-gray-200">
@@ -921,7 +926,7 @@ export default function StepTwoConflictResolution({
 
             <div className="flex items-center gap-4 text-sm">
               <span className="text-green-600 font-medium">
-                {productosSeleccionados.size} seleccionado{productosSeleccionados.size !== 1 ? 's' : ''} de {conflictos.length}
+                {productosVisiblesSeleccionados} seleccionado{productosVisiblesSeleccionados !== 1 ? 's' : ''} de {conflictosFiltrados.length}
               </span>
               {resumenCambios.productosModificados > 0 && (
                 <span className="text-blue-600">
