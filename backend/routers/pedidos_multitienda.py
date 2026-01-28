@@ -344,7 +344,7 @@ async def obtener_productos_tienda(
         LEFT JOIN productos_excluidos pe ON p.id = pe.producto_id
         WHERE p.activo = true
           AND pe.producto_id IS NULL
-          AND abc.clase_abc IN ('A', 'B', 'C', 'D')
+          AND (abc.clase_abc IN ('A', 'B', 'C', 'D') OR abc.clase_abc IS NULL)
           AND (COALESCE(v.p75, 0) > 0 OR COALESCE(st.stock, 0) > 0 OR COALESCE(sc.stock, 0) > 0)
     """
 
@@ -436,25 +436,62 @@ async def obtener_productos_tienda(
         # Calcular stock efectivo (stock actual + tránsito)
         stock_efectivo = stock_tienda + transito_unidades
 
+        # Lógica de envío prueba: Si no ha vendido localmente pero hay stock en CEDI
+        # obtener P75 de referencia de otras tiendas (similar a single-store)
+        p75_usado = p75
+        clase_abc_usada = clase_abc if clase_abc else 'D'
+        es_envio_prueba = False
+
+        if p75 == 0 and stock_cedi > 0:
+            # Buscar P75 promedio en otras tiendas del mismo CEDI
+            cursor = conn.cursor()
+            cursor.execute("""
+                WITH tiendas_mismo_cedi AS (
+                    SELECT DISTINCT ps.tienda_destino_id
+                    FROM pedidos_sugeridos ps
+                    WHERE ps.cedi_origen_id = %s
+                      AND ps.tienda_destino_id != %s
+                    LIMIT 10
+                )
+                SELECT AVG(v.p75) as p75_promedio
+                FROM ventas_p75_tienda v
+                INNER JOIN tiendas_mismo_cedi t ON v.ubicacion_id = t.tienda_destino_id
+                WHERE v.producto_id = %s
+                  AND v.p75 > 0
+            """, [cedi_origen, tienda_destino, producto_id])
+            row_ref = cursor.fetchone()
+            cursor.close()
+
+            if row_ref and row_ref[0] and row_ref[0] > 0:
+                p75_usado = float(row_ref[0])
+                clase_abc_usada = 'D'  # Conservador para productos nuevos
+                es_envio_prueba = True
+                logger.info(f"📦 Envío prueba: {codigo} ({tienda_destino}) - P75 ref: {p75_usado:.2f}")
+
         # Determinar override de días de cobertura por categoría (perecederos)
         dias_cobertura_override = None
         if categoria:
             cat_norm = categoria.strip().upper()
             if cat_norm in config_cobertura_categoria:
                 # Usar días de cobertura específicos para esta categoría según clase ABC
-                dias_cobertura_override = config_cobertura_categoria[cat_norm].get(clase_abc)
+                dias_cobertura_override = config_cobertura_categoria[cat_norm].get(clase_abc_usada)
 
         # Usar el mismo cálculo estadístico que single-store (calcular_inventario_simple)
         # Esto garantiza que ambos wizards usen la misma lógica de ROP, SS y MAX
         # IMPORTANTE: Usar stock_efectivo (stock + tránsito) para calcular SUG correctamente
+        # Si es envío prueba, usar p75_usado (de referencia) y clase D
+        sigma_usada = sigma_demanda
+        if es_envio_prueba and sigma_demanda == 0:
+            sigma_usada = p75_usado * 0.3  # Estimar 30% de variabilidad para productos nuevos
+
         resultado = calcular_inventario_simple(
-            demanda_p75=p75,
-            sigma_demanda=sigma_demanda,
-            demanda_maxima=demanda_maxima if demanda_maxima > 0 else p75 * 2,
+            demanda_p75=p75_usado,  # ← Usar P75 de referencia si es envío prueba
+            sigma_demanda=sigma_usada,
+            demanda_maxima=demanda_maxima if demanda_maxima > 0 else p75_usado * 2,
             unidades_por_bulto=unidades_por_bulto,
             stock_actual=stock_efectivo,  # ← CAMBIO: usar stock efectivo (stock + tránsito)
             stock_cedi=stock_cedi,
-            clase_abc=clase_abc,
+            clase_abc=clase_abc_usada,  # ← Usar clase D si es envío prueba
             es_generador_trafico=es_generador_trafico,
             dias_cobertura_override=dias_cobertura_override
         )
@@ -468,11 +505,12 @@ async def obtener_productos_tienda(
         tiene_sobrestock = resultado.tiene_sobrestock
 
         # Calcular días de stock usando stock efectivo (incluye tránsito)
-        if p75 > 0:
-            dias_stock = stock_efectivo / p75  # ← CAMBIO: usar stock efectivo
-            dias_ss = stock_seguridad_unid / p75
-            dias_rop = punto_reorden_unid / p75
-            dias_max = stock_maximo_unid / p75
+        # Si es envío prueba, usar p75_usado para el cálculo de días
+        if p75_usado > 0:
+            dias_stock = stock_efectivo / p75_usado  # ← CAMBIO: usar stock efectivo y p75_usado
+            dias_ss = stock_seguridad_unid / p75_usado
+            dias_rop = punto_reorden_unid / p75_usado
+            dias_max = stock_maximo_unid / p75_usado
         else:
             dias_stock = 999 if stock_efectivo > 0 else 0
             dias_ss = 0
