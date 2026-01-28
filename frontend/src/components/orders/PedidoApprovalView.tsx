@@ -87,6 +87,9 @@ export default function PedidoApprovalView() {
   const [filtroCediCCS, setFiltroCediCCS] = useState<string>('todos'); // todos, hay, no_hay, menor_igual_pedido
   const [filtroCediVLC, setFiltroCediVLC] = useState<string>('todos'); // todos, hay, no_hay
 
+  // Estado para entrada manual de llegadas
+  const [llegadasManuales, setLlegadasManuales] = useState<Record<string, number>>({});
+
   // Estado para modal de historial de inventario
   const [historyModal, setHistoryModal] = useState<HistoryModalState>({
     isOpen: false,
@@ -209,19 +212,51 @@ export default function PedidoApprovalView() {
     }
   };
 
+  // Manejar cambio de llegada manual
+  const handleLlegadaManualChange = (codigoProducto: string, valor: string) => {
+    const cantidad = parseFloat(valor) || 0;
+    setLlegadasManuales(prev => ({
+      ...prev,
+      [codigoProducto]: cantidad
+    }));
+  };
+
+  // Verificar si hay llegadas manuales pendientes
+  const hayLlegadasManualesPendientes = Object.values(llegadasManuales).some(v => v > 0);
+
   const handleGuardarLlegada = async () => {
     if (!verificacionData) return;
 
-    // Filtrar solo productos con nuevo incremento > 0
-    const productosConIncremento = verificacionData.productos
+    // Combinar llegadas auto-detectadas con manuales
+    const productosConIncremento: Array<{ codigo_producto: string; cantidad_llegada: number }> = [];
+
+    // Agregar auto-detectados
+    verificacionData.productos
       .filter(p => p.nuevo_incremento > 0)
-      .map(p => ({
-        codigo_producto: p.codigo_producto,
-        cantidad_llegada: p.nuevo_incremento
-      }));
+      .forEach(p => {
+        productosConIncremento.push({
+          codigo_producto: p.codigo_producto,
+          cantidad_llegada: p.nuevo_incremento
+        });
+      });
+
+    // Agregar manuales (si no están ya en auto-detectados)
+    Object.entries(llegadasManuales).forEach(([codigo, cantidad]) => {
+      if (cantidad > 0) {
+        const existente = productosConIncremento.find(p => p.codigo_producto === codigo);
+        if (existente) {
+          existente.cantidad_llegada += cantidad;
+        } else {
+          productosConIncremento.push({
+            codigo_producto: codigo,
+            cantidad_llegada: cantidad
+          });
+        }
+      }
+    });
 
     if (productosConIncremento.length === 0) {
-      alert('No hay nuevos incrementos para guardar');
+      alert('No hay llegadas para guardar. Ingresa cantidades en la columna "Llegada".');
       return;
     }
 
@@ -229,6 +264,9 @@ export default function PedidoApprovalView() {
       setGuardandoLlegada(true);
       const result = await registrarLlegada(pedidoId!, productosConIncremento);
       alert(`${result.mensaje}`);
+
+      // Limpiar llegadas manuales
+      setLlegadasManuales({});
 
       // Recargar verificación para actualizar cantidades
       await handleVerificarLlegada();
@@ -473,26 +511,32 @@ export default function PedidoApprovalView() {
                     {' | '}
                     <span className="text-red-700">{verificacionData.productos_no_llegaron} no llegaron</span>
                   </p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    Ingresa la cantidad de bultos que llegaron en la columna "Llegada" y presiona "Guardar Llegada"
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {verificacionData.hay_nuevos_incrementos && (
-                    <button
-                      onClick={handleGuardarLlegada}
-                      disabled={guardandoLlegada}
-                      className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
-                    >
-                      {guardandoLlegada ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                          Guardando...
-                        </>
-                      ) : (
-                        <>
-                          Guardar Llegada
-                        </>
-                      )}
-                    </button>
-                  )}
+                  <button
+                    onClick={handleGuardarLlegada}
+                    disabled={guardandoLlegada}
+                    className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {guardandoLlegada ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        Guardar Llegada
+                        {(verificacionData.hay_nuevos_incrementos || hayLlegadasManualesPendientes) && (
+                          <span className="ml-1 bg-white/20 px-1.5 py-0.5 rounded text-xs">
+                            {verificacionData.productos.filter(p => p.nuevo_incremento > 0).length + Object.values(llegadasManuales).filter(v => v > 0).length}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </button>
                   <button
                     onClick={handleExportarExcel}
                     className="px-4 py-2 bg-gray-600 text-white text-sm rounded-lg hover:bg-gray-700 flex items-center gap-2"
@@ -688,7 +732,7 @@ export default function PedidoApprovalView() {
                       CEDI VLC
                     </th>
                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                      Llegada
+                      Llegada (Bultos)
                     </th>
                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                       Diferencia
@@ -797,23 +841,30 @@ export default function PedidoApprovalView() {
                             </div>
                           </button>
                         </td>
-                        {/* Columna Llegada */}
-                        <td className="px-3 py-3 text-sm text-right">
-                          <div>
-                            {Number(verif.nuevo_incremento) > 0 && (
-                              <span className="text-green-600 font-semibold">
-                                +{formatNumber(verif.nuevo_incremento)}
-                              </span>
+                        {/* Columna Llegada - Con input manual */}
+                        <td className="px-3 py-3 text-sm">
+                          <div className="flex flex-col items-end gap-1">
+                            {/* Input manual para ingresar llegada */}
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              value={llegadasManuales[verif.codigo_producto] || ''}
+                              onChange={(e) => handleLlegadaManualChange(verif.codigo_producto, e.target.value)}
+                              placeholder="0"
+                              className="w-16 text-right text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 py-1 px-2"
+                            />
+                            {/* Mostrar llegadas ya registradas */}
+                            {(Number(verif.nuevo_incremento) > 0 || Number(verif.cantidad_ya_guardada) > 0) && (
+                              <div className="text-xs text-gray-500">
+                                {Number(verif.nuevo_incremento) > 0 && (
+                                  <span className="text-green-600">+{formatNumber(verif.nuevo_incremento)} auto</span>
+                                )}
+                                {Number(verif.cantidad_ya_guardada) > 0 && (
+                                  <span className="block">Guardado: {formatNumber(verif.cantidad_ya_guardada)}</span>
+                                )}
+                              </div>
                             )}
-                            {Number(verif.cantidad_ya_guardada) > 0 && (
-                              <span className="text-gray-500 text-xs block">
-                                (Total: {formatNumber(verif.total_llegadas_detectadas)})
-                              </span>
-                            )}
-                            {Number(verif.nuevo_incremento) === 0 && Number(verif.cantidad_ya_guardada) === 0 && (
-                              <span className="text-gray-400">{formatNumber(verif.total_llegadas_detectadas)}</span>
-                            )}
-                            <span className="text-xs text-gray-500 block">{formatNumber(verif.total_llegadas_detectadas * unidadesPorBulto)}u</span>
                           </div>
                         </td>
                         {/* Columna Diferencia (Pedido - Llegada) - Si no llegó, mostrar 0 */}

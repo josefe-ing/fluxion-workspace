@@ -130,7 +130,8 @@ async def listar_pedidos(
     try:
         cursor = conn.cursor()
 
-        # Query con conteo de productos y bultos por clasificación ABC usando subconsulta
+        # Query con conteo de productos y bultos por clasificación ABC + indicadores de llegada
+        # Tolerancia: completo >= 97%, parcial > 0%, no_llego = 0%
         query = """
             SELECT
                 ps.id, ps.numero_pedido, ps.fecha_pedido, ps.fecha_creacion,
@@ -147,21 +148,44 @@ async def listar_pedidos(
                 COALESCE(abc_counts.bultos_a, 0) as bultos_a,
                 COALESCE(abc_counts.bultos_b, 0) as bultos_b,
                 COALESCE(abc_counts.bultos_c, 0) as bultos_c,
-                COALESCE(abc_counts.bultos_d, 0) as bultos_d
+                COALESCE(abc_counts.bultos_d, 0) as bultos_d,
+                -- Peso total calculado
+                COALESCE(abc_counts.peso_total_calculado, ps.total_peso_kg, 0) as peso_total_kg,
+                -- Indicadores de llegada
+                COALESCE(llegada_stats.llegada_completos, 0) as llegada_completos,
+                COALESCE(llegada_stats.llegada_parciales, 0) as llegada_parciales,
+                COALESCE(llegada_stats.llegada_no_llegaron, 0) as llegada_no_llegaron,
+                COALESCE(llegada_stats.tiene_verificacion, FALSE) as tiene_verificacion
             FROM pedidos_sugeridos ps
             LEFT JOIN LATERAL (
                 SELECT
-                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'A') as productos_a,
-                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'B') as productos_b,
-                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) = 'C') as productos_c,
-                    COUNT(*) FILTER (WHERE UPPER(clasificacion_abc) IN ('D', '') OR clasificacion_abc IS NULL) as productos_d,
-                    SUM(cantidad_pedida_bultos) FILTER (WHERE UPPER(clasificacion_abc) = 'A') as bultos_a,
-                    SUM(cantidad_pedida_bultos) FILTER (WHERE UPPER(clasificacion_abc) = 'B') as bultos_b,
-                    SUM(cantidad_pedida_bultos) FILTER (WHERE UPPER(clasificacion_abc) = 'C') as bultos_c,
-                    SUM(cantidad_pedida_bultos) FILTER (WHERE UPPER(clasificacion_abc) IN ('D', '') OR clasificacion_abc IS NULL) as bultos_d
+                    COUNT(*) FILTER (WHERE UPPER(d.clasificacion_abc) = 'A') as productos_a,
+                    COUNT(*) FILTER (WHERE UPPER(d.clasificacion_abc) = 'B') as productos_b,
+                    COUNT(*) FILTER (WHERE UPPER(d.clasificacion_abc) = 'C') as productos_c,
+                    COUNT(*) FILTER (WHERE UPPER(d.clasificacion_abc) IN ('D', '') OR d.clasificacion_abc IS NULL) as productos_d,
+                    SUM(d.cantidad_pedida_bultos) FILTER (WHERE UPPER(d.clasificacion_abc) = 'A') as bultos_a,
+                    SUM(d.cantidad_pedida_bultos) FILTER (WHERE UPPER(d.clasificacion_abc) = 'B') as bultos_b,
+                    SUM(d.cantidad_pedida_bultos) FILTER (WHERE UPPER(d.clasificacion_abc) = 'C') as bultos_c,
+                    SUM(d.cantidad_pedida_bultos) FILTER (WHERE UPPER(d.clasificacion_abc) IN ('D', '') OR d.clasificacion_abc IS NULL) as bultos_d,
+                    -- Calcular peso total en kg desde productos
+                    SUM(COALESCE(d.peso_unitario_kg, p.peso_unitario, 0) * d.cantidad_pedida_unidades) as peso_total_calculado
+                FROM pedidos_sugeridos_detalle d
+                LEFT JOIN productos p ON p.codigo = d.codigo_producto
+                WHERE d.pedido_id = ps.id AND d.incluido = true
+            ) abc_counts ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    -- Completo: recibido >= 97% de pedido
+                    COUNT(*) FILTER (WHERE COALESCE(cantidad_recibida_bultos, 0) >= cantidad_pedida_bultos * 0.97 AND cantidad_pedida_bultos > 0) as llegada_completos,
+                    -- Parcial: recibido > 0 pero < 97%
+                    COUNT(*) FILTER (WHERE COALESCE(cantidad_recibida_bultos, 0) > 0 AND COALESCE(cantidad_recibida_bultos, 0) < cantidad_pedida_bultos * 0.97 AND cantidad_pedida_bultos > 0) as llegada_parciales,
+                    -- No llegó: recibido = 0 o NULL
+                    COUNT(*) FILTER (WHERE (COALESCE(cantidad_recibida_bultos, 0) = 0) AND cantidad_pedida_bultos > 0) as llegada_no_llegaron,
+                    -- Tiene verificación si algún producto tiene cantidad_recibida > 0
+                    (SUM(COALESCE(cantidad_recibida_bultos, 0)) > 0) as tiene_verificacion
                 FROM pedidos_sugeridos_detalle
                 WHERE pedido_id = ps.id AND incluido = true
-            ) abc_counts ON true
+            ) llegada_stats ON true
             WHERE 1=1
         """
 
@@ -198,6 +222,23 @@ async def listar_pedidos(
             else:
                 porcentaje = 0
 
+            # Peso total calculado (row[27])
+            peso_total_kg_calculado = safe_float(row[27]) if row[27] else None
+
+            # Calcular porcentajes de llegada (shifted by 1 due to peso_total_kg)
+            llegada_completos = row[28] or 0
+            llegada_parciales = row[29] or 0
+            llegada_no_llegaron = row[30] or 0
+            tiene_verificacion = row[31] or False
+            total_verificados = llegada_completos + llegada_parciales + llegada_no_llegaron
+
+            if total_verificados > 0:
+                pct_completos = (llegada_completos / total_verificados) * 100
+                pct_parciales = (llegada_parciales / total_verificados) * 100
+                pct_no_llegaron = (llegada_no_llegaron / total_verificados) * 100
+            else:
+                pct_completos = pct_parciales = pct_no_llegaron = 0.0
+
             pedidos.append(PedidoSugeridoResumen(
                 id=row[0],
                 numero_pedido=row[1],
@@ -212,7 +253,7 @@ async def listar_pedidos(
                 total_lineas=row[10] or 0,
                 total_bultos=safe_float(row[11]),
                 total_unidades=safe_float(row[12]),
-                total_peso_kg=safe_float(row[13]) if row[13] else None,
+                total_peso_kg=peso_total_kg_calculado,
                 fecha_entrega_solicitada=row[14],
                 fecha_aprobacion=to_venezuela_aware(row[15]),
                 fecha_recepcion=to_venezuela_aware(row[16]),
@@ -226,7 +267,15 @@ async def listar_pedidos(
                 bultos_a=safe_float(row[23]),
                 bultos_b=safe_float(row[24]),
                 bultos_c=safe_float(row[25]),
-                bultos_d=safe_float(row[26])
+                bultos_d=safe_float(row[26]),
+                # Indicadores de llegada
+                llegada_completos=llegada_completos,
+                llegada_parciales=llegada_parciales,
+                llegada_no_llegaron=llegada_no_llegaron,
+                llegada_pct_completos=round(pct_completos, 1),
+                llegada_pct_parciales=round(pct_parciales, 1),
+                llegada_pct_no_llegaron=round(pct_no_llegaron, 1),
+                tiene_verificacion_llegada=tiene_verificacion
             ))
 
         return pedidos

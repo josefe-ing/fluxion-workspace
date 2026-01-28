@@ -18,6 +18,7 @@ export interface PedidoSugerido {
   total_productos: number;
   total_bultos: number;
   total_unidades: number;
+  total_peso_kg?: number;
   tiene_devoluciones?: boolean;
   total_productos_devolucion?: number;
   total_bultos_devolucion?: number;
@@ -34,6 +35,14 @@ export interface PedidoSugerido {
   bultos_b: number;
   bultos_c: number;
   bultos_d: number;
+  // Indicadores de llegada
+  llegada_completos: number;
+  llegada_parciales: number;
+  llegada_no_llegaron: number;
+  llegada_pct_completos: number;
+  llegada_pct_parciales: number;
+  llegada_pct_no_llegaron: number;
+  tiene_verificacion_llegada: boolean;
 }
 
 export interface ProductoDetalle {

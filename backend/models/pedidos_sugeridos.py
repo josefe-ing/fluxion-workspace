@@ -573,6 +573,15 @@ class PedidoSugeridoResumen(BaseModel):
     bultos_c: float = 0.0
     bultos_d: float = 0.0
 
+    # Indicadores de llegada (calculados desde cantidad_recibida)
+    llegada_completos: int = 0
+    llegada_parciales: int = 0
+    llegada_no_llegaron: int = 0
+    llegada_pct_completos: float = 0.0
+    llegada_pct_parciales: float = 0.0
+    llegada_pct_no_llegaron: float = 0.0
+    tiene_verificacion_llegada: bool = False
+
     class Config:
         from_attributes = True
 

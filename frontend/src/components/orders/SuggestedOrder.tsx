@@ -235,8 +235,10 @@ export default function SuggestedOrder() {
                 <th className="text-left text-xs font-medium text-gray-500 uppercase pl-3 pr-3 py-2 w-24">Número</th>
                 <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-32">Fecha y Hora</th>
                 <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-24">Usuario</th>
-                <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-96">Destino y Cantidad</th>
+                <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-80">Destino y Cantidad</th>
                 <th className="text-left text-xs font-medium text-gray-500 uppercase px-3 py-2 w-28">Estado</th>
+                <th className="text-center text-xs font-medium text-gray-500 uppercase px-3 py-2 w-36">Llegada</th>
+                <th className="text-right text-xs font-medium text-gray-500 uppercase px-3 py-2 w-20">Toneladas</th>
                 <th className="text-right text-xs font-medium text-gray-500 uppercase pl-3 pr-3 py-2 w-28">Acciones</th>
               </tr>
             </thead>
@@ -265,6 +267,51 @@ export default function SuggestedOrder() {
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {getEstadoBadge(pedido.estado)}
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    {pedido.tiene_verificacion_llegada ? (
+                      <div className="flex items-center gap-1">
+                        {/* Indicador visual de barras */}
+                        <div className="flex items-center gap-0.5" title={`Completo: ${pedido.llegada_completos} | Parcial: ${pedido.llegada_parciales} | No llegó: ${pedido.llegada_no_llegaron}`}>
+                          {pedido.llegada_pct_completos > 0 && (
+                            <div
+                              className="h-4 bg-green-500 rounded-sm"
+                              style={{ width: `${Math.max(pedido.llegada_pct_completos * 0.8, 4)}px` }}
+                              title={`Completo: ${pedido.llegada_pct_completos}%`}
+                            />
+                          )}
+                          {pedido.llegada_pct_parciales > 0 && (
+                            <div
+                              className="h-4 bg-yellow-500 rounded-sm"
+                              style={{ width: `${Math.max(pedido.llegada_pct_parciales * 0.8, 4)}px` }}
+                              title={`Parcial: ${pedido.llegada_pct_parciales}%`}
+                            />
+                          )}
+                          {pedido.llegada_pct_no_llegaron > 0 && (
+                            <div
+                              className="h-4 bg-red-500 rounded-sm"
+                              style={{ width: `${Math.max(pedido.llegada_pct_no_llegaron * 0.8, 4)}px` }}
+                              title={`No llegó: ${pedido.llegada_pct_no_llegaron}%`}
+                            />
+                          )}
+                        </div>
+                        {/* Porcentaje principal */}
+                        <span className="text-xs font-medium text-green-700 ml-1">
+                          {pedido.llegada_pct_completos}%
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400">Sin verificar</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap text-right">
+                    {pedido.total_peso_kg ? (
+                      <span className="text-sm font-medium text-gray-700">
+                        {formatNumber(pedido.total_peso_kg / 1000)}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">-</span>
+                    )}
                   </td>
                   <td className="pl-3 pr-3 py-2.5 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
                     <button
