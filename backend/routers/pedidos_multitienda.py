@@ -160,7 +160,7 @@ async def calcular_transito_tienda(conn, cedi_origen: str, tienda_destino: str) 
             ps.id, ps.numero_pedido, ps.fecha_pedido, ps.estado,
             psd.codigo_producto, psd.descripcion_producto,
             psd.cantidad_pedida_bultos,
-            COALESCE(psd.unidades_por_bulto, p.unidades_por_bulto, 1) as unidades_por_bulto
+            COALESCE(p.unidades_por_bulto, 1) as unidades_por_bulto
         FROM pedidos_sugeridos ps
         JOIN pedidos_sugeridos_detalle psd ON psd.pedido_id = ps.id
         JOIN productos p ON psd.codigo_producto = p.codigo
