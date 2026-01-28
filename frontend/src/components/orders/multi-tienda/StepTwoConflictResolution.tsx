@@ -9,10 +9,12 @@ import { useState, useMemo } from 'react';
 import { X, Package, TrendingDown, Store, Info } from 'lucide-react';
 import ProductHistoryModal from '../../dashboard/ProductHistoryModal';
 import ProductSalesModal from '../../sales/ProductSalesModal';
+import { TransitoModal } from './TransitoModal';
 import type {
   OrderDataMultiTienda,
   CalcularMultiTiendaResponse,
   ConflictoProducto,
+  AsignacionTienda,
 } from '../../../types/multitienda';
 
 interface Props {
@@ -62,8 +64,13 @@ export default function StepTwoConflictResolution({
   const [necesitanModalOpen, setNecesitanModalOpen] = useState(false);
   const [salesModalOpen, setSalesModalOpen] = useState(false);
   const [stockTiendaModalOpen, setStockTiendaModalOpen] = useState(false);
+  const [transitoModalOpen, setTransitoModalOpen] = useState(false);
   const [selectedConflicto, setSelectedConflicto] = useState<ConflictoProducto | null>(null);
   const [selectedTiendaId, setSelectedTiendaId] = useState<string>('');
+  const [selectedAsignacion, setSelectedAsignacion] = useState<AsignacionTienda | null>(null);
+
+  // Estado para ajustes de tránsito: { [codigo_producto]: { [tienda_id]: bultos } }
+  const [ajustesTransito, setAjustesTransito] = useState<Record<string, Record<string, number>>>({});
 
   // Handlers para abrir modales
   const handleOpenStockCediModal = (conflicto: ConflictoProducto) => {
@@ -86,6 +93,44 @@ export default function StepTwoConflictResolution({
     setSelectedConflicto(conflicto);
     setSelectedTiendaId(tiendaId);
     setStockTiendaModalOpen(true);
+  };
+
+  const handleOpenTransitoModal = (conflicto: ConflictoProducto, asignacion: AsignacionTienda) => {
+    setSelectedConflicto(conflicto);
+    setSelectedAsignacion(asignacion);
+    setSelectedTiendaId(asignacion.tienda_id);
+    setTransitoModalOpen(true);
+  };
+
+  // Obtener valor de tránsito (override o valor del servidor)
+  const getTransitoValue = (codigoProducto: string, tiendaId: string, valorServidor: number): number => {
+    return ajustesTransito[codigoProducto]?.[tiendaId] ?? valorServidor;
+  };
+
+  // Manejar cambio de tránsito
+  const handleTransitoChange = (codigoProducto: string, tiendaId: string, valor: number) => {
+    setAjustesTransito(prev => ({
+      ...prev,
+      [codigoProducto]: {
+        ...prev[codigoProducto],
+        [tiendaId]: Math.max(0, valor),
+      },
+    }));
+  };
+
+  // Calcular días efectivos considerando tránsito
+  const calcularDiasEfectivos = (stockActual: number, transitoBultos: number, demandaP75: number, unidadesPorBulto: number): number => {
+    if (demandaP75 <= 0) return 999;
+    const stockEfectivo = stockActual + (transitoBultos * unidadesPorBulto);
+    return stockEfectivo / demandaP75;
+  };
+
+  // Calcular SUG efectivo considerando tránsito (stock_maximo - (stock + transito))
+  const calcularSugEfectivo = (asignacion: AsignacionTienda, transitoBultos: number, unidadesPorBulto: number): number => {
+    // cantidad_necesaria ya está en unidades, la usamos directamente pero restamos el tránsito
+    const transitoUnidades = transitoBultos * unidadesPorBulto;
+    const necesidadAjustada = Math.max(0, asignacion.cantidad_necesaria - transitoUnidades);
+    return Math.ceil(necesidadAjustada / unidadesPorBulto);
   };
 
   // Obtener categorías únicas
@@ -552,12 +597,13 @@ export default function StepTwoConflictResolution({
                   <th
                     key={tienda.id}
                     className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    colSpan={6}
+                    colSpan={7}
                   >
                     <div className="border-b border-gray-300 pb-1 mb-1">{tienda.nombre}</div>
                     <div className="flex justify-around text-[10px] font-normal normal-case">
                       <span>P75</span>
                       <span>Stk</span>
+                      <span className="text-orange-600 font-medium">Trán</span>
                       <span>Días</span>
                       <span>SUG</span>
                       <span>DPD+U</span>
@@ -662,19 +708,35 @@ export default function StepTwoConflictResolution({
                       </button>
                     </td>
 
-                    {/* Por cada tienda: P75 | Stk | Días | SUG | DPD+U | Final */}
+                    {/* Por cada tienda: P75 | Stk | Trán | Días | SUG | DPD+U | Final */}
                     {tiendas.map(tienda => {
                       const asignacion = conflicto.distribucion_dpdu.find(a => a.tienda_id === tienda.id);
-                      if (!asignacion) return <td key={tienda.id} colSpan={6}></td>;
+                      if (!asignacion) return <td key={tienda.id} colSpan={7}></td>;
 
                       const valorDpdu = asignacion.cantidad_asignada_bultos;
                       const valorFinal = getValorFinal(conflicto.codigo_producto, tienda.id, valorDpdu);
                       const fueModificado = ajustesManuales[conflicto.codigo_producto]?.[tienda.id] !== undefined;
-                      // SUG: cantidad que necesita la tienda (en bultos)
-                      const sugBultos = Math.ceil(asignacion.cantidad_necesaria / conflicto.unidades_por_bulto);
+
+                      // Tránsito: usar override o valor del servidor
+                      const transitoServidor = asignacion.transito_bultos || 0;
+                      const transitoEfectivo = getTransitoValue(conflicto.codigo_producto, tienda.id, transitoServidor);
+                      const transitoFueModificado = ajustesTransito[conflicto.codigo_producto]?.[tienda.id] !== undefined;
+                      const tieneTransito = transitoServidor > 0 || transitoEfectivo > 0;
+
+                      // Días efectivos considerando tránsito
+                      const diasEfectivos = calcularDiasEfectivos(
+                        asignacion.stock_actual,
+                        transitoEfectivo,
+                        asignacion.demanda_p75,
+                        conflicto.unidades_por_bulto
+                      );
+
+                      // SUG: cantidad que necesita la tienda (ajustada por tránsito)
+                      const sugBultos = calcularSugEfectivo(asignacion, transitoEfectivo, conflicto.unidades_por_bulto);
+                      const sugOriginal = Math.ceil(asignacion.cantidad_necesaria / conflicto.unidades_por_bulto);
 
                       return (
-                        <td key={tienda.id} colSpan={6} className="px-1 py-3">
+                        <td key={tienda.id} colSpan={7} className="px-1 py-3">
                           <div className="flex items-center justify-around gap-1">
                             {/* P75 - bultos y unidades - Clickeable para ver ventas */}
                             <button
@@ -704,18 +766,61 @@ export default function StepTwoConflictResolution({
                               </div>
                             </button>
 
-                            {/* Días stock */}
-                            <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${getDiasStockColor(asignacion.dias_stock)}`}>
-                              {asignacion.dias_stock < 999 ? `${asignacion.dias_stock.toFixed(1)}` : '—'}
+                            {/* Tránsito - Editable, clickeable para ver desglose */}
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={transitoEfectivo}
+                                onChange={(e) => handleTransitoChange(
+                                  conflicto.codigo_producto,
+                                  tienda.id,
+                                  parseFloat(e.target.value) || 0
+                                )}
+                                onClick={(e) => {
+                                  // Solo abrir modal si tiene desglose
+                                  if (asignacion.transito_desglose && asignacion.transito_desglose.length > 0) {
+                                    e.stopPropagation();
+                                    handleOpenTransitoModal(conflicto, asignacion);
+                                  }
+                                }}
+                                className={`w-12 px-0.5 py-0.5 text-xs text-center border rounded focus:outline-none focus:ring-1 focus:ring-orange-400 ${
+                                  transitoFueModificado
+                                    ? 'border-orange-400 bg-orange-50 font-medium'
+                                    : tieneTransito
+                                      ? 'border-orange-300 bg-orange-50 text-orange-700 cursor-pointer'
+                                      : 'border-gray-200 bg-gray-50 text-gray-400'
+                                }`}
+                                title={tieneTransito ? 'Click para ver desglose de tránsito' : 'Sin productos en tránsito'}
+                              />
+                              {tieneTransito && asignacion.transito_desglose && asignacion.transito_desglose.length > 0 && (
+                                <div className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full" title="Tiene desglose" />
+                              )}
+                            </div>
+
+                            {/* Días stock - Ahora usa días efectivos (stock + tránsito) */}
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${getDiasStockColor(diasEfectivos)}`}
+                              title={transitoEfectivo > 0
+                                ? `Días con tránsito: ${diasEfectivos.toFixed(1)} (sin tránsito: ${asignacion.dias_stock.toFixed(1)})`
+                                : `Días de stock: ${diasEfectivos.toFixed(1)}`}
+                            >
+                              {diasEfectivos < 999 ? `${diasEfectivos.toFixed(1)}` : '—'}
                             </span>
 
-                            {/* SUG - Sugerido (lo que necesita la tienda) */}
-                            <div className="text-center w-10" title="Cantidad sugerida para la tienda">
-                              <div className="text-xs font-medium text-red-600">
+                            {/* SUG - Sugerido (ajustado por tránsito) */}
+                            <div
+                              className="text-center w-10"
+                              title={transitoEfectivo > 0
+                                ? `Sugerido ajustado: ${sugBultos} blt (original: ${sugOriginal} blt)`
+                                : 'Cantidad sugerida para la tienda'}
+                            >
+                              <div className={`text-xs font-medium ${sugBultos < sugOriginal ? 'text-green-600' : 'text-red-600'}`}>
                                 {sugBultos}
                               </div>
-                              <div className="text-[10px] text-red-400">
-                                {formatNumber(asignacion.cantidad_necesaria)}u
+                              <div className="text-[10px] text-gray-400">
+                                {sugBultos < sugOriginal && <span className="text-green-500">↓</span>}
                               </div>
                             </div>
 
@@ -860,6 +965,20 @@ export default function StepTwoConflictResolution({
           codigoProducto={selectedConflicto.codigo_producto}
           descripcionProducto={selectedConflicto.descripcion_producto}
           ubicacionId={selectedTiendaId}
+        />
+      )}
+
+      {/* Modal de Tránsito */}
+      {selectedConflicto && selectedAsignacion && (
+        <TransitoModal
+          isOpen={transitoModalOpen}
+          onClose={() => setTransitoModalOpen(false)}
+          codigoProducto={selectedConflicto.codigo_producto}
+          descripcionProducto={selectedConflicto.descripcion_producto}
+          tiendaNombre={tiendas.find(t => t.id === selectedAsignacion.tienda_id)?.nombre || selectedAsignacion.tienda_id}
+          transitoBultos={getTransitoValue(selectedConflicto.codigo_producto, selectedAsignacion.tienda_id, selectedAsignacion.transito_bultos || 0)}
+          desglose={selectedAsignacion.transito_desglose || []}
+          unidadesPorBulto={selectedConflicto.unidades_por_bulto}
         />
       )}
 

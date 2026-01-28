@@ -26,10 +26,14 @@ interface VentasDetail {
   velocidad_venta: string | null;
   stock_actual: number | null;
   p75_unidades_dia: number | null;
-  prom_semana: number | null;
-  prom_finde: number | null;
-  prom_quincena: number | null;
-  prom_normal: number | null;
+  p75_lun: number | null;
+  p75_mar: number | null;
+  p75_mie: number | null;
+  p75_jue: number | null;
+  p75_vie: number | null;
+  p75_sab: number | null;
+  p75_dom: number | null;
+  q15_boost: number | null;
 }
 
 interface PaginationMetadata {
@@ -49,6 +53,13 @@ interface PaginatedVentasResponse {
 interface Categoria {
   value: string;
   label: string;
+}
+
+interface HistoricoDiaItem {
+  fecha: string;
+  fecha_display: string;
+  cantidad: number;
+  es_probable_rotura: boolean;
 }
 
 // Mapping de ubicaciones a nombres amigables
@@ -116,6 +127,18 @@ export default function SalesDashboard() {
   // Modal Ventas Perdidas
   const [showVentasPerdidasModal, setShowVentasPerdidasModal] = useState(false);
 
+  // Modal Análisis por Día
+  const [showDayModal, setShowDayModal] = useState(false);
+  const [selectedDay, setSelectedDay] = useState<{ dia: string; producto: VentasDetail } | null>(null);
+
+  // Modal Q15% Análisis
+  const [showQ15Modal, setShowQ15Modal] = useState(false);
+  const [selectedQ15Producto, setSelectedQ15Producto] = useState<VentasDetail | null>(null);
+
+  // Histórico por día de semana
+  const [historicoDia, setHistoricoDia] = useState<HistoricoDiaItem[]>([]);
+  const [loadingHistorico, setLoadingHistorico] = useState(false);
+
   // Estado para descarga Excel
   const [exportingExcel, setExportingExcel] = useState(false);
 
@@ -145,6 +168,46 @@ export default function SalesDashboard() {
       }
     };
   }, [searchTerm]);
+
+  // Mapeo de nombre de día a número de día de semana (DOW)
+  const diaToNumber: Record<string, number> = {
+    'Domingo': 0,
+    'Lunes': 1,
+    'Martes': 2,
+    'Miércoles': 3,
+    'Jueves': 4,
+    'Viernes': 5,
+    'Sábado': 6,
+  };
+
+  // Cargar histórico cuando se abre el modal de día
+  useEffect(() => {
+    if (!showDayModal || !selectedDay || !ubicacionId) {
+      setHistoricoDia([]);
+      return;
+    }
+
+    const fetchHistorico = async () => {
+      setLoadingHistorico(true);
+      try {
+        const diaSemana = diaToNumber[selectedDay.dia];
+        const response = await http.get(`/api/ventas/producto/${selectedDay.producto.codigo_producto}/historico-dia`, {
+          params: {
+            ubicacion_id: ubicacionId,
+            dia_semana: diaSemana
+          }
+        });
+        setHistoricoDia(response.data.dias || []);
+      } catch (error) {
+        console.error('Error cargando histórico por día:', error);
+        setHistoricoDia([]);
+      } finally {
+        setLoadingHistorico(false);
+      }
+    };
+
+    fetchHistorico();
+  }, [showDayModal, selectedDay, ubicacionId]);
 
   const calcularRangoFechas = (periodo: string) => {
     const hoy = new Date();
@@ -355,11 +418,15 @@ export default function SalesDashboard() {
         'Rank': prod.rank_ventas || '',
         'Total Unidades': Math.round(prod.cantidad_total),
         'Prom/Dia': Number((prod.promedio_diario || 0).toFixed(1)),
-        'P75/Dia': Number((prod.p75_unidades_dia || 0).toFixed(1)),
-        'Prom Semana': Number((prod.prom_semana || 0).toFixed(1)),
-        'Prom Finde': Number((prod.prom_finde || 0).toFixed(1)),
-        'Prom Quincena': Number((prod.prom_quincena || 0).toFixed(1)),
-        'Prom Normal': Number((prod.prom_normal || 0).toFixed(1)),
+        'P75': Number((prod.p75_unidades_dia || 0).toFixed(1)),
+        'P75 Lun': Number((prod.p75_lun || 0).toFixed(1)),
+        'P75 Mar': Number((prod.p75_mar || 0).toFixed(1)),
+        'P75 Mié': Number((prod.p75_mie || 0).toFixed(1)),
+        'P75 Jue': Number((prod.p75_jue || 0).toFixed(1)),
+        'P75 Vie': Number((prod.p75_vie || 0).toFixed(1)),
+        'P75 Sáb': Number((prod.p75_sab || 0).toFixed(1)),
+        'P75 Dom': Number((prod.p75_dom || 0).toFixed(1)),
+        'Q15%': prod.q15_boost ? Number(prod.q15_boost.toFixed(1)) : 0,
         'Velocidad': prod.velocidad_venta || '',
         'Stock': prod.stock_actual ? Math.round(prod.stock_actual) : '',
         '% Total': Number((prod.porcentaje_total || 0).toFixed(2)),
@@ -662,11 +729,15 @@ export default function SalesDashboard() {
                     <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">#</th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Prom/Dia</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-purple-500 uppercase">P75/Dia</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-teal-600 uppercase">Sem</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-orange-500 uppercase">Fin</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-green-600 uppercase">Quinc</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-400 uppercase">Normal</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-purple-500 uppercase">P75</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-blue-500 uppercase">Lun</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-blue-500 uppercase">Mar</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-blue-500 uppercase">Mié</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-blue-500 uppercase">Jue</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-blue-500 uppercase">Vie</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-orange-500 uppercase">Sáb</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-red-500 uppercase">Dom</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-green-600 uppercase">Q15%</th>
                     <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Vel</th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Stock</th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">%</th>
@@ -675,7 +746,7 @@ export default function SalesDashboard() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {currentItems.length === 0 ? (
                     <tr>
-                      <td colSpan={15} className="px-6 py-12 text-center text-sm text-gray-500">
+                      <td colSpan={19} className="px-6 py-12 text-center text-sm text-gray-500">
                         No se encontraron ventas con los filtros seleccionados
                       </td>
                     </tr>
@@ -683,13 +754,19 @@ export default function SalesDashboard() {
                     currentItems.map((item, index) => (
                       <tr
                         key={`${item.codigo_producto}-${index}`}
-                        className="hover:bg-gray-50 cursor-pointer transition-colors"
-                        onClick={() => handleProductClick(item.codigo_producto, item.descripcion_producto)}
+                        className="hover:bg-gray-50 transition-colors"
                       >
-                        <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-900">
+                        <td
+                          className="px-3 py-2 whitespace-nowrap font-medium text-gray-900 cursor-pointer hover:text-indigo-600"
+                          onClick={() => handleProductClick(item.codigo_producto, item.descripcion_producto)}
+                        >
                           {item.codigo_producto}
                         </td>
-                        <td className="px-3 py-2 text-gray-900 max-w-[200px] truncate" title={item.descripcion_producto}>
+                        <td
+                          className="px-3 py-2 text-gray-900 max-w-[200px] truncate cursor-pointer hover:text-indigo-600"
+                          title={item.descripcion_producto}
+                          onClick={() => handleProductClick(item.codigo_producto, item.descripcion_producto)}
+                        >
                           {item.descripcion_producto}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap text-gray-500">
@@ -710,17 +787,53 @@ export default function SalesDashboard() {
                         <td className="px-3 py-2 whitespace-nowrap text-right text-purple-600 font-medium">
                           {fmtNum(item.p75_unidades_dia)}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-right text-teal-600">
-                          {fmtNum(item.prom_semana)}
+                        <td
+                          className="px-3 py-2 whitespace-nowrap text-right text-blue-600 cursor-pointer hover:bg-blue-50"
+                          onClick={() => { setSelectedDay({ dia: 'Lunes', producto: item }); setShowDayModal(true); }}
+                        >
+                          {fmtNum(item.p75_lun)}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-right text-orange-600">
-                          {fmtNum(item.prom_finde)}
+                        <td
+                          className="px-3 py-2 whitespace-nowrap text-right text-blue-600 cursor-pointer hover:bg-blue-50"
+                          onClick={() => { setSelectedDay({ dia: 'Martes', producto: item }); setShowDayModal(true); }}
+                        >
+                          {fmtNum(item.p75_mar)}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-right text-green-600 font-medium">
-                          {fmtNum(item.prom_quincena)}
+                        <td
+                          className="px-3 py-2 whitespace-nowrap text-right text-blue-600 cursor-pointer hover:bg-blue-50"
+                          onClick={() => { setSelectedDay({ dia: 'Miércoles', producto: item }); setShowDayModal(true); }}
+                        >
+                          {fmtNum(item.p75_mie)}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-500">
-                          {fmtNum(item.prom_normal)}
+                        <td
+                          className="px-3 py-2 whitespace-nowrap text-right text-blue-600 cursor-pointer hover:bg-blue-50"
+                          onClick={() => { setSelectedDay({ dia: 'Jueves', producto: item }); setShowDayModal(true); }}
+                        >
+                          {fmtNum(item.p75_jue)}
+                        </td>
+                        <td
+                          className="px-3 py-2 whitespace-nowrap text-right text-blue-600 cursor-pointer hover:bg-blue-50"
+                          onClick={() => { setSelectedDay({ dia: 'Viernes', producto: item }); setShowDayModal(true); }}
+                        >
+                          {fmtNum(item.p75_vie)}
+                        </td>
+                        <td
+                          className="px-3 py-2 whitespace-nowrap text-right text-orange-600 font-medium cursor-pointer hover:bg-orange-50"
+                          onClick={() => { setSelectedDay({ dia: 'Sábado', producto: item }); setShowDayModal(true); }}
+                        >
+                          {fmtNum(item.p75_sab)}
+                        </td>
+                        <td
+                          className="px-3 py-2 whitespace-nowrap text-right text-red-600 cursor-pointer hover:bg-red-50"
+                          onClick={() => { setSelectedDay({ dia: 'Domingo', producto: item }); setShowDayModal(true); }}
+                        >
+                          {fmtNum(item.p75_dom)}
+                        </td>
+                        <td
+                          className="px-3 py-2 whitespace-nowrap text-right text-green-600 font-medium cursor-pointer hover:bg-green-50"
+                          onClick={() => { setSelectedQ15Producto(item); setShowQ15Modal(true); }}
+                        >
+                          {item.q15_boost !== null && item.q15_boost !== 0 ? `${item.q15_boost > 0 ? '+' : ''}${item.q15_boost.toFixed(0)}%` : '-'}
                         </td>
                         <td className="px-3 py-2 text-center">
                           {renderVelocidad(item.velocidad_venta)}
@@ -814,6 +927,217 @@ export default function SalesDashboard() {
           ubicacionId={ubicacionId}
           ubicacionNombre={ubicacionId}
         />
+      )}
+
+      {/* Modal Análisis por Día */}
+      {showDayModal && selectedDay && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Análisis de {selectedDay.dia}</h3>
+                  <p className="text-sm text-gray-500">{selectedDay.producto.codigo_producto} - {selectedDay.producto.descripcion_producto}</p>
+                </div>
+                <button
+                  onClick={() => setShowDayModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <p className="text-sm text-blue-700 font-medium">P75 de {selectedDay.dia}</p>
+                  <p className="text-3xl font-bold text-blue-600">
+                    {fmtNum(
+                      selectedDay.dia === 'Lunes' ? selectedDay.producto.p75_lun :
+                      selectedDay.dia === 'Martes' ? selectedDay.producto.p75_mar :
+                      selectedDay.dia === 'Miércoles' ? selectedDay.producto.p75_mie :
+                      selectedDay.dia === 'Jueves' ? selectedDay.producto.p75_jue :
+                      selectedDay.dia === 'Viernes' ? selectedDay.producto.p75_vie :
+                      selectedDay.dia === 'Sábado' ? selectedDay.producto.p75_sab :
+                      selectedDay.producto.p75_dom
+                    )} unidades
+                  </p>
+                </div>
+
+                {/* Histórico de los últimos 8 días de este día de semana */}
+                <div>
+                  <p className="text-sm font-medium text-gray-700 mb-2">Últimos 8 {selectedDay.dia}s</p>
+                  {loadingHistorico ? (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                      <span className="ml-2 text-sm text-gray-500">Cargando...</span>
+                    </div>
+                  ) : historicoDia.length > 0 ? (
+                    <div className="bg-gray-50 rounded-lg overflow-hidden">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-100 text-gray-600">
+                            <th className="px-3 py-2 text-left font-medium">Fecha</th>
+                            <th className="px-3 py-2 text-right font-medium">Unidades</th>
+                            <th className="px-3 py-2 text-center font-medium">Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historicoDia.map((item, idx) => (
+                            <tr key={idx} className={`border-t border-gray-200 ${item.es_probable_rotura ? 'bg-red-50' : ''}`}>
+                              <td className="px-3 py-2 text-gray-700">
+                                {new Date(item.fecha).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </td>
+                              <td className={`px-3 py-2 text-right font-medium ${item.es_probable_rotura ? 'text-red-600' : 'text-gray-900'}`}>
+                                {Math.round(item.cantidad).toLocaleString()}
+                              </td>
+                              <td className="px-3 py-2 text-center">
+                                {item.es_probable_rotura ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">
+                                    Excluido
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+                                    Incluido
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 italic py-2">No hay datos históricos disponibles</p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-gray-50 p-3 rounded">
+                    <p className="text-xs text-gray-500">P75 General</p>
+                    <p className="text-lg font-semibold">{fmtNum(selectedDay.producto.p75_unidades_dia)}</p>
+                  </div>
+                  <div className="bg-gray-50 p-3 rounded">
+                    <p className="text-xs text-gray-500">Promedio Diario</p>
+                    <p className="text-lg font-semibold">{fmtNum(selectedDay.producto.promedio_diario)}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-gray-700 mb-2">Comparación por Día de Semana</p>
+                  <div className="grid grid-cols-7 gap-1 text-center text-xs">
+                    {[
+                      { dia: 'Lun', val: selectedDay.producto.p75_lun, color: 'blue' },
+                      { dia: 'Mar', val: selectedDay.producto.p75_mar, color: 'blue' },
+                      { dia: 'Mié', val: selectedDay.producto.p75_mie, color: 'blue' },
+                      { dia: 'Jue', val: selectedDay.producto.p75_jue, color: 'blue' },
+                      { dia: 'Vie', val: selectedDay.producto.p75_vie, color: 'blue' },
+                      { dia: 'Sáb', val: selectedDay.producto.p75_sab, color: 'orange' },
+                      { dia: 'Dom', val: selectedDay.producto.p75_dom, color: 'red' },
+                    ].map(d => (
+                      <div key={d.dia} className={`p-2 rounded ${selectedDay.dia.startsWith(d.dia) ? `bg-${d.color}-100 ring-2 ring-${d.color}-500` : 'bg-gray-100'}`}>
+                        <p className="font-medium">{d.dia}</p>
+                        <p className={`font-bold text-${d.color}-600`}>{fmtNum(d.val)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <p className="text-xs text-gray-500 italic">
+                  * P75 excluye días con venta menor al 40% del promedio (probable rotura de stock)
+                </p>
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={() => setShowDayModal(false)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Q15% Análisis */}
+      {showQ15Modal && selectedQ15Producto && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Análisis Q15% (Segunda Quincena)</h3>
+                  <p className="text-sm text-gray-500">{selectedQ15Producto.codigo_producto} - {selectedQ15Producto.descripcion_producto}</p>
+                </div>
+                <button
+                  onClick={() => setShowQ15Modal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className={`p-4 rounded-lg ${selectedQ15Producto.q15_boost && selectedQ15Producto.q15_boost > 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                  <p className={`text-sm font-medium ${selectedQ15Producto.q15_boost && selectedQ15Producto.q15_boost > 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    Variación días 15-20 vs días normales
+                  </p>
+                  <p className={`text-3xl font-bold ${selectedQ15Producto.q15_boost && selectedQ15Producto.q15_boost > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {selectedQ15Producto.q15_boost !== null && selectedQ15Producto.q15_boost !== 0
+                      ? `${selectedQ15Producto.q15_boost > 0 ? '+' : ''}${selectedQ15Producto.q15_boost.toFixed(1)}%`
+                      : 'Sin variación'}
+                  </p>
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <p className="text-sm font-medium text-gray-700 mb-2">¿Qué significa Q15%?</p>
+                  <p className="text-sm text-gray-600">
+                    Compara las ventas promedio durante los días <strong>15 al 20</strong> del mes
+                    (período de quincena) contra los días normales (6-14 y 21-31).
+                  </p>
+                  <ul className="mt-2 text-sm text-gray-600 space-y-1">
+                    <li>• <span className="text-green-600 font-medium">+X%</span> = Vende más en quincena</li>
+                    <li>• <span className="text-red-600 font-medium">-X%</span> = Vende menos en quincena</li>
+                  </ul>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-gray-50 p-3 rounded">
+                    <p className="text-xs text-gray-500">P75 General</p>
+                    <p className="text-lg font-semibold">{fmtNum(selectedQ15Producto.p75_unidades_dia)}</p>
+                  </div>
+                  <div className="bg-gray-50 p-3 rounded">
+                    <p className="text-xs text-gray-500">Stock Actual</p>
+                    <p className="text-lg font-semibold">{selectedQ15Producto.stock_actual ? Math.round(selectedQ15Producto.stock_actual).toLocaleString() : '-'}</p>
+                  </div>
+                </div>
+
+                {selectedQ15Producto.q15_boost && selectedQ15Producto.q15_boost > 20 && (
+                  <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg">
+                    <p className="text-sm text-amber-800">
+                      <strong>💡 Tip:</strong> Este producto tiene un boost significativo en quincena.
+                      Considera aumentar el stock antes del día 15.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={() => setShowQ15Modal(false)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

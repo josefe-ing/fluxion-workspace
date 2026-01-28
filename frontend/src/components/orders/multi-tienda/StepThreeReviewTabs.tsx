@@ -18,6 +18,7 @@ import StockSeguridadModal from '../StockSeguridadModal';
 import StockMinimoModal from '../StockMinimoModal';
 import StockMaximoModal from '../StockMaximoModal';
 import CriticidadModal from '../CriticidadModal';
+import { TransitoModal } from './TransitoModal';
 
 interface Props {
   orderData: OrderDataMultiTienda;
@@ -136,6 +137,15 @@ export default function StepThreeReviewTabs({
   const [criticidadModalOpen, setCriticidadModalOpen] = useState(false);
   const [selectedProductoCriticidad, setSelectedProductoCriticidad] = useState<ProductoPedidoSimplificado | null>(null);
 
+  // Modal de tránsito
+  const [transitoModalOpen, setTransitoModalOpen] = useState(false);
+  const [selectedProductoTransito, setSelectedProductoTransito] = useState<ProductoPedidoSimplificado | null>(null);
+  const [selectedTiendaTransito, setSelectedTiendaTransito] = useState<string>('');
+  const [selectedTiendaNombre, setSelectedTiendaNombre] = useState<string>('');
+
+  // Estado para ajustes de tránsito: { [`${tienda_id}_${codigo_producto}`]: bultos }
+  const [ajustesTransito, setAjustesTransito] = useState<Record<string, number>>({});
+
   // Usar orderData.pedidos_por_tienda si tiene datos (viene del paso 2 con ajustes),
   // de lo contrario usar calculationResult.pedidos_por_tienda (datos originales)
   const pedidos = (orderData.pedidos_por_tienda && orderData.pedidos_por_tienda.length > 0)
@@ -201,6 +211,39 @@ export default function StepThreeReviewTabs({
       return { ...prev, [tiendaId]: newSet };
     });
   }, [seleccionesPorTienda]);
+
+  // Obtener valor de tránsito (override o valor del servidor)
+  const getTransitoValue = useCallback((tiendaId: string, producto: ProductoPedidoSimplificado): number => {
+    const key = `${tiendaId}_${producto.codigo_producto}`;
+    if (ajustesTransito[key] !== undefined) {
+      return ajustesTransito[key];
+    }
+    return producto.transito_bultos || 0;
+  }, [ajustesTransito]);
+
+  // Manejar cambio de tránsito
+  const handleTransitoChange = useCallback((tiendaId: string, codigoProducto: string, valor: number) => {
+    const key = `${tiendaId}_${codigoProducto}`;
+    setAjustesTransito(prev => ({
+      ...prev,
+      [key]: Math.max(0, valor),
+    }));
+  }, []);
+
+  // Abrir modal de tránsito
+  const handleOpenTransitoModal = useCallback((producto: ProductoPedidoSimplificado, tiendaId: string, tiendaNombre: string) => {
+    setSelectedProductoTransito(producto);
+    setSelectedTiendaTransito(tiendaId);
+    setSelectedTiendaNombre(tiendaNombre);
+    setTransitoModalOpen(true);
+  }, []);
+
+  // Calcular días efectivos considerando tránsito
+  const calcularDiasEfectivos = useCallback((producto: ProductoPedidoSimplificado, transitoBultos: number): number => {
+    if (producto.prom_p75_unid <= 0) return 999;
+    const stockEfectivo = producto.stock_tienda + (transitoBultos * producto.unidades_por_bulto);
+    return stockEfectivo / producto.prom_p75_unid;
+  }, []);
 
   // Sincronizar ediciones con orderData
   useEffect(() => {
@@ -766,8 +809,10 @@ export default function StepThreeReviewTabs({
               const cantidadPedir = getCantidadPedir(pedido.tienda_id, producto);
               const nota = getNota(pedido.tienda_id, producto);
               const upb = producto.unidades_por_bulto;
-              const stockTransito = producto.stock_en_transito || 0;
-              const stockTotal = producto.stock_tienda + stockTransito;
+              const transitoBultos = getTransitoValue(pedido.tienda_id, producto);
+              const transitoUnidades = transitoBultos * upb;
+              const stockTotal = producto.stock_tienda + transitoUnidades;
+              const diasEfectivos = calcularDiasEfectivos(producto, transitoBultos);
               const estaSeleccionado = getSeleccionesTienda(pedido.tienda_id).has(producto.codigo_producto);
 
               return (
@@ -832,21 +877,41 @@ export default function StepThreeReviewTabs({
                     <div className="text-xs font-medium text-gray-800">{(producto.stock_tienda / upb).toFixed(1).replace('.', ',')}</div>
                     <div className="text-[10px] text-gray-400">{formatNumber(producto.stock_tienda)}u</div>
                   </td>
-                  {/* TRÁN */}
+                  {/* TRÁN - Editable */}
                   <td className="bg-green-50/30 px-1 py-1 text-center">
-                    <div className="text-xs font-medium text-blue-600">{(stockTransito / upb).toFixed(1).replace('.', ',')}</div>
-                    <div className="text-[10px] text-blue-400">{formatNumber(stockTransito)}u</div>
+                    <div className="flex flex-col items-center">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={transitoBultos}
+                        onChange={(e) => handleTransitoChange(pedido.tienda_id, producto.codigo_producto, parseFloat(e.target.value) || 0)}
+                        className="w-10 px-0.5 py-0 text-xs text-center border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 font-medium text-blue-600 bg-blue-50"
+                        title="Editar bultos en tránsito"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleOpenTransitoModal(producto, pedido.tienda_id, pedido.tienda_nombre)}
+                        className="text-[10px] text-blue-400 hover:text-blue-600 hover:underline cursor-pointer"
+                        title="Ver desglose de pedidos pendientes"
+                      >
+                        {formatNumber(transitoUnidades)}u
+                      </button>
+                    </div>
                   </td>
                   {/* TOT */}
                   <td className="bg-green-50/30 px-1 py-1 text-center">
                     <div className="text-xs font-medium text-gray-800">{(stockTotal / upb).toFixed(1).replace('.', ',')}</div>
                     <div className="text-[10px] text-gray-400">{formatNumber(stockTotal)}u</div>
                   </td>
-                  {/* Días Stock */}
-                  <td className="bg-green-50/30 px-1 py-1 text-center">
-                    <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${getDiasStockColor(producto.dias_stock)}`}>
-                      {producto.dias_stock < 999 ? producto.dias_stock.toFixed(1) : '∞'}
+                  {/* Días Stock - usando stock efectivo (stock + tránsito) */}
+                  <td className="bg-green-50/30 px-1 py-1 text-center" title={`Stock: ${producto.dias_stock.toFixed(1)}d | Con tránsito: ${diasEfectivos.toFixed(1)}d`}>
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${getDiasStockColor(diasEfectivos)}`}>
+                      {diasEfectivos < 999 ? diasEfectivos.toFixed(1) : '∞'}
                     </span>
+                    {transitoBultos > 0 && (
+                      <div className="text-[9px] text-gray-400 mt-0.5">({producto.dias_stock.toFixed(1)})</div>
+                    )}
                   </td>
                   {/* Stock CEDI */}
                   <td
@@ -1329,6 +1394,20 @@ export default function StepThreeReviewTabs({
             stock_seg_mult_a: 1.5, stock_seg_mult_ab: 2, stock_seg_mult_b: 2.5, stock_seg_mult_bc: 3, stock_seg_mult_c: 4,
             stock_max_mult_a: 5, stock_max_mult_ab: 7, stock_max_mult_b: 10, stock_max_mult_bc: 12, stock_max_mult_c: 15,
           }}
+        />
+      )}
+
+      {/* Modal de Tránsito */}
+      {selectedProductoTransito && (
+        <TransitoModal
+          isOpen={transitoModalOpen}
+          onClose={() => setTransitoModalOpen(false)}
+          codigoProducto={selectedProductoTransito.codigo_producto}
+          descripcionProducto={selectedProductoTransito.descripcion_producto}
+          tiendaNombre={selectedTiendaNombre}
+          transitoBultos={getTransitoValue(selectedTiendaTransito, selectedProductoTransito)}
+          desglose={selectedProductoTransito.transito_desglose || []}
+          unidadesPorBulto={selectedProductoTransito.unidades_por_bulto}
         />
       )}
     </div>

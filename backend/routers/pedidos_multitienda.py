@@ -138,6 +138,99 @@ async def cargar_config_tienda(conn, tienda_id: str) -> ConfigTiendaABC:
         cursor.close()
 
 
+async def calcular_transito_tienda(conn, cedi_origen: str, tienda_destino: str) -> Dict[str, Dict]:
+    """
+    Calcula productos en tránsito hacia una tienda.
+
+    Detecta el tránsito real analizando incrementos en inventario_historico
+    (misma lógica que verificar-llegada). NO se basa en el estado del pedido.
+
+    Algoritmo:
+    1. Buscar pedidos recientes (10 días) del CEDI hacia la tienda
+    2. Para cada producto, detectar incrementos en inventario_historico desde fecha_pedido
+    3. transito = cantidad_pedida - llegadas_detectadas (si > 0)
+
+    Returns: {codigo_producto: {transito_bultos: float, desglose: [...]}}
+    """
+    cursor = conn.cursor()
+
+    # 1. Obtener productos de pedidos recientes (no cancelados/rechazados)
+    cursor.execute("""
+        SELECT
+            ps.id, ps.numero_pedido, ps.fecha_pedido, ps.estado,
+            psd.codigo_producto, psd.descripcion_producto,
+            psd.cantidad_pedida_bultos,
+            COALESCE(psd.unidades_por_bulto, p.unidades_por_bulto, 1) as unidades_por_bulto
+        FROM pedidos_sugeridos ps
+        JOIN pedidos_sugeridos_detalle psd ON psd.pedido_id = ps.id
+        JOIN productos p ON psd.codigo_producto = p.codigo
+        WHERE ps.tienda_destino_id = %s
+          AND ps.cedi_origen_id = %s
+          AND ps.fecha_pedido >= CURRENT_DATE - INTERVAL '10 days'
+          AND ps.estado NOT IN ('cancelado', 'rechazado')
+          AND psd.cantidad_pedida_bultos > 0
+          AND psd.incluido = true
+    """, [tienda_destino, cedi_origen])
+
+    pedidos_productos = cursor.fetchall()
+    transito_por_producto: Dict[str, Dict] = {}
+
+    # 2. Para cada producto/pedido, detectar llegadas via inventario_historico
+    for row in pedidos_productos:
+        (pedido_id, numero_pedido, fecha_pedido, estado,
+         codigo, desc, cantidad_pedida, unidades_por_bulto) = row
+
+        # Query de detección de llegada (igual que verificar-llegada línea 2347)
+        # Suma todos los incrementos positivos entre snapshots consecutivos
+        cursor.execute("""
+            WITH snapshots AS (
+                SELECT
+                    fecha_snapshot,
+                    SUM(cantidad) as cantidad,
+                    LAG(SUM(cantidad)) OVER (ORDER BY fecha_snapshot) as cantidad_anterior
+                FROM inventario_historico
+                WHERE producto_id = %s
+                  AND ubicacion_id = %s
+                  AND fecha_snapshot >= %s
+                GROUP BY fecha_snapshot
+                ORDER BY fecha_snapshot
+            )
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN cantidad_anterior IS NOT NULL AND cantidad > cantidad_anterior
+                    THEN cantidad - cantidad_anterior
+                    ELSE 0
+                END
+            ), 0) as total_llegadas
+            FROM snapshots
+        """, [codigo, tienda_destino, fecha_pedido])
+
+        llegadas_unidades = float(cursor.fetchone()[0] or 0)
+        llegadas_bultos = llegadas_unidades / (unidades_por_bulto or 1)
+        pendiente = max(0, float(cantidad_pedida) - llegadas_bultos)
+
+        if pendiente > 0:
+            if codigo not in transito_por_producto:
+                transito_por_producto[codigo] = {'transito_bultos': 0, 'desglose': []}
+
+            transito_por_producto[codigo]['transito_bultos'] += pendiente
+            transito_por_producto[codigo]['desglose'].append({
+                'numero_pedido': numero_pedido,
+                'fecha_pedido': str(fecha_pedido),
+                'estado': estado,
+                'pedido_bultos': float(cantidad_pedida),
+                'llegadas_bultos': round(llegadas_bultos, 2),
+                'pendiente_bultos': round(pendiente, 2)
+            })
+
+    cursor.close()
+
+    if transito_por_producto:
+        logger.info(f"🚚 Tránsito calculado para {tienda_destino} desde {cedi_origen}: {len(transito_por_producto)} productos en tránsito")
+
+    return transito_por_producto
+
+
 async def obtener_productos_tienda(
     conn,
     cedi_origen: str,
@@ -454,6 +547,19 @@ async def obtener_productos_tienda(
             'es_sugerido': necesita_reposicion,
         })
 
+    # Calcular tránsito para esta tienda (productos en pedidos previos que no han llegado)
+    transito_data = await calcular_transito_tienda(conn, cedi_origen, tienda_destino)
+
+    # Agregar tránsito a cada producto
+    for prod in productos:
+        codigo = prod['codigo_producto']
+        if codigo in transito_data:
+            prod['transito_bultos'] = transito_data[codigo]['transito_bultos']
+            prod['transito_desglose'] = transito_data[codigo]['desglose']
+        else:
+            prod['transito_bultos'] = 0
+            prod['transito_desglose'] = []
+
     return productos
 
 
@@ -532,6 +638,8 @@ async def calcular_pedidos_multitienda(
                     'dias_stock': prod['dias_stock'],
                     'cantidad_necesaria': prod['cantidad_necesaria_unid'],
                     'cantidad_sugerida_bultos': prod['cantidad_sugerida_bultos'],
+                    'transito_bultos': prod.get('transito_bultos', 0),
+                    'transito_desglose': prod.get('transito_desglose', []),
                 }
 
         # Detectar conflictos y aplicar DPD+U
@@ -575,6 +683,29 @@ async def calcular_pedidos_multitienda(
                     config=config_dpdu
                 )
 
+                # Crear distribución DPD+U con datos de tránsito
+                distribucion_con_transito = []
+                for a in asignaciones:
+                    tienda_data = tiendas_data.get(a.tienda_id, {})
+                    distribucion_con_transito.append(AsignacionTiendaResponse(
+                        tienda_id=a.tienda_id,
+                        tienda_nombre=a.tienda_nombre,
+                        demanda_p75=a.demanda_p75,
+                        stock_actual=a.stock_actual,
+                        dias_stock=a.dias_stock,
+                        cantidad_necesaria=a.cantidad_necesaria,
+                        transito_bultos=tienda_data.get('transito_bultos', 0),
+                        transito_desglose=tienda_data.get('transito_desglose'),
+                        urgencia=a.urgencia,
+                        pct_demanda=a.pct_demanda,
+                        pct_urgencia=a.pct_urgencia,
+                        peso_final=a.peso_final,
+                        cantidad_asignada_unid=a.cantidad_asignada_unid,
+                        cantidad_asignada_bultos=a.cantidad_asignada_bultos,
+                        deficit_vs_necesidad=a.deficit_vs_necesidad,
+                        cobertura_dias_resultante=a.cobertura_dias_resultante
+                    ))
+
                 conflictos.append(ConflictoProductoResponse(
                     codigo_producto=codigo,
                     descripcion_producto=prod_data['descripcion_producto'],
@@ -586,25 +717,7 @@ async def calcular_pedidos_multitienda(
                     demanda_total_tiendas=sum(d.demanda_p75 for d in datos_tiendas),
                     necesidad_total_tiendas=necesidad_total,
                     es_conflicto=True,
-                    distribucion_dpdu=[
-                        AsignacionTiendaResponse(
-                            tienda_id=a.tienda_id,
-                            tienda_nombre=a.tienda_nombre,
-                            demanda_p75=a.demanda_p75,
-                            stock_actual=a.stock_actual,
-                            dias_stock=a.dias_stock,
-                            cantidad_necesaria=a.cantidad_necesaria,
-                            urgencia=a.urgencia,
-                            pct_demanda=a.pct_demanda,
-                            pct_urgencia=a.pct_urgencia,
-                            peso_final=a.peso_final,
-                            cantidad_asignada_unid=a.cantidad_asignada_unid,
-                            cantidad_asignada_bultos=a.cantidad_asignada_bultos,
-                            deficit_vs_necesidad=a.deficit_vs_necesidad,
-                            cobertura_dias_resultante=a.cobertura_dias_resultante
-                        )
-                        for a in asignaciones
-                    ]
+                    distribucion_dpdu=distribucion_con_transito
                 ))
             else:
                 productos_sin_conflicto += 1
@@ -649,6 +762,8 @@ async def calcular_pedidos_multitienda(
                     cantidad_sugerida_bultos=cantidad_final,
                     stock_tienda=prod['stock_tienda'],
                     stock_cedi_origen=prod['stock_cedi_origen'],
+                    transito_bultos=prod.get('transito_bultos', 0),
+                    transito_desglose=prod.get('transito_desglose'),
                     prom_p75_unid=prod['prom_p75_unid'],
                     dias_stock=prod['dias_stock'],
                     ajustado_por_dpdu=ajustado,

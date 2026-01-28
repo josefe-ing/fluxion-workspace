@@ -47,6 +47,16 @@ class CalcularMultiTiendaRequest(BaseModel):
 # MODELOS DE RESPONSE - DISTRIBUCIÓN DPD+U
 # =====================================================================================
 
+class TransitoDesgloseResponse(BaseModel):
+    """Desglose de un pedido pendiente que contribuye al tránsito."""
+    numero_pedido: str
+    fecha_pedido: str
+    estado: str
+    pedido_bultos: float
+    llegadas_bultos: float
+    pendiente_bultos: float
+
+
 class AsignacionTiendaResponse(BaseModel):
     """Asignación de un producto a una tienda según DPD+U."""
     tienda_id: str
@@ -57,6 +67,13 @@ class AsignacionTiendaResponse(BaseModel):
     stock_actual: float = Field(..., description="Stock actual en tienda")
     dias_stock: float = Field(..., description="Días de cobertura actual")
     cantidad_necesaria: float = Field(..., description="Cantidad necesaria según ABC")
+
+    # Tránsito (productos en pedidos previos que no han llegado)
+    transito_bultos: float = Field(default=0, description="Bultos en tránsito desde pedidos anteriores")
+    transito_desglose: Optional[List[TransitoDesgloseResponse]] = Field(
+        default=None,
+        description="Desglose de pedidos que contribuyen al tránsito"
+    )
 
     # Cálculos DPD+U
     urgencia: float = Field(..., description="Factor de urgencia (1/días_stock)")
@@ -132,6 +149,13 @@ class ProductoPedidoSimplificado(BaseModel):
     # Stock
     stock_tienda: float
     stock_cedi_origen: float
+
+    # Tránsito (productos en pedidos previos que no han llegado)
+    transito_bultos: float = Field(default=0, description="Bultos en tránsito desde pedidos anteriores")
+    transito_desglose: Optional[List[TransitoDesgloseResponse]] = Field(
+        default=None,
+        description="Desglose de pedidos que contribuyen al tránsito"
+    )
 
     # Métricas
     prom_p75_unid: float

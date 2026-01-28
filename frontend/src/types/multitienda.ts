@@ -34,6 +34,19 @@ export interface ConfigDPDU {
   dias_minimo_urgencia: number;  // default 0.5
 }
 
+/**
+ * Desglose de un pedido pendiente que contribuye al tránsito.
+ * Muestra cuántos bultos de un pedido anterior no han llegado.
+ */
+export interface TransitoDesglose {
+  numero_pedido: string;
+  fecha_pedido: string;
+  estado: string;
+  pedido_bultos: number;
+  llegadas_bultos: number;
+  pendiente_bultos: number;
+}
+
 export interface AsignacionTienda {
   tienda_id: string;
   tienda_nombre: string;
@@ -43,6 +56,10 @@ export interface AsignacionTienda {
   stock_actual: number;
   dias_stock: number;
   cantidad_necesaria: number;
+
+  // Tránsito (productos en pedidos anteriores que no han llegado)
+  transito_bultos?: number;
+  transito_desglose?: TransitoDesglose[];
 
   // Cálculos DPD+U
   urgencia: number;
@@ -104,7 +121,11 @@ export interface ProductoPedidoSimplificado {
   // Stock
   stock_tienda: number;
   stock_cedi_origen: number;
-  stock_en_transito?: number;  // Stock en tránsito
+  stock_en_transito?: number;  // Stock en tránsito (legacy)
+
+  // Tránsito (productos en pedidos anteriores que no han llegado)
+  transito_bultos?: number;
+  transito_desglose?: TransitoDesglose[];
 
   // Métricas de venta
   prom_p75_unid: number;

@@ -827,10 +827,15 @@ class VentasDetailResponse(BaseModel):
     velocidad_venta: Optional[str]  # Velocidad de venta (BAJA, MEDIA, ALTA, MUY_ALTA)
     stock_actual: Optional[float]  # Stock disponible actualmente
     p75_unidades_dia: Optional[float] = None  # P75 ventas diarias en unidades
-    prom_semana: Optional[float] = None  # Promedio diario Lun-Vie
-    prom_finde: Optional[float] = None  # Promedio diario Sáb-Dom
-    prom_quincena: Optional[float] = None  # Promedio diario en quincena (días 1-5 y 15-20)
-    prom_normal: Optional[float] = None  # Promedio diario fuera de quincena
+    # P75 por día de la semana
+    p75_lun: Optional[float] = None  # P75 Lunes
+    p75_mar: Optional[float] = None  # P75 Martes
+    p75_mie: Optional[float] = None  # P75 Miércoles
+    p75_jue: Optional[float] = None  # P75 Jueves
+    p75_vie: Optional[float] = None  # P75 Viernes
+    p75_sab: Optional[float] = None  # P75 Sábado
+    p75_dom: Optional[float] = None  # P75 Domingo
+    q15_boost: Optional[float] = None  # % incremento en días 15-20 vs días normales
 
 class PaginatedVentasResponse(BaseModel):
     data: List[VentasDetailResponse]
@@ -8269,12 +8274,20 @@ async def get_ventas_detail(
                     FROM ventas_filtradas
                     GROUP BY producto_id, fecha
                 ),
-                p75_stats AS (
-                    SELECT
-                        producto_id,
-                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as p75_unidades
+                -- Promedio general por producto (para filtrar roturas de stock)
+                avg_general AS (
+                    SELECT producto_id, AVG(cantidad_dia) as avg_dia
                     FROM ventas_diarias
                     GROUP BY producto_id
+                ),
+                -- P75 general excluyendo dias con venta < 40 pct del promedio (probable rotura de stock)
+                p75_stats AS (
+                    SELECT
+                        vd.producto_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN vd.cantidad_dia >= COALESCE(ag.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_unidades
+                    FROM ventas_diarias vd
+                    LEFT JOIN avg_general ag ON vd.producto_id = ag.producto_id
+                    GROUP BY vd.producto_id
                 ),
                 -- Calcular ranking de ventas y clasificación ABC
                 ranking_ventas AS (
@@ -8288,45 +8301,60 @@ async def get_ventas_detail(
                         END as clase_abc
                     FROM producto_stats
                 ),
-                -- Promedio entre semana vs fin de semana
-                dia_semana_stats AS (
+                -- Promedio por día de semana (para filtrar roturas de stock)
+                avg_por_dow AS (
                     SELECT
                         producto_id,
-                        COALESCE(
-                            SUM(CASE WHEN EXTRACT(DOW FROM fecha) BETWEEN 1 AND 5 THEN cantidad_dia END)
-                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM fecha) BETWEEN 1 AND 5 THEN fecha END), 0),
-                            0
-                        ) as prom_semana,
-                        COALESCE(
-                            SUM(CASE WHEN EXTRACT(DOW FROM fecha) IN (0, 6) THEN cantidad_dia END)
-                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM fecha) IN (0, 6) THEN fecha END), 0),
-                            0
-                        ) as prom_finde
+                        EXTRACT(DOW FROM fecha) as dow,
+                        AVG(cantidad_dia) as avg_dia
                     FROM ventas_diarias
-                    GROUP BY producto_id
+                    GROUP BY producto_id, EXTRACT(DOW FROM fecha)
                 ),
-                -- Promedio quincena (días 1-5 y 15-20) vs días normales
-                quincena_stats AS (
+                -- P75 por dia de la semana, excluyendo dias con venta menor al 40 pct del promedio
+                p75_por_dia AS (
+                    SELECT
+                        vd.producto_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 1 AND vd.cantidad_dia >= COALESCE(a1.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_lun,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 2 AND vd.cantidad_dia >= COALESCE(a2.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_mar,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 3 AND vd.cantidad_dia >= COALESCE(a3.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_mie,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 4 AND vd.cantidad_dia >= COALESCE(a4.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_jue,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 5 AND vd.cantidad_dia >= COALESCE(a5.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_vie,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 6 AND vd.cantidad_dia >= COALESCE(a6.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_sab,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 0 AND vd.cantidad_dia >= COALESCE(a0.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_dom
+                    FROM ventas_diarias vd
+                    LEFT JOIN avg_por_dow a0 ON vd.producto_id = a0.producto_id AND a0.dow = 0
+                    LEFT JOIN avg_por_dow a1 ON vd.producto_id = a1.producto_id AND a1.dow = 1
+                    LEFT JOIN avg_por_dow a2 ON vd.producto_id = a2.producto_id AND a2.dow = 2
+                    LEFT JOIN avg_por_dow a3 ON vd.producto_id = a3.producto_id AND a3.dow = 3
+                    LEFT JOIN avg_por_dow a4 ON vd.producto_id = a4.producto_id AND a4.dow = 4
+                    LEFT JOIN avg_por_dow a5 ON vd.producto_id = a5.producto_id AND a5.dow = 5
+                    LEFT JOIN avg_por_dow a6 ON vd.producto_id = a6.producto_id AND a6.dow = 6
+                    GROUP BY vd.producto_id
+                ),
+                -- Q15 boost: comparacion dias 15-20 vs dias normales (6-14, 21-31)
+                q15_stats AS (
                     SELECT
                         producto_id,
-                        COALESCE(
-                            SUM(CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5
-                                       OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20
-                                      THEN cantidad_dia END)
-                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5
-                                                          OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20
-                                                         THEN fecha END), 0),
-                            0
-                        ) as prom_quincena,
-                        COALESCE(
-                            SUM(CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5
-                                       OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20)
-                                      THEN cantidad_dia END)
-                            / NULLIF(COUNT(DISTINCT CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5
-                                                                   OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20)
-                                                         THEN fecha END), 0),
-                            0
-                        ) as prom_normal
+                        CASE
+                            WHEN COALESCE(
+                                SUM(CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN cantidad_dia END)
+                                / NULLIF(COUNT(DISTINCT CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN fecha END), 0),
+                                0
+                            ) > 0
+                            THEN ROUND((
+                                (COALESCE(
+                                    SUM(CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20 THEN cantidad_dia END)
+                                    / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20 THEN fecha END), 0),
+                                    0
+                                ) /
+                                COALESCE(
+                                    SUM(CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN cantidad_dia END)
+                                    / NULLIF(COUNT(DISTINCT CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN fecha END), 0),
+                                    0
+                                ) - 1) * 100
+                            )::numeric, 1)
+                            ELSE 0
+                        END as q15_boost
                     FROM ventas_diarias
                     GROUP BY producto_id
                 )
@@ -8355,17 +8383,21 @@ async def get_ventas_detail(
                     END as velocidad_venta,
                     ia.cantidad as stock_actual,
                     COALESCE(p75.p75_unidades, 0) as p75_unidades_dia,
-                    COALESCE(ds.prom_semana, 0) as prom_semana,
-                    COALESCE(ds.prom_finde, 0) as prom_finde,
-                    COALESCE(qs.prom_quincena, 0) as prom_quincena,
-                    COALESCE(qs.prom_normal, 0) as prom_normal
+                    COALESCE(pd.p75_lun, 0) as p75_lun,
+                    COALESCE(pd.p75_mar, 0) as p75_mar,
+                    COALESCE(pd.p75_mie, 0) as p75_mie,
+                    COALESCE(pd.p75_jue, 0) as p75_jue,
+                    COALESCE(pd.p75_vie, 0) as p75_vie,
+                    COALESCE(pd.p75_sab, 0) as p75_sab,
+                    COALESCE(pd.p75_dom, 0) as p75_dom,
+                    COALESCE(q15.q15_boost, 0) as q15_boost
                 FROM producto_stats ps
                 CROSS JOIN totales t
                 LEFT JOIN productos p ON ps.producto_id = p.codigo
                 LEFT JOIN p75_stats p75 ON ps.producto_id = p75.producto_id
                 LEFT JOIN ranking_ventas rv ON ps.producto_id = rv.producto_id
-                LEFT JOIN dia_semana_stats ds ON ps.producto_id = ds.producto_id
-                LEFT JOIN quincena_stats qs ON ps.producto_id = qs.producto_id
+                LEFT JOIN p75_por_dia pd ON ps.producto_id = pd.producto_id
+                LEFT JOIN q15_stats q15 ON ps.producto_id = q15.producto_id
                 LEFT JOIN inventario_actual ia ON ps.producto_id = ia.producto_id
                     AND ia.ubicacion_id = %s
                 WHERE 1=1 {categoria_filter}
@@ -8396,10 +8428,14 @@ async def get_ventas_detail(
                     velocidad_venta=row[15],
                     stock_actual=float(row[16]) if row[16] else None,
                     p75_unidades_dia=float(row[17]) if row[17] else None,
-                    prom_semana=float(row[18]) if row[18] else None,
-                    prom_finde=float(row[19]) if row[19] else None,
-                    prom_quincena=float(row[20]) if row[20] else None,
-                    prom_normal=float(row[21]) if row[21] else None,
+                    p75_lun=float(row[18]) if row[18] else None,
+                    p75_mar=float(row[19]) if row[19] else None,
+                    p75_mie=float(row[20]) if row[20] else None,
+                    p75_jue=float(row[21]) if row[21] else None,
+                    p75_vie=float(row[22]) if row[22] else None,
+                    p75_sab=float(row[23]) if row[23] else None,
+                    p75_dom=float(row[24]) if row[24] else None,
+                    q15_boost=float(row[25]) if row[25] else None,
                 )
                 for row in result
             ]
@@ -8574,10 +8610,19 @@ async def get_ventas_export_resumen(
                     FROM ventas_filtradas
                     GROUP BY producto_id, fecha
                 ),
-                p75_stats AS (
-                    SELECT producto_id, PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as p75_unidades
+                -- Promedio general por producto (para filtrar roturas de stock)
+                avg_general AS (
+                    SELECT producto_id, AVG(cantidad_dia) as avg_dia
                     FROM ventas_diarias
                     GROUP BY producto_id
+                ),
+                -- P75 general excluyendo dias con venta < 40 pct del promedio (probable rotura de stock)
+                p75_stats AS (
+                    SELECT vd.producto_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN vd.cantidad_dia >= COALESCE(ag.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_unidades
+                    FROM ventas_diarias vd
+                    LEFT JOIN avg_general ag ON vd.producto_id = ag.producto_id
+                    GROUP BY vd.producto_id
                 ),
                 ranking_ventas AS (
                     SELECT producto_id,
@@ -8589,21 +8634,42 @@ async def get_ventas_export_resumen(
                         END as clase_abc
                     FROM producto_stats
                 ),
-                dia_semana_stats AS (
-                    SELECT producto_id,
-                        COALESCE(SUM(CASE WHEN EXTRACT(DOW FROM fecha) BETWEEN 1 AND 5 THEN cantidad_dia END)
-                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM fecha) BETWEEN 1 AND 5 THEN fecha END), 0), 0) as prom_semana,
-                        COALESCE(SUM(CASE WHEN EXTRACT(DOW FROM fecha) IN (0, 6) THEN cantidad_dia END)
-                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM fecha) IN (0, 6) THEN fecha END), 0), 0) as prom_finde
+                -- Promedio por día de semana (para filtrar roturas de stock)
+                avg_por_dow AS (
+                    SELECT producto_id, EXTRACT(DOW FROM fecha) as dow, AVG(cantidad_dia) as avg_dia
                     FROM ventas_diarias
-                    GROUP BY producto_id
+                    GROUP BY producto_id, EXTRACT(DOW FROM fecha)
                 ),
-                quincena_stats AS (
+                -- P75 por dia de la semana, excluyendo dias con venta menor al 40 pct del promedio
+                p75_por_dia AS (
+                    SELECT vd.producto_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 1 AND vd.cantidad_dia >= COALESCE(a1.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_lun,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 2 AND vd.cantidad_dia >= COALESCE(a2.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_mar,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 3 AND vd.cantidad_dia >= COALESCE(a3.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_mie,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 4 AND vd.cantidad_dia >= COALESCE(a4.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_jue,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 5 AND vd.cantidad_dia >= COALESCE(a5.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_vie,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 6 AND vd.cantidad_dia >= COALESCE(a6.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_sab,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY CASE WHEN EXTRACT(DOW FROM vd.fecha) = 0 AND vd.cantidad_dia >= COALESCE(a0.avg_dia, 0) * 0.4 THEN vd.cantidad_dia END) as p75_dom
+                    FROM ventas_diarias vd
+                    LEFT JOIN avg_por_dow a0 ON vd.producto_id = a0.producto_id AND a0.dow = 0
+                    LEFT JOIN avg_por_dow a1 ON vd.producto_id = a1.producto_id AND a1.dow = 1
+                    LEFT JOIN avg_por_dow a2 ON vd.producto_id = a2.producto_id AND a2.dow = 2
+                    LEFT JOIN avg_por_dow a3 ON vd.producto_id = a3.producto_id AND a3.dow = 3
+                    LEFT JOIN avg_por_dow a4 ON vd.producto_id = a4.producto_id AND a4.dow = 4
+                    LEFT JOIN avg_por_dow a5 ON vd.producto_id = a5.producto_id AND a5.dow = 5
+                    LEFT JOIN avg_por_dow a6 ON vd.producto_id = a6.producto_id AND a6.dow = 6
+                    GROUP BY vd.producto_id
+                ),
+                -- Q15 boost: comparacion dias 15-20 vs dias normales
+                q15_stats AS (
                     SELECT producto_id,
-                        COALESCE(SUM(CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5 OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20 THEN cantidad_dia END)
-                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5 OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20 THEN fecha END), 0), 0) as prom_quincena,
-                        COALESCE(SUM(CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5 OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN cantidad_dia END)
-                            / NULLIF(COUNT(DISTINCT CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5 OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN fecha END), 0), 0) as prom_normal
+                        CASE WHEN COALESCE(SUM(CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN fecha END), 0), 0) > 0
+                        THEN ROUND(((COALESCE(SUM(CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20 THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20 THEN fecha END), 0), 0) /
+                            COALESCE(SUM(CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN fecha END), 0), 0) - 1) * 100)::numeric, 1)
+                        ELSE 0 END as q15_boost
                     FROM ventas_diarias
                     GROUP BY producto_id
                 )
@@ -8626,17 +8692,21 @@ async def get_ventas_export_resumen(
                     END as velocidad_venta,
                     ia.cantidad as stock_actual,
                     COALESCE(p75.p75_unidades, 0) as p75_unidades_dia,
-                    COALESCE(ds.prom_semana, 0) as prom_semana,
-                    COALESCE(ds.prom_finde, 0) as prom_finde,
-                    COALESCE(qs.prom_quincena, 0) as prom_quincena,
-                    COALESCE(qs.prom_normal, 0) as prom_normal
+                    COALESCE(pd.p75_lun, 0) as p75_lun,
+                    COALESCE(pd.p75_mar, 0) as p75_mar,
+                    COALESCE(pd.p75_mie, 0) as p75_mie,
+                    COALESCE(pd.p75_jue, 0) as p75_jue,
+                    COALESCE(pd.p75_vie, 0) as p75_vie,
+                    COALESCE(pd.p75_sab, 0) as p75_sab,
+                    COALESCE(pd.p75_dom, 0) as p75_dom,
+                    COALESCE(q15.q15_boost, 0) as q15_boost
                 FROM producto_stats ps
                 CROSS JOIN totales t
                 LEFT JOIN productos p ON ps.producto_id = p.codigo
                 LEFT JOIN p75_stats p75 ON ps.producto_id = p75.producto_id
                 LEFT JOIN ranking_ventas rv ON ps.producto_id = rv.producto_id
-                LEFT JOIN dia_semana_stats ds ON ps.producto_id = ds.producto_id
-                LEFT JOIN quincena_stats qs ON ps.producto_id = qs.producto_id
+                LEFT JOIN p75_por_dia pd ON ps.producto_id = pd.producto_id
+                LEFT JOIN q15_stats q15 ON ps.producto_id = q15.producto_id
                 LEFT JOIN inventario_actual ia ON ps.producto_id = ia.producto_id
                     AND ia.ubicacion_id = %s
                 ORDER BY ps.cantidad_total DESC
@@ -8660,10 +8730,14 @@ async def get_ventas_export_resumen(
                     "velocidad_venta": row[9],
                     "stock_actual": float(row[10]) if row[10] else None,
                     "p75_unidades_dia": float(row[11]) if row[11] else None,
-                    "prom_semana": float(row[12]) if row[12] else None,
-                    "prom_finde": float(row[13]) if row[13] else None,
-                    "prom_quincena": float(row[14]) if row[14] else None,
-                    "prom_normal": float(row[15]) if row[15] else None,
+                    "p75_lun": float(row[12]) if row[12] else None,
+                    "p75_mar": float(row[13]) if row[13] else None,
+                    "p75_mie": float(row[14]) if row[14] else None,
+                    "p75_jue": float(row[15]) if row[15] else None,
+                    "p75_vie": float(row[16]) if row[16] else None,
+                    "p75_sab": float(row[17]) if row[17] else None,
+                    "p75_dom": float(row[18]) if row[18] else None,
+                    "q15_boost": float(row[19]) if row[19] else None,
                 })
 
             return items
@@ -9283,6 +9357,94 @@ async def get_ventas_ultimos_20_dias(
     except Exception as e:
         logger.error(f"Error obteniendo ventas últimos 20 días: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error obteniendo ventas: {str(e)}")
+
+
+@app.get("/api/ventas/producto/{codigo_producto}/historico-dia", tags=["Ventas"])
+async def get_ventas_historico_dia(
+    codigo_producto: str,
+    ubicacion_id: str,
+    dia_semana: int  # 0=Domingo, 1=Lunes, 2=Martes, ..., 6=Sábado
+):
+    """
+    Obtiene las ventas de los últimos 8 ocurrencias de un día específico de la semana.
+
+    Por ejemplo, si dia_semana=1 (Lunes), retorna las ventas de los últimos 8 lunes.
+
+    Args:
+        codigo_producto: Código del producto
+        ubicacion_id: ID de la tienda
+        dia_semana: Día de la semana (0=Dom, 1=Lun, 2=Mar, 3=Mié, 4=Jue, 5=Vie, 6=Sáb)
+
+    Returns:
+        dias: Lista de los últimos 8 días con fecha, cantidad vendida y si hubo rotura de stock
+    """
+    try:
+        dias_nombres = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Obtener las últimas 8 fechas de ese día de la semana con ventas (o sin ventas)
+            # Primero obtenemos las fechas disponibles
+            cursor.execute("""
+                WITH fechas_dia AS (
+                    SELECT DISTINCT fecha_venta::date as fecha
+                    FROM ventas
+                    WHERE ubicacion_id = %s
+                      AND EXTRACT(DOW FROM fecha_venta) = %s
+                    ORDER BY fecha DESC
+                    LIMIT 8
+                ),
+                ventas_producto AS (
+                    SELECT
+                        fecha_venta::date as fecha,
+                        SUM(cantidad_vendida) as cantidad
+                    FROM ventas
+                    WHERE ubicacion_id = %s
+                      AND producto_id = %s
+                      AND EXTRACT(DOW FROM fecha_venta) = %s
+                    GROUP BY fecha_venta::date
+                )
+                SELECT
+                    f.fecha,
+                    COALESCE(v.cantidad, 0) as cantidad
+                FROM fechas_dia f
+                LEFT JOIN ventas_producto v ON f.fecha = v.fecha
+                ORDER BY f.fecha DESC
+            """, [ubicacion_id, dia_semana, ubicacion_id, codigo_producto, dia_semana])
+
+            rows = cursor.fetchall()
+
+            # Calcular promedio para detectar posibles roturas de stock
+            cantidades = [float(r[1]) for r in rows if r[1] > 0]
+            promedio = sum(cantidades) / len(cantidades) if cantidades else 0
+            umbral_rotura = promedio * 0.4
+
+            dias = []
+            for row in rows:
+                fecha = row[0]
+                cantidad = float(row[1]) if row[1] else 0
+                es_rotura = cantidad < umbral_rotura if promedio > 0 else False
+
+                dias.append({
+                    "fecha": fecha.strftime('%Y-%m-%d'),
+                    "fecha_display": fecha.strftime('%d/%m'),
+                    "cantidad": cantidad,
+                    "es_probable_rotura": es_rotura
+                })
+
+            cursor.close()
+
+            return {
+                "dia_semana": dias_nombres[dia_semana],
+                "dias": dias,
+                "promedio": round(promedio, 1),
+                "umbral_rotura": round(umbral_rotura, 1)
+            }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo histórico por día: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
 @app.get("/api/ventas/producto/{codigo_producto}/transacciones", tags=["Ventas"])
