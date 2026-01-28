@@ -22,6 +22,7 @@ import ConfiguracionABC from './components/admin/ConfiguracionABC';
 import GeneradoresTrafico from './components/admin/GeneradoresTrafico';
 import UsuariosAdmin from './components/admin/UsuariosAdmin';
 import ExclusionesInterCedi from './components/admin/ExclusionesInterCedi';
+import ProductosAdmin from './components/admin/ProductosAdmin';
 // DEPRECADOS: Comentados para futura eliminación
 // import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
 // import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
@@ -201,6 +202,14 @@ function ProtectedRoutes() {
           element={
             <RoleProtectedRoute allowedRoles={['super_admin']}>
               <ExclusionesInterCedi />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="administrador/productos"
+          element={
+            <RoleProtectedRoute allowedRoles={['super_admin']}>
+              <ProductosAdmin />
             </RoleProtectedRoute>
           }
         />

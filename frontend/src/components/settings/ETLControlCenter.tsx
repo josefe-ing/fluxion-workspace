@@ -82,6 +82,18 @@ export default function ETLControlCenter() {
               </div>
             </div>
           </Link>
+          <Link
+            to="/administrador/productos"
+            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:border-teal-400 hover:shadow-md transition-all group"
+          >
+            <div className="flex items-center space-x-3">
+              <span className="text-2xl">📦</span>
+              <div>
+                <div className="font-medium text-gray-900 group-hover:text-teal-600">Productos</div>
+                <div className="text-xs text-gray-500">Editar peso, volumen, cuadrante</div>
+              </div>
+            </div>
+          </Link>
         </div>
 
         {/* Panels Stack */}
