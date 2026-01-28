@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 import http from '../../services/http';
 import ProductSalesModal from './ProductSalesModal';
 import SyncVentasModal from './SyncVentasModal';
@@ -24,6 +25,11 @@ interface VentasDetail {
   rank_ventas: number | null;
   velocidad_venta: string | null;
   stock_actual: number | null;
+  p75_unidades_dia: number | null;
+  prom_semana: number | null;
+  prom_finde: number | null;
+  prom_quincena: number | null;
+  prom_normal: number | null;
 }
 
 interface PaginationMetadata {
@@ -45,9 +51,33 @@ interface Categoria {
   label: string;
 }
 
+// Mapping de ubicaciones a nombres amigables
+const UBICACION_FRIENDLY_NAMES: Record<string, string> = {
+  'tienda_01': 'PERIFÉRICO',
+  'tienda_02': 'AV. BOLÍVAR',
+  'tienda_03': 'MAÑONGO',
+  'tienda_04': 'SAN DIEGO',
+  'tienda_05': 'VIVIENDA',
+  'tienda_06': 'NAGUANAGUA',
+  'tienda_07': 'CENTRO',
+  'tienda_08': 'BOSQUE',
+  'tienda_09': 'GUACARA',
+  'tienda_10': 'FERIAS',
+  'tienda_11': 'FLOR AMARILLO',
+  'tienda_12': 'PARAPARAL',
+  'tienda_13': 'NAGUANAGUA III',
+  'tienda_15': 'ISABELICA',
+  'tienda_16': 'TOCUYITO',
+  'tienda_17': 'ARTIGAS',
+  'tienda_18': 'PARAÍSO',
+  'tienda_19': 'GUIGUE',
+  'tienda_20': 'TAZAJAL',
+};
+
 export default function SalesDashboard() {
   const navigate = useNavigate();
   const { ubicacionId } = useParams();
+  const nombreTienda = ubicacionId ? UBICACION_FRIENDLY_NAMES[ubicacionId] || ubicacionId : '';
 
   const [ventasData, setVentasData] = useState<VentasDetail[]>([]);
   const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
@@ -86,11 +116,16 @@ export default function SalesDashboard() {
   // Modal Ventas Perdidas
   const [showVentasPerdidasModal, setShowVentasPerdidasModal] = useState(false);
 
-  // Métricas (ahora basadas en la página actual)
+  // Estado para descarga Excel
+  const [exportingExcel, setExportingExcel] = useState(false);
+
+  // Métricas
   const stats = {
-    total_transacciones: pagination?.total_items || 0,
-    total_unidades: ventasData.reduce((sum, item) => sum + item.cantidad_total, 0),
     productos_unicos: pagination?.total_items || 0,
+    total_unidades: ventasData.reduce((sum, item) => sum + item.cantidad_total, 0),
+    abc_a: ventasData.filter(i => i.clase_abc === 'A').length,
+    abc_b: ventasData.filter(i => i.clase_abc === 'B').length,
+    vel_muy_alta: ventasData.filter(i => i.velocidad_venta === 'MUY_ALTA').length,
   };
 
   // Debounce effect para búsqueda (300ms)
@@ -101,7 +136,7 @@ export default function SalesDashboard() {
 
     searchDebounceTimer.current = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
-      setCurrentPage(1); // Reset a página 1 cuando se busca
+      setCurrentPage(1);
     }, 300);
 
     return () => {
@@ -157,7 +192,6 @@ export default function SalesDashboard() {
   const handlePeriodoChange = (periodo: string) => {
     setPeriodoSeleccionado(periodo);
     if (periodo === 'personalizado') {
-      // No hacer nada, usar los valores de fechaInicio y fechaFin
       return;
     }
     const rango = calcularRangoFechas(periodo);
@@ -197,11 +231,9 @@ export default function SalesDashboard() {
       if (fechaInicio) params.append('fecha_inicio', fechaInicio);
       if (fechaFin) params.append('fecha_fin', fechaFin);
 
-      // Paginación server-side
       params.append('page', currentPage.toString());
       params.append('page_size', pageSize.toString());
 
-      // Búsqueda (se enviará al backend en lugar de filtrar client-side)
       if (debouncedSearchTerm) params.append('search', debouncedSearchTerm);
 
       const response = await http.get(`/api/ventas/detail?${params.toString()}`) as { data: PaginatedVentasResponse };
@@ -216,7 +248,6 @@ export default function SalesDashboard() {
 
   useEffect(() => {
     loadCategorias();
-    // Establecer el período inicial al cargar
     handlePeriodoChange('ultimo_mes');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -228,7 +259,6 @@ export default function SalesDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubicacionId, selectedCategoria, fechaInicio, fechaFin, currentPage, debouncedSearchTerm]);
 
-  // Cargar conteo de agotados visuales cuando hay ubicación
   useEffect(() => {
     if (ubicacionId) {
       loadAgotadosVisualesCount();
@@ -248,12 +278,9 @@ export default function SalesDashboard() {
     }
   };
 
-  // Ya no necesitamos filtrado client-side, se hace en el backend
-  // Los datos de ventasData ya vienen filtrados y paginados del servidor
   const currentItems = ventasData;
   const totalPages = pagination?.total_pages || 1;
 
-  // Función para renderizar badge de clasificación ABC
   const renderClaseABC = (clase: string | null) => {
     const estilos: Record<string, string> = {
       'A': 'bg-green-600 text-white',
@@ -268,7 +295,6 @@ export default function SalesDashboard() {
     );
   };
 
-  // Función para renderizar badge de velocidad
   const renderVelocidad = (velocidad: string | null) => {
     const estilos: Record<string, string> = {
       'MUY_ALTA': 'bg-green-100 text-green-800 border-green-200',
@@ -302,54 +328,129 @@ export default function SalesDashboard() {
     setIsModalOpen(true);
   };
 
-  // Obtener ubicacionId actual (puede ser undefined si no hay)
+  const handleExportExcel = async () => {
+    if (!ubicacionId || !fechaInicio || !fechaFin) return;
+    try {
+      setExportingExcel(true);
+      const params = new URLSearchParams({
+        ubicacion_id: ubicacionId,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+      });
+
+      const [diarioRes, resumenRes] = await Promise.all([
+        http.get(`/api/ventas/export-diario?${params.toString()}`),
+        http.get(`/api/ventas/export-resumen?${params.toString()}`),
+      ]);
+
+      const wb = XLSX.utils.book_new();
+
+      // Hoja 1: Resumen con métricas
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const resumenRows = (resumenRes.data as any[]).map((prod) => ({
+        'Codigo': prod.codigo_producto,
+        'Descripcion': prod.descripcion_producto,
+        'Categoria': prod.categoria,
+        'ABC': prod.clase_abc || '',
+        'Rank': prod.rank_ventas || '',
+        'Total Unidades': Math.round(prod.cantidad_total),
+        'Prom/Dia': Number((prod.promedio_diario || 0).toFixed(1)),
+        'P75/Dia': Number((prod.p75_unidades_dia || 0).toFixed(1)),
+        'Prom Semana': Number((prod.prom_semana || 0).toFixed(1)),
+        'Prom Finde': Number((prod.prom_finde || 0).toFixed(1)),
+        'Prom Quincena': Number((prod.prom_quincena || 0).toFixed(1)),
+        'Prom Normal': Number((prod.prom_normal || 0).toFixed(1)),
+        'Velocidad': prod.velocidad_venta || '',
+        'Stock': prod.stock_actual ? Math.round(prod.stock_actual) : '',
+        '% Total': Number((prod.porcentaje_total || 0).toFixed(2)),
+      }));
+      const wsResumen = XLSX.utils.json_to_sheet(resumenRows);
+      XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen Ventas');
+
+      // Hoja 2: Ventas diarias (fechas ya vienen ordenadas de reciente a antigua)
+      const { fechas, productos } = diarioRes.data as {
+        fechas: string[];
+        productos: { codigo: string; descripcion: string; categoria: string; abc?: string; rank?: number; ventas: Record<string, number> }[];
+      };
+      const diarioRows = productos.map((prod) => {
+        const row: Record<string, string | number> = {
+          'Codigo': prod.codigo,
+          'Descripcion': prod.descripcion,
+          'Categoria': prod.categoria,
+          'ABC': prod.abc || '',
+          'Rank': prod.rank || '',
+        };
+        let total = 0;
+        for (const fecha of fechas) {
+          const cantidad = prod.ventas[fecha] || 0;
+          row[fecha] = cantidad;
+          total += cantidad;
+        }
+        row['Total'] = total;
+        return row;
+      });
+      const wsDiario = XLSX.utils.json_to_sheet(diarioRows);
+      XLSX.utils.book_append_sheet(wb, wsDiario, 'Ventas Diarias');
+
+      XLSX.writeFile(wb, `ventas_${nombreTienda || ubicacionId}_${fechaInicio}_${fechaFin}.xlsx`);
+    } catch (error) {
+      console.error('Error exportando Excel:', error);
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   const currentUbicacionId = ubicacionId || null;
 
-  return (
-    <div className="space-y-6">
-      {/* Botón de regreso */}
-      <button
-        onClick={() => navigate('/ventas')}
-        className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
-      >
-        <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-        </svg>
-        Volver al resumen
-      </button>
+  const fmtNum = (val: number | null | undefined) => {
+    if (val === null || val === undefined) return '-';
+    return val.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  };
 
-      {/* Título */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Detalle de Ventas</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Análisis de productos vendidos con promedios y comparaciones
-          </p>
+  return (
+    <div className="space-y-4">
+      {/* Header estilo inventario */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/ventas')}
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+          </button>
+          <div>
+            <h1 className="text-3xl font-bold text-indigo-600">
+              {nombreTienda || 'Todas las tiendas'}
+            </h1>
+            <p className="text-sm text-gray-500">
+              Analisis de ventas &bull; {fechaInicio} al {fechaFin}
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Botón Ventas Perdidas */}
+        <div className="flex items-center gap-2">
           {ubicacionId && (
             <button
               onClick={() => setShowVentasPerdidasModal(true)}
-              className="flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+              className="inline-flex items-center px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors"
             >
-              <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              Ventas Perdidas
+              V. Perdidas
             </button>
           )}
-          {/* Botón Centro de Comando - Agotados Visuales */}
           {ubicacionId && (
             <button
               onClick={() => setShowCentroComandoModal(true)}
-              className="relative flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
+              className="relative inline-flex items-center px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors"
             >
-              <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
-              Agotados Visuales
+              Agotados
               {agotadosVisualesCount > 0 && (
                 <span className="absolute -top-2 -right-2 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white bg-red-600 rounded-full min-w-[24px]">
                   {agotadosVisualesCount > 99 ? '99+' : agotadosVisualesCount}
@@ -357,195 +458,124 @@ export default function SalesDashboard() {
               )}
             </button>
           )}
+          {ubicacionId && (
+            <button
+              onClick={handleExportExcel}
+              disabled={exportingExcel || !fechaInicio || !fechaFin}
+              className="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              {exportingExcel ? 'Descargando...' : 'Excel'}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Métricas Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Productos Únicos</p>
-              <p className="mt-2 text-3xl font-semibold text-gray-900">{stats.productos_unicos}</p>
-            </div>
-            <div className="h-12 w-12 bg-gray-100 rounded-lg flex items-center justify-center">
-              <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-              </svg>
-            </div>
-          </div>
+      {/* KPI Cards compactos - estilo inventario */}
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <p className="text-xs font-medium text-gray-500">Productos</p>
+          <p className="text-xl font-bold text-gray-900">{stats.productos_unicos.toLocaleString()}</p>
         </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Unidades Vendidas</p>
-              <p className="mt-2 text-3xl font-semibold text-gray-900">{Math.round(stats.total_unidades).toLocaleString()}</p>
-            </div>
-            <div className="h-12 w-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-              </svg>
-            </div>
-          </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <p className="text-xs font-medium text-green-600">Unidades</p>
+          <p className="text-xl font-bold text-green-600">{Math.round(stats.total_unidades).toLocaleString()}</p>
         </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Promedio Diario</p>
-              <p className="mt-2 text-3xl font-semibold text-gray-900">
-                {ventasData.length > 0 ? Math.round(ventasData.reduce((sum, item) => sum + item.promedio_diario, 0) / ventasData.length).toLocaleString() : 0}
-              </p>
-            </div>
-            <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-            </div>
-          </div>
+        <div
+          className={`bg-white rounded-lg border p-3 cursor-pointer transition-all ${
+            selectedClaseABC === 'A' ? 'border-green-500 ring-2 ring-green-200' : 'border-gray-200 hover:border-green-300'
+          }`}
+          onClick={() => { setSelectedClaseABC(selectedClaseABC === 'A' ? '' : 'A'); setCurrentPage(1); }}
+        >
+          <p className="text-xs font-medium text-green-600">ABC-A</p>
+          <p className="text-xl font-bold text-green-600">{stats.abc_a}</p>
+        </div>
+        <div
+          className={`bg-white rounded-lg border p-3 cursor-pointer transition-all ${
+            selectedClaseABC === 'B' ? 'border-yellow-500 ring-2 ring-yellow-200' : 'border-gray-200 hover:border-yellow-300'
+          }`}
+          onClick={() => { setSelectedClaseABC(selectedClaseABC === 'B' ? '' : 'B'); setCurrentPage(1); }}
+        >
+          <p className="text-xs font-medium text-yellow-600">ABC-B</p>
+          <p className="text-xl font-bold text-yellow-600">{stats.abc_b}</p>
+        </div>
+        <div
+          className={`bg-white rounded-lg border p-3 cursor-pointer transition-all ${
+            selectedVelocidad === 'MUY_ALTA' ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300'
+          }`}
+          onClick={() => { setSelectedVelocidad(selectedVelocidad === 'MUY_ALTA' ? '' : 'MUY_ALTA'); setCurrentPage(1); }}
+        >
+          <p className="text-xs font-medium text-blue-600">Muy Alta</p>
+          <p className="text-xl font-bold text-blue-600">{stats.vel_muy_alta}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <p className="text-xs font-medium text-purple-600">Prom/Dia</p>
+          <p className="text-xl font-bold text-purple-600">
+            {ventasData.length > 0 ? Math.round(ventasData.reduce((sum, item) => sum + item.promedio_diario, 0)).toLocaleString() : 0}
+          </p>
         </div>
       </div>
 
-      {/* Filtros */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
-        {/* Primera fila: Período y Mes */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Período */}
+      {/* Filtros compactos - estilo inventario */}
+      <div className="bg-white rounded-lg border border-gray-200 p-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Período</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Periodo</label>
             <select
               value={periodoSeleccionado}
-              onChange={(e) => {
-                handlePeriodoChange(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => { handlePeriodoChange(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
               <option value="hoy">Hoy</option>
               <option value="ayer">Ayer</option>
-              <option value="ultima_semana">Última Semana</option>
-              <option value="ultimo_mes">Último Mes</option>
-              <option value="ultimos_3_meses">Últimos 3 Meses</option>
-              <option value="ultimo_ano">Último Año</option>
+              <option value="ultima_semana">Ult. Semana</option>
+              <option value="ultimo_mes">Ult. Mes</option>
+              <option value="ultimos_3_meses">Ult. 3 Meses</option>
+              <option value="ultimo_ano">Ult. Ano</option>
               <option value="mes_actual">Mes Actual</option>
               <option value="mes_anterior">Mes Anterior</option>
               <option value="personalizado">Personalizado</option>
             </select>
           </div>
-
-          {/* Selector de Mes */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Seleccionar Mes</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Mes</label>
             <input
               type="month"
-              onChange={(e) => {
-                handleMesChange(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => { handleMesChange(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
-        </div>
-
-        {/* Segunda fila: Fechas personalizadas (solo visible si periodo es personalizado) */}
-        {periodoSeleccionado === 'personalizado' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-200">
-            {/* Fecha Inicio */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Fecha Inicio</label>
-              <input
-                type="date"
-                value={fechaInicio}
-                onChange={(e) => {
-                  setFechaInicio(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Fecha Fin */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Fecha Fin</label>
-              <input
-                type="date"
-                value={fechaFin}
-                onChange={(e) => {
-                  setFechaFin(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Tercera fila: Categoría y Búsqueda */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-200">
-          {/* Categoría */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Categoría</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Categoria</label>
             <select
               value={selectedCategoria}
-              onChange={(e) => {
-                setSelectedCategoria(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => { setSelectedCategoria(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
-              <option value="">Todas las categorías</option>
+              <option value="">Todas</option>
               {categorias.map((cat) => (
-                <option key={cat.value} value={cat.value}>
-                  {cat.label}
-                </option>
+                <option key={cat.value} value={cat.value}>{cat.label}</option>
               ))}
             </select>
           </div>
-
-          {/* Búsqueda */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Buscar Producto</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Marca</label>
             <input
               type="text"
-              placeholder="Código o descripción..."
-              value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-        </div>
-
-        {/* Cuarta fila: Filtros avanzados (Marca, ABC, Velocidad) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-gray-200">
-          {/* Marca */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Marca</label>
-            <input
-              type="text"
-              placeholder="Filtrar por marca..."
+              placeholder="Filtrar..."
               value={selectedMarca}
-              onChange={(e) => {
-                setSelectedMarca(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => { setSelectedMarca(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
-
-          {/* Clasificación ABC */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Clasificación ABC</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">ABC</label>
             <select
               value={selectedClaseABC}
-              onChange={(e) => {
-                setSelectedClaseABC(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => { setSelectedClaseABC(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
               <option value="">Todas</option>
               <option value="A">A - Top 50</option>
@@ -553,44 +583,67 @@ export default function SalesDashboard() {
               <option value="C">C - Resto</option>
             </select>
           </div>
-
-          {/* Velocidad de Venta */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Velocidad de Venta</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Velocidad</label>
             <select
               value={selectedVelocidad}
-              onChange={(e) => {
-                setSelectedVelocidad(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => { setSelectedVelocidad(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
               <option value="">Todas</option>
-              <option value="MUY_ALTA">Muy Alta (+30/mes)</option>
-              <option value="ALTA">Alta (16-30/mes)</option>
-              <option value="MEDIA">Media (6-15/mes)</option>
-              <option value="BAJA">Baja (1-5/mes)</option>
+              <option value="MUY_ALTA">Muy Alta</option>
+              <option value="ALTA">Alta</option>
+              <option value="MEDIA">Media</option>
+              <option value="BAJA">Baja</option>
               <option value="SIN_VENTAS">Sin Ventas</option>
             </select>
           </div>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Buscar</label>
+            <input
+              type="text"
+              placeholder="Codigo o descripcion..."
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+          {periodoSeleccionado === 'personalizado' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Desde</label>
+                <input
+                  type="date"
+                  value={fechaInicio}
+                  onChange={(e) => { setFechaInicio(e.target.value); setCurrentPage(1); }}
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Hasta</label>
+                <input
+                  type="date"
+                  value={fechaFin}
+                  onChange={(e) => { setFechaFin(e.target.value); setCurrentPage(1); }}
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+            </>
+          )}
         </div>
+      </div>
 
-        {/* Indicador de rango de fechas actual */}
-        <div className="pt-2 border-t border-gray-200">
-          <p className="text-sm text-gray-600">
-            <span className="font-medium">Período seleccionado:</span> {fechaInicio} al {fechaFin}
-          </p>
+      {/* Indicador de productos */}
+      <div className="flex items-center justify-between">
+        <div className="inline-flex items-center px-4 py-2 bg-indigo-50 border border-indigo-200 rounded-lg">
+          <span className="text-sm text-indigo-700">
+            Mostrando <span className="font-bold text-indigo-900">{(pagination?.total_items || 0).toLocaleString()}</span> productos
+          </span>
         </div>
       </div>
 
       {/* Tabla de Productos */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Productos Vendidos ({pagination?.total_items || 0})
-          </h2>
-        </div>
-
         {loading ? (
           <div className="p-12 text-center">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-gray-900 border-r-transparent"></div>
@@ -599,48 +652,30 @@ export default function SalesDashboard() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Código
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Descripción
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Categoría
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Marca
-                    </th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      ABC
-                    </th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Rank
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Cant. Total
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Prom/Día
-                    </th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Velocidad
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Stock
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      % Total
-                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Codigo</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripcion</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cat</th>
+                    <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">ABC</th>
+                    <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">#</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Prom/Dia</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-purple-500 uppercase">P75/Dia</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-teal-600 uppercase">Sem</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-orange-500 uppercase">Fin</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-green-600 uppercase">Quinc</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-400 uppercase">Normal</th>
+                    <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Vel</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Stock</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">%</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {currentItems.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="px-6 py-12 text-center text-sm text-gray-500">
+                      <td colSpan={15} className="px-6 py-12 text-center text-sm text-gray-500">
                         No se encontraron ventas con los filtros seleccionados
                       </td>
                     </tr>
@@ -648,37 +683,49 @@ export default function SalesDashboard() {
                     currentItems.map((item, index) => (
                       <tr
                         key={`${item.codigo_producto}-${index}`}
-                        className="hover:bg-blue-50 cursor-pointer transition-colors"
+                        className="hover:bg-gray-50 cursor-pointer transition-colors"
                         onClick={() => handleProductClick(item.codigo_producto, item.descripcion_producto)}
                       >
-                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-blue-600">
+                        <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-900">
                           {item.codigo_producto}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900 max-w-xs truncate" title={item.descripcion_producto}>
+                        <td className="px-3 py-2 text-gray-900 max-w-[200px] truncate" title={item.descripcion_producto}>
                           {item.descripcion_producto}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                        <td className="px-3 py-2 whitespace-nowrap text-gray-500">
                           {item.categoria}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                          {item.marca || '-'}
-                        </td>
-                        <td className="px-4 py-3 text-center">
+                        <td className="px-3 py-2 text-center">
                           {renderClaseABC(item.clase_abc)}
                         </td>
-                        <td className="px-4 py-3 text-center text-sm text-gray-600">
+                        <td className="px-3 py-2 text-center text-gray-600">
                           {item.rank_ventas ? `#${item.rank_ventas}` : '-'}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-semibold text-gray-900">
+                        <td className="px-3 py-2 whitespace-nowrap text-right font-semibold text-gray-900">
                           {Math.round(item.cantidad_total).toLocaleString()}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-blue-600 font-medium">
-                          {item.promedio_diario.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                        <td className="px-3 py-2 whitespace-nowrap text-right text-blue-600 font-medium">
+                          {fmtNum(item.promedio_diario)}
                         </td>
-                        <td className="px-4 py-3 text-center">
+                        <td className="px-3 py-2 whitespace-nowrap text-right text-purple-600 font-medium">
+                          {fmtNum(item.p75_unidades_dia)}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-right text-teal-600">
+                          {fmtNum(item.prom_semana)}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-right text-orange-600">
+                          {fmtNum(item.prom_finde)}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-right text-green-600 font-medium">
+                          {fmtNum(item.prom_quincena)}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-500">
+                          {fmtNum(item.prom_normal)}
+                        </td>
+                        <td className="px-3 py-2 text-center">
                           {renderVelocidad(item.velocidad_venta)}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm">
+                        <td className="px-3 py-2 whitespace-nowrap text-right">
                           <span className={`font-medium ${
                             !item.stock_actual || item.stock_actual === 0 ? 'text-red-600' :
                             item.stock_actual < item.promedio_diario * 3 ? 'text-yellow-600' :
@@ -687,7 +734,7 @@ export default function SalesDashboard() {
                             {item.stock_actual !== null && item.stock_actual !== undefined ? Math.round(item.stock_actual).toLocaleString() : '-'}
                           </span>
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-500">
+                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-500">
                           {item.porcentaje_total.toFixed(2)}%
                         </td>
                       </tr>
@@ -697,7 +744,7 @@ export default function SalesDashboard() {
               </table>
             </div>
 
-            {/* Paginación */}
+            {/* Paginacion */}
             {totalPages > 1 && pagination && (
               <div className="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
                 <div className="flex items-center justify-between">
@@ -717,7 +764,7 @@ export default function SalesDashboard() {
                       Anterior
                     </button>
                     <span className="px-3 py-1 text-sm text-gray-700">
-                      Página {currentPage} de {totalPages}
+                      Pagina {currentPage} de {totalPages}
                     </span>
                     <button
                       onClick={() => handlePageChange(currentPage + 1)}
@@ -734,7 +781,7 @@ export default function SalesDashboard() {
         )}
       </div>
 
-      {/* Modal de análisis de ventas por producto */}
+      {/* Modales */}
       {selectedProducto && (
         <ProductSalesModal
           isOpen={isModalOpen}
@@ -745,14 +792,12 @@ export default function SalesDashboard() {
         />
       )}
 
-      {/* Modal de sincronización de ventas */}
       <SyncVentasModal
         isOpen={isSyncModalOpen}
         onClose={() => setIsSyncModalOpen(false)}
         ubicacionId={ubicacionId}
       />
 
-      {/* Modal Centro de Comando - Agotados Visuales */}
       {ubicacionId && (
         <CentroComandoVentasModal
           isOpen={showCentroComandoModal}
@@ -762,7 +807,6 @@ export default function SalesDashboard() {
         />
       )}
 
-      {/* Modal Ventas Perdidas */}
       {ubicacionId && (
         <VentasPerdidasModal
           isOpen={showVentasPerdidasModal}

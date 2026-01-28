@@ -826,6 +826,11 @@ class VentasDetailResponse(BaseModel):
     rank_ventas: Optional[int]  # Ranking por ventas
     velocidad_venta: Optional[str]  # Velocidad de venta (BAJA, MEDIA, ALTA, MUY_ALTA)
     stock_actual: Optional[float]  # Stock disponible actualmente
+    p75_unidades_dia: Optional[float] = None  # P75 ventas diarias en unidades
+    prom_semana: Optional[float] = None  # Promedio diario Lun-Vie
+    prom_finde: Optional[float] = None  # Promedio diario Sáb-Dom
+    prom_quincena: Optional[float] = None  # Promedio diario en quincena (días 1-5 y 15-20)
+    prom_normal: Optional[float] = None  # Promedio diario fuera de quincena
 
 class PaginatedVentasResponse(BaseModel):
     data: List[VentasDetailResponse]
@@ -8282,6 +8287,48 @@ async def get_ventas_detail(
                             ELSE 'C'
                         END as clase_abc
                     FROM producto_stats
+                ),
+                -- Promedio entre semana vs fin de semana
+                dia_semana_stats AS (
+                    SELECT
+                        producto_id,
+                        COALESCE(
+                            SUM(CASE WHEN EXTRACT(DOW FROM fecha) BETWEEN 1 AND 5 THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM fecha) BETWEEN 1 AND 5 THEN fecha END), 0),
+                            0
+                        ) as prom_semana,
+                        COALESCE(
+                            SUM(CASE WHEN EXTRACT(DOW FROM fecha) IN (0, 6) THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM fecha) IN (0, 6) THEN fecha END), 0),
+                            0
+                        ) as prom_finde
+                    FROM ventas_diarias
+                    GROUP BY producto_id
+                ),
+                -- Promedio quincena (días 1-5 y 15-20) vs días normales
+                quincena_stats AS (
+                    SELECT
+                        producto_id,
+                        COALESCE(
+                            SUM(CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5
+                                       OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20
+                                      THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5
+                                                          OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20
+                                                         THEN fecha END), 0),
+                            0
+                        ) as prom_quincena,
+                        COALESCE(
+                            SUM(CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5
+                                       OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20)
+                                      THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5
+                                                                   OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20)
+                                                         THEN fecha END), 0),
+                            0
+                        ) as prom_normal
+                    FROM ventas_diarias
+                    GROUP BY producto_id
                 )
                 SELECT
                     ps.producto_id,
@@ -8306,12 +8353,19 @@ async def get_ventas_detail(
                         WHEN ps.cantidad_total / {dias_distintos}::float * 30 < 30 THEN 'ALTA'
                         ELSE 'MUY_ALTA'
                     END as velocidad_venta,
-                    ia.cantidad as stock_actual
+                    ia.cantidad as stock_actual,
+                    COALESCE(p75.p75_unidades, 0) as p75_unidades_dia,
+                    COALESCE(ds.prom_semana, 0) as prom_semana,
+                    COALESCE(ds.prom_finde, 0) as prom_finde,
+                    COALESCE(qs.prom_quincena, 0) as prom_quincena,
+                    COALESCE(qs.prom_normal, 0) as prom_normal
                 FROM producto_stats ps
                 CROSS JOIN totales t
                 LEFT JOIN productos p ON ps.producto_id = p.codigo
                 LEFT JOIN p75_stats p75 ON ps.producto_id = p75.producto_id
                 LEFT JOIN ranking_ventas rv ON ps.producto_id = rv.producto_id
+                LEFT JOIN dia_semana_stats ds ON ps.producto_id = ds.producto_id
+                LEFT JOIN quincena_stats qs ON ps.producto_id = qs.producto_id
                 LEFT JOIN inventario_actual ia ON ps.producto_id = ia.producto_id
                     AND ia.ubicacion_id = %s
                 WHERE 1=1 {categoria_filter}
@@ -8340,7 +8394,12 @@ async def get_ventas_detail(
                     clase_abc=row[13],
                     rank_ventas=int(row[14]) if row[14] else None,
                     velocidad_venta=row[15],
-                    stock_actual=float(row[16]) if row[16] else None
+                    stock_actual=float(row[16]) if row[16] else None,
+                    p75_unidades_dia=float(row[17]) if row[17] else None,
+                    prom_semana=float(row[18]) if row[18] else None,
+                    prom_finde=float(row[19]) if row[19] else None,
+                    prom_quincena=float(row[20]) if row[20] else None,
+                    prom_normal=float(row[21]) if row[21] else None,
                 )
                 for row in result
             ]
@@ -8360,6 +8419,259 @@ async def get_ventas_detail(
     except Exception as e:
         logger.error(f"Error obteniendo detalle de ventas: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@app.get("/api/ventas/export-diario", tags=["Ventas"])
+async def get_ventas_export_diario(
+    ubicacion_id: str,
+    fecha_inicio: str,
+    fecha_fin: str,
+):
+    """
+    Retorna ventas diarias por producto para exportar a Excel.
+    Cada fila es un producto, cada columna es un día del rango.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            where_clauses = [
+                "fecha_venta >= %s::timestamp AND fecha_venta < (%s::date + interval '1 day')::timestamp",
+                "ubicacion_id = %s"
+            ]
+            params = [fecha_inicio, fecha_fin, ubicacion_id]
+
+            # Excluir día de inauguración atípico para PARAÍSO (tienda_18)
+            if ubicacion_id == 'tienda_18':
+                where_clauses.append("fecha_venta::date != '2025-12-06'")
+
+            where_clause = " AND ".join(where_clauses)
+
+            # Query diario
+            query = f"""
+                SELECT
+                    v.producto_id,
+                    COALESCE(p.descripcion, v.producto_id) as descripcion,
+                    COALESCE(p.categoria, 'Sin categoría') as categoria,
+                    v.fecha_venta::date as fecha,
+                    SUM(v.cantidad_vendida) as cantidad
+                FROM ventas v
+                LEFT JOIN productos p ON v.producto_id = p.codigo
+                WHERE {where_clause}
+                GROUP BY v.producto_id, p.descripcion, p.categoria, v.fecha_venta::date
+                ORDER BY v.producto_id, v.fecha_venta::date
+            """
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            # Query para ranking ABC (total por producto)
+            ranking_query = f"""
+                WITH producto_totals AS (
+                    SELECT producto_id, SUM(cantidad_vendida) as cantidad_total
+                    FROM ventas
+                    WHERE {where_clause}
+                    GROUP BY producto_id
+                )
+                SELECT producto_id, cantidad_total,
+                    ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) as rank_ventas,
+                    CASE
+                        WHEN ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) <= 50 THEN 'A'
+                        WHEN ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) <= 200 THEN 'B'
+                        ELSE 'C'
+                    END as clase_abc
+                FROM producto_totals
+            """
+            cursor.execute(ranking_query, params)
+            ranking_rows = cursor.fetchall()
+            cursor.close()
+
+            # Mapa de ranking por producto
+            ranking_map: Dict[str, Dict[str, Any]] = {}
+            for r in ranking_rows:
+                ranking_map[r[0]] = {"rank": int(r[2]), "abc": r[3]}
+
+            # Construir respuesta
+            productos: Dict[str, Dict[str, Any]] = {}
+            fechas_set: set = set()
+
+            for row in rows:
+                prod_id = row[0]
+                fecha_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                fechas_set.add(fecha_str)
+
+                if prod_id not in productos:
+                    rk = ranking_map.get(prod_id, {})
+                    productos[prod_id] = {
+                        "codigo": prod_id,
+                        "descripcion": row[1],
+                        "categoria": row[2],
+                        "abc": rk.get("abc", ""),
+                        "rank": rk.get("rank", None),
+                        "ventas": {}
+                    }
+                productos[prod_id]["ventas"][fecha_str] = float(row[4]) if row[4] else 0
+
+            # Fechas ordenadas de más reciente a más antigua
+            fechas_ordenadas = sorted(list(fechas_set), reverse=True)
+
+            # Productos ordenados por rank (total ventas desc)
+            productos_list = sorted(productos.values(), key=lambda x: x.get("rank") or 99999)
+
+            return {
+                "fechas": fechas_ordenadas,
+                "productos": productos_list
+            }
+
+    except Exception as e:
+        logger.error(f"Error exportando ventas diarias: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.get("/api/ventas/export-resumen", tags=["Ventas"])
+async def get_ventas_export_resumen(
+    ubicacion_id: str,
+    fecha_inicio: str,
+    fecha_fin: str,
+):
+    """
+    Retorna todos los productos con métricas completas de ventas (sin paginación) para exportar a Excel.
+    Incluye P75, promedios por día de semana/fin de semana y quincena.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            where_clauses = [
+                "fecha_venta >= %s::timestamp AND fecha_venta < (%s::date + interval '1 day')::timestamp",
+                "ubicacion_id = %s"
+            ]
+            params = [fecha_inicio, fecha_fin, ubicacion_id]
+
+            if ubicacion_id == 'tienda_18':
+                where_clauses.append("fecha_venta::date != '2025-12-06'")
+
+            where_clause = " AND ".join(where_clauses)
+
+            # Calcular días distintos
+            cursor.execute(f"SELECT COUNT(DISTINCT fecha_venta::date) FROM ventas WHERE {where_clause}", params)
+            dias_distintos = cursor.fetchone()[0] or 1
+
+            query = f"""
+                WITH ventas_filtradas AS (
+                    SELECT producto_id, cantidad_vendida, venta_total, fecha_venta::date as fecha
+                    FROM ventas
+                    WHERE {where_clause}
+                ),
+                producto_stats AS (
+                    SELECT producto_id, SUM(cantidad_vendida) as cantidad_total, SUM(venta_total) as venta_total_sum
+                    FROM ventas_filtradas
+                    GROUP BY producto_id
+                ),
+                totales AS (
+                    SELECT SUM(cantidad_total) as gran_total FROM producto_stats
+                ),
+                ventas_diarias AS (
+                    SELECT producto_id, fecha, SUM(cantidad_vendida) as cantidad_dia
+                    FROM ventas_filtradas
+                    GROUP BY producto_id, fecha
+                ),
+                p75_stats AS (
+                    SELECT producto_id, PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as p75_unidades
+                    FROM ventas_diarias
+                    GROUP BY producto_id
+                ),
+                ranking_ventas AS (
+                    SELECT producto_id,
+                        ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) as rank_ventas,
+                        CASE
+                            WHEN ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) <= 50 THEN 'A'
+                            WHEN ROW_NUMBER() OVER (ORDER BY cantidad_total DESC) <= 200 THEN 'B'
+                            ELSE 'C'
+                        END as clase_abc
+                    FROM producto_stats
+                ),
+                dia_semana_stats AS (
+                    SELECT producto_id,
+                        COALESCE(SUM(CASE WHEN EXTRACT(DOW FROM fecha) BETWEEN 1 AND 5 THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM fecha) BETWEEN 1 AND 5 THEN fecha END), 0), 0) as prom_semana,
+                        COALESCE(SUM(CASE WHEN EXTRACT(DOW FROM fecha) IN (0, 6) THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM fecha) IN (0, 6) THEN fecha END), 0), 0) as prom_finde
+                    FROM ventas_diarias
+                    GROUP BY producto_id
+                ),
+                quincena_stats AS (
+                    SELECT producto_id,
+                        COALESCE(SUM(CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5 OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20 THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5 OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20 THEN fecha END), 0), 0) as prom_quincena,
+                        COALESCE(SUM(CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5 OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN cantidad_dia END)
+                            / NULLIF(COUNT(DISTINCT CASE WHEN NOT (EXTRACT(DAY FROM fecha) BETWEEN 1 AND 5 OR EXTRACT(DAY FROM fecha) BETWEEN 15 AND 20) THEN fecha END), 0), 0) as prom_normal
+                    FROM ventas_diarias
+                    GROUP BY producto_id
+                )
+                SELECT
+                    ps.producto_id,
+                    COALESCE(p.descripcion, ps.producto_id) as descripcion,
+                    COALESCE(p.categoria, 'Sin categoría') as categoria,
+                    p.marca as marca,
+                    ps.cantidad_total,
+                    ps.cantidad_total / {dias_distintos}::float as promedio_diario,
+                    (ps.cantidad_total / NULLIF(t.gran_total, 0) * 100) as porcentaje_total,
+                    rv.clase_abc,
+                    rv.rank_ventas,
+                    CASE
+                        WHEN ps.cantidad_total / {dias_distintos}::float = 0 THEN 'SIN_VENTAS'
+                        WHEN ps.cantidad_total / {dias_distintos}::float * 30 < 5 THEN 'BAJA'
+                        WHEN ps.cantidad_total / {dias_distintos}::float * 30 < 15 THEN 'MEDIA'
+                        WHEN ps.cantidad_total / {dias_distintos}::float * 30 < 30 THEN 'ALTA'
+                        ELSE 'MUY_ALTA'
+                    END as velocidad_venta,
+                    ia.cantidad as stock_actual,
+                    COALESCE(p75.p75_unidades, 0) as p75_unidades_dia,
+                    COALESCE(ds.prom_semana, 0) as prom_semana,
+                    COALESCE(ds.prom_finde, 0) as prom_finde,
+                    COALESCE(qs.prom_quincena, 0) as prom_quincena,
+                    COALESCE(qs.prom_normal, 0) as prom_normal
+                FROM producto_stats ps
+                CROSS JOIN totales t
+                LEFT JOIN productos p ON ps.producto_id = p.codigo
+                LEFT JOIN p75_stats p75 ON ps.producto_id = p75.producto_id
+                LEFT JOIN ranking_ventas rv ON ps.producto_id = rv.producto_id
+                LEFT JOIN dia_semana_stats ds ON ps.producto_id = ds.producto_id
+                LEFT JOIN quincena_stats qs ON ps.producto_id = qs.producto_id
+                LEFT JOIN inventario_actual ia ON ps.producto_id = ia.producto_id
+                    AND ia.ubicacion_id = %s
+                ORDER BY ps.cantidad_total DESC
+            """
+            cursor.execute(query, params + [ubicacion_id])
+            result = cursor.fetchall()
+            cursor.close()
+
+            items = []
+            for row in result:
+                items.append({
+                    "codigo_producto": row[0],
+                    "descripcion_producto": row[1],
+                    "categoria": row[2],
+                    "marca": row[3],
+                    "cantidad_total": float(row[4]) if row[4] else 0,
+                    "promedio_diario": float(row[5]) if row[5] else 0,
+                    "porcentaje_total": float(row[6]) if row[6] else 0,
+                    "clase_abc": row[7],
+                    "rank_ventas": int(row[8]) if row[8] else None,
+                    "velocidad_venta": row[9],
+                    "stock_actual": float(row[10]) if row[10] else None,
+                    "p75_unidades_dia": float(row[11]) if row[11] else None,
+                    "prom_semana": float(row[12]) if row[12] else None,
+                    "prom_finde": float(row[13]) if row[13] else None,
+                    "prom_quincena": float(row[14]) if row[14] else None,
+                    "prom_normal": float(row[15]) if row[15] else None,
+                })
+
+            return items
+
+    except Exception as e:
+        logger.error(f"Error exportando resumen de ventas: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 
 @app.get("/api/ventas/categorias", tags=["Ventas"])
 async def get_ventas_categorias():
