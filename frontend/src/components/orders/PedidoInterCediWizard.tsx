@@ -32,6 +32,9 @@ export default function PedidoInterCediWizard() {
   const [numTiendasRegion, setNumTiendasRegion] = useState<number>(0);
   const [observaciones, setObservaciones] = useState('');
   const [pedidoGuardadoId, setPedidoGuardadoId] = useState<string | undefined>();
+  // Exclusiones aplicadas
+  const [totalExcluidos, setTotalExcluidos] = useState<number>(0);
+  const [codigosExcluidos, setCodigosExcluidos] = useState<string[]>([]);
 
   const steps = [
     { number: 1, name: 'Configuración', description: 'CEDI destino y cobertura' },
@@ -76,6 +79,9 @@ export default function PedidoInterCediWizard() {
       setTotalesPorCedi(response.totales_por_cedi);
       setRegion(response.region);
       setNumTiendasRegion(response.num_tiendas_region);
+      // Guardar info de exclusiones
+      setTotalExcluidos(response.total_excluidos_inter_cedi || 0);
+      setCodigosExcluidos(response.codigos_excluidos_inter_cedi || []);
       setCurrentStep(2);
 
     } catch (err) {
@@ -253,6 +259,8 @@ export default function PedidoInterCediWizard() {
             region={region}
             numTiendasRegion={numTiendasRegion}
             config={config}
+            totalExcluidos={totalExcluidos}
+            codigosExcluidos={codigosExcluidos}
             updateProductos={setProductos}
             onNext={() => setCurrentStep(3)}
             onBack={() => setCurrentStep(1)}

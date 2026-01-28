@@ -400,6 +400,9 @@ async def calcular_pedido_inter_cedi(
             'cedi_verde': []
         }
 
+        # Rastrear productos excluidos para mostrar en respuesta
+        codigos_excluidos_aplicados: List[str] = []
+
         lead_time = request.lead_time_dias or LEAD_TIME_DEFAULT
 
         for row in rows:
@@ -408,8 +411,9 @@ async def calcular_pedido_inter_cedi(
             producto_id = row_dict['producto_id']
             codigo = row_dict['codigo']
 
-            # Saltar productos excluidos
+            # Saltar productos excluidos y registrarlos
             if codigo in codigos_excluidos_intercedi:
+                codigos_excluidos_aplicados.append(codigo)
                 continue
 
             cedi_origen_id = row_dict['cedi_origen_id'] or 'cedi_seco'
@@ -581,7 +585,14 @@ async def calcular_pedido_inter_cedi(
                     'unidades': sum(p.cantidad_sugerida_unidades for p in productos)
                 }
 
-        logger.info(f"✅ Calculados {total_productos} productos, {total_bultos} bultos desde {total_cedis_origen} CEDIs")
+        # Mensaje con info de exclusiones
+        total_excluidos = len(codigos_excluidos_aplicados)
+        if total_excluidos > 0:
+            logger.info(f"✅ Calculados {total_productos} productos, {total_bultos} bultos desde {total_cedis_origen} CEDIs ({total_excluidos} excluidos)")
+            mensaje = f"Pedido Inter-CEDI calculado: {total_productos} productos desde {total_cedis_origen} CEDIs para región {region} ({total_excluidos} productos excluidos)"
+        else:
+            logger.info(f"✅ Calculados {total_productos} productos, {total_bultos} bultos desde {total_cedis_origen} CEDIs")
+            mensaje = f"Pedido Inter-CEDI calculado: {total_productos} productos desde {total_cedis_origen} CEDIs para región {region}"
 
         return CalcularPedidoInterCediResponse(
             productos=productos_calculados,
@@ -595,12 +606,14 @@ async def calcular_pedido_inter_cedi(
             region=region,
             num_tiendas_region=len(tiendas_region),
             totales_por_cedi=totales_por_cedi,
+            total_excluidos_inter_cedi=total_excluidos,
+            codigos_excluidos_inter_cedi=codigos_excluidos_aplicados,
             dias_cobertura_a=request.dias_cobertura_a,
             dias_cobertura_b=request.dias_cobertura_b,
             dias_cobertura_c=request.dias_cobertura_c,
             dias_cobertura_d=request.dias_cobertura_d,
             fecha_calculo=datetime.now(),
-            mensaje=f"Pedido Inter-CEDI calculado: {total_productos} productos desde {total_cedis_origen} CEDIs para región {region}"
+            mensaje=mensaje
         )
 
     except HTTPException:

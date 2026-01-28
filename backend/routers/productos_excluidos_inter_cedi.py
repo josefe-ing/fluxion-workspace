@@ -177,6 +177,7 @@ async def obtener_codigos_excluidos_inter_cedi(cedi_destino_id: str):
 async def crear_exclusion_inter_cedi(request: CrearExclusionInterCediRequest):
     """
     Agrega un producto a la lista de excluidos para un CEDI destino.
+    Soporta códigos con o sin ceros iniciales (ej: "3216" o "003216").
     """
     try:
         # Validar motivo
@@ -186,14 +187,17 @@ async def crear_exclusion_inter_cedi(request: CrearExclusionInterCediRequest):
                 detail=f"Motivo inválido. Valores permitidos: {MOTIVOS_VALIDOS}"
             )
 
+        # Generar variantes del código (con y sin ceros)
+        variantes = normalizar_codigo_producto(request.codigo_producto)
+
         with get_db_connection_write() as conn:
             cursor = conn.cursor()
 
-            # Verificar si ya existe
+            # Verificar si ya existe (con cualquier variante)
             cursor.execute("""
                 SELECT id FROM productos_excluidos_inter_cedi
-                WHERE cedi_destino_id = %s AND codigo_producto = %s AND activo = TRUE
-            """, [request.cedi_destino_id, request.codigo_producto])
+                WHERE cedi_destino_id = %s AND codigo_producto = ANY(%s) AND activo = TRUE
+            """, [request.cedi_destino_id, variantes])
 
             if cursor.fetchone():
                 raise HTTPException(
@@ -201,13 +205,13 @@ async def crear_exclusion_inter_cedi(request: CrearExclusionInterCediRequest):
                     detail=f"El producto {request.codigo_producto} ya está excluido para este CEDI"
                 )
 
-            # Buscar información del producto
+            # Buscar información del producto (probando variantes)
             cursor.execute("""
                 SELECT id, codigo, descripcion, categoria, cedi_origen_id
                 FROM productos
-                WHERE codigo = %s
+                WHERE codigo = ANY(%s)
                 LIMIT 1
-            """, [request.codigo_producto])
+            """, [variantes])
 
             producto = cursor.fetchone()
             if not producto:
@@ -271,11 +275,34 @@ async def crear_exclusion_inter_cedi(request: CrearExclusionInterCediRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def normalizar_codigo_producto(codigo: str) -> list:
+    """
+    Genera variantes del código para buscar en la base de datos.
+    Maneja códigos con o sin ceros iniciales.
+    Returns: lista de posibles códigos a buscar
+    """
+    codigo_limpio = codigo.strip()
+    variantes = [codigo_limpio]
+
+    # Si es numérico, generar variante con padding de 6 dígitos
+    if codigo_limpio.isdigit():
+        codigo_padded = codigo_limpio.zfill(6)
+        if codigo_padded != codigo_limpio:
+            variantes.append(codigo_padded)
+        # También probar sin ceros iniciales
+        codigo_stripped = codigo_limpio.lstrip('0') or '0'
+        if codigo_stripped != codigo_limpio:
+            variantes.append(codigo_stripped)
+
+    return variantes
+
+
 @router.post("/bulk", response_model=CargaMasivaResponse)
 async def carga_masiva_exclusiones(request: CargaMasivaRequest):
     """
     Carga masiva de productos excluidos.
     Acepta una lista de códigos de productos y los agrega todos.
+    Soporta códigos con o sin ceros iniciales (ej: "3216" o "003216").
     """
     try:
         # Validar motivo
@@ -301,23 +328,28 @@ async def carga_masiva_exclusiones(request: CargaMasivaRequest):
 
             for codigo in codigos:
                 try:
-                    # Verificar si ya existe
+                    # Generar variantes del código (con y sin ceros)
+                    variantes = normalizar_codigo_producto(codigo)
+
+                    # Verificar si ya existe (con cualquier variante)
                     cursor.execute("""
                         SELECT id FROM productos_excluidos_inter_cedi
-                        WHERE cedi_destino_id = %s AND codigo_producto = %s AND activo = TRUE
-                    """, [request.cedi_destino_id, codigo])
+                        WHERE cedi_destino_id = %s
+                          AND codigo_producto = ANY(%s)
+                          AND activo = TRUE
+                    """, [request.cedi_destino_id, variantes])
 
                     if cursor.fetchone():
                         duplicados += 1
                         continue
 
-                    # Buscar información del producto
+                    # Buscar información del producto (probando variantes)
                     cursor.execute("""
                         SELECT id, codigo, descripcion, categoria, cedi_origen_id
                         FROM productos
-                        WHERE codigo = %s
+                        WHERE codigo = ANY(%s)
                         LIMIT 1
-                    """, [codigo])
+                    """, [variantes])
 
                     producto = cursor.fetchone()
                     if not producto:

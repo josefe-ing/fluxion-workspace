@@ -292,6 +292,10 @@ class CalcularPedidoInterCediResponse(ConfiguracionDiasCobertura):
     # Desglose por CEDI origen
     totales_por_cedi: Dict[str, Dict[str, Decimal]] = Field(default_factory=dict)
 
+    # Productos excluidos (explícito)
+    total_excluidos_inter_cedi: int = Field(default=0, description="Productos omitidos por exclusión Inter-CEDI")
+    codigos_excluidos_inter_cedi: List[str] = Field(default_factory=list, description="Códigos de productos excluidos")
+
     # Timestamp del cálculo
     fecha_calculo: datetime = Field(default_factory=datetime.now)
     mensaje: str = "Pedido Inter-CEDI calculado exitosamente"

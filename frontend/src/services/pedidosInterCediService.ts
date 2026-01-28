@@ -113,6 +113,9 @@ export interface CalcularPedidoResponse extends ConfiguracionDiasCobertura {
   region: string;
   num_tiendas_region: number;
   totales_por_cedi: Record<string, TotalesPorCedi>;
+  // Productos excluidos explícitamente
+  total_excluidos_inter_cedi: number;
+  codigos_excluidos_inter_cedi: string[];
   fecha_calculo: string;
   mensaje: string;
 }
