@@ -877,22 +877,42 @@ export default function StepThreeReviewTabs({
                     <div className="text-xs font-medium text-gray-800">{(producto.stock_tienda / upb).toFixed(1).replace('.', ',')}</div>
                     <div className="text-[10px] text-gray-400">{formatNumber(producto.stock_tienda)}u</div>
                   </td>
-                  {/* TRÁN - Editable */}
+                  {/* TRÁN - Editable con modal */}
                   <td className="bg-green-50/30 px-1 py-1 text-center">
-                    <div className="flex flex-col items-center">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        value={transitoBultos}
-                        onChange={(e) => handleTransitoChange(pedido.tienda_id, producto.codigo_producto, parseFloat(e.target.value) || 0)}
-                        className="w-10 px-0.5 py-0 text-xs text-center border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 font-medium text-blue-600 bg-blue-50"
-                        title="Editar bultos en tránsito"
-                      />
+                    <div className="flex flex-col items-center relative">
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={transitoBultos}
+                          onChange={(e) => handleTransitoChange(pedido.tienda_id, producto.codigo_producto, parseFloat(e.target.value) || 0)}
+                          onClick={(e) => {
+                            // Abrir modal si tiene desglose
+                            if (producto.transito_desglose && producto.transito_desglose.length > 0) {
+                              e.stopPropagation();
+                              handleOpenTransitoModal(producto, pedido.tienda_id, pedido.tienda_nombre);
+                            }
+                          }}
+                          className={`w-10 px-0.5 py-0 text-xs text-center border rounded focus:outline-none focus:ring-1 ${
+                            ajustesTransito[`${pedido.tienda_id}_${producto.codigo_producto}`] !== undefined
+                              ? 'border-orange-400 bg-orange-50 font-medium text-orange-700 focus:ring-orange-400'
+                              : transitoBultos > 0
+                                ? 'border-orange-300 bg-orange-50 text-orange-700 cursor-pointer focus:ring-orange-400'
+                                : 'border-gray-200 bg-gray-50 text-gray-400 focus:ring-gray-400'
+                          }`}
+                          title={transitoBultos > 0 ? 'Click para ver desglose de tránsito' : 'Sin productos en tránsito'}
+                        />
+                        {transitoBultos > 0 && producto.transito_desglose && producto.transito_desglose.length > 0 && (
+                          <div className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full" title="Tiene desglose" />
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => handleOpenTransitoModal(producto, pedido.tienda_id, pedido.tienda_nombre)}
-                        className="text-[10px] text-blue-400 hover:text-blue-600 hover:underline cursor-pointer"
+                        className={`text-[10px] hover:underline cursor-pointer ${
+                          transitoBultos > 0 ? 'text-orange-400 hover:text-orange-600' : 'text-gray-400'
+                        }`}
                         title="Ver desglose de pedidos pendientes"
                       >
                         {formatNumber(transitoUnidades)}u
