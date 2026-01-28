@@ -406,6 +406,10 @@ async def obtener_productos_tienda(
 
     cursor.close()
 
+    # Calcular tránsito para esta tienda ANTES del loop de productos
+    # para que podamos usar stock efectivo (stock + tránsito) al calcular SUG
+    transito_data = await calcular_transito_tienda(conn, cedi_origen, tienda_destino)
+
     productos = []
     for row in rows:
         producto_id = row[0]
@@ -424,6 +428,14 @@ async def obtener_productos_tienda(
         demanda_maxima = float(row[13])
         es_generador_trafico = bool(row[14]) if row[14] else False
 
+        # Obtener tránsito para este producto
+        transito_info = transito_data.get(codigo, {'transito_bultos': 0, 'desglose': []})
+        transito_bultos = transito_info['transito_bultos']
+        transito_unidades = transito_bultos * unidades_por_bulto
+
+        # Calcular stock efectivo (stock actual + tránsito)
+        stock_efectivo = stock_tienda + transito_unidades
+
         # Determinar override de días de cobertura por categoría (perecederos)
         dias_cobertura_override = None
         if categoria:
@@ -434,12 +446,13 @@ async def obtener_productos_tienda(
 
         # Usar el mismo cálculo estadístico que single-store (calcular_inventario_simple)
         # Esto garantiza que ambos wizards usen la misma lógica de ROP, SS y MAX
+        # IMPORTANTE: Usar stock_efectivo (stock + tránsito) para calcular SUG correctamente
         resultado = calcular_inventario_simple(
             demanda_p75=p75,
             sigma_demanda=sigma_demanda,
             demanda_maxima=demanda_maxima if demanda_maxima > 0 else p75 * 2,
             unidades_por_bulto=unidades_por_bulto,
-            stock_actual=stock_tienda,
+            stock_actual=stock_efectivo,  # ← CAMBIO: usar stock efectivo (stock + tránsito)
             stock_cedi=stock_cedi,
             clase_abc=clase_abc,
             es_generador_trafico=es_generador_trafico,
@@ -454,14 +467,14 @@ async def obtener_productos_tienda(
         cantidad_sugerida_bultos = resultado.cantidad_sugerida_bultos
         tiene_sobrestock = resultado.tiene_sobrestock
 
-        # Calcular días de stock actual y convertir niveles a días (como single-store)
+        # Calcular días de stock usando stock efectivo (incluye tránsito)
         if p75 > 0:
-            dias_stock = stock_tienda / p75
+            dias_stock = stock_efectivo / p75  # ← CAMBIO: usar stock efectivo
             dias_ss = stock_seguridad_unid / p75
             dias_rop = punto_reorden_unid / p75
             dias_max = stock_maximo_unid / p75
         else:
-            dias_stock = 999 if stock_tienda > 0 else 0
+            dias_stock = 999 if stock_efectivo > 0 else 0
             dias_ss = 0
             dias_rop = 0
             dias_max = 0
@@ -545,20 +558,10 @@ async def obtener_productos_tienda(
             'cantidad_sugerida_bultos': int(cantidad_sugerida_bultos),
             'cantidad_sugerida_unid': cantidad_sugerida_unid,
             'es_sugerido': necesita_reposicion,
+            # Tránsito (ya calculado antes del loop)
+            'transito_bultos': transito_bultos,
+            'transito_desglose': transito_info['desglose'],
         })
-
-    # Calcular tránsito para esta tienda (productos en pedidos previos que no han llegado)
-    transito_data = await calcular_transito_tienda(conn, cedi_origen, tienda_destino)
-
-    # Agregar tránsito a cada producto
-    for prod in productos:
-        codigo = prod['codigo_producto']
-        if codigo in transito_data:
-            prod['transito_bultos'] = transito_data[codigo]['transito_bultos']
-            prod['transito_desglose'] = transito_data[codigo]['desglose']
-        else:
-            prod['transito_bultos'] = 0
-            prod['transito_desglose'] = []
 
     return productos
 

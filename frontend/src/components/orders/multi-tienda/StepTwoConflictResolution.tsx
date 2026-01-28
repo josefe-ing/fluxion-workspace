@@ -597,13 +597,14 @@ export default function StepTwoConflictResolution({
                   <th
                     key={tienda.id}
                     className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    colSpan={7}
+                    colSpan={8}
                   >
                     <div className="border-b border-gray-300 pb-1 mb-1">{tienda.nombre}</div>
                     <div className="flex justify-around text-[10px] font-normal normal-case">
                       <span>P75</span>
                       <span>Stk</span>
                       <span className="text-orange-600 font-medium">Trán</span>
+                      <span>TOT</span>
                       <span>Días</span>
                       <span>SUG</span>
                       <span>DPD+U</span>
@@ -680,14 +681,14 @@ export default function StepTwoConflictResolution({
                     <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => handleOpenStockCediModal(conflicto)}
-                        className="hover:bg-blue-50 rounded px-2 py-1 transition-colors cursor-pointer"
+                        className="hover:bg-green-50 rounded px-2 py-1 transition-colors cursor-pointer w-full"
                         title="Ver histórico de inventario en CEDI"
                       >
-                        <div className="text-sm font-bold text-gray-900">
-                          {conflicto.stock_cedi_bultos} blt
+                        <div className="text-sm font-bold text-green-700">
+                          {conflicto.stock_cedi_bultos.toFixed(1).replace('.', ',')}
                         </div>
-                        <div className="text-xs text-gray-500">
-                          {formatNumber(conflicto.stock_cedi_disponible)} uds
+                        <div className="text-xs text-green-500">
+                          {formatNumber(conflicto.stock_cedi_disponible)}u
                         </div>
                       </button>
                     </td>
@@ -708,10 +709,10 @@ export default function StepTwoConflictResolution({
                       </button>
                     </td>
 
-                    {/* Por cada tienda: P75 | Stk | Trán | Días | SUG | DPD+U | Final */}
+                    {/* Por cada tienda: P75 | Stk | Trán | TOT | Días | SUG | DPD+U | Final */}
                     {tiendas.map(tienda => {
                       const asignacion = conflicto.distribucion_dpdu.find(a => a.tienda_id === tienda.id);
-                      if (!asignacion) return <td key={tienda.id} colSpan={7}></td>;
+                      if (!asignacion) return <td key={tienda.id} colSpan={8}></td>;
 
                       const valorDpdu = asignacion.cantidad_asignada_bultos;
                       const valorFinal = getValorFinal(conflicto.codigo_producto, tienda.id, valorDpdu);
@@ -736,7 +737,7 @@ export default function StepTwoConflictResolution({
                       const sugOriginal = Math.ceil(asignacion.cantidad_necesaria / conflicto.unidades_por_bulto);
 
                       return (
-                        <td key={tienda.id} colSpan={7} className="px-1 py-3">
+                        <td key={tienda.id} colSpan={8} className="px-1 py-3">
                           <div className="flex items-center justify-around gap-1">
                             {/* P75 - bultos y unidades - Clickeable para ver ventas */}
                             <button
@@ -785,7 +786,7 @@ export default function StepTwoConflictResolution({
                                     handleOpenTransitoModal(conflicto, asignacion);
                                   }
                                 }}
-                                className={`w-12 px-0.5 py-0.5 text-xs text-center border rounded focus:outline-none focus:ring-1 focus:ring-orange-400 ${
+                                className={`w-10 px-0.5 py-0 text-xs text-center border rounded focus:outline-none focus:ring-1 focus:ring-orange-400 ${
                                   transitoFueModificado
                                     ? 'border-orange-400 bg-orange-50 font-medium'
                                     : tieneTransito
@@ -797,6 +798,16 @@ export default function StepTwoConflictResolution({
                               {tieneTransito && asignacion.transito_desglose && asignacion.transito_desglose.length > 0 && (
                                 <div className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full" title="Tiene desglose" />
                               )}
+                            </div>
+
+                            {/* TOT - Total (Stock + Tránsito) */}
+                            <div className="text-center w-10" title="Stock total efectivo (Stock + Tránsito)">
+                              <div className="text-xs font-medium text-gray-700">
+                                {((asignacion.stock_actual + (transitoEfectivo * conflicto.unidades_por_bulto)) / conflicto.unidades_por_bulto).toFixed(1).replace('.', ',')}
+                              </div>
+                              <div className="text-[10px] text-gray-400">
+                                {formatNumber(asignacion.stock_actual + (transitoEfectivo * conflicto.unidades_por_bulto))}u
+                              </div>
                             </div>
 
                             {/* Días stock - Ahora usa días efectivos (stock + tránsito) */}
@@ -820,7 +831,9 @@ export default function StepTwoConflictResolution({
                                 {sugBultos}
                               </div>
                               <div className="text-[10px] text-gray-400">
-                                {sugBultos < sugOriginal && <span className="text-green-500">↓</span>}
+                                ~{asignacion.demanda_p75 > 0
+                                  ? Math.round((sugBultos * conflicto.unidades_por_bulto) / asignacion.demanda_p75)
+                                  : 0}d
                               </div>
                             </div>
 
@@ -836,24 +849,31 @@ export default function StepTwoConflictResolution({
                               </div>
                             </div>
 
-                            {/* Input Final */}
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.1"
-                              max={conflicto.stock_cedi_bultos}
-                              value={valorFinal}
-                              onChange={(e) => handleCambioManual(
-                                conflicto.codigo_producto,
-                                tienda.id,
-                                parseFloat(e.target.value) || 0
-                              )}
-                              className={`w-16 px-1 py-1 text-sm text-center border rounded focus:outline-none focus:ring-1 focus:ring-gray-900 ${
-                                fueModificado
-                                  ? 'border-blue-400 bg-blue-50 font-medium'
-                                  : 'border-gray-300'
-                              }`}
-                            />
+                            {/* Final - Input con días calculados */}
+                            <div className="text-center w-12">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                max={conflicto.stock_cedi_bultos}
+                                value={valorFinal}
+                                onChange={(e) => handleCambioManual(
+                                  conflicto.codigo_producto,
+                                  tienda.id,
+                                  parseFloat(e.target.value) || 0
+                                )}
+                                className={`w-full px-0.5 py-0.5 text-xs text-center border rounded focus:outline-none focus:ring-1 focus:ring-gray-900 ${
+                                  fueModificado
+                                    ? 'border-blue-400 bg-blue-50 font-medium'
+                                    : 'border-gray-300'
+                                }`}
+                              />
+                              <div className="text-[10px] text-gray-400 mt-0.5">
+                                ~{asignacion.demanda_p75 > 0
+                                  ? Math.round((valorFinal * conflicto.unidades_por_bulto) / asignacion.demanda_p75)
+                                  : 0}d
+                              </div>
+                            </div>
                           </div>
                         </td>
                       );
@@ -942,7 +962,7 @@ export default function StepTwoConflictResolution({
           onClose={() => setStockCediModalOpen(false)}
           codigoProducto={selectedConflicto.codigo_producto}
           descripcionProducto={selectedConflicto.descripcion_producto}
-          ubicacionId="cedi_principal"
+          ubicacionId={calculationResult.cedi_origen}
         />
       )}
 
