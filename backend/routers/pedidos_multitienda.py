@@ -660,8 +660,11 @@ async def calcular_pedidos_multitienda(
         # Calcular productos para cada tienda
         # IMPORTANTE: Cargar configuración ABC de cada tienda ANTES de calcular
         # Esto asegura que se usen los parámetros correctos (lead_time, dias_cobertura)
+        import time as _time
+        _t0 = _time.time()
         productos_por_tienda: Dict[str, List[Dict]] = {}
-        for tienda in request.tiendas_destino:
+        for i, tienda in enumerate(request.tiendas_destino):
+            _ts = _time.time()
             # Cargar y aplicar configuración específica de la tienda
             await cargar_config_tienda(conn, tienda.tienda_id)
 
@@ -673,9 +676,16 @@ async def calcular_pedidos_multitienda(
                 filtros={'cuadrantes': cuadrantes} if cuadrantes else None
             )
             productos_por_tienda[tienda.tienda_id] = productos
+            logger.info(f"⏱️ Tienda {i+1}/{len(request.tiendas_destino)} {tienda.tienda_id}: {len(productos)} productos en {_time.time()-_ts:.1f}s")
+        logger.info(f"⏱️ Total cálculo tiendas: {_time.time()-_t0:.1f}s")
 
         # Consolidar todos los productos únicos
+        _tc = _time.time()
+        total_productos_raw = sum(len(p) for p in productos_por_tienda.values())
+        logger.info(f"⏱️ Consolidando {total_productos_raw} productos de {len(productos_por_tienda)} tiendas...")
         todos_productos: Dict[str, Dict] = {}
+        # Pre-build tienda name lookup
+        _tienda_nombres = {t.tienda_id: t.tienda_nombre for t in request.tiendas_destino}
         for tienda_id, productos in productos_por_tienda.items():
             for prod in productos:
                 codigo = prod['codigo_producto']
@@ -690,10 +700,7 @@ async def calcular_pedidos_multitienda(
                         'tiendas': {}
                     }
                 todos_productos[codigo]['tiendas'][tienda_id] = {
-                    'tienda_nombre': next(
-                        (t.tienda_nombre for t in request.tiendas_destino if t.tienda_id == tienda_id),
-                        tienda_id
-                    ),
+                    'tienda_nombre': _tienda_nombres.get(tienda_id, tienda_id),
                     'demanda_p75': prod['prom_p75_unid'],
                     'stock_tienda': prod['stock_tienda'],
                     'dias_stock': prod['dias_stock'],
@@ -703,7 +710,10 @@ async def calcular_pedidos_multitienda(
                     'transito_desglose': prod.get('transito_desglose', []),
                 }
 
+        logger.info(f"⏱️ Consolidación: {len(todos_productos)} productos únicos en {_time.time()-_tc:.1f}s")
+
         # Detectar conflictos y aplicar DPD+U
+        _td = _time.time()
         conflictos = []
         productos_sin_conflicto = 0
 
@@ -783,8 +793,18 @@ async def calcular_pedidos_multitienda(
             else:
                 productos_sin_conflicto += 1
 
+        logger.info(f"⏱️ Detección conflictos: {len(conflictos)} conflictos en {_time.time()-_td:.1f}s")
+
         # Construir pedidos por tienda con cantidades ajustadas
+        _te = _time.time()
         pedidos_por_tienda = []
+
+        # Pre-build conflict lookup dicts for O(1) access
+        conflictos_dict: Dict[str, Any] = {c.codigo_producto: c for c in conflictos}
+        conflictos_asignaciones: Dict[str, Dict[str, Any]] = {}
+        for c in conflictos:
+            conflictos_asignaciones[c.codigo_producto] = {a.tienda_id: a for a in c.distribucion_dpdu}
+
         for tienda in request.tiendas_destino:
             productos_tienda = productos_por_tienda.get(tienda.tienda_id, [])
 
@@ -798,14 +818,11 @@ async def calcular_pedidos_multitienda(
                 cantidad_final = cantidad_original
                 ajustado = False
 
-                # Buscar si este producto tiene conflicto
-                conflicto = next((c for c in conflictos if c.codigo_producto == codigo), None)
+                # Buscar si este producto tiene conflicto (O(1) dict lookup)
+                conflicto = conflictos_dict.get(codigo)
                 if conflicto:
-                    # Buscar asignación para esta tienda
-                    asignacion = next(
-                        (a for a in conflicto.distribucion_dpdu if a.tienda_id == tienda.tienda_id),
-                        None
-                    )
+                    # Buscar asignación para esta tienda (O(1) dict lookup)
+                    asignacion = conflictos_asignaciones[codigo].get(tienda.tienda_id)
                     if asignacion:
                         cantidad_final = asignacion.cantidad_asignada_bultos
                         ajustado = cantidad_final != cantidad_original
@@ -846,6 +863,10 @@ async def calcular_pedidos_multitienda(
 
         # Ordenar conflictos por stock_cedi (menor primero = más crítico)
         conflictos.sort(key=lambda c: c.stock_cedi_disponible)
+
+        total_prods_response = sum(len(p.productos) for p in pedidos_por_tienda)
+        logger.info(f"⏱️ Ensamblaje pedidos: {total_prods_response} productos en {_time.time()-_te:.1f}s")
+        logger.info(f"⏱️ TOTAL calcular: {_time.time()-_t0:.1f}s | {len(request.tiendas_destino)} tiendas, {len(todos_productos)} productos únicos, {len(conflictos)} conflictos, {total_prods_response} items en respuesta")
 
         return CalcularMultiTiendaResponse(
             cedi_origen=request.cedi_origen,
