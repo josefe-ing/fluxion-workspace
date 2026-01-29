@@ -157,6 +157,9 @@ export default function OrderWizardMultiTienda() {
     setCalculationError(null);
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+
       const response = await fetch(`${API_URL}/api/pedidos-multitienda/calcular`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -168,7 +171,9 @@ export default function OrderWizardMultiTienda() {
           })),
           dias_cobertura: orderData.dias_cobertura,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -190,7 +195,11 @@ export default function OrderWizardMultiTienda() {
       setCurrentStep(2);
     } catch (err) {
       console.error('Error calculando pedidos:', err);
-      setCalculationError(err instanceof Error ? err.message : 'Error desconocido');
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setCalculationError('La solicitud tardó demasiado. Intente con menos tiendas.');
+      } else {
+        setCalculationError(err instanceof Error ? err.message : 'Error desconocido');
+      }
     } finally {
       setCalculating(false);
     }
