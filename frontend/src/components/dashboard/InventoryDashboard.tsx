@@ -48,6 +48,8 @@ interface StockItem {
   stock_cedi: number | null;
   // Stock en tiendas de la región (para vista CEDI)
   stock_tiendas_regional: number | null;
+  // Conversión a bultos
+  unidades_por_bulto: number | null;
   // Límites forzados por configuración
   limite_min_forzado: number | null;
   limite_max_forzado: number | null;
@@ -138,6 +140,20 @@ export default function InventoryDashboard() {
 
   // Detectar si es vista CEDI (los CEDIs no venden, métricas diferentes)
   const isCedi = selectedUbicacion?.startsWith('cedi_') ?? false;
+
+  // Helper: convertir unidades a bultos
+  const toBultos = (unidades: number | null, upb: number | null): number | null => {
+    if (unidades === null) return null;
+    const factor = upb && upb > 0 ? upb : 1;
+    return unidades / factor;
+  };
+
+  // Helper: formatear cantidad en bultos con indicador de unidad
+  const formatBultos = (unidades: number | null, upb: number | null): string => {
+    const bultos = toBultos(unidades, upb);
+    if (bultos === null) return '-';
+    return formatNumber(bultos, 1);
+  };
 
   // Modal de histórico de inventario
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -321,14 +337,19 @@ export default function InventoryDashboard() {
           'Código': item.codigo_producto,
           'Artículo': item.descripcion_producto,
           'Categoría': item.categoria,
-          'Stock': item.stock_actual ?? 0,
-          'Peso (kg)': item.peso_total_kg !== null ? Math.round(item.peso_total_kg * 100) / 100 : '-',
-          'Vol. (L)': item.volumen_total_m3 !== null ? Math.round(item.volumen_total_m3 * 1000 * 100) / 100 : '-',
+          'Stock (unid)': item.stock_actual ?? 0,
         };
         if (isCedi) {
-          base['Stock Tiendas'] = item.stock_tiendas_regional ?? 0;
-          base['P75 Regional'] = item.demanda_p75 !== null ? Math.round(item.demanda_p75 * 10) / 10 : 0;
+          const upb = item.unidades_por_bulto || 1;
+          base['Unid/Bulto'] = upb;
+          base['Stock (bultos)'] = item.stock_actual !== null ? Math.round((item.stock_actual / upb) * 10) / 10 : 0;
+          base['Peso (kg)'] = item.peso_total_kg !== null ? Math.round(item.peso_total_kg * 100) / 100 : '-';
+          base['Vol. (L)'] = item.volumen_total_m3 !== null ? Math.round(item.volumen_total_m3 * 1000 * 100) / 100 : '-';
+          base['Tiendas (bultos)'] = item.stock_tiendas_regional !== null ? Math.round((item.stock_tiendas_regional / upb) * 10) / 10 : 0;
+          base['P75 Regional (bultos/día)'] = item.demanda_p75 !== null ? Math.round((item.demanda_p75 / upb) * 10) / 10 : 0;
         } else {
+          base['Peso (kg)'] = item.peso_total_kg !== null ? Math.round(item.peso_total_kg * 100) / 100 : '-';
+          base['Vol. (L)'] = item.volumen_total_m3 !== null ? Math.round(item.volumen_total_m3 * 1000 * 100) / 100 : '-';
           base['Stock CEDI'] = item.stock_cedi ?? 0;
           base['P75/día'] = item.demanda_p75 !== null ? Math.round(item.demanda_p75 * 10) / 10 : 0;
         }
@@ -702,7 +723,7 @@ export default function InventoryDashboard() {
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Código o descripción..."
+              placeholder="3216, 1234, 50..."
               className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
@@ -779,9 +800,10 @@ export default function InventoryDashboard() {
               {isCedi ? (
               <ul className="space-y-1 text-gray-600">
                 <li><span className="inline-block w-20 font-medium">ABC</span> Clasificación regional por volumen de venta agregado de las tiendas</li>
-                <li><span className="inline-block w-20 font-medium">P75 Reg.</span> Demanda regional (suma de P75 de todas las tiendas de la región)</li>
-                <li><span className="inline-block w-20 font-medium">Días</span> Días de cobertura = Stock CEDI / P75 Regional</li>
-                <li><span className="inline-block w-20 font-medium">Tiendas</span> Stock total del producto en las tiendas de la región</li>
+                <li><span className="inline-block w-20 font-medium">P75 Reg.</span> Demanda regional en bultos/día (suma de P75 de las tiendas)</li>
+                <li><span className="inline-block w-20 font-medium">Días</span> Días de cobertura = Bultos CEDI / P75 Regional</li>
+                <li><span className="inline-block w-20 font-medium">Bultos</span> Stock del CEDI expresado en bultos</li>
+                <li><span className="inline-block w-20 font-medium">Tiendas</span> Stock total en tiendas de la región (en bultos)</li>
               </ul>
               ) : (
               <ul className="space-y-1 text-gray-600">
@@ -814,7 +836,7 @@ export default function InventoryDashboard() {
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('stock')}>
-                    Stock {sortBy === 'stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
+                    {isCedi ? 'Bultos' : 'Stock'} {sortBy === 'stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" title="Peso total del stock (unitario × cantidad)" onClick={() => handleSort('peso')}>
                     Peso {sortBy === 'peso' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
@@ -863,9 +885,9 @@ export default function InventoryDashboard() {
                     <tr key={`${item.producto_id}-${item.ubicacion_id}`} className="hover:bg-gray-50">
                       <td className="px-3 py-2 font-medium text-gray-900">{item.codigo_producto}</td>
                       <td className="px-3 py-2 text-gray-900 max-w-[180px] truncate" title={item.descripcion_producto}>{item.descripcion_producto}</td>
-                      <td className="px-3 py-2 text-center">
+                      <td className="px-3 py-2 text-center" title={isCedi && item.unidades_por_bulto && item.unidades_por_bulto > 1 ? `${formatInteger(item.stock_actual)} unid (${item.unidades_por_bulto} unid/bulto)` : undefined}>
                         <span className={`font-semibold ${(item.stock_actual ?? 0) <= 0 ? 'text-red-600' : 'text-gray-900'}`}>
-                          {formatInteger(item.stock_actual)}
+                          {isCedi ? formatBultos(item.stock_actual, item.unidades_por_bulto) : formatInteger(item.stock_actual)}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-center text-xs text-gray-600" title={item.peso_producto_kg ? `${formatNumber(item.peso_producto_kg, 2)} kg/ud` : ''}>
@@ -874,10 +896,10 @@ export default function InventoryDashboard() {
                       <td className="px-3 py-2 text-center text-xs text-gray-600" title={item.volumen_producto_m3 ? `${formatNumber(item.volumen_producto_m3 * 1000, 2)} L/ud` : ''}>
                         {formatVolumen(item.volumen_total_m3)}
                       </td>
-                      <td className="px-3 py-2 text-center">
+                      <td className="px-3 py-2 text-center" title={isCedi && item.unidades_por_bulto && item.unidades_por_bulto > 1 ? `${formatInteger(item.stock_tiendas_regional)} unid` : undefined}>
                         {isCedi ? (
                           <span className={`font-medium ${(item.stock_tiendas_regional ?? 0) <= 0 ? 'text-gray-400' : 'text-blue-600'}`}>
-                            {formatInteger(item.stock_tiendas_regional)}
+                            {formatBultos(item.stock_tiendas_regional, item.unidades_por_bulto)}
                           </span>
                         ) : (
                           <span className={`font-medium ${(item.stock_cedi ?? 0) <= 0 ? 'text-red-500' : 'text-green-600'}`}>
@@ -890,8 +912,10 @@ export default function InventoryDashboard() {
                         title={isCedi ? 'Ver desglose del cálculo' : undefined}
                       >
                         {item.demanda_p75 !== null && item.demanda_p75 > 0 ? (
-                          <span className={isCedi ? 'text-purple-600 underline decoration-dotted' : ''}>
-                            {formatNumber(item.demanda_p75, 1)}
+                          <span className={isCedi ? 'text-purple-600 underline decoration-dotted' : ''}
+                            title={isCedi && item.unidades_por_bulto && item.unidades_por_bulto > 1 ? `${formatNumber(item.demanda_p75, 1)} unid/día` : undefined}
+                          >
+                            {isCedi ? formatBultos(item.demanda_p75, item.unidades_por_bulto) : formatNumber(item.demanda_p75, 1)}
                           </span>
                         ) : '-'}
                       </td>

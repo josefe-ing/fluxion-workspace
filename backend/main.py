@@ -344,6 +344,8 @@ class StockResponse(BaseModel):
     stock_cedi: Optional[float] = None  # Stock disponible en el CEDI de la región
     # Stock en tiendas de la región (para vista CEDI)
     stock_tiendas_regional: Optional[float] = None  # Stock total en tiendas de la región
+    # Conversión a bultos
+    unidades_por_bulto: Optional[float] = None  # Factor de conversión unidades → bultos
     # Límites forzados por configuración
     limite_min_forzado: Optional[float] = None  # Mínimo exhibición (unidades)
     limite_max_forzado: Optional[float] = None  # Capacidad máxima (unidades)
@@ -3944,9 +3946,33 @@ async def get_stock(
                 base_params.append(marca)
 
             if search:
-                search_term = f"%{search}%"
-                base_where += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
-                base_params.extend([search_term, search_term])
+                # Soporte para múltiples códigos separados por coma (con/sin ceros)
+                search_codes = [c.strip() for c in search.split(',') if c.strip()]
+                if len(search_codes) > 1 or (len(search_codes) == 1 and search_codes[0].replace(' ', '').isdigit()):
+                    # Búsqueda por código(s): generar variantes con/sin ceros
+                    or_conditions = []
+                    for code in search_codes:
+                        code = code.strip()
+                        if not code:
+                            continue
+                        variantes = [code]
+                        if code.isdigit():
+                            padded = code.zfill(6)
+                            if padded != code:
+                                variantes.append(padded)
+                            stripped = code.lstrip('0') or '0'
+                            if stripped != code:
+                                variantes.append(stripped)
+                        placeholders = ','.join(['%s'] * len(variantes))
+                        or_conditions.append(f"p.codigo IN ({placeholders})")
+                        base_params.extend(variantes)
+                    if or_conditions:
+                        base_where += f" AND ({' OR '.join(or_conditions)})"
+                else:
+                    # Búsqueda libre por código o descripción
+                    search_term = f"%{search}%"
+                    base_where += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
+                    base_params.extend([search_term, search_term])
 
             # =====================================================================
             # QUERY PRINCIPAL: rama diferente para CEDI vs Tienda
@@ -4037,6 +4063,8 @@ async def get_stock(
                         COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
                         COALESCE(p.marca, '') as marca,
                         ia.cantidad as stock_actual,
+                        -- Unidades por bulto
+                        COALESCE(p.unidades_por_bulto, 1) as unidades_por_bulto,
                         -- Peso y volumen del producto
                         COALESCE(p.peso_unitario, 0) as peso_unitario_kg,
                         COALESCE(p.volumen_unitario, 0) as volumen_unitario_m3,
@@ -4245,6 +4273,8 @@ async def get_stock(
                         COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
                         COALESCE(p.marca, '') as marca,
                         ia.cantidad as stock_actual,
+                        -- Unidades por bulto
+                        COALESCE(p.unidades_por_bulto, 1) as unidades_por_bulto,
                         -- Peso y volumen del producto
                         COALESCE(p.peso_unitario, 0) as peso_unitario_kg,
                         COALESCE(p.volumen_unitario, 0) as volumen_unitario_m3,
@@ -4488,6 +4518,8 @@ async def get_stock(
                 stock_cedi=row_dict.get('stock_cedi'),
                 # Stock en tiendas de la región (para vista CEDI)
                 stock_tiendas_regional=row_dict.get('stock_tiendas_regional'),
+                # Conversión a bultos
+                unidades_por_bulto=row_dict.get('unidades_por_bulto'),
                 # Límites forzados por configuración
                 limite_min_forzado=row_dict.get('limite_min_forzado'),
                 limite_max_forzado=row_dict.get('limite_max_forzado'),
