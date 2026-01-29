@@ -3871,6 +3871,7 @@ async def get_stock(
     top_ventas: Optional[int] = None,
     velocidad_venta: Optional[str] = None,
     stock_cedi_filter: Optional[str] = None,
+    stock_filter: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
     search: Optional[str] = None,
@@ -3900,6 +3901,7 @@ async def get_stock(
         top_ventas: Top N productos por ventas (50, 100, 200)
         velocidad_venta: SIN_VENTAS, BAJA (1-5/mes), MEDIA (6-15/mes), ALTA (16-30/mes), MUY_ALTA (>30/mes)
         stock_cedi_filter: CON_STOCK (>0 en CEDI), SIN_STOCK (=0 en CEDI)
+        stock_filter: CON_STOCK (stock_actual > 0), SIN_STOCK (stock_actual <= 0)
         page: Número de página
         page_size: Items por página
         search: Buscar por código o descripción
@@ -4422,6 +4424,12 @@ async def get_stock(
                     main_query += " AND stock_cedi > 0"
                 elif stock_cedi_filter == 'SIN_STOCK':
                     main_query += " AND stock_cedi <= 0"
+
+            if stock_filter:
+                if stock_filter == 'CON_STOCK':
+                    main_query += " AND stock_actual > 0"
+                elif stock_filter == 'SIN_STOCK':
+                    main_query += " AND stock_actual <= 0"
 
             # Count query
             count_query = f"SELECT COUNT(*) FROM ({main_query}) as counted"

@@ -8,18 +8,88 @@ import {
   ESTADO_COLORS,
   ESTADOS_PEDIDO
 } from '../../services/pedidosService';
+import {
+  listarPedidosInterCedi,
+  eliminarPedidoInterCedi,
+  PedidoInterCediResumen
+} from '../../services/pedidosInterCediService';
 import { formatNumber } from '../../utils/formatNumber';
 import PedidoSugeridoV2Wizard from './PedidoSugeridoV2Wizard';
 
+// Tipo unificado para mostrar en la lista
+interface PedidoUnificado {
+  id: string;
+  tipo: 'sugerido' | 'inter-cedi';
+  numero_pedido: string;
+  fecha_creacion: string;
+  usuario_creador: string;
+  destino_nombre: string;
+  origen_nombre: string;
+  total_productos: number;
+  total_bultos: number;
+  total_peso_kg?: number;
+  estado: string;
+  // Campos de llegada (solo pedidos sugeridos)
+  tiene_verificacion_llegada?: boolean;
+  llegada_completos?: number;
+  llegada_parciales?: number;
+  llegada_no_llegaron?: number;
+  llegada_pct_completos?: number;
+  llegada_pct_parciales?: number;
+  llegada_pct_no_llegaron?: number;
+  // Original para eliminar
+  _original_sugerido?: PedidoSugerido;
+}
+
+function mapSugerido(p: PedidoSugerido): PedidoUnificado {
+  return {
+    id: p.id,
+    tipo: 'sugerido',
+    numero_pedido: p.numero_pedido,
+    fecha_creacion: p.fecha_creacion,
+    usuario_creador: p.usuario_creador,
+    destino_nombre: p.tienda_destino_nombre,
+    origen_nombre: p.cedi_origen_nombre,
+    total_productos: p.total_productos,
+    total_bultos: p.total_bultos,
+    total_peso_kg: p.total_peso_kg,
+    estado: p.estado,
+    tiene_verificacion_llegada: p.tiene_verificacion_llegada,
+    llegada_completos: p.llegada_completos,
+    llegada_parciales: p.llegada_parciales,
+    llegada_no_llegaron: p.llegada_no_llegaron,
+    llegada_pct_completos: p.llegada_pct_completos,
+    llegada_pct_parciales: p.llegada_pct_parciales,
+    llegada_pct_no_llegaron: p.llegada_pct_no_llegaron,
+    _original_sugerido: p,
+  };
+}
+
+function mapInterCedi(p: PedidoInterCediResumen): PedidoUnificado {
+  return {
+    id: p.id,
+    tipo: 'inter-cedi',
+    numero_pedido: p.numero_pedido,
+    fecha_creacion: p.fecha_creacion,
+    usuario_creador: p.usuario_creador || 'sistema',
+    destino_nombre: p.cedi_destino_nombre || 'CEDI Caracas',
+    origen_nombre: `${p.total_cedis_origen} CEDIs Valencia`,
+    total_productos: p.total_productos,
+    total_bultos: p.total_bultos,
+    estado: p.estado,
+  };
+}
+
 export default function SuggestedOrder() {
   const navigate = useNavigate();
-  const [pedidos, setPedidos] = useState<PedidoSugerido[]>([]);
-  const [pedidosFiltrados, setPedidosFiltrados] = useState<PedidoSugerido[]>([]);
+  const [pedidos, setPedidos] = useState<PedidoUnificado[]>([]);
+  const [pedidosFiltrados, setPedidosFiltrados] = useState<PedidoUnificado[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState<string>('');
+  const [filtroTipo, setFiltroTipo] = useState<string>('');
   const [filtroTienda, setFiltroTienda] = useState<string>('');
   const [mostrarWizardV2, setMostrarWizardV2] = useState(false);
-  const [pedidoAEliminar, setPedidoAEliminar] = useState<PedidoSugerido | null>(null);
+  const [pedidoAEliminar, setPedidoAEliminar] = useState<PedidoUnificado | null>(null);
   const [eliminando, setEliminando] = useState(false);
 
   useEffect(() => {
@@ -27,19 +97,31 @@ export default function SuggestedOrder() {
   }, [filtroEstado]);
 
   useEffect(() => {
-    // Filtrar por tienda localmente
-    if (filtroTienda) {
-      setPedidosFiltrados(pedidos.filter(p => p.tienda_destino_nombre === filtroTienda));
-    } else {
-      setPedidosFiltrados(pedidos);
+    let filtrados = pedidos;
+    if (filtroTipo) {
+      filtrados = filtrados.filter(p => p.tipo === filtroTipo);
     }
-  }, [pedidos, filtroTienda]);
+    if (filtroTienda) {
+      filtrados = filtrados.filter(p => p.destino_nombre === filtroTienda);
+    }
+    setPedidosFiltrados(filtrados);
+  }, [pedidos, filtroTipo, filtroTienda]);
 
   const cargarPedidos = async () => {
     try {
       setLoading(true);
-      const data = await listarPedidos(filtroEstado ? { estado: filtroEstado } : undefined);
-      setPedidos(data);
+      const filtroParam = filtroEstado ? { estado: filtroEstado } : undefined;
+      const [sugeridos, interCedi] = await Promise.all([
+        listarPedidos(filtroParam),
+        listarPedidosInterCedi(filtroParam)
+      ]);
+
+      const unificados: PedidoUnificado[] = [
+        ...sugeridos.map(mapSugerido),
+        ...interCedi.map(mapInterCedi)
+      ].sort((a, b) => new Date(b.fecha_creacion).getTime() - new Date(a.fecha_creacion).getTime());
+
+      setPedidos(unificados);
     } catch (error) {
       console.error('Error cargando pedidos:', error);
     } finally {
@@ -47,8 +129,8 @@ export default function SuggestedOrder() {
     }
   };
 
-  // Obtener lista única de tiendas
-  const tiendasUnicas = Array.from(new Set(pedidos.map(p => p.tienda_destino_nombre))).sort();
+  // Obtener lista única de destinos
+  const destinosUnicos = Array.from(new Set(pedidos.map(p => p.destino_nombre))).sort();
 
   const handleCrearPedido = () => {
     navigate('/pedidos-sugeridos/nuevo');
@@ -56,18 +138,16 @@ export default function SuggestedOrder() {
 
   const handlePedidoV2Creado = (pedidoId: string) => {
     setMostrarWizardV2(false);
-    cargarPedidos(); // Refresh the list
-    // Navigate to the new order
+    cargarPedidos();
     navigate(`/pedidos-sugeridos/${pedidoId}/aprobar`);
   };
 
-  const handleVerPedido = (pedidoId: string, estado: string) => {
-    // Si está pendiente de aprobación, ir a vista de aprobación
-    if (estado === 'pendiente_aprobacion_gerente') {
-      navigate(`/pedidos-sugeridos/${pedidoId}/aprobar`);
+  const handleVerPedido = (pedido: PedidoUnificado) => {
+    if (pedido.tipo === 'inter-cedi') {
+      // Por ahora no hay vista de detalle inter-CEDI, navegar al wizard con el ID
+      navigate(`/pedidos-inter-cedi/nuevo`);
     } else {
-      // Para otros estados, ir a vista de detalle (TODO: crear vista de detalle)
-      navigate(`/pedidos-sugeridos/${pedidoId}/aprobar`);
+      navigate(`/pedidos-sugeridos/${pedido.id}/aprobar`);
     }
   };
 
@@ -82,12 +162,27 @@ export default function SuggestedOrder() {
     );
   };
 
+  const getTipoBadge = (tipo: string) => {
+    if (tipo === 'inter-cedi') {
+      return (
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200">
+          Inter-CEDI
+        </span>
+      );
+    }
+    return null;
+  };
+
   const handleEliminarPedido = async () => {
     if (!pedidoAEliminar) return;
 
     try {
       setEliminando(true);
-      await eliminarPedido(pedidoAEliminar.id);
+      if (pedidoAEliminar.tipo === 'inter-cedi') {
+        await eliminarPedidoInterCedi(pedidoAEliminar.id);
+      } else {
+        await eliminarPedido(pedidoAEliminar.id);
+      }
       setPedidoAEliminar(null);
       cargarPedidos();
     } catch (error: any) {
@@ -162,7 +257,22 @@ export default function SuggestedOrder() {
 
           <div className="flex items-center gap-4">
             <label className="text-sm font-medium text-gray-700">
-              Filtrar por tienda:
+              Tipo:
+            </label>
+            <select
+              value={filtroTipo}
+              onChange={(e) => setFiltroTipo(e.target.value)}
+              className="rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+            >
+              <option value="">Todos</option>
+              <option value="sugerido">Pedidos a Tienda</option>
+              <option value="inter-cedi">Inter-CEDI</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-gray-700">
+              Filtrar por destino:
             </label>
             <select
               value={filtroTienda}
@@ -170,8 +280,8 @@ export default function SuggestedOrder() {
               className="rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
             >
               <option value="">Todas</option>
-              {tiendasUnicas.map(tienda => (
-                <option key={tienda} value={tienda}>{tienda}</option>
+              {destinosUnicos.map(destino => (
+                <option key={destino} value={destino}>{destino}</option>
               ))}
             </select>
           </div>
@@ -245,12 +355,13 @@ export default function SuggestedOrder() {
             <tbody className="divide-y divide-gray-100">
               {pedidosFiltrados.map((pedido) => (
                 <tr
-                  key={pedido.id}
+                  key={`${pedido.tipo}-${pedido.id}`}
                   className="hover:bg-gray-50 cursor-pointer"
-                  onClick={() => handleVerPedido(pedido.id, pedido.estado)}
+                  onClick={() => handleVerPedido(pedido)}
                 >
                   <td className="pl-3 pr-3 py-2.5 whitespace-nowrap">
                     <div className="text-sm font-bold text-gray-900">{pedido.numero_pedido}</div>
+                    {getTipoBadge(pedido.tipo)}
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     <div className="text-sm text-gray-700">
@@ -262,8 +373,8 @@ export default function SuggestedOrder() {
                     <div className="text-sm text-gray-500">{pedido.usuario_creador}</div>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    <div className="text-sm font-semibold text-gray-900">{pedido.tienda_destino_nombre}: <span className="font-bold text-blue-600">{pedido.total_productos}</span> productos / <span className="text-gray-600">{formatNumber(pedido.total_bultos)}</span> bultos</div>
-                    <div className="text-xs text-gray-500">desde {pedido.cedi_origen_nombre}</div>
+                    <div className="text-sm font-semibold text-gray-900">{pedido.destino_nombre}: <span className="font-bold text-blue-600">{pedido.total_productos}</span> productos / <span className="text-gray-600">{formatNumber(pedido.total_bultos)}</span> bultos</div>
+                    <div className="text-xs text-gray-500">desde {pedido.origen_nombre}</div>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {getEstadoBadge(pedido.estado)}
@@ -273,24 +384,24 @@ export default function SuggestedOrder() {
                       <div className="flex items-center gap-1">
                         {/* Indicador visual de barras */}
                         <div className="flex items-center gap-0.5" title={`Completo: ${pedido.llegada_completos} | Parcial: ${pedido.llegada_parciales} | No llegó: ${pedido.llegada_no_llegaron}`}>
-                          {pedido.llegada_pct_completos > 0 && (
+                          {(pedido.llegada_pct_completos || 0) > 0 && (
                             <div
                               className="h-4 bg-green-500 rounded-sm"
-                              style={{ width: `${Math.max(pedido.llegada_pct_completos * 0.8, 4)}px` }}
+                              style={{ width: `${Math.max((pedido.llegada_pct_completos || 0) * 0.8, 4)}px` }}
                               title={`Completo: ${pedido.llegada_pct_completos}%`}
                             />
                           )}
-                          {pedido.llegada_pct_parciales > 0 && (
+                          {(pedido.llegada_pct_parciales || 0) > 0 && (
                             <div
                               className="h-4 bg-yellow-500 rounded-sm"
-                              style={{ width: `${Math.max(pedido.llegada_pct_parciales * 0.8, 4)}px` }}
+                              style={{ width: `${Math.max((pedido.llegada_pct_parciales || 0) * 0.8, 4)}px` }}
                               title={`Parcial: ${pedido.llegada_pct_parciales}%`}
                             />
                           )}
-                          {pedido.llegada_pct_no_llegaron > 0 && (
+                          {(pedido.llegada_pct_no_llegaron || 0) > 0 && (
                             <div
                               className="h-4 bg-red-500 rounded-sm"
-                              style={{ width: `${Math.max(pedido.llegada_pct_no_llegaron * 0.8, 4)}px` }}
+                              style={{ width: `${Math.max((pedido.llegada_pct_no_llegaron || 0) * 0.8, 4)}px` }}
                               title={`No llegó: ${pedido.llegada_pct_no_llegaron}%`}
                             />
                           )}
@@ -315,7 +426,7 @@ export default function SuggestedOrder() {
                   </td>
                   <td className="pl-3 pr-3 py-2.5 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
                     <button
-                      onClick={() => handleVerPedido(pedido.id, pedido.estado)}
+                      onClick={() => handleVerPedido(pedido)}
                       className="text-indigo-600 hover:text-indigo-800 font-medium mr-3"
                     >
                       Ver
@@ -365,7 +476,7 @@ export default function SuggestedOrder() {
                     </h3>
                     <div className="mt-2">
                       <p className="text-sm text-gray-500">
-                        ¿Estás seguro de eliminar el pedido <strong>{pedidoAEliminar.numero_pedido}</strong> para <strong>{pedidoAEliminar.tienda_destino_nombre}</strong>? Esta acción no se puede deshacer.
+                        ¿Estás seguro de eliminar el pedido <strong>{pedidoAEliminar.numero_pedido}</strong> para <strong>{pedidoAEliminar.destino_nombre}</strong>? Esta acción no se puede deshacer.
                       </p>
                     </div>
                   </div>

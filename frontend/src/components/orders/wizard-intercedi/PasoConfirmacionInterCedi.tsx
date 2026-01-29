@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import {} from 'react';
 import type { ProductoInterCedi, TotalesPorCedi, ConfiguracionDiasCobertura } from '../../../services/pedidosInterCediService';
 import {
   CEDI_ORIGEN_COLORS,
@@ -43,7 +43,6 @@ export default function PasoConfirmacionInterCedi({
   isLoading,
   pedidoGuardadoId
 }: Props) {
-  const [expandedCedi, setExpandedCedi] = useState<string | null>(null);
 
   // Calcular totales de productos incluidos
   const totalesActuales = calcularTotales(productos);
@@ -79,6 +78,15 @@ export default function PasoConfirmacionInterCedi({
     window.open(url, '_blank');
   };
 
+  // Calcular peso total en toneladas
+  const pesoTotalToneladas = productos.reduce((sum, p) => {
+    if (p.incluido === false) return sum;
+    const cantidadPedida = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+    if (cantidadPedida <= 0) return sum;
+    const pesoUnitario = p.peso_unitario_kg || 0;
+    return sum + cantidadPedida * p.unidades_por_bulto * pesoUnitario;
+  }, 0) / 1000;
+
   const cedisConProductos = ['cedi_seco', 'cedi_frio', 'cedi_verde'].filter(
     cedi => totalesPorCediActuales[cedi]?.productos > 0
   );
@@ -97,7 +105,7 @@ export default function PasoConfirmacionInterCedi({
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Resumen del Pedido</h3>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           {/* Total Productos */}
           <div className="bg-gray-50 rounded-lg p-4 text-center">
             <div className="text-3xl font-bold text-gray-900">{formatNumber(totalesActuales.totalProductos)}</div>
@@ -114,6 +122,12 @@ export default function PasoConfirmacionInterCedi({
           <div className="bg-gray-50 rounded-lg p-4 text-center">
             <div className="text-3xl font-bold text-gray-900">{formatNumber(totalesActuales.totalUnidades)}</div>
             <div className="text-sm text-gray-500">Unidades</div>
+          </div>
+
+          {/* Peso Total */}
+          <div className="bg-gray-50 rounded-lg p-4 text-center">
+            <div className="text-3xl font-bold text-gray-900">{formatNumber(pesoTotalToneladas, 2)}</div>
+            <div className="text-sm text-gray-500">Toneladas</div>
           </div>
 
           {/* CEDIs Origen */}
@@ -165,81 +179,31 @@ export default function PasoConfirmacionInterCedi({
         <div className="space-y-3">
           {(['cedi_seco', 'cedi_frio', 'cedi_verde'] as const).map((cediId) => {
             const totales = totalesPorCediActuales[cediId];
-            const productosDelCedi = productosAgrupados[cediId];
-            const isExpanded = expandedCedi === cediId;
             const colorClass = CEDI_ORIGEN_COLORS[cediId];
 
             if (totales.productos === 0) return null;
 
-            return (
-              <div key={cediId} className={`border rounded-lg overflow-hidden ${colorClass.replace('bg-', 'border-').split(' ')[0]}`}>
-                {/* Header del CEDI */}
-                <div
-                  className={`${colorClass} px-4 py-3 cursor-pointer flex items-center justify-between`}
-                  onClick={() => setExpandedCedi(isExpanded ? null : cediId)}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold">{CEDI_ORIGEN_NOMBRES[cediId]}</span>
-                    <span className="text-sm opacity-75">
-                      {formatNumber(totales.productos)} productos · {formatNumber(totales.bultos)} bultos · {formatNumber(totales.unidades)} unid
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {pedidoGuardadoId && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleExportExcel(cediId); }}
-                        className="px-2 py-1 text-xs font-medium bg-white/50 rounded hover:bg-white/70"
-                      >
-                        Excel
-                      </button>
-                    )}
-                    <svg
-                      className={`w-5 h-5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </div>
-                </div>
+            // Peso por CEDI en toneladas
+            const pesoCediTon = productosAgrupados[cediId].reduce((sum, p) => {
+              const cantidadPedida = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+              return sum + cantidadPedida * p.unidades_por_bulto * (p.peso_unitario_kg || 0);
+            }, 0) / 1000;
 
-                {/* Lista de productos expandida */}
-                {isExpanded && (
-                  <div className="bg-white max-h-64 overflow-y-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50 sticky top-0">
-                        <tr>
-                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
-                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
-                          <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">ABC</th>
-                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Bultos</th>
-                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Unidades</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {productosDelCedi.map((producto) => (
-                          <tr key={producto.codigo_producto} className="hover:bg-gray-50">
-                            <td className="px-3 py-2 text-xs text-gray-600 font-mono">
-                              {producto.codigo_producto}
-                            </td>
-                            <td className="px-3 py-2 text-sm text-gray-900 truncate max-w-[200px]">
-                              {producto.descripcion_producto}
-                            </td>
-                            <td className="px-3 py-2 text-center">
-                              <span className="text-xs font-semibold">{producto.clasificacion_abc || 'D'}</span>
-                            </td>
-                            <td className="px-3 py-2 text-right text-sm font-medium text-gray-900">
-                              {formatNumber(producto.cantidad_pedida_bultos ?? producto.cantidad_sugerida_bultos)}
-                            </td>
-                            <td className="px-3 py-2 text-right text-sm text-gray-600">
-                              {formatNumber((producto.cantidad_pedida_bultos ?? producto.cantidad_sugerida_bultos) * producto.unidades_por_bulto)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+            return (
+              <div key={cediId} className={`${colorClass} border rounded-lg px-4 py-3 flex items-center justify-between`}>
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold">{CEDI_ORIGEN_NOMBRES[cediId]}</span>
+                  <span className="text-sm opacity-75">
+                    {formatNumber(totales.productos)} productos · {formatNumber(totales.bultos)} bultos · {formatNumber(totales.unidades)} unid · {formatNumber(pesoCediTon, 2)} ton
+                  </span>
+                </div>
+                {pedidoGuardadoId && (
+                  <button
+                    onClick={() => handleExportExcel(cediId)}
+                    className="px-2 py-1 text-xs font-medium bg-white/50 rounded hover:bg-white/70"
+                  >
+                    Excel
+                  </button>
                 )}
               </div>
             );

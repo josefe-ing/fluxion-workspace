@@ -129,6 +129,7 @@ export default function InventoryDashboard() {
   const [selectedTopVentas, setSelectedTopVentas] = useState<string>('all');
   const [selectedVelocidadVenta, setSelectedVelocidadVenta] = useState<string>('all');
   const [selectedStockCediFilter, setSelectedStockCediFilter] = useState<string>('all');
+  const [selectedStockFilter, setSelectedStockFilter] = useState<string>('all');
 
   // Paginación
   const [currentPage, setCurrentPage] = useState(1);
@@ -199,12 +200,12 @@ export default function InventoryDashboard() {
     loadStock();
   }, [selectedUbicacion, selectedAlmacen, selectedCategoria, selectedMarca, currentPage, debouncedSearchTerm,
       sortBy, sortOrder, selectedEstadoCriticidad, selectedClasificacionProducto,
-      selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter]);
+      selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter, selectedStockFilter]);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [selectedUbicacion, selectedCategoria, selectedMarca, debouncedSearchTerm, selectedEstadoCriticidad,
-      selectedClasificacionProducto, selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter]);
+      selectedClasificacionProducto, selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter, selectedStockFilter]);
 
   const loadUbicaciones = async () => {
     try {
@@ -276,6 +277,7 @@ export default function InventoryDashboard() {
       if (selectedTopVentas !== 'all') params.top_ventas = parseInt(selectedTopVentas);
       if (selectedVelocidadVenta !== 'all') params.velocidad_venta = selectedVelocidadVenta;
       if (selectedStockCediFilter !== 'all') params.stock_cedi_filter = selectedStockCediFilter;
+      if (selectedStockFilter !== 'all') params.stock_filter = selectedStockFilter;
 
       const response = await http.get('/api/stock', { params });
       const { data, pagination: paginationData } = response.data as PaginatedStockResponse;
@@ -328,6 +330,7 @@ export default function InventoryDashboard() {
       if (selectedTopVentas !== 'all') params.top_ventas = parseInt(selectedTopVentas);
       if (selectedVelocidadVenta !== 'all') params.velocidad_venta = selectedVelocidadVenta;
       if (selectedStockCediFilter !== 'all') params.stock_cedi_filter = selectedStockCediFilter;
+      if (selectedStockFilter !== 'all') params.stock_filter = selectedStockFilter;
 
       const response = await http.get('/api/stock', { params });
       const { data } = response.data as PaginatedStockResponse;
@@ -626,6 +629,18 @@ export default function InventoryDashboard() {
             </select>
           </div>
           <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Stock</label>
+            <select
+              value={selectedStockFilter}
+              onChange={(e) => setSelectedStockFilter(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="all">Todos</option>
+              <option value="CON_STOCK">Con stock</option>
+              <option value="SIN_STOCK">Sin stock</option>
+            </select>
+          </div>
+          <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Estado</label>
             <select
               value={selectedEstadoCriticidad}
@@ -740,7 +755,7 @@ export default function InventoryDashboard() {
           </div>
           {(selectedEstadoCriticidad !== 'all' || selectedClasificacionProducto !== 'all' ||
             selectedClaseABC !== 'all' || selectedTopVentas !== 'all' || selectedVelocidadVenta !== 'all' ||
-            selectedCategoria !== 'all' || selectedMarca !== 'all' || selectedStockCediFilter !== 'all' || debouncedSearchTerm) && (
+            selectedCategoria !== 'all' || selectedMarca !== 'all' || selectedStockCediFilter !== 'all' || selectedStockFilter !== 'all' || debouncedSearchTerm) && (
             <span className="text-xs text-gray-500 italic">(filtrado)</span>
           )}
         </div>

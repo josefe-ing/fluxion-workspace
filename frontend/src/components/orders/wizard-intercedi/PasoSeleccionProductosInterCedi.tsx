@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import type { ProductoInterCedi, TotalesPorCedi, ConfiguracionDiasCobertura } from '../../../services/pedidosInterCediService';
 import {
   CEDI_ORIGEN_COLORS,
@@ -140,15 +141,29 @@ export default function PasoSeleccionProductosInterCedi({
   // Filtrar productos
   const productosFiltrados = useMemo(() => {
     return productos.filter(p => {
-      // Filtro de búsqueda
+      // Filtro de búsqueda (soporta múltiples códigos separados por coma)
       if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        const matchSearch =
-          p.codigo_producto.toLowerCase().includes(term) ||
-          p.descripcion_producto.toLowerCase().includes(term) ||
-          (p.categoria?.toLowerCase().includes(term)) ||
-          (p.marca?.toLowerCase().includes(term));
-        if (!matchSearch) return false;
+        // Detectar si es búsqueda múltiple por códigos (contiene comas)
+        if (searchTerm.includes(',')) {
+          const codigos = searchTerm.split(',').map(c => c.trim()).filter(c => c.length > 0);
+          const codigoNormalizado = p.codigo_producto.replace(/^0+/, '');
+          const match = codigos.some(codigo => {
+            const codigoBuscado = codigo.replace(/^0+/, '');
+            return codigoNormalizado === codigoBuscado ||
+                   p.codigo_producto === codigo ||
+                   p.codigo_producto.endsWith(codigo);
+          });
+          if (!match) return false;
+        } else {
+          // Búsqueda normal (texto libre)
+          const term = searchTerm.toLowerCase();
+          const matchSearch =
+            p.codigo_producto.toLowerCase().includes(term) ||
+            p.descripcion_producto.toLowerCase().includes(term) ||
+            (p.categoria?.toLowerCase().includes(term)) ||
+            (p.marca?.toLowerCase().includes(term));
+          if (!matchSearch) return false;
+        }
       }
 
       // Filtro por CEDI origen
@@ -347,6 +362,110 @@ export default function PasoSeleccionProductosInterCedi({
     updateProductos(nuevosProductos);
   };
 
+  // Calcular peso total en toneladas
+  const pesoTotalToneladas = useMemo(() => {
+    return productos.reduce((sum, p) => {
+      if (p.incluido === false) return sum;
+      const cantidadPedida = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+      if (cantidadPedida <= 0) return sum;
+      const pesoUnitario = p.peso_unitario_kg || 0;
+      const pesoTotalKg = cantidadPedida * p.unidades_por_bulto * pesoUnitario;
+      return sum + pesoTotalKg;
+    }, 0) / 1000;
+  }, [productos]);
+
+  // Exportar a Excel
+  const handleExportarExcel = () => {
+    try {
+      const datosExcel = productosOrdenados.map((p, idx) => {
+        const unidadesPorBulto = Number(p.unidades_por_bulto) || 1;
+        const cantidadPedida = Number(p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos) || 0;
+        const demandaP75 = Number(p.demanda_regional_p75) || 0;
+        const stockCedi = Number(p.stock_actual_cedi) || 0;
+        const stockOrigen = Number(p.stock_cedi_origen) || 0;
+        const stockTiendas = Number(p.stock_tiendas_total) || 0;
+        const demandaBultosDia = demandaP75 / unidadesPorBulto;
+        const stockCediBultos = stockCedi / unidadesPorBulto;
+        const stockOrigenBultos = stockOrigen / unidadesPorBulto;
+        const diasStockCedi = demandaP75 > 0 ? stockCedi / demandaP75 : 999;
+        const stockTiendasBultos = stockTiendas / unidadesPorBulto;
+        const diasStockTiendas = demandaP75 > 0 ? stockTiendas / demandaP75 : 999;
+        const pesoUnitario = Number(p.peso_unitario_kg) || 0;
+        const pesoTotalKg = cantidadPedida * unidadesPorBulto * pesoUnitario;
+        const prioridad = calcularPrioridad(p.clasificacion_abc || 'D', diasStockCedi);
+
+        return {
+          '#': idx + 1,
+          'Incluido': (p.incluido !== false && cantidadPedida > 0) ? 'Si' : 'No',
+          'CEDI Origen': CEDI_ORIGEN_NOMBRES[p.cedi_origen_id] || p.cedi_origen_id,
+          'Código': p.codigo_producto,
+          'Cód. Barras': p.codigo_barras || '',
+          'Producto': p.descripcion_producto,
+          'Categoría': p.categoria || '',
+          'Marca': p.marca || '',
+          'U/B': unidadesPorBulto,
+          'ABC': p.clasificacion_abc || 'D',
+          'Cuadrante': p.cuadrante || '',
+          'Stock Origen (bultos)': Math.round(stockOrigenBultos),
+          'Stock Origen (unid)': stockOrigen,
+          'Stock CCS (bultos)': Math.round(stockCediBultos),
+          'Stock CCS (unid)': stockCedi,
+          'Días Stock CCS': diasStockCedi >= 999 ? '' : Math.round(diasStockCedi),
+          'Stock Tiendas (bultos)': Math.round(stockTiendasBultos),
+          'Stock Tiendas (unid)': stockTiendas,
+          'Días Stock Tiendas': diasStockTiendas >= 999 ? '' : Math.round(diasStockTiendas),
+          'P75 (bultos/día)': Number(demandaBultosDia.toFixed(2)),
+          'P75 (unid/día)': Number(demandaP75.toFixed(2)),
+          'Prioridad': prioridad,
+          'Sugerido (bultos)': Number(p.cantidad_sugerida_bultos) || 0,
+          'A Pedir (bultos)': cantidadPedida,
+          'Peso (Kg)': pesoTotalKg > 0 ? Number(pesoTotalKg.toFixed(2)) : '',
+          'Notas': p.observaciones || ''
+        };
+      });
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(datosExcel);
+
+      // Ajustar ancho de columnas
+      ws['!cols'] = [
+        { wch: 5 },   // #
+        { wch: 8 },   // Incluido
+        { wch: 12 },  // CEDI Origen
+        { wch: 10 },  // Código
+        { wch: 16 },  // Cód. Barras
+        { wch: 45 },  // Producto
+        { wch: 18 },  // Categoría
+        { wch: 15 },  // Marca
+        { wch: 5 },   // U/B
+        { wch: 5 },   // ABC
+        { wch: 12 },  // Cuadrante
+        { wch: 14 },  // Stock Origen bultos
+        { wch: 14 },  // Stock Origen unid
+        { wch: 14 },  // Stock CCS bultos
+        { wch: 14 },  // Stock CCS unid
+        { wch: 14 },  // Días Stock CCS
+        { wch: 14 },  // Stock Tiendas bultos
+        { wch: 14 },  // Stock Tiendas unid
+        { wch: 16 },  // Días Stock Tiendas
+        { wch: 14 },  // P75 bultos/día
+        { wch: 14 },  // P75 unid/día
+        { wch: 10 },  // Prioridad
+        { wch: 14 },  // Sugerido
+        { wch: 14 },  // A Pedir
+        { wch: 12 },  // Peso
+        { wch: 20 },  // Notas
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, 'Pedido Inter-CEDI');
+      const fecha = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(wb, `Pedido_InterCEDI_${region}_${fecha}.xlsx`);
+    } catch (error) {
+      console.error('Error exportando a Excel:', error);
+      alert('Error al exportar a Excel. Revise la consola para más detalles.');
+    }
+  };
+
   const canProceed = totalesActuales.totalProductos > 0;
 
   return (
@@ -361,6 +480,12 @@ export default function PasoSeleccionProductosInterCedi({
             </p>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={handleExportarExcel}
+              className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 rounded-md hover:bg-green-100 border border-green-200"
+            >
+              Excel
+            </button>
             <button
               onClick={handleAceptarTodas}
               className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100"
@@ -502,6 +627,7 @@ export default function PasoSeleccionProductosInterCedi({
             <div className="text-xs text-gray-500 mb-1">Total General</div>
             <div className="text-lg font-bold text-gray-900">{formatNumber(totalesActuales.totalProductos)} productos</div>
             <div className="text-sm text-gray-600">{formatNumber(totalesActuales.totalBultos)} bultos</div>
+            <div className="text-sm text-gray-600 font-medium">{formatNumber(pesoTotalToneladas, 2)} ton</div>
           </div>
 
           {/* CEDI Seco */}
