@@ -8,7 +8,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -52,7 +52,15 @@ def check_concurrent_etl(etl_name: str = 'inventario', max_age_minutes: int = 12
         return False
 
     try:
-        conn = psycopg2.connect(DatabaseConfig.get_dsn())
+        # Import POSTGRES_DSN from backend
+        import sys
+        from pathlib import Path
+        backend_path = Path(__file__).parent.parent / 'backend'
+        if str(backend_path) not in sys.path:
+            sys.path.append(str(backend_path))
+        from db_config import POSTGRES_DSN
+
+        conn = psycopg2.connect(POSTGRES_DSN)
         cursor = conn.cursor()
 
         # Limpiar ejecuciones huérfanas (>3 horas)
@@ -167,7 +175,15 @@ class MultiTiendaETL:
 
         try:
             import os
-            conn = psycopg2.connect(DatabaseConfig.get_dsn())
+            # Import POSTGRES_DSN from backend
+            import sys
+            from pathlib import Path
+            backend_path = Path(__file__).parent.parent / 'backend'
+            if str(backend_path) not in sys.path:
+                sys.path.append(str(backend_path))
+            from db_config import POSTGRES_DSN
+
+            conn = psycopg2.connect(POSTGRES_DSN)
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -197,7 +213,15 @@ class MultiTiendaETL:
 
         try:
             import json
-            conn = psycopg2.connect(DatabaseConfig.get_dsn())
+            # Import POSTGRES_DSN from backend
+            import sys
+            from pathlib import Path
+            backend_path = Path(__file__).parent.parent / 'backend'
+            if str(backend_path) not in sys.path:
+                sys.path.append(str(backend_path))
+            from db_config import POSTGRES_DSN
+
+            conn = psycopg2.connect(POSTGRES_DSN)
             cursor = conn.cursor()
 
             finished_at = datetime.now()
@@ -645,17 +669,23 @@ class MultiTiendaETL:
             logger.error(f"   ❌ Error cargando productos KLK: {e}")
             return 0
 
-    def ejecutar_todas_las_tiendas(self, paralelo: bool = True, max_workers: int = 3) -> List[Dict[str, Any]]:
+    def ejecutar_todas_las_tiendas(
+        self,
+        paralelo: bool = True,
+        max_workers: int = 3,
+        tiendas_filtradas: Optional[Dict] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Ejecuta el ETL para todas las tiendas activas.
+        Ejecuta el ETL para todas las tiendas activas (o un subconjunto específico).
 
         Args:
             paralelo: Si True, ejecuta tiendas KLK en paralelo (default: True)
             max_workers: Número de workers para paralelización KLK (default: 3)
                         3 workers es óptimo basado en benchmarks del servidor KLK
+            tiendas_filtradas: Si se proporciona, ejecutar solo estas tiendas (dict de tienda_id -> config)
         """
         etl_start_time = datetime.now()
-        tiendas_activas = get_tiendas_activas()
+        tiendas_activas = tiendas_filtradas if tiendas_filtradas is not None else get_tiendas_activas()
 
         # Separar tiendas por sistema POS
         tiendas_klk = []
@@ -843,22 +873,27 @@ def main():
     etl = MultiTiendaETL()
 
     if args.tiendas:
-        # Ejecutar múltiples tiendas específicas (secuencialmente)
+        # Ejecutar múltiples tiendas específicas
+        # Using ejecutar_todas_las_tiendas() to ensure ExecutionTracker works correctly
         etl_start_time = datetime.now()
         logger.info(f"🎯 Ejecutando ETL para {len(args.tiendas)} tiendas: {args.tiendas}")
 
-        # Registrar inicio de ejecución
-        etl._track_start(args.tiendas)
+        # Filter tiendas to only requested ones
+        from core.tiendas_config import TIENDAS_CONFIG
+        tiendas_solicitadas = {tid: TIENDAS_CONFIG[tid] for tid in args.tiendas if tid in TIENDAS_CONFIG}
 
-        resultados = []
-        for tienda_id in args.tiendas:
-            resultado = etl.ejecutar_etl_tienda(tienda_id)
-            resultados.append(resultado)
+        if not tiendas_solicitadas:
+            logger.error(f"❌ Ninguna de las tiendas solicitadas está configurada: {args.tiendas}")
+            sys.exit(1)
+
+        # Use --secuencial logic: default to paralelo unless explicitly disabled
+        paralelo = not args.secuencial
+        resultados = etl.ejecutar_todas_las_tiendas(
+            paralelo=paralelo,
+            max_workers=args.workers,
+            tiendas_filtradas=tiendas_solicitadas
+        )
         etl_end_time = datetime.now()
-
-        # Registrar fin de ejecución
-        fallidos = [r for r in resultados if not r.get("success")]
-        etl._track_finish(resultados, status='success' if not fallidos else 'partial')
 
         etl.generar_resumen(resultados)
 
