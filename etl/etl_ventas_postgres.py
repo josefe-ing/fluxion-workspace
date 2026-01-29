@@ -73,6 +73,13 @@ try:
 except ImportError:
     TRACKING_AVAILABLE = False
 
+# ExecutionTracker for enhanced ETL tracking
+try:
+    from core.execution_tracker import ExecutionTracker, ETLPhase, ErrorCategory
+    EXECUTION_TRACKER_AVAILABLE = True
+except ImportError:
+    EXECUTION_TRACKER_AVAILABLE = False
+
 
 class VentasETLPostgres:
     """
@@ -114,6 +121,12 @@ class VentasETLPostgres:
             'tiendas_stellar': 0,
             'gaps_recuperados': 0
         }
+
+        # ExecutionTracker (nuevo sistema de tracking mejorado)
+        if EXECUTION_TRACKER_AVAILABLE:
+            self.tracker = ExecutionTracker()
+        else:
+            self.tracker = None
 
     def _setup_logger(self) -> logging.Logger:
         """Configura el logger"""
@@ -211,10 +224,28 @@ class VentasETLPostgres:
             self.logger.warning(f"Orphan cleanup failed: {e}")
 
     def _track_start(self, fecha_desde: datetime, fecha_hasta: datetime, tiendas: List[str], etl_type: str = 'scheduled') -> Optional[int]:
-        """Registra inicio de ejecución ETL en PostgreSQL"""
+        """Registra inicio de ejecución ETL en PostgreSQL usando ExecutionTracker"""
         if not TRACKING_AVAILABLE or self.dry_run:
             return None
 
+        # Usar nuevo ExecutionTracker si está disponible
+        if self.tracker:
+            try:
+                execution = self.tracker.start_execution(
+                    etl_name='ventas',
+                    etl_type=etl_type,
+                    fecha_desde=fecha_desde,
+                    fecha_hasta=fecha_hasta,
+                    tiendas=tiendas,
+                    triggered_by=None  # Auto-detectará: eventbridge/fluxion_admin/cli
+                )
+                self.logger.info(f"Tracking: Ejecución iniciada (ID: {execution.id}, triggered_by: {execution.triggered_by})")
+                return execution.id
+            except Exception as e:
+                self.logger.warning(f"Tracking: Error al registrar inicio con ExecutionTracker: {e}")
+                return None
+
+        # Fallback al sistema antiguo si el tracker no está disponible
         try:
             conn = self.klk_loader._get_connection()
             cursor = conn.cursor()
@@ -245,10 +276,29 @@ class VentasETLPostgres:
             return None
 
     def _track_finish(self, execution_id: Optional[int], tiendas_results: List[Dict], status: str = 'success', error_msg: str = None):
-        """Registra fin de ejecución ETL en PostgreSQL"""
+        """Registra fin de ejecución ETL en PostgreSQL usando ExecutionTracker"""
         if not TRACKING_AVAILABLE or execution_id is None:
             return
 
+        # Usar nuevo ExecutionTracker si está disponible
+        if self.tracker:
+            try:
+                # Actualizar métricas agregadas del tracker
+                if hasattr(self.tracker, '_current_execution') and self.tracker._current_execution:
+                    self.tracker._current_execution.records_extracted = self.stats['total_ventas_extraidas']
+                    self.tracker._current_execution.records_loaded = self.stats['total_ventas_cargadas']
+                    self.tracker._current_execution.duplicates_skipped = self.stats['total_duplicados_omitidos']
+                    self.tracker._current_execution.gaps_recovered = self.stats['gaps_recuperados']
+
+                # Finalizar tracking
+                self.tracker.finish_execution(status=status)
+                self.logger.info(f"Tracking: Ejecución finalizada con ExecutionTracker (ID: {execution_id}, status: {status})")
+                return
+            except Exception as e:
+                self.logger.warning(f"Tracking: Error al registrar fin con ExecutionTracker: {e}")
+                # Continuar con fallback
+
+        # Fallback al sistema antiguo
         try:
             conn = self.klk_loader._get_connection()
             cursor = conn.cursor()
@@ -406,7 +456,23 @@ class VentasETLPostgres:
 
         self.logger.info(f"   Sucursal KLK: {codigo_sucursal}")
 
+        # Iniciar tracking de tienda si el tracker está disponible
+        if self.tracker:
+            self.tracker.start_tienda(
+                tienda_id=tienda_id,
+                tienda_nombre=tienda_nombre,
+                source_system='klk'
+            )
+
+        registros_extraidos = 0
+        registros_cargados = 0
+        duplicados = 0
+
         try:
+            # FASE: EXTRACT
+            if self.tracker:
+                self.tracker.start_phase(ETLPhase.EXTRACT)
+
             # Extraer ventas
             response = self.klk_extractor.extract_ventas_raw(
                 sucursal=codigo_sucursal,
@@ -417,6 +483,13 @@ class VentasETLPostgres:
             )
 
             if not response or 'ventas' not in response:
+                if self.tracker:
+                    self.tracker.finish_phase(ETLPhase.EXTRACT, records=0)
+                    self.tracker.finish_tienda_success(
+                        records_extracted=0,
+                        records_loaded=0,
+                        duplicates_skipped=0
+                    )
                 tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
                 return {
                     'tienda_id': tienda_id,
@@ -424,6 +497,7 @@ class VentasETLPostgres:
                     'sistema': 'KLK',
                     'success': True,
                     'registros': 0,
+                    'ventas_cargadas': 0,
                     'tiempo_proceso': tiempo_proceso,
                     'message': 'Sin ventas en el rango'
                 }
@@ -432,7 +506,16 @@ class VentasETLPostgres:
             registros_extraidos = len(ventas_data)
             self.stats['total_ventas_extraidas'] += registros_extraidos
 
+            if self.tracker:
+                self.tracker.finish_phase(ETLPhase.EXTRACT, records=registros_extraidos)
+
             if registros_extraidos == 0:
+                if self.tracker:
+                    self.tracker.finish_tienda_success(
+                        records_extracted=0,
+                        records_loaded=0,
+                        duplicates_skipped=0
+                    )
                 tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
                 return {
                     'tienda_id': tienda_id,
@@ -440,9 +523,14 @@ class VentasETLPostgres:
                     'sistema': 'KLK',
                     'success': True,
                     'registros': 0,
+                    'ventas_cargadas': 0,
                     'tiempo_proceso': tiempo_proceso,
                     'message': 'Sin ventas nuevas'
                 }
+
+            # FASE: LOAD (KLK no tiene transformación separada)
+            if self.tracker:
+                self.tracker.start_phase(ETLPhase.LOAD)
 
             # Cargar a PostgreSQL
             if self.dry_run:
@@ -459,6 +547,14 @@ class VentasETLPostgres:
                 else:
                     raise Exception(result.get('message'))
 
+            if self.tracker:
+                self.tracker.finish_phase(ETLPhase.LOAD, records=registros_cargados)
+                self.tracker.finish_tienda_success(
+                    records_extracted=registros_extraidos,
+                    records_loaded=registros_cargados,
+                    duplicates_skipped=duplicados
+                )
+
             tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
             return {
                 'tienda_id': tienda_id,
@@ -466,12 +562,27 @@ class VentasETLPostgres:
                 'sistema': 'KLK',
                 'success': True,
                 'registros': registros_cargados,
+                'ventas_cargadas': registros_cargados,
                 'tiempo_proceso': tiempo_proceso,
                 'message': f'{registros_cargados:,} ventas'
             }
 
         except Exception as e:
             self.logger.error(f"   Error KLK: {e}")
+
+            # Clasificar error y registrar en tracker
+            if self.tracker:
+                # Determinar en qué fase estamos (si no se extrajeron datos, es extract, sino load)
+                error_phase = ETLPhase.EXTRACT if registros_extraidos == 0 else ETLPhase.LOAD
+                error_category = ExecutionTracker.classify_error(e, error_phase)
+
+                self.tracker.finish_tienda_error(
+                    phase=error_phase,
+                    category=error_category,
+                    message=str(e),
+                    records_extracted=registros_extraidos
+                )
+
             tiempo_proceso = (datetime.now() - tiempo_inicio).total_seconds()
             return {
                 'tienda_id': tienda_id,
