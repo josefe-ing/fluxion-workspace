@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import ConnectivityPanel from './ConnectivityPanel';
 import InventarioETLPanel from './InventarioETLPanel';
 import VentasETLPanel from './VentasETLPanel';
+import ETLHistoryTable from './ETLHistoryTable';
 
-type TabType = 'inventario' | 'ventas';
+type TabType = 'inventario' | 'ventas' | 'history';
 
 export default function ETLControlCenter() {
   const [activeTab, setActiveTab] = useState<TabType>('ventas');
@@ -136,6 +137,21 @@ export default function ETLControlCenter() {
                     <span>ETL Inventario</span>
                   </div>
                 </button>
+                <button
+                  onClick={() => setActiveTab('history')}
+                  className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm transition-colors ${
+                    activeTab === 'history'
+                      ? 'border-green-500 text-green-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-center space-x-2">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Historial</span>
+                  </div>
+                </button>
               </nav>
             </div>
 
@@ -143,6 +159,7 @@ export default function ETLControlCenter() {
             <div>
               {activeTab === 'ventas' && <VentasETLPanel />}
               {activeTab === 'inventario' && <InventarioETLPanel />}
+              {activeTab === 'history' && <ETLHistoryTable />}
             </div>
           </div>
         </div>

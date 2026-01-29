@@ -75,6 +75,7 @@ from routers.business_intelligence import router as business_intelligence_router
 from routers.bi_stores import router as bi_stores_router
 from routers.ubicaciones import router as ubicaciones_router
 from routers.productos_admin import router as productos_admin_router
+from routers.etl_history import router as etl_history_router
 # from routers.conjuntos_router import router as conjuntos_router  # TODO: Uncomment when router is ready
 
 # Configurar logging
@@ -154,6 +155,7 @@ app.include_router(business_intelligence_router)
 app.include_router(bi_stores_router)
 app.include_router(ubicaciones_router)
 app.include_router(productos_admin_router)
+app.include_router(etl_history_router)
 # app.include_router(conjuntos_router)  # TODO: Uncomment when router is ready
 
 # ============================================================================
