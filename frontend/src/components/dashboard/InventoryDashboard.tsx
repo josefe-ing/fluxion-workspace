@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 import ProductHistoryModal from './ProductHistoryModal';
+import CediCalculoModal from './CediCalculoModal';
 import CentroComandoCorreccionModal from './CentroComandoCorreccionModal';
 import InventoryHealthChart from './InventoryHealthChart';
 import * as XLSX from 'xlsx';
@@ -45,6 +46,8 @@ interface StockItem {
   dias_max: number | null;
   // Stock en CEDI
   stock_cedi: number | null;
+  // Stock en tiendas de la región (para vista CEDI)
+  stock_tiendas_regional: number | null;
   // Límites forzados por configuración
   limite_min_forzado: number | null;
   limite_max_forzado: number | null;
@@ -133,9 +136,16 @@ export default function InventoryDashboard() {
   const [sortBy, setSortBy] = useState<string>('rank_ventas');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
+  // Detectar si es vista CEDI (los CEDIs no venden, métricas diferentes)
+  const isCedi = selectedUbicacion?.startsWith('cedi_') ?? false;
+
   // Modal de histórico de inventario
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<{ codigo: string; descripcion: string } | null>(null);
+
+  // Modal de cálculo CEDI (P75 Regional + Días)
+  const [showCediCalculoModal, setShowCediCalculoModal] = useState(false);
+  const [cediCalculoProduct, setCediCalculoProduct] = useState<StockItem | null>(null);
 
   // Modal Centro de Comando de Corrección
   const [showCorreccionModal, setShowCorreccionModal] = useState(false);
@@ -306,26 +316,38 @@ export default function InventoryDashboard() {
       const response = await http.get('/api/stock', { params });
       const { data } = response.data as PaginatedStockResponse;
 
-      const excelData = data.map((item) => ({
-        'Código': item.codigo_producto,
-        'Artículo': item.descripcion_producto,
-        'Categoría': item.categoria,
-        'Stock': item.stock_actual ?? 0,
-        'Peso (kg)': item.peso_total_kg !== null ? Math.round(item.peso_total_kg * 100) / 100 : '-',
-        'Vol. (L)': item.volumen_total_m3 !== null ? Math.round(item.volumen_total_m3 * 1000 * 100) / 100 : '-',
-        'Stock CEDI': item.stock_cedi ?? 0,
-        'P75/día': item.demanda_p75 !== null ? Math.round(item.demanda_p75 * 10) / 10 : 0,
-        'Días Stock': item.dias_cobertura_actual !== null ? Math.round(item.dias_cobertura_actual * 10) / 10 : '-',
-        'Días SS': item.dias_ss !== null ? Math.round(item.dias_ss * 10) / 10 : '-',
-        'Días ROP': item.dias_rop !== null ? Math.round(item.dias_rop * 10) / 10 : '-',
-        'Días MAX': item.dias_max !== null ? Math.round(item.dias_max * 10) / 10 : '-',
-        'Mín. Exhibición': item.limite_min_forzado ?? '-',
-        'Cap. Máxima': item.limite_max_forzado ?? '-',
-        'Tipo Límite': item.tipo_limite ?? '-',
-        'Estado': item.estado_criticidad || '-',
-        'ABC': item.clase_abc || '-',
-        'Top': item.rank_ventas || '-',
-      }));
+      const excelData = data.map((item) => {
+        const base: Record<string, string | number> = {
+          'Código': item.codigo_producto,
+          'Artículo': item.descripcion_producto,
+          'Categoría': item.categoria,
+          'Stock': item.stock_actual ?? 0,
+          'Peso (kg)': item.peso_total_kg !== null ? Math.round(item.peso_total_kg * 100) / 100 : '-',
+          'Vol. (L)': item.volumen_total_m3 !== null ? Math.round(item.volumen_total_m3 * 1000 * 100) / 100 : '-',
+        };
+        if (isCedi) {
+          base['Stock Tiendas'] = item.stock_tiendas_regional ?? 0;
+          base['P75 Regional'] = item.demanda_p75 !== null ? Math.round(item.demanda_p75 * 10) / 10 : 0;
+        } else {
+          base['Stock CEDI'] = item.stock_cedi ?? 0;
+          base['P75/día'] = item.demanda_p75 !== null ? Math.round(item.demanda_p75 * 10) / 10 : 0;
+        }
+        base['Días Stock'] = item.dias_cobertura_actual !== null ? Math.round(item.dias_cobertura_actual * 10) / 10 : '-';
+        base['Días SS'] = item.dias_ss !== null ? Math.round(item.dias_ss * 10) / 10 : '-';
+        base['Días ROP'] = item.dias_rop !== null ? Math.round(item.dias_rop * 10) / 10 : '-';
+        base['Días MAX'] = item.dias_max !== null ? Math.round(item.dias_max * 10) / 10 : '-';
+        if (!isCedi) {
+          base['Mín. Exhibición'] = item.limite_min_forzado ?? '-';
+          base['Cap. Máxima'] = item.limite_max_forzado ?? '-';
+          base['Tipo Límite'] = item.tipo_limite ?? '-';
+        }
+        base['Estado'] = item.estado_criticidad || '-';
+        base['ABC'] = item.clase_abc || '-';
+        if (!isCedi) {
+          base['Top'] = item.rank_ventas || '-';
+        }
+        return base;
+      });
 
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(excelData);
@@ -597,6 +619,7 @@ export default function InventoryDashboard() {
               <option value="SIN_DEMANDA">Sin demanda</option>
             </select>
           </div>
+          {!isCedi && (
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Stock CEDI</label>
             <select
@@ -609,6 +632,8 @@ export default function InventoryDashboard() {
               <option value="SIN_STOCK">Sin stock</option>
             </select>
           </div>
+          )}
+          {!isCedi && (
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Clasificación</label>
             <select
@@ -623,6 +648,7 @@ export default function InventoryDashboard() {
               <option value="FANTASMA">Fantasma</option>
             </select>
           </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">ABC</label>
             <select
@@ -638,6 +664,7 @@ export default function InventoryDashboard() {
               <option value="SIN_VENTAS">Sin ventas</option>
             </select>
           </div>
+          {!isCedi && (
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Top</label>
             <select
@@ -651,6 +678,8 @@ export default function InventoryDashboard() {
               <option value="200">Top 200</option>
             </select>
           </div>
+          )}
+          {!isCedi && (
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Velocidad</label>
             <select
@@ -666,6 +695,7 @@ export default function InventoryDashboard() {
               <option value="MUY_ALTA">Muy alta (+30/mes)</option>
             </select>
           </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Buscar</label>
             <input
@@ -746,12 +776,21 @@ export default function InventoryDashboard() {
             </div>
             <div>
               <h4 className="font-semibold text-gray-700 mb-2">Otras Métricas</h4>
+              {isCedi ? (
+              <ul className="space-y-1 text-gray-600">
+                <li><span className="inline-block w-20 font-medium">ABC</span> Clasificación regional por volumen de venta agregado de las tiendas</li>
+                <li><span className="inline-block w-20 font-medium">P75 Reg.</span> Demanda regional (suma de P75 de todas las tiendas de la región)</li>
+                <li><span className="inline-block w-20 font-medium">Días</span> Días de cobertura = Stock CEDI / P75 Regional</li>
+                <li><span className="inline-block w-20 font-medium">Tiendas</span> Stock total del producto en las tiendas de la región</li>
+              </ul>
+              ) : (
               <ul className="space-y-1 text-gray-600">
                 <li><span className="inline-block w-20 font-medium">ABC</span> Clasificación por volumen de venta (A=top 50, B=51-200, C=resto)</li>
                 <li><span className="inline-block w-20 font-medium">Top #</span> Ranking por ventas en esta tienda</li>
                 <li><span className="inline-block w-20 font-medium">P75/día</span> Demanda diaria (percentil 75, últimos 20 días)</li>
                 <li><span className="inline-block w-20 font-medium">Días</span> Días de cobertura con stock actual</li>
               </ul>
+              )}
               <div className="mt-2 pt-2 border-t border-gray-200">
                 <p className="text-xs text-gray-500"><span className="text-purple-600">🔒</span> = Límite forzado configurado (pasa el cursor para ver detalle)</p>
               </div>
@@ -784,9 +823,19 @@ export default function InventoryDashboard() {
                     Vol. {sortBy === 'volumen' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">
-                    <span title="Stock disponible en CEDI de la región">CEDI</span>
+                    {isCedi ? (
+                      <span title="Stock total en tiendas de la región">Tiendas</span>
+                    ) : (
+                      <span title="Stock disponible en CEDI de la región">CEDI</span>
+                    )}
                   </th>
-                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">P75/día</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">
+                    {isCedi ? (
+                      <span title="Demanda regional P75 (suma de tiendas de la región)">P75 Reg.</span>
+                    ) : (
+                      'P75/día'
+                    )}
+                  </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('dias_stock')}>
                     Días {sortBy === 'dias_stock' && <span>{sortOrder === 'desc' ? '↓' : '↑'}</span>}
                   </th>
@@ -798,15 +847,17 @@ export default function InventoryDashboard() {
                   </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Estado</th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">ABC</th>
+                  {!isCedi && (
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" onClick={() => handleSort('rank_ventas')}>
                     Top {sortBy === 'rank_ventas' && <span>{sortOrder === 'asc' ? '↑' : '↓'}</span>}
                   </th>
+                  )}
                   <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">His.</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {stockData.length === 0 ? (
-                  <tr><td colSpan={16} className="px-6 py-12 text-center text-gray-500">No se encontraron productos</td></tr>
+                  <tr><td colSpan={isCedi ? 15 : 16} className="px-6 py-12 text-center text-gray-500">No se encontraron productos</td></tr>
                 ) : (
                   stockData.map((item) => (
                     <tr key={`${item.producto_id}-${item.ubicacion_id}`} className="hover:bg-gray-50">
@@ -824,20 +875,36 @@ export default function InventoryDashboard() {
                         {formatVolumen(item.volumen_total_m3)}
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <span className={`font-medium ${(item.stock_cedi ?? 0) <= 0 ? 'text-red-500' : 'text-green-600'}`}>
-                          {formatInteger(item.stock_cedi)}
-                        </span>
+                        {isCedi ? (
+                          <span className={`font-medium ${(item.stock_tiendas_regional ?? 0) <= 0 ? 'text-gray-400' : 'text-blue-600'}`}>
+                            {formatInteger(item.stock_tiendas_regional)}
+                          </span>
+                        ) : (
+                          <span className={`font-medium ${(item.stock_cedi ?? 0) <= 0 ? 'text-red-500' : 'text-green-600'}`}>
+                            {formatInteger(item.stock_cedi)}
+                          </span>
+                        )}
                       </td>
-                      <td className="px-3 py-2 text-center text-gray-600">
-                        {item.demanda_p75 !== null && item.demanda_p75 > 0 ? formatNumber(item.demanda_p75, 1) : '-'}
+                      <td className={`px-3 py-2 text-center text-gray-600 ${isCedi ? 'cursor-pointer hover:bg-purple-50' : ''}`}
+                        onClick={isCedi ? () => { setCediCalculoProduct(item); setShowCediCalculoModal(true); } : undefined}
+                        title={isCedi ? 'Ver desglose del cálculo' : undefined}
+                      >
+                        {item.demanda_p75 !== null && item.demanda_p75 > 0 ? (
+                          <span className={isCedi ? 'text-purple-600 underline decoration-dotted' : ''}>
+                            {formatNumber(item.demanda_p75, 1)}
+                          </span>
+                        ) : '-'}
                       </td>
-                      <td className="px-3 py-2 text-center">
+                      <td className={`px-3 py-2 text-center ${isCedi ? 'cursor-pointer hover:bg-amber-50' : ''}`}
+                        onClick={isCedi ? () => { setCediCalculoProduct(item); setShowCediCalculoModal(true); } : undefined}
+                        title={isCedi ? 'Ver desglose del cálculo' : undefined}
+                      >
                         <span className={`font-medium ${
                           item.dias_cobertura_actual === null ? 'text-gray-400' :
                           item.dias_cobertura_actual < 3 ? 'text-red-600' :
                           item.dias_cobertura_actual < 7 ? 'text-orange-600' :
                           item.dias_cobertura_actual > 30 ? 'text-blue-600' : 'text-gray-900'
-                        }`}>
+                        } ${isCedi ? 'underline decoration-dotted' : ''}`}>
                           {item.dias_cobertura_actual !== null ? (item.dias_cobertura_actual > 999 ? '999+' : formatNumber(item.dias_cobertura_actual, 1)) : '-'}
                         </span>
                       </td>
@@ -871,7 +938,9 @@ export default function InventoryDashboard() {
                       <td className="px-2 py-2 w-24">{renderInventoryLevelIndicator(item)}</td>
                       <td className="px-3 py-2 text-center">{renderEstadoCriticidad(item.estado_criticidad)}</td>
                       <td className="px-3 py-2 text-center">{renderClaseABC(item.clase_abc)}</td>
+                      {!isCedi && (
                       <td className="px-3 py-2 text-center text-gray-600">{item.rank_ventas ? `#${item.rank_ventas}` : '-'}</td>
+                      )}
                       <td className="px-3 py-2 text-center">
                         <button
                           onClick={() => { setSelectedProduct({ codigo: item.codigo_producto, descripcion: item.descripcion_producto }); setShowHistoryModal(true); }}
@@ -934,6 +1003,19 @@ export default function InventoryDashboard() {
         almacenCodigo={selectedAlmacen}
         onAjustesAplicados={() => { loadStock(); loadAnomaliasCount(); }}
       />
+      {cediCalculoProduct && (
+        <CediCalculoModal
+          isOpen={showCediCalculoModal}
+          onClose={() => { setShowCediCalculoModal(false); setCediCalculoProduct(null); }}
+          codigoProducto={cediCalculoProduct.codigo_producto}
+          descripcionProducto={cediCalculoProduct.descripcion_producto}
+          stockActual={cediCalculoProduct.stock_actual}
+          demandaP75={cediCalculoProduct.demanda_p75}
+          diasCobertura={cediCalculoProduct.dias_cobertura_actual}
+          claseAbc={cediCalculoProduct.clase_abc}
+          cediId={selectedUbicacion}
+        />
+      )}
     </div>
   );
 }

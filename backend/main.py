@@ -342,6 +342,8 @@ class StockResponse(BaseModel):
     dias_max: Optional[float] = None  # Días de stock máximo
     # Stock en CEDI de origen
     stock_cedi: Optional[float] = None  # Stock disponible en el CEDI de la región
+    # Stock en tiendas de la región (para vista CEDI)
+    stock_tiendas_regional: Optional[float] = None  # Stock total en tiendas de la región
     # Límites forzados por configuración
     limite_min_forzado: Optional[float] = None  # Mínimo exhibición (unidades)
     limite_max_forzado: Optional[float] = None  # Capacidad máxima (unidades)
@@ -3911,6 +3913,16 @@ async def get_stock(
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
+            # Detectar si la ubicación es un CEDI
+            is_cedi = False
+            cedi_region = None
+            if ubicacion_id:
+                cursor.execute("SELECT tipo, region FROM ubicaciones WHERE id = %s", [ubicacion_id])
+                tipo_row = cursor.fetchone()
+                if tipo_row and tipo_row[0] == 'cedi':
+                    is_cedi = True
+                    cedi_region = tipo_row[1]
+
             # Base params para filtros
             base_params = []
             base_where = "p.activo = true AND u.activo = true"
@@ -3936,237 +3948,422 @@ async def get_stock(
                 base_where += " AND (p.codigo ILIKE %s OR p.descripcion ILIKE %s)"
                 base_params.extend([search_term, search_term])
 
-            # Query principal con CTEs para calcular métricas
-            # Lead time default: 1.5 días
-            # NOTA: Para tienda_18 (PARAÍSO) se excluye 2025-12-06 (inauguración con ventas atípicas)
-            main_query = f"""
-            WITH ventas_20d AS (
-                -- Ventas diarias por producto en la ubicación (últimos 20 días)
-                SELECT
-                    producto_id,
-                    DATE(fecha_venta) as fecha,
-                    SUM(cantidad_vendida) as total_dia
-                FROM ventas
-                WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
-                  AND fecha_venta < CURRENT_DATE
-                  AND NOT (ubicacion_id = 'tienda_18' AND DATE(fecha_venta) = '2025-12-06')
-                GROUP BY producto_id, DATE(fecha_venta)
-            ),
-            demanda_p75 AS (
-                -- P75 de ventas diarias (más conservador que promedio)
-                SELECT
-                    producto_id,
-                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75,
-                    STDDEV(total_dia) as sigma_demanda,
-                    COUNT(DISTINCT fecha) as dias_con_venta
-                FROM ventas_20d
-                GROUP BY producto_id
-            ),
-            ventas_30d AS (
-                -- Total ventas 30 días para clasificación producto
-                SELECT
-                    producto_id,
-                    SUM(cantidad_vendida) as total_30d
-                FROM ventas
-                WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
-                GROUP BY producto_id
-            ),
-            ventas_14d AS (
-                -- Total ventas 14 días para detectar dormidos
-                SELECT
-                    producto_id,
-                    SUM(cantidad_vendida) as total_14d
-                FROM ventas
-                WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '14 days'
-                GROUP BY producto_id
-            ),
-            ventas_60d AS (
-                -- Total ventas 60 días (2 meses)
-                SELECT
-                    producto_id,
-                    SUM(cantidad_vendida) as total_60d
-                FROM ventas
-                WHERE ubicacion_id = %s
-                  AND fecha_venta >= CURRENT_DATE - INTERVAL '60 days'
-                GROUP BY producto_id
-            ),
-            tienda_region AS (
-                -- Obtener la región de la tienda
-                SELECT region FROM ubicaciones WHERE id = %s
-            ),
-            stock_cedi AS (
-                -- Stock disponible en TODOS los CEDIs de la misma región
-                SELECT
-                    ia.producto_id,
-                    SUM(ia.cantidad) as cantidad_cedi
-                FROM inventario_actual ia
-                INNER JOIN ubicaciones cedi ON cedi.id = ia.ubicacion_id
-                WHERE cedi.tipo = 'cedi'
-                  AND cedi.region = (SELECT region FROM tienda_region)
-                GROUP BY ia.producto_id
-            ),
-            abc_tienda AS (
-                -- Clasificación ABC de la tienda
-                SELECT
-                    producto_id,
-                    clase_abc,
-                    rank_cantidad
-                FROM productos_abc_tienda
-                WHERE ubicacion_id = %s
-            ),
-            config_abc AS (
-                -- Configuración de días de cobertura por tienda (de config_parametros_abc_tienda)
-                SELECT
-                    COALESCE(lead_time_override, 1.5) as lead_time,
-                    COALESCE(dias_cobertura_a, 7) as dias_cob_a,
-                    COALESCE(dias_cobertura_b, 14) as dias_cob_b,
-                    COALESCE(dias_cobertura_c, 21) as dias_cob_c,
-                    COALESCE(clase_d_dias_cobertura, 30) as dias_cob_d
-                FROM config_parametros_abc_tienda
-                WHERE tienda_id = %s AND activo = true
-            ),
-            limites_forzados AS (
-                -- Límites forzados por configuración (capacidad máxima y mínimo exhibición)
-                SELECT
-                    producto_codigo,
-                    capacidad_maxima_unidades as limite_max_forzado,
-                    minimo_exhibicion_unidades as limite_min_forzado,
-                    tipo_restriccion as tipo_limite
-                FROM capacidad_almacenamiento_producto
-                WHERE tienda_id = %s AND activo = true
-            ),
-            stock_data AS (
-                SELECT
-                    ia.ubicacion_id,
-                    u.nombre as ubicacion_nombre,
-                    'tienda' as tipo_ubicacion,
-                    ia.producto_id,
-                    COALESCE(p.codigo, '') as codigo_producto,
-                    COALESCE(p.codigo_barras, '') as codigo_barras,
-                    COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
-                    COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
-                    COALESCE(p.marca, '') as marca,
-                    ia.cantidad as stock_actual,
-                    -- Peso y volumen del producto
-                    COALESCE(p.peso_unitario, 0) as peso_unitario_kg,
-                    COALESCE(p.volumen_unitario, 0) as volumen_unitario_m3,
-                    -- Demanda P75
-                    COALESCE(dp.p75, 0) as demanda_p75,
-                    COALESCE(dp.sigma_demanda, 0) as sigma_demanda,
-                    -- Clase ABC y ranking
-                    COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
-                    abc.rank_cantidad as rank_ventas,
-                    -- Configuración ABC desde config_parametros_abc_tienda
-                    COALESCE((SELECT lead_time FROM config_abc), 1.5) as lead_time,
-                    -- Días de cobertura MAX según clase ABC (esto es el stock_max_mult en días)
-                    CASE COALESCE(abc.clase_abc, 'C')
-                        WHEN 'A' THEN COALESCE((SELECT dias_cob_a FROM config_abc), 7)
-                        WHEN 'B' THEN COALESCE((SELECT dias_cob_b FROM config_abc), 14)
-                        WHEN 'C' THEN COALESCE((SELECT dias_cob_c FROM config_abc), 21)
-                        ELSE COALESCE((SELECT dias_cob_d FROM config_abc), 30)
-                    END as dias_cobertura_objetivo,
-                    -- Ventas para clasificación producto
-                    COALESCE(v30.total_30d, 0) as ventas_30d,
-                    COALESCE(v14.total_14d, 0) as ventas_14d,
-                    COALESCE(v60.total_60d, 0) as ventas_60d,
-                    -- Stock en CEDI
-                    COALESCE(sc.cantidad_cedi, 0) as stock_cedi,
-                    -- Límites forzados por configuración
-                    lf.limite_min_forzado,
-                    lf.limite_max_forzado,
-                    lf.tipo_limite,
-                    -- Metadata
-                    TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion
-                FROM inventario_actual ia
-                INNER JOIN productos p ON ia.producto_id = p.id
-                INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
-                LEFT JOIN demanda_p75 dp ON dp.producto_id = ia.producto_id
-                LEFT JOIN abc_tienda abc ON abc.producto_id = ia.producto_id
-                LEFT JOIN ventas_60d v60 ON v60.producto_id = ia.producto_id
-                LEFT JOIN ventas_30d v30 ON v30.producto_id = ia.producto_id
-                LEFT JOIN ventas_14d v14 ON v14.producto_id = ia.producto_id
-                LEFT JOIN stock_cedi sc ON sc.producto_id = ia.producto_id
-                LEFT JOIN limites_forzados lf ON lf.producto_codigo = p.codigo
-                WHERE {base_where}
-            ),
-            calculated AS (
-                SELECT
-                    *,
-                    -- Parámetros de inventario en DÍAS (basados en config de tienda)
-                    -- SS = lead_time (stock mínimo para cubrir tiempo de entrega)
-                    lead_time as dias_ss,
-                    -- ROP = lead_time + (dias_cobertura / 2) (punto medio entre SS y MAX)
-                    lead_time + (dias_cobertura_objetivo / 2.0) as dias_rop,
-                    -- MAX = lead_time + dias_cobertura (cobertura total objetivo)
-                    lead_time + dias_cobertura_objetivo as dias_max,
-                    -- Calcular parámetros de inventario en UNIDADES
-                    CASE WHEN demanda_p75 > 0 THEN
-                        demanda_p75 * lead_time
-                    ELSE 0 END as stock_seguridad,
-                    CASE WHEN demanda_p75 > 0 THEN
-                        demanda_p75 * (lead_time + dias_cobertura_objetivo / 2.0)
-                    ELSE 0 END as punto_reorden,
-                    CASE WHEN demanda_p75 > 0 THEN
-                        demanda_p75 * (lead_time + dias_cobertura_objetivo)
-                    ELSE 0 END as stock_maximo,
-                    -- Días de cobertura actual
-                    CASE WHEN demanda_p75 > 0 THEN
-                        stock_actual / demanda_p75
-                    ELSE NULL END as dias_cobertura_actual,
-                    -- Clasificación de producto
-                    CASE
-                        WHEN stock_actual <= 0 AND ventas_30d = 0 THEN 'FANTASMA'
-                        WHEN stock_actual <= 0 AND ventas_30d > 0 THEN 'ANOMALIA'
-                        WHEN stock_actual > 0 AND ventas_14d = 0 THEN 'DORMIDO'
-                        ELSE 'ACTIVO'
-                    END as clasificacion_producto,
-                    -- Velocidad de venta (basado en ventas_30d)
-                    CASE
-                        WHEN ventas_30d = 0 THEN 'SIN_VENTAS'
-                        WHEN ventas_30d BETWEEN 1 AND 5 THEN 'BAJA'
-                        WHEN ventas_30d BETWEEN 6 AND 15 THEN 'MEDIA'
-                        WHEN ventas_30d BETWEEN 16 AND 30 THEN 'ALTA'
-                        ELSE 'MUY_ALTA'
-                    END as velocidad_venta
-                FROM stock_data
-            ),
-            final AS (
-                SELECT
-                    *,
-                    -- Estado de criticidad basado en SS, ROP, MAX
-                    CASE
-                        WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
-                        WHEN dias_cobertura_actual IS NULL THEN 'SIN_DEMANDA'
-                        WHEN stock_actual <= stock_seguridad THEN 'CRITICO'
-                        WHEN stock_actual <= punto_reorden THEN 'URGENTE'
-                        WHEN stock_actual <= stock_maximo THEN 'OPTIMO'
-                        ELSE 'EXCESO'
-                    END as estado_criticidad,
-                    -- Estado stock legacy
-                    CASE
-                        WHEN stock_actual = 0 THEN 'sin_stock'
-                        WHEN stock_actual < 0 THEN 'stock_negativo'
-                        ELSE 'normal'
-                    END as estado_stock
-                FROM calculated
-            )
-            SELECT * FROM final
-            WHERE 1=1
-            """
+            # =====================================================================
+            # QUERY PRINCIPAL: rama diferente para CEDI vs Tienda
+            # =====================================================================
+            if is_cedi and ubicacion_id:
+                # --- CEDI: P75 regional (suma de tiendas), ABC regional ---
+                main_query = f"""
+                WITH tiendas_region AS (
+                    -- Tiendas activas de la misma región que el CEDI
+                    SELECT id FROM ubicaciones
+                    WHERE region = %s
+                      AND tipo = 'tienda' AND activo = true
+                ),
+                ventas_30d_regional AS (
+                    -- Ventas diarias de TODAS las tiendas de la región (30 días)
+                    SELECT
+                        producto_id,
+                        ubicacion_id,
+                        DATE(fecha_venta) as fecha,
+                        SUM(cantidad_vendida) as cantidad_dia
+                    FROM ventas
+                    WHERE ubicacion_id IN (SELECT id FROM tiendas_region)
+                      AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                      AND fecha_venta < CURRENT_DATE
+                      AND NOT (ubicacion_id = 'tienda_18' AND DATE(fecha_venta) = '2025-12-06')
+                    GROUP BY producto_id, ubicacion_id, DATE(fecha_venta)
+                ),
+                p75_por_tienda AS (
+                    -- P75 por producto por tienda
+                    SELECT
+                        producto_id,
+                        ubicacion_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as p75_tienda,
+                        STDDEV(cantidad_dia) as sigma_tienda
+                    FROM ventas_30d_regional
+                    GROUP BY producto_id, ubicacion_id
+                ),
+                demanda_p75 AS (
+                    -- P75 regional = SUMA de P75 de todas las tiendas
+                    SELECT
+                        producto_id,
+                        SUM(COALESCE(p75_tienda, 0)) as p75,
+                        SQRT(SUM(COALESCE(sigma_tienda * sigma_tienda, 0))) as sigma_demanda,
+                        COUNT(DISTINCT ubicacion_id) as dias_con_venta
+                    FROM p75_por_tienda
+                    GROUP BY producto_id
+                    HAVING SUM(COALESCE(p75_tienda, 0)) > 0
+                ),
+                abc_ranking AS (
+                    -- ABC regional: ranking por cantidad vendida agregada de la región
+                    SELECT
+                        producto_id,
+                        SUM(cantidad_dia) as cantidad_total,
+                        ROW_NUMBER() OVER (ORDER BY SUM(cantidad_dia) DESC) as rank_cantidad
+                    FROM ventas_30d_regional
+                    GROUP BY producto_id
+                ),
+                abc_regional AS (
+                    SELECT
+                        producto_id,
+                        rank_cantidad,
+                        CASE
+                            WHEN rank_cantidad <= 50 THEN 'A'
+                            WHEN rank_cantidad <= 200 THEN 'B'
+                            WHEN rank_cantidad <= 800 THEN 'C'
+                            ELSE 'D'
+                        END as clase_abc
+                    FROM abc_ranking
+                ),
+                stock_tiendas AS (
+                    -- Stock total en tiendas de la región (para la columna "Tiendas")
+                    SELECT
+                        ia.producto_id,
+                        SUM(ia.cantidad) as cantidad_tiendas
+                    FROM inventario_actual ia
+                    WHERE ia.ubicacion_id IN (SELECT id FROM tiendas_region)
+                    GROUP BY ia.producto_id
+                ),
+                stock_data AS (
+                    SELECT
+                        ia.ubicacion_id,
+                        u.nombre as ubicacion_nombre,
+                        'cedi' as tipo_ubicacion,
+                        ia.producto_id,
+                        COALESCE(p.codigo, '') as codigo_producto,
+                        COALESCE(p.codigo_barras, '') as codigo_barras,
+                        COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
+                        COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
+                        COALESCE(p.marca, '') as marca,
+                        ia.cantidad as stock_actual,
+                        -- Peso y volumen del producto
+                        COALESCE(p.peso_unitario, 0) as peso_unitario_kg,
+                        COALESCE(p.volumen_unitario, 0) as volumen_unitario_m3,
+                        -- Demanda P75 regional
+                        COALESCE(dp.p75, 0) as demanda_p75,
+                        COALESCE(dp.sigma_demanda, 0) as sigma_demanda,
+                        -- Clase ABC regional
+                        COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
+                        abc.rank_cantidad as rank_ventas,
+                        -- Lead time para CEDI (default 2.0 días)
+                        2.0 as lead_time,
+                        -- Días de cobertura MAX según clase ABC
+                        CASE COALESCE(abc.clase_abc, 'C')
+                            WHEN 'A' THEN 7
+                            WHEN 'B' THEN 14
+                            WHEN 'C' THEN 21
+                            ELSE 30
+                        END as dias_cobertura_objetivo,
+                        -- Ventas: NULL para CEDIs (no venden)
+                        0 as ventas_30d,
+                        0 as ventas_14d,
+                        0 as ventas_60d,
+                        -- Stock en tiendas de la región (reemplaza stock_cedi)
+                        COALESCE(st.cantidad_tiendas, 0) as stock_cedi,
+                        -- Stock tiendas regional (campo nuevo)
+                        COALESCE(st.cantidad_tiendas, 0) as stock_tiendas_regional,
+                        -- Límites forzados: no aplica a CEDIs
+                        NULL::numeric as limite_min_forzado,
+                        NULL::numeric as limite_max_forzado,
+                        NULL::text as tipo_limite,
+                        -- Metadata
+                        TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion
+                    FROM inventario_actual ia
+                    INNER JOIN productos p ON ia.producto_id = p.id
+                    INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                    LEFT JOIN demanda_p75 dp ON dp.producto_id = ia.producto_id
+                    LEFT JOIN abc_regional abc ON abc.producto_id = ia.producto_id
+                    LEFT JOIN stock_tiendas st ON st.producto_id = ia.producto_id
+                    WHERE {base_where}
+                ),
+                calculated AS (
+                    SELECT
+                        *,
+                        -- Parámetros de inventario en DÍAS (fórmula simplificada, igual que tiendas)
+                        lead_time as dias_ss,
+                        lead_time + (dias_cobertura_objetivo / 2.0) as dias_rop,
+                        lead_time + dias_cobertura_objetivo as dias_max,
+                        -- Parámetros en UNIDADES
+                        CASE WHEN demanda_p75 > 0 THEN
+                            demanda_p75 * lead_time
+                        ELSE 0 END as stock_seguridad,
+                        CASE WHEN demanda_p75 > 0 THEN
+                            demanda_p75 * (lead_time + dias_cobertura_objetivo / 2.0)
+                        ELSE 0 END as punto_reorden,
+                        CASE WHEN demanda_p75 > 0 THEN
+                            demanda_p75 * (lead_time + dias_cobertura_objetivo)
+                        ELSE 0 END as stock_maximo,
+                        -- Días de cobertura actual = stock / P75 regional
+                        CASE WHEN demanda_p75 > 0 THEN
+                            stock_actual / demanda_p75
+                        ELSE NULL END as dias_cobertura_actual,
+                        -- Clasificación de producto: NULL para CEDIs (no aplica FANTASMA/DORMIDO)
+                        NULL::text as clasificacion_producto,
+                        -- Velocidad de venta: NULL para CEDIs
+                        NULL::text as velocidad_venta
+                    FROM stock_data
+                ),
+                final AS (
+                    SELECT
+                        *,
+                        -- Estado de criticidad basado en SS, ROP, MAX
+                        CASE
+                            WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
+                            WHEN dias_cobertura_actual IS NULL THEN 'SIN_DEMANDA'
+                            WHEN stock_actual <= stock_seguridad THEN 'CRITICO'
+                            WHEN stock_actual <= punto_reorden THEN 'URGENTE'
+                            WHEN stock_actual <= stock_maximo THEN 'OPTIMO'
+                            ELSE 'EXCESO'
+                        END as estado_criticidad,
+                        CASE
+                            WHEN stock_actual = 0 THEN 'sin_stock'
+                            WHEN stock_actual < 0 THEN 'stock_negativo'
+                            ELSE 'normal'
+                        END as estado_stock
+                    FROM calculated
+                )
+                SELECT * FROM final
+                WHERE 1=1
+                """
 
-            # Params para los CTEs (ubicacion_id se usa 8 veces en CTEs)
-            # Luego base_params puede agregar más (ubicacion_id, almacen, categoria, search)
-            query_params = []
-            if ubicacion_id:
-                # 8 veces para los CTEs: ventas_20d, ventas_30d, ventas_14d, ventas_60d, cedi_region, abc_tienda, config_abc, limites_forzados
-                query_params = [ubicacion_id] * 8 + base_params
+                # Params: cedi_region (1 vez para tiendas_region) + base_params
+                query_params = [cedi_region] + base_params
+
             else:
-                # Sin ubicacion_id, los CTEs de ventas no funcionan bien
-                # Usamos un valor que no matchea nada para evitar errores SQL
-                query_params = ['__none__'] * 8 + base_params
+                # --- TIENDA: lógica original (P75 de la tienda, ABC de la tienda) ---
+                # Lead time default: 1.5 días
+                # NOTA: Para tienda_18 (PARAÍSO) se excluye 2025-12-06 (inauguración con ventas atípicas)
+                main_query = f"""
+                WITH ventas_20d AS (
+                    -- Ventas diarias por producto en la ubicación (últimos 20 días)
+                    SELECT
+                        producto_id,
+                        DATE(fecha_venta) as fecha,
+                        SUM(cantidad_vendida) as total_dia
+                    FROM ventas
+                    WHERE ubicacion_id = %s
+                      AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
+                      AND fecha_venta < CURRENT_DATE
+                      AND NOT (ubicacion_id = 'tienda_18' AND DATE(fecha_venta) = '2025-12-06')
+                    GROUP BY producto_id, DATE(fecha_venta)
+                ),
+                demanda_p75 AS (
+                    -- P75 de ventas diarias (más conservador que promedio)
+                    SELECT
+                        producto_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75,
+                        STDDEV(total_dia) as sigma_demanda,
+                        COUNT(DISTINCT fecha) as dias_con_venta
+                    FROM ventas_20d
+                    GROUP BY producto_id
+                ),
+                ventas_30d AS (
+                    -- Total ventas 30 días para clasificación producto
+                    SELECT
+                        producto_id,
+                        SUM(cantidad_vendida) as total_30d
+                    FROM ventas
+                    WHERE ubicacion_id = %s
+                      AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+                    GROUP BY producto_id
+                ),
+                ventas_14d AS (
+                    -- Total ventas 14 días para detectar dormidos
+                    SELECT
+                        producto_id,
+                        SUM(cantidad_vendida) as total_14d
+                    FROM ventas
+                    WHERE ubicacion_id = %s
+                      AND fecha_venta >= CURRENT_DATE - INTERVAL '14 days'
+                    GROUP BY producto_id
+                ),
+                ventas_60d AS (
+                    -- Total ventas 60 días (2 meses)
+                    SELECT
+                        producto_id,
+                        SUM(cantidad_vendida) as total_60d
+                    FROM ventas
+                    WHERE ubicacion_id = %s
+                      AND fecha_venta >= CURRENT_DATE - INTERVAL '60 days'
+                    GROUP BY producto_id
+                ),
+                tienda_region AS (
+                    -- Obtener la región de la tienda
+                    SELECT region FROM ubicaciones WHERE id = %s
+                ),
+                stock_cedi AS (
+                    -- Stock disponible en TODOS los CEDIs de la misma región
+                    SELECT
+                        ia.producto_id,
+                        SUM(ia.cantidad) as cantidad_cedi
+                    FROM inventario_actual ia
+                    INNER JOIN ubicaciones cedi ON cedi.id = ia.ubicacion_id
+                    WHERE cedi.tipo = 'cedi'
+                      AND cedi.region = (SELECT region FROM tienda_region)
+                    GROUP BY ia.producto_id
+                ),
+                abc_tienda AS (
+                    -- Clasificación ABC de la tienda
+                    SELECT
+                        producto_id,
+                        clase_abc,
+                        rank_cantidad
+                    FROM productos_abc_tienda
+                    WHERE ubicacion_id = %s
+                ),
+                config_abc AS (
+                    -- Configuración de días de cobertura por tienda (de config_parametros_abc_tienda)
+                    SELECT
+                        COALESCE(lead_time_override, 1.5) as lead_time,
+                        COALESCE(dias_cobertura_a, 7) as dias_cob_a,
+                        COALESCE(dias_cobertura_b, 14) as dias_cob_b,
+                        COALESCE(dias_cobertura_c, 21) as dias_cob_c,
+                        COALESCE(clase_d_dias_cobertura, 30) as dias_cob_d
+                    FROM config_parametros_abc_tienda
+                    WHERE tienda_id = %s AND activo = true
+                ),
+                limites_forzados AS (
+                    -- Límites forzados por configuración (capacidad máxima y mínimo exhibición)
+                    SELECT
+                        producto_codigo,
+                        capacidad_maxima_unidades as limite_max_forzado,
+                        minimo_exhibicion_unidades as limite_min_forzado,
+                        tipo_restriccion as tipo_limite
+                    FROM capacidad_almacenamiento_producto
+                    WHERE tienda_id = %s AND activo = true
+                ),
+                stock_data AS (
+                    SELECT
+                        ia.ubicacion_id,
+                        u.nombre as ubicacion_nombre,
+                        'tienda' as tipo_ubicacion,
+                        ia.producto_id,
+                        COALESCE(p.codigo, '') as codigo_producto,
+                        COALESCE(p.codigo_barras, '') as codigo_barras,
+                        COALESCE(NULLIF(p.descripcion, ''), 'Sin Descripción') as descripcion_producto,
+                        COALESCE(NULLIF(p.categoria, ''), 'Sin Categoría') as categoria,
+                        COALESCE(p.marca, '') as marca,
+                        ia.cantidad as stock_actual,
+                        -- Peso y volumen del producto
+                        COALESCE(p.peso_unitario, 0) as peso_unitario_kg,
+                        COALESCE(p.volumen_unitario, 0) as volumen_unitario_m3,
+                        -- Demanda P75
+                        COALESCE(dp.p75, 0) as demanda_p75,
+                        COALESCE(dp.sigma_demanda, 0) as sigma_demanda,
+                        -- Clase ABC y ranking
+                        COALESCE(abc.clase_abc, 'SIN_VENTAS') as clase_abc,
+                        abc.rank_cantidad as rank_ventas,
+                        -- Configuración ABC desde config_parametros_abc_tienda
+                        COALESCE((SELECT lead_time FROM config_abc), 1.5) as lead_time,
+                        -- Días de cobertura MAX según clase ABC (esto es el stock_max_mult en días)
+                        CASE COALESCE(abc.clase_abc, 'C')
+                            WHEN 'A' THEN COALESCE((SELECT dias_cob_a FROM config_abc), 7)
+                            WHEN 'B' THEN COALESCE((SELECT dias_cob_b FROM config_abc), 14)
+                            WHEN 'C' THEN COALESCE((SELECT dias_cob_c FROM config_abc), 21)
+                            ELSE COALESCE((SELECT dias_cob_d FROM config_abc), 30)
+                        END as dias_cobertura_objetivo,
+                        -- Ventas para clasificación producto
+                        COALESCE(v30.total_30d, 0) as ventas_30d,
+                        COALESCE(v14.total_14d, 0) as ventas_14d,
+                        COALESCE(v60.total_60d, 0) as ventas_60d,
+                        -- Stock en CEDI
+                        COALESCE(sc.cantidad_cedi, 0) as stock_cedi,
+                        -- Stock tiendas regional: NULL para tiendas
+                        NULL::numeric as stock_tiendas_regional,
+                        -- Límites forzados por configuración
+                        lf.limite_min_forzado,
+                        lf.limite_max_forzado,
+                        lf.tipo_limite,
+                        -- Metadata
+                        TO_CHAR(ia.fecha_actualizacion, 'YYYY-MM-DD HH24:MI:SS') as fecha_extraccion
+                    FROM inventario_actual ia
+                    INNER JOIN productos p ON ia.producto_id = p.id
+                    INNER JOIN ubicaciones u ON ia.ubicacion_id = u.id
+                    LEFT JOIN demanda_p75 dp ON dp.producto_id = ia.producto_id
+                    LEFT JOIN abc_tienda abc ON abc.producto_id = ia.producto_id
+                    LEFT JOIN ventas_60d v60 ON v60.producto_id = ia.producto_id
+                    LEFT JOIN ventas_30d v30 ON v30.producto_id = ia.producto_id
+                    LEFT JOIN ventas_14d v14 ON v14.producto_id = ia.producto_id
+                    LEFT JOIN stock_cedi sc ON sc.producto_id = ia.producto_id
+                    LEFT JOIN limites_forzados lf ON lf.producto_codigo = p.codigo
+                    WHERE {base_where}
+                ),
+                calculated AS (
+                    SELECT
+                        *,
+                        -- Parámetros de inventario en DÍAS (basados en config de tienda)
+                        -- SS = lead_time (stock mínimo para cubrir tiempo de entrega)
+                        lead_time as dias_ss,
+                        -- ROP = lead_time + (dias_cobertura / 2) (punto medio entre SS y MAX)
+                        lead_time + (dias_cobertura_objetivo / 2.0) as dias_rop,
+                        -- MAX = lead_time + dias_cobertura (cobertura total objetivo)
+                        lead_time + dias_cobertura_objetivo as dias_max,
+                        -- Calcular parámetros de inventario en UNIDADES
+                        CASE WHEN demanda_p75 > 0 THEN
+                            demanda_p75 * lead_time
+                        ELSE 0 END as stock_seguridad,
+                        CASE WHEN demanda_p75 > 0 THEN
+                            demanda_p75 * (lead_time + dias_cobertura_objetivo / 2.0)
+                        ELSE 0 END as punto_reorden,
+                        CASE WHEN demanda_p75 > 0 THEN
+                            demanda_p75 * (lead_time + dias_cobertura_objetivo)
+                        ELSE 0 END as stock_maximo,
+                        -- Días de cobertura actual
+                        CASE WHEN demanda_p75 > 0 THEN
+                            stock_actual / demanda_p75
+                        ELSE NULL END as dias_cobertura_actual,
+                        -- Clasificación de producto
+                        CASE
+                            WHEN stock_actual <= 0 AND ventas_30d = 0 THEN 'FANTASMA'
+                            WHEN stock_actual <= 0 AND ventas_30d > 0 THEN 'ANOMALIA'
+                            WHEN stock_actual > 0 AND ventas_14d = 0 THEN 'DORMIDO'
+                            ELSE 'ACTIVO'
+                        END as clasificacion_producto,
+                        -- Velocidad de venta (basado en ventas_30d)
+                        CASE
+                            WHEN ventas_30d = 0 THEN 'SIN_VENTAS'
+                            WHEN ventas_30d BETWEEN 1 AND 5 THEN 'BAJA'
+                            WHEN ventas_30d BETWEEN 6 AND 15 THEN 'MEDIA'
+                            WHEN ventas_30d BETWEEN 16 AND 30 THEN 'ALTA'
+                            ELSE 'MUY_ALTA'
+                        END as velocidad_venta
+                    FROM stock_data
+                ),
+                final AS (
+                    SELECT
+                        *,
+                        -- Estado de criticidad basado en SS, ROP, MAX
+                        CASE
+                            WHEN demanda_p75 = 0 OR demanda_p75 IS NULL THEN 'SIN_DEMANDA'
+                            WHEN dias_cobertura_actual IS NULL THEN 'SIN_DEMANDA'
+                            WHEN stock_actual <= stock_seguridad THEN 'CRITICO'
+                            WHEN stock_actual <= punto_reorden THEN 'URGENTE'
+                            WHEN stock_actual <= stock_maximo THEN 'OPTIMO'
+                            ELSE 'EXCESO'
+                        END as estado_criticidad,
+                        -- Estado stock legacy
+                        CASE
+                            WHEN stock_actual = 0 THEN 'sin_stock'
+                            WHEN stock_actual < 0 THEN 'stock_negativo'
+                            ELSE 'normal'
+                        END as estado_stock
+                    FROM calculated
+                )
+                SELECT * FROM final
+                WHERE 1=1
+                """
+
+                # Params para los CTEs (ubicacion_id se usa 8 veces en CTEs)
+                # Luego base_params puede agregar más (ubicacion_id, almacen, categoria, search)
+                query_params = []
+                if ubicacion_id:
+                    # 8 veces para los CTEs: ventas_20d, ventas_30d, ventas_14d, ventas_60d, cedi_region, abc_tienda, config_abc, limites_forzados
+                    query_params = [ubicacion_id] * 8 + base_params
+                else:
+                    # Sin ubicacion_id, los CTEs de ventas no funcionan bien
+                    # Usamos un valor que no matchea nada para evitar errores SQL
+                    query_params = ['__none__'] * 8 + base_params
 
             # Filtros adicionales sobre campos calculados
             filter_params = []
@@ -4289,6 +4486,8 @@ async def get_stock(
                 dias_max=row_dict.get('dias_max'),
                 # Stock en CEDI
                 stock_cedi=row_dict.get('stock_cedi'),
+                # Stock en tiendas de la región (para vista CEDI)
+                stock_tiendas_regional=row_dict.get('stock_tiendas_regional'),
                 # Límites forzados por configuración
                 limite_min_forzado=row_dict.get('limite_min_forzado'),
                 limite_max_forzado=row_dict.get('limite_max_forzado'),
