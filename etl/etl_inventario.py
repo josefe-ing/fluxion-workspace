@@ -32,6 +32,13 @@ try:
 except ImportError:
     POSTGRES_AVAILABLE = False
 
+# ExecutionTracker for detailed ETL tracking
+try:
+    from core.execution_tracker import ExecutionTracker, ETLPhase, ErrorCategory
+    EXECUTION_TRACKER_AVAILABLE = True
+except ImportError:
+    EXECUTION_TRACKER_AVAILABLE = False
+
 
 def check_concurrent_etl(etl_name: str = 'inventario', max_age_minutes: int = 120) -> bool:
     """
@@ -147,6 +154,12 @@ class MultiTiendaETL:
         self.results = []
         self.execution_id = None
 
+        # ExecutionTracker for detailed tracking
+        if EXECUTION_TRACKER_AVAILABLE:
+            self.tracker = ExecutionTracker()
+        else:
+            self.tracker = None
+
     def _track_start(self, tiendas: List[str]) -> None:
         """Registra inicio de ejecución ETL en PostgreSQL"""
         if not POSTGRES_AVAILABLE:
@@ -253,6 +266,16 @@ class MultiTiendaETL:
             # DETECTAR SISTEMA POS Y DELEGAR AL ETL APROPIADO
             sistema_pos = getattr(config, 'sistema_pos', 'stellar')
 
+            # Start tracking tienda with ExecutionTracker
+            if self.tracker:
+                self.tracker.start_tienda(
+                    tienda_id=tienda_id,
+                    tienda_nombre=config.ubicacion_nombre,
+                    source_system='klk' if sistema_pos == 'klk' else 'stellar',
+                    server_ip=getattr(config, 'server_ip', None),
+                    server_port=getattr(config, 'port', None)
+                )
+
             if sistema_pos == 'klk':
                 logger.info(f"🏪 Procesando: {config.ubicacion_nombre} (KLK POS)")
                 return self._ejecutar_etl_klk(tienda_id, config, start_time, monitor)
@@ -288,6 +311,10 @@ class MultiTiendaETL:
 
     def _ejecutar_etl_stellar(self, tienda_id: str, config, start_time: float, monitor) -> Dict[str, Any]:
         """Ejecuta ETL para tiendas con Stellar POS (SQL Server)"""
+        registros_extraidos = 0
+        registros_transformados = 0
+        registros_cargados = 0
+
         try:
             # Configurar config de base de datos
             db_config = DatabaseConfig(
@@ -302,6 +329,9 @@ class MultiTiendaETL:
             )
 
             # 1. EXTRACCIÓN
+            if self.tracker:
+                self.tracker.start_phase(ETLPhase.EXTRACT)
+
             logger.info(f"   📥 Extrayendo datos...")
             query_params = {'codigo_deposito': config.codigo_deposito}
 
@@ -313,6 +343,13 @@ class MultiTiendaETL:
 
             if raw_data is None or raw_data.empty:
                 logger.warning(f"   ⚠️ Sin datos para {config.ubicacion_nombre}")
+                if self.tracker:
+                    self.tracker.finish_phase(ETLPhase.EXTRACT, records=0)
+                    self.tracker.finish_tienda_success(
+                        records_extracted=0,
+                        records_loaded=0,
+                        duplicates_skipped=0
+                    )
                 return {
                     "tienda_id": tienda_id,
                     "nombre": config.ubicacion_nombre,
@@ -325,13 +362,27 @@ class MultiTiendaETL:
             registros_extraidos = len(raw_data)
             logger.info(f"   ✅ Extraídos: {registros_extraidos} registros")
 
+            if self.tracker:
+                self.tracker.finish_phase(ETLPhase.EXTRACT, records=registros_extraidos)
+
             # 2. TRANSFORMACIÓN
+            if self.tracker:
+                self.tracker.start_phase(ETLPhase.TRANSFORM)
+
             logger.info(f"   🔄 Transformando datos...")
             raw_data_dict = {config.ubicacion_id: raw_data}
             transformed_data = self.transformer.transform_inventory_data(raw_data_dict)
 
             if transformed_data.empty:
                 logger.warning(f"   ⚠️ Sin datos transformados para {config.ubicacion_nombre}")
+                if self.tracker:
+                    self.tracker.finish_phase(ETLPhase.TRANSFORM, records=0)
+                    self.tracker.finish_tienda_error(
+                        phase=ETLPhase.TRANSFORM,
+                        category=ExecutionTracker.classify_error(Exception("Sin datos transformados"), ETLPhase.TRANSFORM),
+                        message="Sin datos transformados",
+                        records_extracted=registros_extraidos
+                    )
                 return {
                     "tienda_id": tienda_id,
                     "nombre": config.ubicacion_nombre,
@@ -344,30 +395,53 @@ class MultiTiendaETL:
             registros_transformados = len(transformed_data)
             logger.info(f"   ✅ Transformados: {registros_transformados} registros")
 
+            if self.tracker:
+                self.tracker.finish_phase(ETLPhase.TRANSFORM, records=registros_transformados)
+
             # 3. CARGA
+            if self.tracker:
+                self.tracker.start_phase(ETLPhase.LOAD)
+
             logger.info(f"   💾 Cargando a base de datos...")
             result = self.loader.load_inventory_data(transformed_data)
 
             if result["success"]:
-                logger.info(f"   ✅ Cargados: {result['stats']['insertados']} registros")
+                registros_cargados = result['stats']['insertados']
+                logger.info(f"   ✅ Cargados: {registros_cargados} registros")
+
+                if self.tracker:
+                    self.tracker.finish_phase(ETLPhase.LOAD, records=registros_cargados)
+                    self.tracker.finish_tienda_success(
+                        records_extracted=registros_extraidos,
+                        records_loaded=registros_cargados,
+                        duplicates_skipped=0
+                    )
 
                 # Reportar métricas a Sentry
                 if monitor:
                     tiempo_proceso = time.time() - start_time
-                    monitor.add_metric("registros_cargados", result['stats']['insertados'])
+                    monitor.add_metric("registros_cargados", registros_cargados)
                     monitor.add_metric("tiempo_proceso", tiempo_proceso)
-                    monitor.set_success(registros_cargados=result['stats']['insertados'])
+                    monitor.set_success(registros_cargados=registros_cargados)
 
                 return {
                     "tienda_id": tienda_id,
                     "nombre": config.ubicacion_nombre,
                     "success": True,
                     "message": "ETL completado exitosamente",
-                    "registros": result['stats']['insertados'],
+                    "registros": registros_cargados,
                     "tiempo_proceso": time.time() - start_time
                 }
             else:
                 logger.error(f"   ❌ Error en carga: {result.get('message')}")
+                if self.tracker:
+                    self.tracker.finish_phase(ETLPhase.LOAD, records=0)
+                    self.tracker.finish_tienda_error(
+                        phase=ETLPhase.LOAD,
+                        category=ExecutionTracker.classify_error(Exception(result.get('message')), ETLPhase.LOAD),
+                        message=result.get('message'),
+                        records_extracted=registros_extraidos
+                    )
                 return {
                     "tienda_id": tienda_id,
                     "nombre": config.ubicacion_nombre,
@@ -379,6 +453,23 @@ class MultiTiendaETL:
 
         except Exception as e:
             logger.error(f"   ❌ Error en ETL Stellar: {str(e)}")
+
+            # Determinar en qué fase ocurrió el error
+            if registros_extraidos == 0:
+                error_phase = ETLPhase.EXTRACT
+            elif registros_transformados == 0:
+                error_phase = ETLPhase.TRANSFORM
+            else:
+                error_phase = ETLPhase.LOAD
+
+            if self.tracker:
+                self.tracker.finish_tienda_error(
+                    phase=error_phase,
+                    category=ExecutionTracker.classify_error(e, error_phase),
+                    message=str(e),
+                    records_extracted=registros_extraidos
+                )
+
             return {
                 "tienda_id": tienda_id,
                 "nombre": config.ubicacion_nombre,
@@ -401,15 +492,29 @@ class MultiTiendaETL:
                 "tiempo_proceso": time.time() - start_time
             }
 
+        registros_extraidos = 0
+        registros_transformados = 0
+        registros_cargados = 0
+
         try:
             logger.info(f"   📡 API: {self.klk_extractor.api_config.base_url}")
 
             # 1. EXTRACCIÓN - Extraer TODOS los almacenes activos de la tienda
+            if self.tracker:
+                self.tracker.start_phase(ETLPhase.EXTRACT)
+
             logger.info(f"   📥 Extrayendo datos desde KLK API (todos los almacenes)...")
             dfs_raw = self.klk_extractor.extract_all_almacenes_tienda(config)
 
             if not dfs_raw:
                 logger.warning(f"   ⚠️ Sin datos para {config.ubicacion_nombre}")
+                if self.tracker:
+                    self.tracker.finish_phase(ETLPhase.EXTRACT, records=0)
+                    self.tracker.finish_tienda_success(
+                        records_extracted=0,
+                        records_loaded=0,
+                        duplicates_skipped=0
+                    )
                 return {
                     "tienda_id": tienda_id,
                     "nombre": config.ubicacion_nombre,
@@ -425,12 +530,26 @@ class MultiTiendaETL:
             registros_extraidos = len(df_raw)
             logger.info(f"   ✅ Extraídos: {registros_extraidos} registros de {len(dfs_raw)} almacén(es)")
 
+            if self.tracker:
+                self.tracker.finish_phase(ETLPhase.EXTRACT, records=registros_extraidos)
+
             # 2. TRANSFORMACIÓN
+            if self.tracker:
+                self.tracker.start_phase(ETLPhase.TRANSFORM)
+
             logger.info(f"   🔄 Transformando datos...")
             df_productos, df_stock = self.klk_transformer.transform(df_raw)
 
             if df_productos.empty or df_stock.empty:
                 logger.warning(f"   ⚠️ Error en transformación para {config.ubicacion_nombre}")
+                if self.tracker:
+                    self.tracker.finish_phase(ETLPhase.TRANSFORM, records=0)
+                    self.tracker.finish_tienda_error(
+                        phase=ETLPhase.TRANSFORM,
+                        category=ExecutionTracker.classify_error(Exception("Error en transformación"), ETLPhase.TRANSFORM),
+                        message="Error en transformación",
+                        records_extracted=registros_extraidos
+                    )
                 return {
                     "tienda_id": tienda_id,
                     "nombre": config.ubicacion_nombre,
@@ -440,9 +559,16 @@ class MultiTiendaETL:
                     "tiempo_proceso": time.time() - start_time
                 }
 
+            registros_transformados = len(df_stock)  # Use df_stock as it's what we're loading
             logger.info(f"   ✅ Transformados: {len(df_productos)} productos, {len(df_stock)} stock")
 
+            if self.tracker:
+                self.tracker.finish_phase(ETLPhase.TRANSFORM, records=registros_transformados)
+
             # 3. CARGA
+            if self.tracker:
+                self.tracker.start_phase(ETLPhase.LOAD)
+
             logger.info(f"   💾 Cargando a base de datos...")
 
             # 3A: Cargar productos primero (necesario por FK)
@@ -452,7 +578,16 @@ class MultiTiendaETL:
             # 3B: Cargar stock (a inventario_actual con almacenes KLK correctos)
             result_stock = self.loader.update_stock_actual_table(df_stock)
             stock_cargado = result_stock.get('records_updated', 0)
+            registros_cargados = stock_cargado
             logger.info(f"   ✅ Stock cargado: {stock_cargado}")
+
+            if self.tracker:
+                self.tracker.finish_phase(ETLPhase.LOAD, records=registros_cargados)
+                self.tracker.finish_tienda_success(
+                    records_extracted=registros_extraidos,
+                    records_loaded=registros_cargados,
+                    duplicates_skipped=0
+                )
 
             # Reportar métricas a Sentry
             if monitor:
@@ -474,6 +609,23 @@ class MultiTiendaETL:
 
         except Exception as e:
             logger.error(f"   ❌ Error en ETL KLK: {str(e)}")
+
+            # Determinar en qué fase ocurrió el error
+            if registros_extraidos == 0:
+                error_phase = ETLPhase.EXTRACT
+            elif registros_transformados == 0:
+                error_phase = ETLPhase.TRANSFORM
+            else:
+                error_phase = ETLPhase.LOAD
+
+            if self.tracker:
+                self.tracker.finish_tienda_error(
+                    phase=error_phase,
+                    category=ExecutionTracker.classify_error(e, error_phase),
+                    message=str(e),
+                    records_extracted=registros_extraidos
+                )
+
             return {
                 "tienda_id": tienda_id,
                 "nombre": config.ubicacion_nombre,
@@ -522,7 +674,18 @@ class MultiTiendaETL:
         logger.info("=" * 60)
 
         # Registrar inicio de ejecución
-        self._track_start(list(tiendas_activas.keys()))
+        if self.tracker:
+            self.tracker.start_execution(
+                etl_name='inventario',
+                etl_type='scheduled' if paralelo else 'manual',
+                fecha_desde=datetime.now(),
+                fecha_hasta=datetime.now(),
+                tiendas=list(tiendas_activas.keys()),
+                triggered_by=None  # Auto-detect (eventbridge/fluxion_admin/cli)
+            )
+            logger.info(f"Tracking: Ejecución iniciada (ID: {self.tracker._current_execution.id if self.tracker._current_execution else None}, triggered_by: {self.tracker._current_execution.triggered_by if self.tracker._current_execution else 'unknown'})")
+        else:
+            self._track_start(list(tiendas_activas.keys()))
 
         resultados = []
 
@@ -587,7 +750,12 @@ class MultiTiendaETL:
 
         # Registrar fin de ejecución
         fallidos = [r for r in resultados if not r.get("success")]
-        self._track_finish(resultados, status='success' if not fallidos else 'partial')
+        if self.tracker:
+            status = 'success' if not fallidos else 'partial'
+            self.tracker.finish_execution(status=status)
+            logger.info(f"Tracking: Ejecución finalizada con ExecutionTracker (ID: {self.tracker._current_execution.id if hasattr(self, 'tracker') and self.tracker and self.tracker._current_execution else None}, status: {status})")
+        else:
+            self._track_finish(resultados, status='success' if not fallidos else 'partial')
 
         # Send email notification (only in production)
         if NOTIFICATIONS_AVAILABLE:
