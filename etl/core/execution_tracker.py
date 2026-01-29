@@ -40,6 +40,14 @@ except ImportError:
     import psycopg2
     from psycopg2.extras import Json
 
+# Import PostgreSQL DSN for connections
+import sys
+from pathlib import Path
+backend_path = Path(__file__).parent.parent.parent / 'backend'
+if str(backend_path) not in sys.path:
+    sys.path.append(str(backend_path))
+from db_config import POSTGRES_DSN
+
 
 # =============================================================================
 # ENUMS
@@ -232,7 +240,7 @@ class ExecutionTracker:
 
     def _get_connection(self):
         """Obtiene conexión a PostgreSQL"""
-        return psycopg2.connect(DatabaseConfig.get_dsn())
+        return psycopg2.connect(POSTGRES_DSN)
 
     def start_execution(
         self,
