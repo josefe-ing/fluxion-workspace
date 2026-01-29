@@ -9,6 +9,7 @@ Este módulo permite:
 """
 
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import JSONResponse
 from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
@@ -628,7 +629,7 @@ async def obtener_productos_tienda(
 # ENDPOINT: CALCULAR PEDIDOS MULTI-TIENDA
 # =====================================================================================
 
-@router.post("/calcular", response_model=CalcularMultiTiendaResponse)
+@router.post("/calcular")
 async def calcular_pedidos_multitienda(
     request: CalcularMultiTiendaRequest,
     cuadrantes: Optional[List[str]] = Query(None, description="Filtrar por cuadrantes"),
@@ -811,6 +812,9 @@ async def calcular_pedidos_multitienda(
             # Ajustar cantidades según DPD+U
             productos_ajustados = []
             productos_ajustados_count = 0
+            total_bultos_tienda = 0
+            total_unidades_tienda = 0
+            total_sugeridos_tienda = 0
 
             for prod in productos_tienda:
                 codigo = prod['codigo_producto']
@@ -829,66 +833,76 @@ async def calcular_pedidos_multitienda(
                         if ajustado:
                             productos_ajustados_count += 1
 
-                productos_ajustados.append(ProductoPedidoSimplificado(
-                    codigo_producto=codigo,
-                    descripcion_producto=prod['descripcion_producto'],
-                    categoria=prod['categoria'],
-                    clasificacion_abc=prod['clasificacion_abc'],
-                    cuadrante=prod.get('cuadrante'),
-                    unidades_por_bulto=prod['unidades_por_bulto'],
-                    cantidad_sugerida_unid=cantidad_final * prod['unidades_por_bulto'],
-                    cantidad_sugerida_bultos=cantidad_final,
-                    stock_tienda=prod['stock_tienda'],
-                    stock_cedi_origen=prod['stock_cedi_origen'],
-                    transito_bultos=prod.get('transito_bultos', 0),
-                    transito_desglose=prod.get('transito_desglose'),
-                    prom_p75_unid=prod['prom_p75_unid'],
-                    dias_stock=prod['dias_stock'],
-                    ajustado_por_dpdu=ajustado,
-                    cantidad_original_bultos=cantidad_original if ajustado else None,
-                    es_sugerido=prod.get('es_sugerido', True)
-                ))
+                prod_dict = {
+                    'codigo_producto': codigo,
+                    'descripcion_producto': prod['descripcion_producto'],
+                    'categoria': prod['categoria'],
+                    'clasificacion_abc': prod['clasificacion_abc'],
+                    'cuadrante': prod.get('cuadrante'),
+                    'unidades_por_bulto': prod['unidades_por_bulto'],
+                    'cantidad_sugerida_unid': cantidad_final * prod['unidades_por_bulto'],
+                    'cantidad_sugerida_bultos': cantidad_final,
+                    'stock_tienda': prod['stock_tienda'],
+                    'stock_cedi_origen': prod['stock_cedi_origen'],
+                    'transito_bultos': prod.get('transito_bultos', 0),
+                    'transito_desglose': prod.get('transito_desglose'),
+                    'prom_p75_unid': prod['prom_p75_unid'],
+                    'dias_stock': prod['dias_stock'],
+                    'ajustado_por_dpdu': ajustado,
+                    'cantidad_original_bultos': cantidad_original if ajustado else None,
+                    'es_sugerido': prod.get('es_sugerido', True),
+                }
+                productos_ajustados.append(prod_dict)
+                if prod_dict['es_sugerido']:
+                    total_bultos_tienda += prod_dict['cantidad_sugerida_bultos']
+                    total_unidades_tienda += prod_dict['cantidad_sugerida_unid']
+                    total_sugeridos_tienda += 1
 
-            # Calcular totales solo de productos sugeridos (los que irán en el pedido)
-            productos_sugeridos = [p for p in productos_ajustados if p.es_sugerido]
-            pedidos_por_tienda.append(PedidoTiendaResponse(
-                tienda_id=tienda.tienda_id,
-                tienda_nombre=tienda.tienda_nombre,
-                productos=productos_ajustados,
-                total_productos=len(productos_sugeridos),
-                total_bultos=sum(p.cantidad_sugerida_bultos for p in productos_sugeridos),
-                total_unidades=sum(p.cantidad_sugerida_unid for p in productos_sugeridos),
-                productos_ajustados_dpdu=productos_ajustados_count
-            ))
+            pedidos_por_tienda.append({
+                'tienda_id': tienda.tienda_id,
+                'tienda_nombre': tienda.tienda_nombre,
+                'productos': productos_ajustados,
+                'total_productos': total_sugeridos_tienda,
+                'total_bultos': total_bultos_tienda,
+                'total_unidades': total_unidades_tienda,
+                'productos_ajustados_dpdu': productos_ajustados_count,
+            })
 
         # Ordenar conflictos por stock_cedi (menor primero = más crítico)
         conflictos.sort(key=lambda c: c.stock_cedi_disponible)
 
-        total_prods_response = sum(len(p.productos) for p in pedidos_por_tienda)
+        total_prods_response = sum(len(p['productos']) for p in pedidos_por_tienda)
         logger.info(f"⏱️ Ensamblaje pedidos: {total_prods_response} productos en {_time.time()-_te:.1f}s")
         logger.info(f"⏱️ TOTAL calcular: {_time.time()-_t0:.1f}s | {len(request.tiendas_destino)} tiendas, {len(todos_productos)} productos únicos, {len(conflictos)} conflictos, {total_prods_response} items en respuesta")
 
-        return CalcularMultiTiendaResponse(
-            cedi_origen=request.cedi_origen,
-            cedi_origen_nombre=cedi_nombre,
-            fecha_calculo=datetime.now(VENEZUELA_TZ),
-            dias_cobertura=request.dias_cobertura,
-            config_dpdu=ConfigDPDUResponse(
-                peso_demanda=config_dpdu.peso_demanda,
-                peso_urgencia=config_dpdu.peso_urgencia,
-                dias_minimo_urgencia=config_dpdu.dias_minimo_urgencia
-            ),
-            conflictos=conflictos,
-            total_conflictos=len(conflictos),
-            productos_sin_conflicto=productos_sin_conflicto,
-            pedidos_por_tienda=pedidos_por_tienda,
-            resumen={
+        # Serialize conflictos (Pydantic models) to dicts once
+        _ts = _time.time()
+        conflictos_dicts = [c.model_dump() for c in conflictos]
+
+        response_data = {
+            'cedi_origen': request.cedi_origen,
+            'cedi_origen_nombre': cedi_nombre,
+            'fecha_calculo': datetime.now(VENEZUELA_TZ).isoformat(),
+            'dias_cobertura': request.dias_cobertura,
+            'config_dpdu': {
+                'peso_demanda': config_dpdu.peso_demanda,
+                'peso_urgencia': config_dpdu.peso_urgencia,
+                'dias_minimo_urgencia': config_dpdu.dias_minimo_urgencia,
+            },
+            'conflictos': conflictos_dicts,
+            'total_conflictos': len(conflictos),
+            'productos_sin_conflicto': productos_sin_conflicto,
+            'pedidos_por_tienda': pedidos_por_tienda,
+            'resumen': {
                 'total_tiendas': len(request.tiendas_destino),
                 'total_productos_unicos': len(todos_productos),
                 'total_conflictos': len(conflictos),
-                'total_bultos': sum(p.total_bultos for p in pedidos_por_tienda),
-            }
-        )
+                'total_bultos': sum(p['total_bultos'] for p in pedidos_por_tienda),
+            },
+        }
+        logger.info(f"⏱️ Serialización: {_time.time()-_ts:.1f}s")
+
+        return JSONResponse(content=response_data)
 
     except Exception as e:
         logger.error(f"Error calculando pedidos multi-tienda: {str(e)}")
