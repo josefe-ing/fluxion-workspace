@@ -447,17 +447,37 @@ async def obtener_productos_tienda(
             cursor = conn.cursor()
             cursor.execute("""
                 WITH tiendas_mismo_cedi AS (
+                    -- Buscar otras tiendas del mismo CEDI
                     SELECT DISTINCT ps.tienda_destino_id
                     FROM pedidos_sugeridos ps
                     WHERE ps.cedi_origen_id = %s
                       AND ps.tienda_destino_id != %s
                     LIMIT 10
+                ),
+                ventas_diarias_tiendas AS (
+                    -- Ventas diarias del producto en las tiendas del mismo CEDI
+                    SELECT
+                        ubicacion_id,
+                        DATE(fecha_venta) as fecha,
+                        SUM(cantidad_vendida) as cantidad_vendida
+                    FROM ventas
+                    WHERE ubicacion_id IN (SELECT tienda_destino_id FROM tiendas_mismo_cedi)
+                      AND producto_id = %s
+                      AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
+                      AND fecha_venta < CURRENT_DATE
+                    GROUP BY ubicacion_id, DATE(fecha_venta)
+                ),
+                p75_por_tienda AS (
+                    -- Calcular P75 por tienda
+                    SELECT
+                        ubicacion_id,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_vendida) as p75
+                    FROM ventas_diarias_tiendas
+                    GROUP BY ubicacion_id
                 )
-                SELECT AVG(v.p75) as p75_promedio
-                FROM ventas_p75_tienda v
-                INNER JOIN tiendas_mismo_cedi t ON v.ubicacion_id = t.tienda_destino_id
-                WHERE v.producto_id = %s
-                  AND v.p75 > 0
+                SELECT AVG(p75) as p75_promedio
+                FROM p75_por_tienda
+                WHERE p75 > 0
             """, [cedi_origen, tienda_destino, producto_id])
             row_ref = cursor.fetchone()
             cursor.close()
