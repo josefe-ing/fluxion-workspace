@@ -159,11 +159,11 @@ export default function ETLExecutionDetailModal({ executionId, onClose }: Props)
               </div>
               <div className="bg-green-50 p-4 rounded-lg">
                 <div className="text-xs text-green-600 font-medium mb-1">Registros Cargados</div>
-                <div className="text-2xl font-bold text-green-900">{detail.records_loaded.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-green-900">{(detail.records_loaded || 0).toLocaleString()}</div>
               </div>
               <div className="bg-yellow-50 p-4 rounded-lg">
                 <div className="text-xs text-yellow-600 font-medium mb-1">Duplicados Omitidos</div>
-                <div className="text-2xl font-bold text-yellow-900">{detail.duplicates_skipped.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-yellow-900">{(detail.duplicates_skipped || 0).toLocaleString()}</div>
               </div>
               <div className="bg-purple-50 p-4 rounded-lg">
                 <div className="text-xs text-purple-600 font-medium mb-1">Sistema Origen</div>
@@ -292,9 +292,9 @@ export default function ETLExecutionDetailModal({ executionId, onClose }: Props)
                         </td>
                         <td className="px-3 py-2 text-sm text-gray-600">{formatDuration(t.duration_seconds)}</td>
                         <td className="px-3 py-2">
-                          <div className="text-sm text-gray-900 font-medium">{t.records_loaded.toLocaleString()}</div>
-                          {t.duplicates_skipped > 0 && (
-                            <div className="text-xs text-gray-500">{t.duplicates_skipped} dup</div>
+                          <div className="text-sm text-gray-900 font-medium">{(t.records_loaded || 0).toLocaleString()}</div>
+                          {(t.duplicates_skipped || 0) > 0 && (
+                            <div className="text-xs text-gray-500">{t.duplicates_skipped || 0} dup</div>
                           )}
                         </td>
                         <td className="px-3 py-2">

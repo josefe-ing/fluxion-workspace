@@ -307,9 +307,9 @@ export default function ETLHistoryTable() {
                     </div>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{exec.records_loaded.toLocaleString()}</div>
-                    {exec.duplicates_skipped > 0 && (
-                      <div className="text-xs text-gray-500">{exec.duplicates_skipped.toLocaleString()} dup</div>
+                    <div className="text-sm font-medium text-gray-900">{(exec.records_loaded || 0).toLocaleString()}</div>
+                    {(exec.duplicates_skipped || 0) > 0 && (
+                      <div className="text-xs text-gray-500">{(exec.duplicates_skipped || 0).toLocaleString()} dup</div>
                     )}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
