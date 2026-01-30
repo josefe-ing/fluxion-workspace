@@ -699,8 +699,298 @@ export default function StepThreeReviewTabs({
     return { porABC, porCategoria };
   }, [activePedido]);
 
+  // Nombres y colores de CEDI origen para tab CEDI Caracas
+  const CEDI_ORIGEN_NOMBRES: Record<string, string> = {
+    'cedi_seco': 'Seco',
+    'cedi_frio': 'Frío',
+    'cedi_verde': 'Verde',
+  };
+
+  const getCediColor = (cediId?: string): string => {
+    switch (cediId) {
+      case 'cedi_seco': return 'bg-amber-100 text-amber-800 border-amber-300';
+      case 'cedi_frio': return 'bg-sky-100 text-sky-800 border-sky-300';
+      case 'cedi_verde': return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+      default: return 'bg-gray-100 text-gray-800 border-gray-300';
+    }
+  };
+
+  const getPrioridadStyle = (pri: number): { bg: string; text: string } => {
+    switch (pri) {
+      case 1: return { bg: 'bg-red-100', text: 'text-red-700' };
+      case 2: return { bg: 'bg-orange-100', text: 'text-orange-700' };
+      case 3: return { bg: 'bg-yellow-100', text: 'text-yellow-700' };
+      default: return { bg: 'bg-gray-100', text: 'text-gray-700' };
+    }
+  };
+
+  // Renderizar tabla estilo inter-CEDI para pestaña CEDI Caracas
+  const renderCediCaracasTable = (pedido: PedidoTienda) => {
+    const filteredProducts = getFilteredProducts(pedido.productos, pedido.tienda_id);
+
+    if (filteredProducts.length === 0) {
+      return (
+        <div className="text-center py-8 text-gray-500">
+          <p>No se encontraron productos con los filtros aplicados</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200 text-sm">
+          <colgroup>
+            <col style={{ width: '28px' }} />   {/* Checkbox */}
+            <col style={{ width: '44px' }} />   {/* CEDI */}
+            <col style={{ width: '62px' }} />   {/* Código */}
+            <col style={{ width: '108px' }} />  {/* Cód.Barras */}
+            <col style={{ width: '180px' }} />  {/* Producto */}
+            <col style={{ width: '30px' }} />   {/* U/B */}
+            <col style={{ width: '34px' }} />   {/* ABC */}
+            <col style={{ width: '56px' }} />   {/* Stk Orig */}
+            <col style={{ width: '52px' }} />   {/* Stk CCS */}
+            <col style={{ width: '42px' }} />   {/* D.CCS */}
+            <col style={{ width: '52px' }} />   {/* Stk Tda */}
+            <col style={{ width: '42px' }} />   {/* D.Tda */}
+            <col style={{ width: '48px' }} />   {/* P75 */}
+            <col style={{ width: '28px' }} />   {/* Pri */}
+            <col style={{ width: '60px' }} />   {/* Sugerido */}
+            <col style={{ width: '60px' }} />   {/* A Pedir */}
+            <col style={{ width: '44px' }} />   {/* Peso */}
+            <col style={{ width: '80px' }} />   {/* Notas */}
+          </colgroup>
+          <thead className="bg-gray-100 sticky top-0 z-10">
+            {/* Fila de categorías */}
+            <tr className="border-b-2 border-gray-300">
+              <th className="bg-gray-200 px-1 py-1 text-center font-bold text-gray-700 text-xs" style={{ width: '28px' }}></th>
+              <th colSpan={6} className="bg-gray-200 px-2 py-1 text-center font-bold text-gray-700 text-xs uppercase border-r border-gray-300">
+                Producto
+              </th>
+              <th className="bg-amber-200 px-2 py-1 text-center font-bold text-amber-900 text-xs uppercase border-r border-amber-300">
+                Origen
+              </th>
+              <th colSpan={5} className="bg-emerald-200 px-2 py-1 text-center font-bold text-emerald-900 text-xs uppercase border-r border-emerald-300">
+                Stock Tiendas / CEDI Caracas
+              </th>
+              <th colSpan={5} className="bg-violet-200 px-2 py-1 text-center font-bold text-violet-900 text-xs uppercase">
+                Pedido
+              </th>
+            </tr>
+            {/* Fila de columnas */}
+            <tr>
+              {/* Checkbox seleccionar todos */}
+              <th className="bg-gray-100 px-1 py-1 text-center text-xs font-medium text-gray-500 w-7">
+                <input
+                  type="checkbox"
+                  checked={filteredProducts.length > 0 && filteredProducts.every(p => getSeleccionesTienda(pedido.tienda_id).has(p.codigo_producto))}
+                  ref={(el) => {
+                    if (el) {
+                      const selecciones = getSeleccionesTienda(pedido.tienda_id);
+                      const seleccionados = filteredProducts.filter(p => selecciones.has(p.codigo_producto)).length;
+                      el.indeterminate = seleccionados > 0 && seleccionados < filteredProducts.length;
+                    }
+                  }}
+                  onChange={() => toggleSeleccionarTodos(pedido.tienda_id, filteredProducts)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+                  title="Seleccionar/deseleccionar todos"
+                />
+              </th>
+              {/* PRODUCTO */}
+              <th className="bg-gray-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap">CEDI</th>
+              <th className="bg-gray-50 px-1 py-1 text-left text-xs font-medium text-gray-600 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSort('codigo')}>
+                Código <SortIcon field="codigo" />
+              </th>
+              <th className="bg-gray-50 px-1 py-1 text-left text-xs font-medium text-gray-600 whitespace-nowrap">Cód.Barras</th>
+              <th className="bg-gray-50 px-1 py-1 text-left text-xs font-medium text-gray-600 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSort('descripcion')}>
+                Producto <SortIcon field="descripcion" />
+              </th>
+              <th className="bg-gray-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap">U/B</th>
+              <th className="bg-gray-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap border-r border-gray-200 cursor-pointer hover:bg-gray-100" onClick={() => handleSort('abc')}>
+                ABC <SortIcon field="abc" />
+              </th>
+              {/* ORIGEN */}
+              <th className="bg-amber-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap border-r border-amber-200 cursor-pointer hover:bg-amber-100" onClick={() => handleSort('cedi')}>
+                Stk Orig <SortIcon field="cedi" />
+              </th>
+              {/* STOCK TIENDAS / CEDI CARACAS */}
+              <th className="bg-emerald-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap">Stk CCS</th>
+              <th className="bg-emerald-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap">D.CCS</th>
+              <th className="bg-emerald-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap cursor-pointer hover:bg-emerald-100" onClick={() => handleSort('stock')}>
+                Stk Tda <SortIcon field="stock" />
+              </th>
+              <th className="bg-emerald-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap cursor-pointer hover:bg-emerald-100" onClick={() => handleSort('dias')}>
+                D.Tda <SortIcon field="dias" />
+              </th>
+              <th className="bg-emerald-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap border-r border-emerald-200 cursor-pointer hover:bg-emerald-100" onClick={() => handleSort('p75')}>
+                P75 <SortIcon field="p75" />
+              </th>
+              {/* PEDIDO */}
+              <th className="bg-violet-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap">Pri</th>
+              <th className="bg-violet-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap cursor-pointer hover:bg-violet-100" onClick={() => handleSort('sugerido')}>
+                Sugerido <SortIcon field="sugerido" />
+              </th>
+              <th className="bg-violet-50 px-1 py-1 text-center text-xs font-medium text-gray-700 whitespace-nowrap cursor-pointer hover:bg-violet-100" onClick={() => handleSort('pedir')}>
+                A Pedir <SortIcon field="pedir" />
+              </th>
+              <th className="bg-violet-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap">Peso</th>
+              <th className="bg-violet-50 px-1 py-1 text-center text-xs font-medium text-gray-600 whitespace-nowrap">Notas</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {filteredProducts.map((producto, idx) => {
+              const cantidadPedir = getCantidadPedir(pedido.tienda_id, producto);
+              const nota = getNota(pedido.tienda_id, producto);
+              const upb = producto.unidades_por_bulto;
+              const estaSeleccionado = getSeleccionesTienda(pedido.tienda_id).has(producto.codigo_producto);
+              const stockOrigenBultos = producto.stock_cedi_origen / upb;
+              const stockCcsBultos = (producto.stock_cedi_caracas || 0) / upb;
+              const stockTdaBultos = (producto.stock_tiendas_region || 0) / upb;
+              const prioridad = producto.prioridad || 3;
+              const prioridadStyle = getPrioridadStyle(prioridad);
+              const pesoTotalKg = producto.peso_kg ? cantidadPedir * producto.peso_kg * upb : 0;
+
+              return (
+                <tr
+                  key={producto.codigo_producto}
+                  className={`${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'} ${
+                    producto.ajustado_por_dpdu ? 'border-l-4 border-l-amber-400' : ''
+                  } ${!estaSeleccionado ? 'opacity-50' : ''} hover:bg-blue-50`}
+                >
+                  {/* Checkbox */}
+                  <td className="px-1 py-1 text-center">
+                    <input
+                      type="checkbox"
+                      checked={estaSeleccionado}
+                      onChange={() => toggleSeleccion(pedido.tienda_id, producto.codigo_producto)}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+                    />
+                  </td>
+                  {/* CEDI Badge */}
+                  <td className="px-1 py-1 text-center">
+                    <span className={`inline-flex items-center px-1 py-0.5 rounded text-[10px] font-medium border ${getCediColor(producto.cedi_origen_id)}`}>
+                      {CEDI_ORIGEN_NOMBRES[producto.cedi_origen_id || ''] || 'Seco'}
+                    </span>
+                  </td>
+                  {/* Código */}
+                  <td className="px-1 py-1 text-xs text-gray-600 font-mono">{producto.codigo_producto}</td>
+                  {/* Cód.Barras */}
+                  <td className="px-1 py-1 text-xs text-gray-500 font-mono">{producto.codigo_barras || '-'}</td>
+                  {/* Producto */}
+                  <td className="px-1 py-1 overflow-hidden">
+                    <div className="text-xs text-gray-900 leading-tight truncate" title={`${producto.descripcion_producto}${producto.categoria ? ` - ${producto.categoria}` : ''}`}>
+                      {producto.descripcion_producto}
+                    </div>
+                    {producto.categoria && (
+                      <div className="text-[10px] text-gray-500 truncate">{producto.categoria}</div>
+                    )}
+                  </td>
+                  {/* U/B */}
+                  <td className="px-1 py-1 text-center">
+                    <span className="text-xs text-gray-900 font-medium">{upb}</span>
+                  </td>
+                  {/* ABC */}
+                  <td className="px-1 py-1 text-center border-r border-gray-100">
+                    {producto.clasificacion_abc && (
+                      <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold ${
+                        producto.clasificacion_abc === 'A' ? 'bg-red-100 text-red-700' :
+                        producto.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-700' :
+                        producto.clasificacion_abc === 'C' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'
+                      }`}>{producto.clasificacion_abc}</span>
+                    )}
+                  </td>
+                  {/* STK ORIG */}
+                  <td
+                    className="bg-amber-50 px-1 py-1 text-center border-r border-amber-100 cursor-pointer hover:bg-amber-100"
+                    title="Ver historial de inventario CEDI origen"
+                    onClick={() => handleOpenHistoricoCedi(producto)}
+                  >
+                    <span className="text-xs font-medium text-gray-800 block">{formatNumber(stockOrigenBultos, 0)}</span>
+                    <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_cedi_origen)}u</span>
+                  </td>
+                  {/* STK CCS */}
+                  <td className="bg-emerald-50 px-1 py-1 text-center">
+                    <span className="text-xs font-medium text-gray-800 block">{formatNumber(stockCcsBultos, 0)}</span>
+                    <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_cedi_caracas || 0)}u</span>
+                  </td>
+                  {/* D.CCS */}
+                  <td className="bg-emerald-50 px-1 py-1 text-center">
+                    <span className={`text-xs font-bold px-1 py-0.5 rounded ${getDiasStockColor(producto.dias_cobertura_ccs || 999)}`}>
+                      {(producto.dias_cobertura_ccs || 0) >= 999 ? '-' : `${formatNumber(producto.dias_cobertura_ccs || 0, 0)}d`}
+                    </span>
+                  </td>
+                  {/* STK TDA */}
+                  <td className="bg-emerald-50 px-1 py-1 text-center">
+                    <span className="text-xs font-medium text-gray-800 block">{formatNumber(stockTdaBultos, 0)}</span>
+                    <span className="text-[10px] text-gray-500 block">{formatNumber(producto.stock_tiendas_region || 0)}u</span>
+                  </td>
+                  {/* D.TDA */}
+                  <td className="bg-emerald-50 px-1 py-1 text-center">
+                    <span className={`text-xs font-bold px-1 py-0.5 rounded ${getDiasStockColor(producto.dias_cobertura_tiendas || 999)}`}>
+                      {(producto.dias_cobertura_tiendas || 0) >= 999 ? '-' : `${formatNumber(producto.dias_cobertura_tiendas || 0, 0)}d`}
+                    </span>
+                  </td>
+                  {/* P75 */}
+                  <td
+                    className="bg-emerald-50 px-1 py-1 text-center border-r border-emerald-100 cursor-pointer hover:bg-emerald-100"
+                    title="Ver análisis de ventas"
+                    onClick={() => handleOpenSalesModal(producto, pedido.tienda_id)}
+                  >
+                    <span className="text-xs font-medium text-gray-800 block">{(producto.prom_p75_unid / upb).toFixed(1)}</span>
+                    <span className="text-[10px] text-gray-500 block">{formatNumber(producto.prom_p75_unid, 0)}u</span>
+                  </td>
+                  {/* PRI */}
+                  <td className="bg-violet-50 px-1 py-1 text-center">
+                    <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${prioridadStyle.bg} ${prioridadStyle.text}`}>
+                      {prioridad}
+                    </span>
+                  </td>
+                  {/* SUGERIDO */}
+                  <td className="bg-violet-50 px-1 py-1 text-center">
+                    <span className="text-xs font-bold text-violet-700 block">{producto.cantidad_sugerida_bultos}</span>
+                    {producto.ajustado_por_dpdu && (
+                      <span className="text-[10px] text-amber-600 block">ΔDPD</span>
+                    )}
+                  </td>
+                  {/* A PEDIR */}
+                  <td className="bg-violet-50 px-1 py-1 text-center">
+                    <input
+                      type="number"
+                      min="0"
+                      value={cantidadPedir}
+                      onChange={(e) => handleCantidadChange(pedido.tienda_id, producto.codigo_producto, parseFloat(e.target.value) || 0)}
+                      className="w-14 px-1 py-0.5 text-xs text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-violet-400 font-medium"
+                    />
+                  </td>
+                  {/* PESO */}
+                  <td className="bg-violet-50 px-1 py-1 text-center text-xs text-gray-600 whitespace-nowrap">
+                    {pesoTotalKg <= 0 ? '-' : pesoTotalKg >= 1000 ? `${formatNumber(pesoTotalKg / 1000, 2)}T` : `${formatNumber(pesoTotalKg, 1)}Kg`}
+                  </td>
+                  {/* NOTAS */}
+                  <td className="bg-violet-50 px-1 py-1">
+                    <input
+                      type="text"
+                      value={nota}
+                      onChange={(e) => handleNotaChange(pedido.tienda_id, producto.codigo_producto, e.target.value)}
+                      placeholder="Notas..."
+                      className="w-full px-1 py-0.5 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-400"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
   // Renderizar tabla de productos
   const renderProductTable = (pedido: PedidoTienda) => {
+    // Si es CEDI Caracas, usar tabla estilo inter-CEDI
+    if (pedido.es_cedi) {
+      return renderCediCaracasTable(pedido);
+    }
+
     const filteredProducts = getFilteredProducts(pedido.productos, pedido.tienda_id);
 
     if (filteredProducts.length === 0) {
@@ -1051,8 +1341,13 @@ export default function StepThreeReviewTabs({
                   activeTab === index
                     ? 'border-gray-900 text-gray-900 bg-gray-50'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap py-3 px-6 border-b-2 font-medium text-sm transition-colors`}
+                } whitespace-nowrap py-3 px-6 border-b-2 font-medium text-sm transition-colors flex items-center gap-1.5`}
               >
+                {pedido.es_cedi && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">
+                    CEDI
+                  </span>
+                )}
                 {pedido.tienda_nombre}
               </button>
             ))}

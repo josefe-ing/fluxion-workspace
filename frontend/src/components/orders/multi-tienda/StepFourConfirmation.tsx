@@ -436,7 +436,14 @@ export default function StepFourConfirmation({
                       className="h-5 w-5 text-green-600 focus:ring-green-500 border-gray-300 rounded mt-0.5 cursor-pointer"
                     />
                     <div className="flex-1 flex justify-between items-center">
-                      <h4 className="font-semibold text-gray-900 text-lg">{pedido.tienda_nombre}</h4>
+                      <div className="flex items-center gap-2">
+                        {pedido.es_cedi && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">
+                            CEDI
+                          </span>
+                        )}
+                        <h4 className="font-semibold text-gray-900 text-lg">{pedido.tienda_nombre}</h4>
+                      </div>
                       {pedido.productos_ajustados_dpdu > 0 && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">
                           {pedido.productos_ajustados_dpdu} DPD+U

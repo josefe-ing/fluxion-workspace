@@ -141,6 +141,16 @@ export interface ProductoPedidoSimplificado {
 
   // Sugerido por el algoritmo?
   es_sugerido?: boolean;
+
+  // Campos extra para vista CEDI Caracas (formato inter-CEDI)
+  cedi_origen_id?: string;
+  stock_cedi_caracas?: number;
+  dias_cobertura_ccs?: number;
+  stock_tiendas_region?: number;
+  dias_cobertura_tiendas?: number;
+  prioridad?: number;
+  num_tiendas_region?: number;
+  codigo_barras?: string;
 }
 
 export interface PedidoTienda {
@@ -151,6 +161,7 @@ export interface PedidoTienda {
   total_bultos: number;
   total_unidades: number;
   productos_ajustados_dpdu: number;
+  es_cedi?: boolean;
 }
 
 // =====================================================================================
@@ -165,6 +176,7 @@ export interface CalcularMultiTiendaRequest {
   }>;
   dias_cobertura?: number;  // default 3
   incluir_solo_conflictos?: boolean;
+  incluir_cedi_caracas?: boolean;
 }
 
 export interface CalcularMultiTiendaResponse {
@@ -277,6 +289,7 @@ export interface OrderDataMultiTienda {
   cedi_origen: string;
   cedi_origen_nombre: string;
   tiendas_seleccionadas: TiendaSeleccionada[];
+  incluir_cedi_caracas: boolean;
 
   // Paso 2: Conflictos (calculados)
   conflictos: ConflictoProducto[];

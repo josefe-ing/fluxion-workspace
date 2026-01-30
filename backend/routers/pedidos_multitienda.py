@@ -645,6 +645,331 @@ async def obtener_productos_tienda(
 
 
 # =====================================================================================
+# CEDI CARACAS: Cálculo de productos usando demanda regional agregada
+# =====================================================================================
+
+async def obtener_productos_cedi_caracas(
+    conn,
+    cedi_origen: str,
+    dias_cobertura: int = 3,
+    filtros: Optional[Dict[str, Any]] = None,
+    config_tienda_abc: Optional[ConfigTiendaABC] = None
+) -> List[Dict]:
+    """
+    Calcula productos para CEDI Caracas como destino en multi-tienda.
+
+    La "demanda" de CEDI Caracas = SUM(P75 de todas las tiendas de la región Caracas).
+    El stock es el inventario actual en cedi_caracas.
+    Usa calcular_inventario_simple() con config ABC específica de cedi_caracas.
+
+    Output: Mismo formato dict que obtener_productos_tienda() para integración
+    transparente con el algoritmo DPD+U.
+    """
+    cursor = conn.cursor()
+
+    # 1. Obtener tiendas de la región Caracas
+    cursor.execute("""
+        SELECT id, nombre FROM ubicaciones
+        WHERE region = 'CARACAS'
+          AND tipo = 'tienda'
+          AND activo = true
+    """)
+    tiendas_region = cursor.fetchall()
+    tiendas_ids = [t[0] for t in tiendas_region]
+
+    if not tiendas_ids:
+        logger.warning("⚠️ No hay tiendas activas en región CARACAS para cálculo multi-tienda")
+        cursor.close()
+        return []
+
+    logger.info(f"📍 CEDI Caracas multi-tienda: {len(tiendas_region)} tiendas en región CARACAS")
+
+    # 2. Query principal: demanda regional + stock CEDI Caracas + stock CEDI origen
+    query = """
+        WITH ventas_30d AS (
+            SELECT
+                producto_id,
+                ubicacion_id,
+                fecha_venta::date as fecha,
+                SUM(cantidad_vendida) as cantidad_dia
+            FROM ventas
+            WHERE ubicacion_id = ANY(%(tiendas_ids)s)
+              AND fecha_venta >= CURRENT_DATE - INTERVAL '30 days'
+              AND fecha_venta < CURRENT_DATE
+              AND NOT (ubicacion_id = 'tienda_18' AND fecha_venta::date = '2025-12-06')
+            GROUP BY producto_id, ubicacion_id, fecha_venta::date
+        ),
+        p75_por_tienda AS (
+            SELECT
+                producto_id,
+                ubicacion_id,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_dia) as p75_tienda,
+                STDDEV(cantidad_dia) as sigma_tienda,
+                MAX(cantidad_dia) as max_tienda
+            FROM ventas_30d
+            GROUP BY producto_id, ubicacion_id
+        ),
+        demanda_regional AS (
+            SELECT
+                producto_id,
+                SUM(COALESCE(p75_tienda, 0)) as p75_regional,
+                SQRT(SUM(COALESCE(sigma_tienda * sigma_tienda, 0))) as sigma_regional,
+                SUM(COALESCE(max_tienda, 0)) as demanda_maxima_regional,
+                COUNT(DISTINCT ubicacion_id) as num_tiendas
+            FROM p75_por_tienda
+            GROUP BY producto_id
+            HAVING SUM(COALESCE(p75_tienda, 0)) > 0
+        ),
+        stock_cedi_caracas AS (
+            SELECT producto_id, SUM(cantidad) as stock
+            FROM inventario_actual
+            WHERE ubicacion_id = 'cedi_caracas'
+            GROUP BY producto_id
+        ),
+        stock_cedi_origen AS (
+            SELECT producto_id, SUM(cantidad) as stock
+            FROM inventario_actual
+            WHERE ubicacion_id = %(cedi_origen)s
+            GROUP BY producto_id
+        ),
+        stock_tiendas_region AS (
+            SELECT producto_id, SUM(cantidad) as stock_total
+            FROM inventario_actual
+            WHERE ubicacion_id = ANY(%(tiendas_ids)s)
+            GROUP BY producto_id
+        ),
+        abc_ranking AS (
+            SELECT
+                producto_id,
+                SUM(cantidad_dia) as cantidad_total,
+                ROW_NUMBER() OVER (ORDER BY SUM(cantidad_dia) DESC) as rank_cantidad
+            FROM ventas_30d
+            GROUP BY producto_id
+        )
+        SELECT
+            p.id as producto_id,
+            p.codigo,
+            p.descripcion,
+            p.categoria,
+            p.cuadrante,
+            COALESCE(p.unidades_por_bulto, 1) as unidades_por_bulto,
+            COALESCE(dr.p75_regional, 0) as p75_regional,
+            COALESCE(dr.sigma_regional, dr.p75_regional * 0.3) as sigma_regional,
+            COALESCE(dr.demanda_maxima_regional, 0) as demanda_maxima_regional,
+            COALESCE(dr.num_tiendas, 0) as num_tiendas,
+            COALESCE(scc.stock, 0) as stock_cedi_caracas,
+            COALESCE(sco.stock, 0) as stock_cedi_origen,
+            COALESCE(str.stock_total, 0) as stock_tiendas_region,
+            p.cedi_origen_id,
+            p.codigo_barras,
+            CASE
+                WHEN abc.rank_cantidad <= 50 THEN 'A'
+                WHEN abc.rank_cantidad <= 200 THEN 'B'
+                WHEN abc.rank_cantidad <= 800 THEN 'C'
+                ELSE 'D'
+            END as clase_abc
+        FROM productos p
+        INNER JOIN demanda_regional dr ON p.id = dr.producto_id
+        LEFT JOIN stock_cedi_caracas scc ON p.id = scc.producto_id
+        LEFT JOIN stock_cedi_origen sco ON p.id = sco.producto_id
+        LEFT JOIN stock_tiendas_region str ON p.id = str.producto_id
+        LEFT JOIN abc_ranking abc ON p.id = abc.producto_id
+        WHERE p.activo = true
+          AND p.cedi_origen_id = %(cedi_origen)s
+    """
+
+    params: Dict[str, Any] = {
+        'tiendas_ids': tiendas_ids,
+        'cedi_origen': cedi_origen,
+    }
+
+    # Filtro de cuadrantes
+    if filtros and filtros.get('cuadrantes'):
+        query += " AND p.cuadrante = ANY(%(cuadrantes)s)"
+        params['cuadrantes'] = filtros['cuadrantes']
+
+    query += " ORDER BY COALESCE(dr.p75_regional, 0) DESC"
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    columns = [desc[0] for desc in cursor.description]
+
+    # 3. Cargar configuración de cobertura por categoría (perecederos)
+    config_cobertura_categoria = {}
+    try:
+        cursor.execute("""
+            SELECT categoria_normalizada, dias_cobertura_a, dias_cobertura_b,
+                   dias_cobertura_c, dias_cobertura_d
+            FROM config_cobertura_categoria
+            WHERE activo = true
+        """)
+        for cat_row in cursor.fetchall():
+            cat_norm = (cat_row[0] or '').strip().upper()
+            config_cobertura_categoria[cat_norm] = {
+                'A': cat_row[1] if cat_row[1] is not None else 7,
+                'B': cat_row[2] if cat_row[2] is not None else 14,
+                'C': cat_row[3] if cat_row[3] is not None else 21,
+                'D': cat_row[4] if cat_row[4] is not None else 30
+            }
+    except Exception as e:
+        logger.warning(f"No se pudo cargar config cobertura por categoría (CEDI CCS): {e}")
+
+    cursor.close()
+
+    # 4. Calcular productos
+    productos = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+
+        producto_id = row_dict['producto_id']
+        codigo = row_dict['codigo']
+        descripcion = row_dict['descripcion']
+        categoria = row_dict['categoria'] or ''
+        cuadrante = row_dict['cuadrante']
+        unidades_por_bulto = int(row_dict['unidades_por_bulto']) or 1
+        p75_regional = float(row_dict['p75_regional'])
+        sigma_regional = float(row_dict['sigma_regional'] or p75_regional * 0.3)
+        demanda_maxima = float(row_dict['demanda_maxima_regional'] or p75_regional * 2)
+        stock_cedi_ccs = float(row_dict['stock_cedi_caracas'])
+        stock_cedi_orig = float(row_dict['stock_cedi_origen'])
+        stock_tiendas = float(row_dict['stock_tiendas_region'])
+        cedi_origen_id = row_dict['cedi_origen_id'] or cedi_origen
+        clase_abc = row_dict['clase_abc'] or 'D'
+        num_tiendas = int(row_dict['num_tiendas'])
+
+        # Determinar override de cobertura para perecederos
+        dias_cobertura_override = None
+        cat_upper = categoria.strip().upper()
+        es_fruver = cedi_origen_id == 'cedi_verde' or 'FRUVER' in cat_upper or 'FRUT' in cat_upper or 'VERDUR' in cat_upper
+        es_panaderia = 'PANAD' in cat_upper or 'PAN ' in cat_upper or cat_upper.startswith('PAN')
+
+        if es_fruver or es_panaderia:
+            # Perecederos: cobertura fija de 1 día (misma lógica que inter-CEDI)
+            dias_cobertura_override = 1
+        elif cat_upper in config_cobertura_categoria:
+            dias_cobertura_override = config_cobertura_categoria[cat_upper].get(clase_abc)
+
+        # Usar calcular_inventario_simple con config de cedi_caracas
+        resultado = calcular_inventario_simple(
+            demanda_p75=p75_regional,
+            sigma_demanda=sigma_regional,
+            demanda_maxima=demanda_maxima if demanda_maxima > 0 else p75_regional * 2,
+            unidades_por_bulto=unidades_por_bulto,
+            stock_actual=stock_cedi_ccs,  # Stock en CEDI Caracas
+            stock_cedi=stock_cedi_orig,   # Stock en CEDI origen (Valencia)
+            clase_abc=clase_abc,
+            es_generador_trafico=False,
+            dias_cobertura_override=dias_cobertura_override,
+            config_tienda=config_tienda_abc
+        )
+
+        punto_reorden_unid = resultado.punto_reorden_unid
+        stock_maximo_unid = resultado.stock_maximo_unid
+        stock_seguridad_unid = resultado.stock_seguridad_unid
+        cantidad_sugerida_unid = resultado.cantidad_sugerida_unid
+        cantidad_sugerida_bultos = resultado.cantidad_sugerida_bultos
+        tiene_sobrestock = resultado.tiene_sobrestock
+
+        # Calcular días de stock
+        if p75_regional > 0:
+            dias_stock = stock_cedi_ccs / p75_regional
+            dias_stock_tiendas = stock_tiendas / p75_regional
+            dias_ss = stock_seguridad_unid / p75_regional
+            dias_rop = punto_reorden_unid / p75_regional
+            dias_max = stock_maximo_unid / p75_regional
+        else:
+            dias_stock = 999 if stock_cedi_ccs > 0 else 0
+            dias_stock_tiendas = 999 if stock_tiendas > 0 else 0
+            dias_ss = 0
+            dias_rop = 0
+            dias_max = 0
+
+        # Determinar si necesita reposición
+        necesita_reposicion = (
+            cantidad_sugerida_bultos > 0 and
+            stock_cedi_orig > 0 and
+            not tiene_sobrestock
+        )
+
+        if not necesita_reposicion:
+            cantidad_sugerida_unid = 0
+            cantidad_sugerida_bultos = 0
+
+        # Calcular prioridad (misma lógica que inter-CEDI)
+        if dias_stock <= dias_ss:
+            prioridad = 1  # Crítico
+        elif dias_stock <= dias_rop:
+            prioridad = 2  # Urgente
+        else:
+            prioridad = 3  # Normal
+
+        productos.append({
+            'producto_id': producto_id,
+            'codigo_producto': codigo,
+            'descripcion_producto': descripcion,
+            'categoria': categoria,
+            'cuadrante': cuadrante,
+            'clasificacion_abc': clase_abc,
+            'unidades_por_bulto': unidades_por_bulto,
+            'prom_p75_unid': p75_regional,
+            'prom_20dias_unid': p75_regional,
+            'stock_tienda': stock_cedi_ccs,  # Para DPD+U: "stock_tienda" = stock en CEDI CCS
+            'stock_cedi_origen': stock_cedi_orig,
+            'dias_stock': round(dias_stock, 2),
+            'dias_ss': round(dias_ss, 1),
+            'dias_rop': round(dias_rop, 1),
+            'dias_max': round(dias_max, 1),
+            'stock_seguridad_unid': stock_seguridad_unid,
+            'punto_reorden_unid': punto_reorden_unid,
+            'stock_maximo_unid': stock_maximo_unid,
+            'cantidad_necesaria_unid': cantidad_sugerida_unid,
+            'cantidad_sugerida_bultos': int(cantidad_sugerida_bultos),
+            'cantidad_sugerida_unid': cantidad_sugerida_unid,
+            'es_sugerido': necesita_reposicion,
+            'transito_bultos': 0,
+            'transito_desglose': [],
+            # Campos extra para la vista inter-CEDI en el frontend
+            'cedi_origen_id': cedi_origen_id,
+            'stock_cedi_caracas': stock_cedi_ccs,
+            'dias_cobertura_ccs': round(dias_stock, 1),
+            'stock_tiendas_region': stock_tiendas,
+            'dias_cobertura_tiendas': round(dias_stock_tiendas, 1),
+            'prioridad': prioridad,
+            'num_tiendas_region': num_tiendas,
+            'codigo_barras': row_dict.get('codigo_barras'),
+        })
+
+    logger.info(f"📦 CEDI Caracas ({cedi_origen}): {len(productos)} productos, {sum(1 for p in productos if p['es_sugerido'])} sugeridos")
+    return productos
+
+
+def _calcular_cedi_caracas_worker(
+    cedi_origen: str,
+    dias_cobertura: int,
+    filtros: Optional[Dict[str, Any]],
+) -> Tuple[str, List[Dict]]:
+    """Worker para CEDI Caracas: calcula demanda regional en thread separado."""
+    _ts = _time.time()
+    with get_db_connection() as thread_conn:
+        loop = asyncio.new_event_loop()
+        config = loop.run_until_complete(
+            cargar_config_tienda(thread_conn, 'cedi_caracas', set_global=False)
+        )
+        productos = loop.run_until_complete(
+            obtener_productos_cedi_caracas(
+                thread_conn,
+                cedi_origen,
+                dias_cobertura,
+                filtros=filtros,
+                config_tienda_abc=config
+            )
+        )
+        loop.close()
+    logger.info(f"⏱️ CEDI Caracas worker ({cedi_origen}): {len(productos)} productos en {_time.time()-_ts:.1f}s")
+    return ('cedi_caracas', productos)
+
+
+# =====================================================================================
 # WORKER: Cálculo por tienda en thread separado (para paralelismo)
 # =====================================================================================
 
@@ -745,6 +1070,20 @@ async def calcular_pedidos_multitienda(
         productos_por_tienda: Dict[str, List[Dict]] = dict(results)
         logger.info(f"⏱️ Total cálculo tiendas (paralelo): {_time.time()-_t0:.1f}s | {total_tiendas} tiendas")
 
+        # Si se incluye CEDI Caracas, calcular su demanda regional
+        incluir_cedi_ccs = request.incluir_cedi_caracas
+        if incluir_cedi_ccs:
+            _t_ccs = _time.time()
+            # Ejecutar en thread separado (igual que tiendas) para evitar
+            # conflicto con el event loop de FastAPI
+            cedi_ccs_id, cedi_ccs_productos = await loop.run_in_executor(
+                None,  # default executor
+                _calcular_cedi_caracas_worker,
+                request.cedi_origen, request.dias_cobertura, filtros
+            )
+            productos_por_tienda[cedi_ccs_id] = cedi_ccs_productos
+            logger.info(f"⏱️ CEDI Caracas incluido: {len(cedi_ccs_productos)} productos en {_time.time()-_t_ccs:.1f}s")
+
         # Consolidar todos los productos únicos
         _tc = _time.time()
         total_productos_raw = sum(len(p) for p in productos_por_tienda.values())
@@ -752,6 +1091,8 @@ async def calcular_pedidos_multitienda(
         todos_productos: Dict[str, Dict] = {}
         # Pre-build tienda name lookup
         _tienda_nombres = {t.tienda_id: t.tienda_nombre for t in request.tiendas_destino}
+        if incluir_cedi_ccs:
+            _tienda_nombres['cedi_caracas'] = 'CEDI CARACAS'
         for tienda_id, productos in productos_por_tienda.items():
             for prod in productos:
                 codigo = prod['codigo_producto']
@@ -798,7 +1139,8 @@ async def calcular_pedidos_multitienda(
             # ¿Es conflicto?
             es_conflicto = stock_cedi < necesidad_total
 
-            if es_conflicto and len(request.tiendas_destino) > 1:
+            total_destinos = len(request.tiendas_destino) + (1 if incluir_cedi_ccs else 0)
+            if es_conflicto and total_destinos > 1:
                 # Preparar datos para DPD+U
                 datos_tiendas = [
                     DatosTiendaProducto(
@@ -863,6 +1205,7 @@ async def calcular_pedidos_multitienda(
 
         # Construir pedidos por tienda con cantidades ajustadas
         _te = _time.time()
+        productos_por_tienda_dict = productos_por_tienda  # Guardar referencia al dict
         pedidos_por_tienda = []
 
         # Pre-build conflict lookup dicts for O(1) access
@@ -933,6 +1276,75 @@ async def calcular_pedidos_multitienda(
                 'productos_ajustados_dpdu': productos_ajustados_count,
             })
 
+        # Agregar pedido de CEDI Caracas (si se incluyó)
+        if incluir_cedi_ccs:
+            productos_cedi_ccs = productos_por_tienda_dict.get('cedi_caracas', [])
+            productos_ajustados_ccs = []
+            ajustados_count_ccs = 0
+            total_bultos_ccs = 0
+            total_unidades_ccs = 0
+            total_sugeridos_ccs = 0
+
+            for prod in productos_cedi_ccs:
+                codigo = prod['codigo_producto']
+                cantidad_original = prod['cantidad_sugerida_bultos']
+                cantidad_final = cantidad_original
+                ajustado = False
+
+                conflicto = conflictos_dict.get(codigo)
+                if conflicto:
+                    asignacion = conflictos_asignaciones[codigo].get('cedi_caracas')
+                    if asignacion:
+                        cantidad_final = asignacion.cantidad_asignada_bultos
+                        ajustado = cantidad_final != cantidad_original
+                        if ajustado:
+                            ajustados_count_ccs += 1
+
+                prod_dict = {
+                    'codigo_producto': codigo,
+                    'descripcion_producto': prod['descripcion_producto'],
+                    'categoria': prod['categoria'],
+                    'clasificacion_abc': prod['clasificacion_abc'],
+                    'cuadrante': prod.get('cuadrante'),
+                    'unidades_por_bulto': prod['unidades_por_bulto'],
+                    'cantidad_sugerida_unid': cantidad_final * prod['unidades_por_bulto'],
+                    'cantidad_sugerida_bultos': cantidad_final,
+                    'stock_tienda': prod['stock_tienda'],
+                    'stock_cedi_origen': prod['stock_cedi_origen'],
+                    'transito_bultos': prod.get('transito_bultos', 0),
+                    'transito_desglose': prod.get('transito_desglose'),
+                    'prom_p75_unid': prod['prom_p75_unid'],
+                    'dias_stock': prod['dias_stock'],
+                    'ajustado_por_dpdu': ajustado,
+                    'cantidad_original_bultos': cantidad_original if ajustado else None,
+                    'es_sugerido': prod.get('es_sugerido', True),
+                    # Campos extra para vista inter-CEDI en frontend
+                    'cedi_origen_id': prod.get('cedi_origen_id'),
+                    'stock_cedi_caracas': prod.get('stock_cedi_caracas'),
+                    'dias_cobertura_ccs': prod.get('dias_cobertura_ccs'),
+                    'stock_tiendas_region': prod.get('stock_tiendas_region'),
+                    'dias_cobertura_tiendas': prod.get('dias_cobertura_tiendas'),
+                    'prioridad': prod.get('prioridad'),
+                    'num_tiendas_region': prod.get('num_tiendas_region'),
+                    'codigo_barras': prod.get('codigo_barras'),
+                }
+                productos_ajustados_ccs.append(prod_dict)
+                if prod_dict['es_sugerido']:
+                    total_bultos_ccs += prod_dict['cantidad_sugerida_bultos']
+                    total_unidades_ccs += prod_dict['cantidad_sugerida_unid']
+                    total_sugeridos_ccs += 1
+
+            pedidos_por_tienda.append({
+                'tienda_id': 'cedi_caracas',
+                'tienda_nombre': 'CEDI CARACAS',
+                'productos': productos_ajustados_ccs,
+                'total_productos': total_sugeridos_ccs,
+                'total_bultos': total_bultos_ccs,
+                'total_unidades': total_unidades_ccs,
+                'productos_ajustados_dpdu': ajustados_count_ccs,
+                'es_cedi': True,
+            })
+
         # Ordenar conflictos por stock_cedi (menor primero = más crítico)
         conflictos.sort(key=lambda c: c.stock_cedi_disponible)
 
@@ -963,6 +1375,7 @@ async def calcular_pedidos_multitienda(
                 'total_productos_unicos': len(todos_productos),
                 'total_conflictos': len(conflictos),
                 'total_bultos': sum(p['total_bultos'] for p in pedidos_por_tienda),
+                'incluye_cedi_caracas': incluir_cedi_ccs,
             },
         }
         logger.info(f"⏱️ Serialización: {_time.time()-_ts:.1f}s")

@@ -682,6 +682,14 @@ PersistentKeepalive = 25`),
     // ========================================
     // 7b. CloudFront Distribution for Backend API (HTTPS)
     // ========================================
+
+    // Import existing ACM Certificate (wildcard for *.fluxionia.co)
+    const fluxionCertificate = acm.Certificate.fromCertificateArn(
+      this,
+      'FluxionWildcardCertificate',
+      'arn:aws:acm:us-east-1:611395766952:certificate/88d81742-53fc-49f5-9c72-3506dd712109'
+    );
+
     const backendDistribution = new cloudfront.Distribution(
       this,
       'FluxionBackendCDN',
@@ -700,6 +708,8 @@ PersistentKeepalive = 25`),
           // Use managed AllViewer origin request policy to forward all headers, query strings, and cookies
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
         },
+        domainNames: ['api.fluxionia.co'],
+        certificate: fluxionCertificate,
         comment: 'Fluxion AI Backend API CDN (HTTPS)',
       }
     );
@@ -1221,13 +1231,6 @@ PersistentKeepalive = 25`),
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       versioned: false,
     });
-
-    // Import existing ACM Certificate (wildcard for *.fluxionia.co)
-    const fluxionCertificate = acm.Certificate.fromCertificateArn(
-      this,
-      'FluxionWildcardCertificate',
-      'arn:aws:acm:us-east-1:611395766952:certificate/88d81742-53fc-49f5-9c72-3506dd712109'
-    );
 
     // CloudFront Distribution for Documentation
     const docsDistribution = new cloudfront.Distribution(this, 'FluxionDocsCDN', {

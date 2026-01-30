@@ -272,6 +272,29 @@ export default function StepOneMultiSelect({
             </div>
           )}
 
+          {/* Toggle CEDI Caracas */}
+          {orderData.cedi_origen && tiendas.length > 0 && (
+            <div className="border border-amber-200 bg-amber-50 rounded-md p-4">
+              <label className="flex items-start cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={orderData.incluir_cedi_caracas}
+                  onChange={(e) => updateOrderData({ incluir_cedi_caracas: e.target.checked })}
+                  className="h-4 w-4 text-amber-600 focus:ring-amber-500 border-gray-300 rounded mt-0.5"
+                />
+                <div className="ml-3">
+                  <span className="font-medium text-gray-900">
+                    Incluir CEDI Caracas como destino
+                  </span>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Abastece al CEDI de Caracas junto con las tiendas, balanceando
+                    la distribución con DPD+U cuando hay escasez de stock.
+                  </p>
+                </div>
+              </label>
+            </div>
+          )}
+
           {/* Resumen de selección */}
           {tiendasSeleccionadas.length > 0 && (
             <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
@@ -297,6 +320,11 @@ export default function StepOneMultiSelect({
                       {t.nombre}
                     </span>
                   ))}
+                  {orderData.incluir_cedi_caracas && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-200 text-amber-800">
+                      CEDI CARACAS
+                    </span>
+                  )}
                 </div>
               </div>
 

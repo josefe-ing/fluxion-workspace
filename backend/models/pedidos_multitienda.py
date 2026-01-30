@@ -41,6 +41,10 @@ class CalcularMultiTiendaRequest(BaseModel):
         default=False,
         description="Si es True, solo retorna productos con conflicto"
     )
+    incluir_cedi_caracas: bool = Field(
+        default=False,
+        description="Si es True, incluye CEDI Caracas como destino para distribución DPD+U"
+    )
 
 
 # =====================================================================================

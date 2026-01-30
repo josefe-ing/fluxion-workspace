@@ -30,6 +30,7 @@ const initialOrderData: OrderDataMultiTienda = {
   cedi_origen: '',
   cedi_origen_nombre: '',
   tiendas_seleccionadas: [],
+  incluir_cedi_caracas: false,
   conflictos: [],
   config_dpdu: {
     peso_demanda: 0.60,
@@ -56,7 +57,8 @@ export default function OrderWizardMultiTienda() {
 
   // Determinar si hay conflictos (para mostrar/ocultar paso 2)
   const hasConflicts = calculationResult?.total_conflictos && calculationResult.total_conflictos > 0;
-  const multipleStores = orderData.tiendas_seleccionadas.filter(t => t.seleccionada).length > 1;
+  const totalDestinos = orderData.tiendas_seleccionadas.filter(t => t.seleccionada).length + (orderData.incluir_cedi_caracas ? 1 : 0);
+  const multipleStores = totalDestinos > 1;
   const showConflictStep = hasConflicts && multipleStores;
 
   // Pasos dinámicos basados en si hay conflictos
@@ -170,6 +172,7 @@ export default function OrderWizardMultiTienda() {
             tienda_nombre: t.nombre,
           })),
           dias_cobertura: orderData.dias_cobertura,
+          incluir_cedi_caracas: orderData.incluir_cedi_caracas || false,
         }),
         signal: controller.signal,
       });
