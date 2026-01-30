@@ -342,7 +342,8 @@ async def obtener_productos_tienda(
             COALESCE(abc.venta_30d, 0) as venta_30d,
             COALESCE(est.sigma_demanda, 0) as sigma_demanda,
             COALESCE(est.demanda_maxima, v.p75 * 2, 0) as demanda_maxima,
-            COALESCE(p.es_generador_trafico, false) as es_generador_trafico
+            COALESCE(p.es_generador_trafico, false) as es_generador_trafico,
+            p.peso_unitario
         FROM productos p
         LEFT JOIN ventas_20dias v ON p.id = v.producto_id
         LEFT JOIN estadisticas_30d est ON p.id = est.producto_id
@@ -485,6 +486,7 @@ async def obtener_productos_tienda(
         sigma_demanda = float(row[12])
         demanda_maxima = float(row[13])
         es_generador_trafico = bool(row[14]) if row[14] else False
+        peso_unitario = float(row[15]) if row[15] else None
 
         # Obtener tránsito para este producto
         transito_info = transito_data.get(codigo, {'transito_bultos': 0, 'desglose': []})
@@ -639,6 +641,8 @@ async def obtener_productos_tienda(
             # Tránsito (ya calculado antes del loop)
             'transito_bultos': transito_bultos,
             'transito_desglose': transito_info['desglose'],
+            # Peso
+            'peso_kg': peso_unitario,
         })
 
     return productos
@@ -762,6 +766,7 @@ async def obtener_productos_cedi_caracas(
             COALESCE(str.stock_total, 0) as stock_tiendas_region,
             p.cedi_origen_id,
             p.codigo_barras,
+            p.peso_unitario,
             CASE
                 WHEN abc.rank_cantidad <= 50 THEN 'A'
                 WHEN abc.rank_cantidad <= 200 THEN 'B'
@@ -937,6 +942,7 @@ async def obtener_productos_cedi_caracas(
             'prioridad': prioridad,
             'num_tiendas_region': num_tiendas,
             'codigo_barras': row_dict.get('codigo_barras'),
+            'peso_kg': float(row_dict['peso_unitario']) if row_dict.get('peso_unitario') else None,
         })
 
     logger.info(f"📦 CEDI Caracas ({cedi_origen}): {len(productos)} productos, {sum(1 for p in productos if p['es_sugerido'])} sugeridos")
@@ -1259,6 +1265,7 @@ async def calcular_pedidos_multitienda(
                     'ajustado_por_dpdu': ajustado,
                     'cantidad_original_bultos': cantidad_original if ajustado else None,
                     'es_sugerido': prod.get('es_sugerido', True),
+                    'peso_kg': prod.get('peso_kg'),
                 }
                 productos_ajustados.append(prod_dict)
                 if prod_dict['es_sugerido']:
@@ -1327,6 +1334,7 @@ async def calcular_pedidos_multitienda(
                     'prioridad': prod.get('prioridad'),
                     'num_tiendas_region': prod.get('num_tiendas_region'),
                     'codigo_barras': prod.get('codigo_barras'),
+                    'peso_kg': prod.get('peso_kg'),
                 }
                 productos_ajustados_ccs.append(prod_dict)
                 if prod_dict['es_sugerido']:

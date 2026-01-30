@@ -74,7 +74,7 @@ export default function StepThreeReviewTabs({
   onNext,
   onBack,
 }: Props) {
-  const [activeTab, setActiveTab] = useState(0);
+  const [activeTab, setActiveTab] = useState(-1); // -1 = Resumen, 0+ = pedido index
 
   // Estado para controlar navegación después de actualizar datos
   const [pendingNavigation, setPendingNavigation] = useState(false);
@@ -151,7 +151,7 @@ export default function StepThreeReviewTabs({
   const pedidos = (orderData.pedidos_por_tienda && orderData.pedidos_por_tienda.length > 0)
     ? orderData.pedidos_por_tienda
     : calculationResult.pedidos_por_tienda || [];
-  const activePedido = pedidos[activeTab];
+  const activePedido = activeTab >= 0 ? pedidos[activeTab] : null;
 
   // Obtener filtros de la tienda activa (o usar defaults)
   const getFiltrosTienda = useCallback((tiendaId: string): FiltrosTienda => {
@@ -555,6 +555,114 @@ export default function StepThreeReviewTabs({
       ajustados,
     };
   }, [activePedido, filtrosPorTienda, ediciones, seleccionesPorTienda]);
+
+  // Datos agregados para tab Resumen
+  const resumenData = useMemo(() => {
+    const productosUnicos = new Set<string>();
+    let totalBultos = 0;
+    let totalUnidades = 0;
+    let totalPesoKg = 0;
+    let productosAjustadosDPDU = 0;
+    const abcBreakdown: Record<string, { count: number; bultos: number; pesoKg: number }> = {
+      A: { count: 0, bultos: 0, pesoKg: 0 },
+      B: { count: 0, bultos: 0, pesoKg: 0 },
+      C: { count: 0, bultos: 0, pesoKg: 0 },
+      D: { count: 0, bultos: 0, pesoKg: 0 },
+    };
+    const categoriaBreakdown: Record<string, { count: number; bultos: number; pesoKg: number }> = {};
+    const criticidadBreakdown = { critico: 0, urgente: 0, optimo: 0, exceso: 0 };
+    const tiendaSummaries: {
+      tienda_id: string;
+      tienda_nombre: string;
+      es_cedi?: boolean;
+      productos: number;
+      bultos: number;
+      unidades: number;
+      pesoKg: number;
+    }[] = [];
+
+    pedidos.forEach(pedido => {
+      const selecciones = getSeleccionesTienda(pedido.tienda_id);
+      const productosSeleccionados = pedido.productos.filter(p => selecciones.has(p.codigo_producto));
+
+      let tiendaBultos = 0;
+      let tiendaUnidades = 0;
+      let tiendaPesoKg = 0;
+
+      productosSeleccionados.forEach(producto => {
+        productosUnicos.add(producto.codigo_producto);
+        const cantidadBultos = getCantidadPedir(pedido.tienda_id, producto);
+        const upb = producto.unidades_por_bulto;
+
+        tiendaBultos += cantidadBultos;
+        tiendaUnidades += cantidadBultos * upb;
+
+        if (producto.peso_kg) {
+          tiendaPesoKg += cantidadBultos * producto.peso_kg * upb;
+        }
+
+        // Peso de este producto
+        const pesoProductoKg = producto.peso_kg ? cantidadBultos * producto.peso_kg * upb : 0;
+
+        // ABC
+        const abc = producto.clasificacion_abc || 'D';
+        if (abcBreakdown[abc]) {
+          abcBreakdown[abc].count += 1;
+          abcBreakdown[abc].bultos += cantidadBultos;
+          abcBreakdown[abc].pesoKg += pesoProductoKg;
+        }
+
+        // Categoría
+        const cat = producto.categoria || 'Sin categoría';
+        if (!categoriaBreakdown[cat]) {
+          categoriaBreakdown[cat] = { count: 0, bultos: 0, pesoKg: 0 };
+        }
+        categoriaBreakdown[cat].count += 1;
+        categoriaBreakdown[cat].bultos += cantidadBultos;
+        categoriaBreakdown[cat].pesoKg += pesoProductoKg;
+
+        // Criticidad
+        const crit = getCriticidad(producto);
+        criticidadBreakdown[crit.nivelNombre] += 1;
+
+        // DPD+U
+        if (producto.ajustado_por_dpdu) {
+          productosAjustadosDPDU += 1;
+        }
+      });
+
+      totalBultos += tiendaBultos;
+      totalUnidades += tiendaUnidades;
+      totalPesoKg += tiendaPesoKg;
+
+      tiendaSummaries.push({
+        tienda_id: pedido.tienda_id,
+        tienda_nombre: pedido.tienda_nombre,
+        es_cedi: pedido.es_cedi,
+        productos: productosSeleccionados.length,
+        bultos: tiendaBultos,
+        unidades: tiendaUnidades,
+        pesoKg: tiendaPesoKg,
+      });
+    });
+
+    // Top categorías ordenadas por count desc
+    const categoriasOrdenadas = Object.entries(categoriaBreakdown)
+      .sort((a, b) => b[1].count - a[1].count);
+
+    return {
+      totalTiendas: pedidos.length,
+      totalProductosUnicos: productosUnicos.size,
+      totalBultos,
+      totalUnidades,
+      totalPesoKg,
+      productosAjustadosDPDU,
+      abcBreakdown,
+      categoriasOrdenadas,
+      criticidadBreakdown,
+      tiendaSummaries,
+    };
+  }, [pedidos, ediciones, seleccionesPorTienda]);
 
   // Color para días de stock
   const getDiasStockColor = (dias: number): string => {
@@ -984,6 +1092,205 @@ export default function StepThreeReviewTabs({
     );
   };
 
+  // Formatear peso en toneladas
+  const formatPesoTon = (kg: number): string => {
+    if (kg <= 0) return '-';
+    const ton = kg / 1000;
+    return `${formatNumber(ton, 2)} T`;
+  };
+
+  // Renderizar tab Resumen
+  const renderResumen = () => {
+    const totalProductos = resumenData.totalProductosUnicos;
+    const abcTotal = Object.values(resumenData.abcBreakdown).reduce((s, v) => s + v.count, 0);
+
+    return (
+      <div className="p-6 space-y-5">
+        {/* Fila 1: Resumen General + ABC */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Resumen General */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Resumen General</h3>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-gray-600">Destinos:</dt>
+                <dd className="font-semibold">{resumenData.totalTiendas}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-600">Productos únicos:</dt>
+                <dd className="font-semibold">{formatNumber(totalProductos)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-600">Total bultos:</dt>
+                <dd className="font-bold text-gray-900">{formatNumber(resumenData.totalBultos)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-600">Total unidades:</dt>
+                <dd className="font-semibold">{formatNumber(resumenData.totalUnidades)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-600">Peso estimado:</dt>
+                <dd className="font-semibold">{formatPesoTon(resumenData.totalPesoKg)}</dd>
+              </div>
+              {resumenData.productosAjustadosDPDU > 0 && (
+                <div className="flex justify-between pt-2 border-t border-gray-200">
+                  <dt className="text-amber-600">Ajustados DPD+U:</dt>
+                  <dd className="font-semibold text-amber-600">{resumenData.productosAjustadosDPDU}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+
+          {/* Clasificación ABC */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Clasificación ABC</h3>
+            <div className="space-y-2">
+              {(['A', 'B', 'C', 'D'] as const).map(abc => {
+                const data = resumenData.abcBreakdown[abc];
+                const pct = abcTotal > 0 ? (data.count / abcTotal * 100) : 0;
+                const colorBar = abc === 'A' ? 'bg-green-500' : abc === 'B' ? 'bg-yellow-500' : abc === 'C' ? 'bg-gray-400' : 'bg-gray-300';
+                const colorText = abc === 'A' ? 'text-green-700' : abc === 'B' ? 'text-yellow-700' : 'text-gray-600';
+
+                return (
+                  <div key={abc} className="flex items-center gap-2 text-sm">
+                    <span className={`${colorText} font-bold w-4`}>{abc}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
+                      <div
+                        className={`${colorBar} h-full rounded-full flex items-center justify-end pr-2 transition-all`}
+                        style={{ width: `${Math.max(pct, 2)}%` }}
+                      >
+                        {pct >= 15 && <span className="text-white text-[10px] font-medium">{data.count}</span>}
+                      </div>
+                    </div>
+                    <span className="text-xs text-gray-500 w-28 text-right">
+                      {data.count} ({pct.toFixed(0)}%) · {formatNumber(data.bultos)} blt · {formatPesoTon(data.pesoKg)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Fila 2: Criticidad + Categorías */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Criticidad */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Prioridad de Productos</h3>
+            <dl className="space-y-2 text-sm">
+              {([
+                { key: 'critico' as const, label: 'Crítico', color: 'text-red-700', dot: 'bg-red-500' },
+                { key: 'urgente' as const, label: 'Urgente', color: 'text-orange-600', dot: 'bg-orange-500' },
+                { key: 'optimo' as const, label: 'Óptimo', color: 'text-green-600', dot: 'bg-green-500' },
+                { key: 'exceso' as const, label: 'Exceso', color: 'text-blue-600', dot: 'bg-blue-500' },
+              ]).map(({ key, label, color, dot }) => (
+                <div key={key} className="flex justify-between items-center">
+                  <dt className={`${color} flex items-center gap-2`}>
+                    <span className={`w-2.5 h-2.5 rounded-full ${dot}`} />
+                    {label}
+                  </dt>
+                  <dd className={`font-semibold ${color}`}>
+                    {resumenData.criticidadBreakdown[key]}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+
+          {/* Top Categorías */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+              Categorías
+              <span className="text-xs font-normal text-gray-400 ml-1">
+                ({resumenData.categoriasOrdenadas.length})
+              </span>
+            </h3>
+            <div className="space-y-1.5 text-sm max-h-40 overflow-y-auto">
+              {resumenData.categoriasOrdenadas.slice(0, 10).map(([cat, data]) => (
+                <div key={cat} className="flex justify-between items-center">
+                  <span className="text-gray-700 truncate mr-2" title={cat}>
+                    {cat.length > 20 ? cat.slice(0, 20) + '...' : cat}
+                  </span>
+                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                    {data.count} prod · {formatNumber(data.bultos)} blt · {formatPesoTon(data.pesoKg)}
+                  </span>
+                </div>
+              ))}
+              {resumenData.categoriasOrdenadas.length > 10 && (
+                <div className="text-xs text-gray-400 pt-1 border-t border-gray-100">
+                  +{resumenData.categoriasOrdenadas.length - 10} categorías más
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Tabla Desglose por Tienda */}
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-700">Desglose por Destino</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">Destino</th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">Productos</th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">Bultos</th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">Unidades</th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">Peso (T)</th>
+                  <th className="px-4 py-2 text-center font-medium text-gray-700"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {resumenData.tiendaSummaries.map((summary, index) => (
+                  <tr key={summary.tienda_id} className="hover:bg-gray-50">
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        {summary.es_cedi && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">
+                            CEDI
+                          </span>
+                        )}
+                        <span className="font-medium">{summary.tienda_nombre}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2 text-right">{summary.productos}</td>
+                    <td className="px-4 py-2 text-right font-bold text-gray-900">{formatNumber(summary.bultos)}</td>
+                    <td className="px-4 py-2 text-right">{formatNumber(summary.unidades)}</td>
+                    <td className="px-4 py-2 text-right text-gray-600">
+                      {formatPesoTon(summary.pesoKg)}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <button
+                        onClick={() => setActiveTab(index)}
+                        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        Ver detalles
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-50 border-t border-gray-300">
+                <tr>
+                  <td className="px-4 py-2 font-bold text-gray-700">Total</td>
+                  <td className="px-4 py-2 text-right font-bold">{formatNumber(resumenData.totalProductosUnicos)}</td>
+                  <td className="px-4 py-2 text-right font-bold text-gray-900">{formatNumber(resumenData.totalBultos)}</td>
+                  <td className="px-4 py-2 text-right font-bold">{formatNumber(resumenData.totalUnidades)}</td>
+                  <td className="px-4 py-2 text-right font-bold text-gray-600">
+                    {formatPesoTon(resumenData.totalPesoKg)}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Renderizar tabla de productos
   const renderProductTable = (pedido: PedidoTienda) => {
     // Si es CEDI Caracas, usar tabla estilo inter-CEDI
@@ -1333,6 +1640,17 @@ export default function StepThreeReviewTabs({
         {/* Tabs de tiendas */}
         <div className="border-b border-gray-200">
           <nav className="flex -mb-px overflow-x-auto" aria-label="Tabs">
+            {/* Tab Resumen (default) */}
+            <button
+              onClick={() => setActiveTab(-1)}
+              className={`${
+                activeTab === -1
+                  ? 'border-blue-600 text-blue-600 bg-blue-50'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } whitespace-nowrap py-3 px-6 border-b-2 font-medium text-sm transition-colors`}
+            >
+              Resumen
+            </button>
             {pedidos.map((pedido, index) => (
               <button
                 key={pedido.tienda_id}
@@ -1354,8 +1672,8 @@ export default function StepThreeReviewTabs({
           </nav>
         </div>
 
-        {/* Filtros (independientes por tienda) */}
-        <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
+        {/* Filtros (independientes por tienda) - solo visible en tabs de tienda */}
+        {activeTab >= 0 && activePedido && <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
           <div className="flex flex-wrap items-center gap-3">
             {/* Búsqueda */}
             <div className="flex items-center gap-1">
@@ -1531,11 +1849,14 @@ export default function StepThreeReviewTabs({
               </span>
             </div>
           )}
-        </div>
+        </div>}
 
-        {/* Tabla de productos */}
+        {/* Contenido principal */}
         <div className="max-h-[calc(100vh-420px)] overflow-y-auto">
-          {activePedido && renderProductTable(activePedido)}
+          {activeTab === -1
+            ? renderResumen()
+            : activePedido && renderProductTable(activePedido)
+          }
         </div>
 
         {/* Footer con resumen consolidado */}
