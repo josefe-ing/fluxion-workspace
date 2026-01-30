@@ -283,7 +283,7 @@ def _crear_resultado(stock_minimo_unid: float, stock_seguridad_unid: float,
 
 
 def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
-                         clase_efectiva: str) -> ResultadoCalculo:
+                         clase_efectiva: str, lead_time_override: Optional[float] = None) -> ResultadoCalculo:
     """
     Clases A, B y C: Formula estadistica simplificada (sin sigmaL porque L es fijo).
 
@@ -296,7 +296,7 @@ def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
     """
     Z = params.nivel_servicio_z
     D = input_data.demanda_p75
-    L = LEAD_TIME
+    L = lead_time_override if lead_time_override is not None else LEAD_TIME
     sigma_D = input_data.sigma_demanda
     unidades_bulto = input_data.unidades_por_bulto
 
@@ -342,7 +342,7 @@ def calcular_estadistico(input_data: InputCalculo, params: ParametrosABC,
 
 
 def calcular_padre_prudente(input_data: InputCalculo, params: ParametrosABC,
-                            clase_efectiva: str) -> ResultadoCalculo:
+                            clase_efectiva: str, lead_time_override: Optional[float] = None) -> ResultadoCalculo:
     """
     Clase D: Metodo heuristico "Padre Prudente".
 
@@ -354,7 +354,7 @@ def calcular_padre_prudente(input_data: InputCalculo, params: ParametrosABC,
     """
     D = input_data.demanda_p75
     D_max = input_data.demanda_maxima
-    L = LEAD_TIME
+    L = lead_time_override if lead_time_override is not None else LEAD_TIME
     unidades_bulto = input_data.unidades_por_bulto
 
     # Demanda durante lead time (para referencia)
@@ -400,7 +400,8 @@ def calcular_padre_prudente(input_data: InputCalculo, params: ParametrosABC,
     )
 
 
-def calcular_inventario(input_data: InputCalculo, dias_cobertura_override: Optional[int] = None) -> ResultadoCalculo:
+def calcular_inventario(input_data: InputCalculo, dias_cobertura_override: Optional[int] = None,
+                        config_tienda: Optional['ConfigTiendaABC'] = None) -> ResultadoCalculo:
     """
     Funcion principal: calcula parametros de inventario segun clase ABC.
 
@@ -411,6 +412,8 @@ def calcular_inventario(input_data: InputCalculo, dias_cobertura_override: Optio
         input_data: Datos de entrada para el cálculo
         dias_cobertura_override: Si se especifica, sobrescribe los días de cobertura
                                   de la clase ABC. Útil para categorías perecederas.
+        config_tienda: Si se especifica, usa esta configuración en vez de los globals.
+                       Necesario para ejecución paralela (thread-safe).
     """
     # Determinar clase efectiva
     if input_data.es_generador_trafico:
@@ -418,7 +421,19 @@ def calcular_inventario(input_data: InputCalculo, dias_cobertura_override: Optio
     else:
         clase_efectiva = input_data.clase_abc
 
-    params = PARAMS_ABC.get(clase_efectiva, PARAMS_ABC['B'])
+    # Usar params de config_tienda si se proporcionó (thread-safe), sino usar globals
+    if config_tienda is not None:
+        params_abc_local = {
+            'A': ParametrosABC(nivel_servicio_z=2.33, dias_cobertura=config_tienda.dias_cobertura_a, metodo=MetodoCalculo.ESTADISTICO),
+            'B': ParametrosABC(nivel_servicio_z=1.88, dias_cobertura=config_tienda.dias_cobertura_b, metodo=MetodoCalculo.ESTADISTICO),
+            'C': ParametrosABC(nivel_servicio_z=1.28, dias_cobertura=config_tienda.dias_cobertura_c, metodo=MetodoCalculo.ESTADISTICO),
+            'D': ParametrosABC(nivel_servicio_z=0.0, dias_cobertura=config_tienda.dias_cobertura_d, metodo=MetodoCalculo.PADRE_PRUDENTE),
+        }
+        params = params_abc_local.get(clase_efectiva, params_abc_local['B'])
+        lead_time = config_tienda.lead_time
+    else:
+        params = PARAMS_ABC.get(clase_efectiva, PARAMS_ABC['B'])
+        lead_time = None  # Will use global LEAD_TIME
 
     # Si hay override de días de cobertura (por categoría perecedera), crear nuevos params
     if dias_cobertura_override is not None:
@@ -429,9 +444,9 @@ def calcular_inventario(input_data: InputCalculo, dias_cobertura_override: Optio
         )
 
     if params.metodo == MetodoCalculo.PADRE_PRUDENTE:
-        return calcular_padre_prudente(input_data, params, clase_efectiva)
+        return calcular_padre_prudente(input_data, params, clase_efectiva, lead_time_override=lead_time)
     else:
-        return calcular_estadistico(input_data, params, clase_efectiva)
+        return calcular_estadistico(input_data, params, clase_efectiva, lead_time_override=lead_time)
 
 
 def calcular_inventario_simple(
@@ -443,7 +458,8 @@ def calcular_inventario_simple(
     stock_cedi: float,
     clase_abc: str,
     es_generador_trafico: bool = False,
-    dias_cobertura_override: Optional[int] = None
+    dias_cobertura_override: Optional[int] = None,
+    config_tienda: Optional[ConfigTiendaABC] = None
 ) -> ResultadoCalculo:
     """
     Wrapper simple para calcular inventario sin crear InputCalculo manualmente.
@@ -454,6 +470,8 @@ def calcular_inventario_simple(
         dias_cobertura_override: Si se especifica, usa este valor de días de cobertura
                                   en lugar del configurado para la clase ABC.
                                   Útil para categorías perecederas (FRUVER, CARNICERIA, etc.)
+        config_tienda: Si se especifica, usa esta configuración en vez de los globals.
+                       Necesario para ejecución paralela (thread-safe).
     """
     input_data = InputCalculo(
         demanda_p75=demanda_p75,
@@ -465,4 +483,5 @@ def calcular_inventario_simple(
         clase_abc=clase_abc,
         es_generador_trafico=es_generador_trafico
     )
-    return calcular_inventario(input_data, dias_cobertura_override=dias_cobertura_override)
+    return calcular_inventario(input_data, dias_cobertura_override=dias_cobertura_override,
+                               config_tienda=config_tienda)

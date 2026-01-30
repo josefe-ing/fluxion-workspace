@@ -10,13 +10,16 @@ Este módulo permite:
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import JSONResponse
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import uuid
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 import logging
 import math
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import time as _time
 
 from models.pedidos_multitienda import (
     CalcularMultiTiendaRequest,
@@ -94,14 +97,14 @@ async def obtener_config_dpdu(conn) -> ConfigDPDU:
     return ConfigDPDU()
 
 
-async def cargar_config_tienda(conn, tienda_id: str) -> ConfigTiendaABC:
+async def cargar_config_tienda(conn, tienda_id: str, set_global: bool = True) -> ConfigTiendaABC:
     """
     Carga la configuración ABC específica de una tienda desde config_parametros_abc_tienda.
     Si no existe configuración, retorna valores por defecto.
 
-    IMPORTANTE: Esta función también llama a set_config_tienda() para aplicar
-    la configuración globalmente, asegurando que calcular_inventario_simple()
-    use los parámetros correctos.
+    Args:
+        set_global: Si True, aplica la configuración globalmente via set_config_tienda().
+                    Pasar False para ejecución paralela (thread-safe).
     """
     cursor = conn.cursor()
     try:
@@ -121,19 +124,22 @@ async def cargar_config_tienda(conn, tienda_id: str) -> ConfigTiendaABC:
                 dias_cobertura_c=int(config_row[3]) if config_row[3] else 21,
                 dias_cobertura_d=int(config_row[4]) if config_row[4] else 30
             )
-            set_config_tienda(config)
+            if set_global:
+                set_config_tienda(config)
             logger.info(f"📋 Config tienda {tienda_id} aplicada: LT={config.lead_time}, A={config.dias_cobertura_a}d, B={config.dias_cobertura_b}d, C={config.dias_cobertura_c}d, D={config.dias_cobertura_d}d")
             return config
         else:
             # Usar defaults
             config = ConfigTiendaABC()
-            set_config_tienda(config)
+            if set_global:
+                set_config_tienda(config)
             logger.info(f"📋 Usando configuración ABC por defecto para {tienda_id}")
             return config
     except Exception as e:
         logger.warning(f"No se pudo cargar config tienda {tienda_id}: {e}. Usando defaults.")
         config = ConfigTiendaABC()
-        set_config_tienda(config)
+        if set_global:
+            set_config_tienda(config)
         return config
     finally:
         cursor.close()
@@ -237,7 +243,8 @@ async def obtener_productos_tienda(
     cedi_origen: str,
     tienda_destino: str,
     dias_cobertura: int = 3,
-    filtros: Optional[Dict[str, Any]] = None
+    filtros: Optional[Dict[str, Any]] = None,
+    config_tienda_abc: Optional[ConfigTiendaABC] = None
 ) -> List[Dict]:
     """
     Obtiene TODOS los productos para una tienda, marcando cuáles necesitan reposición.
@@ -411,6 +418,56 @@ async def obtener_productos_tienda(
     # para que podamos usar stock efectivo (stock + tránsito) al calcular SUG
     transito_data = await calcular_transito_tienda(conn, cedi_origen, tienda_destino)
 
+    # Pre-calcular P75 de referencia para TODOS los productos candidatos a envío prueba
+    # (p75=0 y stock_cedi>0) en UNA SOLA query batch, en vez de N queries individuales
+    candidatos_envio_prueba = [
+        row[0]  # producto_id
+        for row in rows
+        if float(row[7]) == 0 and float(row[9]) > 0  # p75==0 and stock_cedi>0
+    ]
+    p75_referencia_batch: Dict[str, float] = {}  # {producto_id: p75_promedio}
+    if candidatos_envio_prueba:
+        cursor_ep = conn.cursor()
+        cursor_ep.execute("""
+            WITH tiendas_mismo_cedi AS (
+                SELECT DISTINCT ps.tienda_destino_id
+                FROM pedidos_sugeridos ps
+                WHERE ps.cedi_origen_id = %s
+                  AND ps.tienda_destino_id != %s
+                LIMIT 10
+            ),
+            ventas_diarias_tiendas AS (
+                SELECT
+                    v.producto_id,
+                    v.ubicacion_id,
+                    DATE(v.fecha_venta) as fecha,
+                    SUM(v.cantidad_vendida) as cantidad_vendida
+                FROM ventas v
+                WHERE v.ubicacion_id IN (SELECT tienda_destino_id FROM tiendas_mismo_cedi)
+                  AND v.producto_id = ANY(%s)
+                  AND v.fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
+                  AND v.fecha_venta < CURRENT_DATE
+                GROUP BY v.producto_id, v.ubicacion_id, DATE(v.fecha_venta)
+            ),
+            p75_por_tienda AS (
+                SELECT
+                    producto_id,
+                    ubicacion_id,
+                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_vendida) as p75
+                FROM ventas_diarias_tiendas
+                GROUP BY producto_id, ubicacion_id
+            )
+            SELECT producto_id, AVG(p75) as p75_promedio
+            FROM p75_por_tienda
+            WHERE p75 > 0
+            GROUP BY producto_id
+        """, [cedi_origen, tienda_destino, candidatos_envio_prueba])
+        for ep_row in cursor_ep.fetchall():
+            if ep_row[1] and float(ep_row[1]) > 0:
+                p75_referencia_batch[ep_row[0]] = float(ep_row[1])
+        cursor_ep.close()
+        logger.info(f"📦 Envío prueba batch: {len(candidatos_envio_prueba)} candidatos, {len(p75_referencia_batch)} con P75 referencia ({tienda_destino})")
+
     productos = []
     for row in rows:
         producto_id = row[0]
@@ -438,56 +495,17 @@ async def obtener_productos_tienda(
         stock_efectivo = stock_tienda + transito_unidades
 
         # Lógica de envío prueba: Si no ha vendido localmente pero hay stock en CEDI
-        # obtener P75 de referencia de otras tiendas (similar a single-store)
+        # usar P75 de referencia pre-calculado en batch
         p75_usado = p75
         clase_abc_usada = clase_abc if clase_abc else 'D'
         es_envio_prueba = False
 
         if p75 == 0 and stock_cedi > 0:
-            # Buscar P75 promedio en otras tiendas del mismo CEDI
-            cursor = conn.cursor()
-            cursor.execute("""
-                WITH tiendas_mismo_cedi AS (
-                    -- Buscar otras tiendas del mismo CEDI
-                    SELECT DISTINCT ps.tienda_destino_id
-                    FROM pedidos_sugeridos ps
-                    WHERE ps.cedi_origen_id = %s
-                      AND ps.tienda_destino_id != %s
-                    LIMIT 10
-                ),
-                ventas_diarias_tiendas AS (
-                    -- Ventas diarias del producto en las tiendas del mismo CEDI
-                    SELECT
-                        ubicacion_id,
-                        DATE(fecha_venta) as fecha,
-                        SUM(cantidad_vendida) as cantidad_vendida
-                    FROM ventas
-                    WHERE ubicacion_id IN (SELECT tienda_destino_id FROM tiendas_mismo_cedi)
-                      AND producto_id = %s
-                      AND fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
-                      AND fecha_venta < CURRENT_DATE
-                    GROUP BY ubicacion_id, DATE(fecha_venta)
-                ),
-                p75_por_tienda AS (
-                    -- Calcular P75 por tienda
-                    SELECT
-                        ubicacion_id,
-                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cantidad_vendida) as p75
-                    FROM ventas_diarias_tiendas
-                    GROUP BY ubicacion_id
-                )
-                SELECT AVG(p75) as p75_promedio
-                FROM p75_por_tienda
-                WHERE p75 > 0
-            """, [cedi_origen, tienda_destino, producto_id])
-            row_ref = cursor.fetchone()
-            cursor.close()
-
-            if row_ref and row_ref[0] and row_ref[0] > 0:
-                p75_usado = float(row_ref[0])
+            p75_ref = p75_referencia_batch.get(producto_id)
+            if p75_ref and p75_ref > 0:
+                p75_usado = p75_ref
                 clase_abc_usada = 'D'  # Conservador para productos nuevos
                 es_envio_prueba = True
-                logger.info(f"📦 Envío prueba: {codigo} ({tienda_destino}) - P75 ref: {p75_usado:.2f}")
 
         # Determinar override de días de cobertura por categoría (perecederos)
         dias_cobertura_override = None
@@ -514,7 +532,8 @@ async def obtener_productos_tienda(
             stock_cedi=stock_cedi,
             clase_abc=clase_abc_usada,  # ← Usar clase D si es envío prueba
             es_generador_trafico=es_generador_trafico,
-            dias_cobertura_override=dias_cobertura_override
+            dias_cobertura_override=dias_cobertura_override,
+            config_tienda=config_tienda_abc  # Thread-safe: pasar config explícitamente
         )
 
         # Extraer valores del resultado estadístico (en unidades)
@@ -626,6 +645,45 @@ async def obtener_productos_tienda(
 
 
 # =====================================================================================
+# WORKER: Cálculo por tienda en thread separado (para paralelismo)
+# =====================================================================================
+
+def _calcular_tienda_worker(
+    cedi_origen: str,
+    tienda_id: str,
+    tienda_nombre: str,
+    dias_cobertura: int,
+    filtros: Optional[Dict[str, Any]],
+    idx: int,
+    total: int
+) -> Tuple[str, List[Dict]]:
+    """
+    Worker sincrónico que calcula productos para una tienda.
+    Cada worker obtiene su propia conexión a BD (thread-safe).
+    """
+    _ts = _time.time()
+    with get_db_connection() as thread_conn:
+        # Cargar config tienda (sin set global - thread-safe)
+        loop = asyncio.new_event_loop()
+        config = loop.run_until_complete(
+            cargar_config_tienda(thread_conn, tienda_id, set_global=False)
+        )
+        productos = loop.run_until_complete(
+            obtener_productos_tienda(
+                thread_conn,
+                cedi_origen,
+                tienda_id,
+                dias_cobertura,
+                filtros=filtros,
+                config_tienda_abc=config
+            )
+        )
+        loop.close()
+    logger.info(f"⏱️ Tienda {idx}/{total} {tienda_id}: {len(productos)} productos en {_time.time()-_ts:.1f}s")
+    return (tienda_id, productos)
+
+
+# =====================================================================================
 # ENDPOINT: CALCULAR PEDIDOS MULTI-TIENDA
 # =====================================================================================
 
@@ -658,27 +716,34 @@ async def calcular_pedidos_multitienda(
         # Obtener configuración DPD+U
         config_dpdu = await obtener_config_dpdu(conn)
 
-        # Calcular productos para cada tienda
-        # IMPORTANTE: Cargar configuración ABC de cada tienda ANTES de calcular
-        # Esto asegura que se usen los parámetros correctos (lead_time, dias_cobertura)
-        import time as _time
+        # Calcular productos para cada tienda EN PARALELO
+        # Cada tienda se procesa en un thread separado con su propia conexión a BD
         _t0 = _time.time()
-        productos_por_tienda: Dict[str, List[Dict]] = {}
-        for i, tienda in enumerate(request.tiendas_destino):
-            _ts = _time.time()
-            # Cargar y aplicar configuración específica de la tienda
-            await cargar_config_tienda(conn, tienda.tienda_id)
+        total_tiendas = len(request.tiendas_destino)
+        filtros = {'cuadrantes': cuadrantes} if cuadrantes else None
 
-            productos = await obtener_productos_tienda(
-                conn,
-                request.cedi_origen,
-                tienda.tienda_id,
-                request.dias_cobertura,
-                filtros={'cuadrantes': cuadrantes} if cuadrantes else None
-            )
-            productos_por_tienda[tienda.tienda_id] = productos
-            logger.info(f"⏱️ Tienda {i+1}/{len(request.tiendas_destino)} {tienda.tienda_id}: {len(productos)} productos en {_time.time()-_ts:.1f}s")
-        logger.info(f"⏱️ Total cálculo tiendas: {_time.time()-_t0:.1f}s")
+        # Usar ThreadPoolExecutor para paralelizar (psycopg2 es sync, funciona en threads)
+        # max_workers=6 para no saturar las conexiones de BD
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=min(6, total_tiendas)) as executor:
+            futures = [
+                loop.run_in_executor(
+                    executor,
+                    _calcular_tienda_worker,
+                    request.cedi_origen,
+                    tienda.tienda_id,
+                    tienda.tienda_nombre,
+                    request.dias_cobertura,
+                    filtros,
+                    i + 1,
+                    total_tiendas
+                )
+                for i, tienda in enumerate(request.tiendas_destino)
+            ]
+            results = await asyncio.gather(*futures)
+
+        productos_por_tienda: Dict[str, List[Dict]] = dict(results)
+        logger.info(f"⏱️ Total cálculo tiendas (paralelo): {_time.time()-_t0:.1f}s | {total_tiendas} tiendas")
 
         # Consolidar todos los productos únicos
         _tc = _time.time()

@@ -690,6 +690,7 @@ PersistentKeepalive = 25`),
           origin: new origins.HttpOrigin(alb.loadBalancerDnsName, {
             protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
             httpPort: 80,
+            readTimeout: cdk.Duration.seconds(60),
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
