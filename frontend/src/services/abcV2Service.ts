@@ -109,10 +109,7 @@ export async function getClasificacionesPorCodigos(
 
 /**
  * Obtener color de la clasificación ABC v2
- * A: Top 50 (verde)
- * B: Ranking 51-200 (amarillo)
- * C: Ranking 201-800 (naranja)
- * D: Ranking 801+ (púrpura)
+ * Colores fijos por clase (independientes del modelo activo)
  */
 export function getColorClasificacionABCv2(clasificacion: string): string {
   switch (clasificacion) {
@@ -182,22 +179,22 @@ export function getColorMatrizABCXYZ(matriz: string): string {
     return 'text-green-800 bg-green-100 border-green-400 font-semibold';
   }
 
-  // Combinaciones A (Top 50 - alta rotación)
+  // Combinaciones A (clase más alta)
   if (matriz?.startsWith('A')) {
     return 'text-green-700 bg-green-50 border-green-300';
   }
 
-  // Combinaciones B (Ranking 51-200 - rotación media)
+  // Combinaciones B (clase media-alta)
   if (matriz?.startsWith('B')) {
     return 'text-yellow-700 bg-yellow-50 border-yellow-300';
   }
 
-  // Combinaciones C (Ranking 201-800 - baja rotación)
+  // Combinaciones C (clase media-baja)
   if (matriz?.startsWith('C')) {
     return 'text-orange-700 bg-orange-50 border-orange-300';
   }
 
-  // Combinaciones D (Ranking 801+ - cola larga)
+  // Combinaciones D (clase más baja)
   if (matriz?.startsWith('D')) {
     return 'text-purple-700 bg-purple-50 border-purple-300';
   }

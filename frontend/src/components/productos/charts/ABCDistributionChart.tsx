@@ -1,6 +1,7 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import { MatrizCell } from '../../../services/productosService';
 import { useMemo, useCallback } from 'react';
+import { useABCModel } from '../../../services/abcModelService';
 
 interface ABCDistributionChartProps {
   resumenABC: Record<string, MatrizCell>;
@@ -13,14 +14,8 @@ const COLORS: Record<string, string> = {
   D: '#a855f7', // purple-500
 };
 
-const DESCRIPCIONES: Record<string, string> = {
-  A: 'Top 1-50 (Más vendidos)',
-  B: 'Ranking 51-200 (Venta media)',
-  C: 'Ranking 201-800 (Venta baja)',
-  D: 'Ranking 801+ (Cola larga)',
-};
-
 export default function ABCDistributionChart({ resumenABC }: ABCDistributionChartProps) {
+  const { getDescripcion } = useABCModel();
   // Transform data for recharts
   const data = useMemo(() =>
     Object.entries(resumenABC).map(([clasificacion, datos]) => ({
@@ -44,7 +39,7 @@ export default function ABCDistributionChart({ resumenABC }: ABCDistributionChar
             Clase {data.name}
           </p>
           <p className="text-sm text-gray-700">
-            {DESCRIPCIONES[data.name as keyof typeof DESCRIPCIONES]}
+            {getDescripcion(data.name)}
           </p>
           <div className="mt-2 space-y-1">
             <p className="text-sm">

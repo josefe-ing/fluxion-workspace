@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, Filter, Eye, CheckSquare, Square } from 'lucide-react';
 import MatrizABCXYZBadge from '../../shared/MatrizABCXYZBadge';
+import { useABCModel } from '../../../services/abcModelService';
 import NivelObjetivoDetalleModal from '../NivelObjetivoDetalleModal';
 import {
   obtenerNivelesTienda,
@@ -23,6 +24,7 @@ export default function PasoSeleccionProductos({
   onSiguiente,
   onAnterior
 }: PasoSeleccionProductosProps) {
+  const { getCorta } = useABCModel();
   const [productos, setProductos] = useState<ProductoNivelObjetivo[]>([]);
   const [productosFiltrados, setProductosFiltrados] = useState<ProductoNivelObjetivo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -248,9 +250,10 @@ export default function PasoSeleccionProductos({
             className="px-3 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
           >
             <option value="">Todas las clases ABC</option>
-            <option value="A">Clase A (Alto valor)</option>
-            <option value="B">Clase B (Medio valor)</option>
-            <option value="C">Clase C (Bajo valor)</option>
+            <option value="A">A - {getCorta('A')}</option>
+            <option value="B">B - {getCorta('B')}</option>
+            <option value="C">C - {getCorta('C')}</option>
+            <option value="D">D - {getCorta('D')}</option>
           </select>
 
           <select

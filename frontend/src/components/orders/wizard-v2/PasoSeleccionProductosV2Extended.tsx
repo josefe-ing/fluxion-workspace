@@ -3,6 +3,7 @@ import { Search, Filter, Eye } from 'lucide-react';
 import MatrizABCXYZBadge from '../../shared/MatrizABCXYZBadge';
 import NivelObjetivoDetalleModal from '../NivelObjetivoDetalleModal';
 import MatrizABCXYZExplicacionModal from './MatrizABCXYZExplicacionModal';
+import { useABCModel } from '../../../services/abcModelService';
 import {
   obtenerNivelesTienda,
   obtenerClasificacionProducto,
@@ -24,6 +25,7 @@ export default function PasoSeleccionProductosV2Extended({
   onSiguiente,
   onAnterior
 }: PasoSeleccionProductosProps) {
+  const { getCorta } = useABCModel();
   const [productos, setProductos] = useState<ProductoNivelObjetivo[]>([]);
   const [productosFiltrados, setProductosFiltrados] = useState<ProductoNivelObjetivo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -328,10 +330,11 @@ export default function PasoSeleccionProductosV2Extended({
             className="px-3 py-1.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
           >
             <option value="">ABC</option>
-            <option value="Top50">🏆 Top 50</option>
-            <option value="A">Clase A</option>
-            <option value="B">Clase B</option>
-            <option value="C">Clase C</option>
+            <option value="Top50">🏆 {getCorta('A')}</option>
+            <option value="A">A - {getCorta('A')}</option>
+            <option value="B">B - {getCorta('B')}</option>
+            <option value="C">C - {getCorta('C')}</option>
+            <option value="D">D - {getCorta('D')}</option>
           </select>
           {isXYZEnabled() && (
             <select

@@ -67,7 +67,7 @@ def recalcular_abc_cache(dias: int = 30, incluir_por_tienda: bool = True):
         row = cursor.fetchone()
         producto_excluido = row['valor'] if row else '003760'
 
-        # Obtener umbrales ABC de configuración
+        # Obtener umbrales ABC de configuración (ranking)
         cursor.execute("""
             SELECT parametro, valor_numerico
             FROM config_inventario_global
@@ -78,15 +78,37 @@ def recalcular_abc_cache(dias: int = 30, incluir_por_tienda: bool = True):
         umbral_b = umbrales.get('umbral_b', 200)
         umbral_c = umbrales.get('umbral_c', 800)
 
-        logger.info(f"Configuración: dias={dias}, umbrales=A:{umbral_a}, B:{umbral_b}, C:{umbral_c}, excluido={producto_excluido}")
+        # Obtener umbrales Pareto
+        cursor.execute("""
+            SELECT parametro, valor_numerico
+            FROM config_inventario_global
+            WHERE categoria = 'abc_umbrales_pareto' AND activo = true
+        """)
+        pareto = {row['parametro']: float(row['valor_numerico']) for row in cursor.fetchall()}
+        pareto_a_pct = pareto.get('umbral_a_pct', 80)
+        pareto_b_pct = pareto.get('umbral_b_pct', 95)
+
+        # Obtener modelo activo
+        cursor.execute("""
+            SELECT valor_texto FROM config_inventario_global
+            WHERE id = 'abc_modelo_activo'
+        """)
+        row_modelo = cursor.fetchone()
+        modelo_activo = row_modelo['valor_texto'] if row_modelo else 'ranking_volumen'
+
+        logger.info(
+            f"Configuración: dias={dias}, umbrales=A:{umbral_a}, B:{umbral_b}, C:{umbral_c}, "
+            f"pareto={pareto_a_pct}/{pareto_b_pct}%, modelo={modelo_activo}, excluido={producto_excluido}"
+        )
 
         # 1. Recalcular ABC GLOBAL
         logger.info("Recalculando ABC cache global...")
         inicio_global = datetime.now()
 
         cursor.execute(
-            "SELECT * FROM recalcular_abc_cache(%s, %s, %s, %s, %s)",
-            (dias, producto_excluido, umbral_a, umbral_b, umbral_c)
+            "SELECT * FROM recalcular_abc_cache(%s, %s, %s, %s, %s, %s, %s, %s)",
+            (dias, producto_excluido, umbral_a, umbral_b, umbral_c,
+             pareto_a_pct, pareto_b_pct, modelo_activo)
         )
         result_global = cursor.fetchone()
 
@@ -107,8 +129,9 @@ def recalcular_abc_cache(dias: int = 30, incluir_por_tienda: bool = True):
             inicio_tienda = datetime.now()
 
             cursor.execute(
-                "SELECT * FROM recalcular_abc_por_tienda(%s, %s, %s, %s, %s)",
-                (dias, producto_excluido, umbral_a, umbral_b, umbral_c)
+                "SELECT * FROM recalcular_abc_por_tienda(%s, %s, %s, %s, %s, %s, %s, %s)",
+                (dias, producto_excluido, umbral_a, umbral_b, umbral_c,
+                 pareto_a_pct, pareto_b_pct, modelo_activo)
             )
             result_tienda = cursor.fetchone()
 
@@ -126,6 +149,7 @@ def recalcular_abc_cache(dias: int = 30, incluir_por_tienda: bool = True):
 
         logger.info("=" * 60)
         logger.info("RECÁLCULO ABC COMPLETADO EXITOSAMENTE")
+        logger.info(f"  - Modelo activo: {modelo_activo}")
         logger.info(f"  - Productos globales: {result_global['productos_procesados']}")
         logger.info(f"  - Productos por tienda: {productos_por_tienda}")
         logger.info(f"  - Tiendas procesadas: {tiendas_procesadas}")

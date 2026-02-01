@@ -46,7 +46,7 @@ from services.calculo_inventario_abc import (
     set_config_tienda,
     LEAD_TIME_DEFAULT
 )
-from db_manager import get_db_connection, get_db_connection_write
+from db_manager import get_db_connection, get_db_connection_write, get_db_connection_resilient
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,8 @@ VENEZUELA_TZ = ZoneInfo("America/Caracas")
 
 
 def get_db():
-    """Get database connection (read-only)"""
-    with get_db_connection() as conn:
+    """Get database connection (read-only, resilient to replica conflicts)"""
+    with get_db_connection_resilient() as conn:
         yield conn
 
 
@@ -742,13 +742,9 @@ async def obtener_productos_cedi_caracas(
             WHERE ubicacion_id = ANY(%(tiendas_ids)s)
             GROUP BY producto_id
         ),
-        abc_ranking AS (
-            SELECT
-                producto_id,
-                SUM(cantidad_dia) as cantidad_total,
-                ROW_NUMBER() OVER (ORDER BY SUM(cantidad_dia) DESC) as rank_cantidad
-            FROM ventas_30d
-            GROUP BY producto_id
+        abc_cache AS (
+            SELECT producto_id, clase_abc
+            FROM productos_abc_cache
         )
         SELECT
             p.id as producto_id,
@@ -767,18 +763,13 @@ async def obtener_productos_cedi_caracas(
             p.cedi_origen_id,
             p.codigo_barras,
             p.peso_unitario,
-            CASE
-                WHEN abc.rank_cantidad <= 50 THEN 'A'
-                WHEN abc.rank_cantidad <= 200 THEN 'B'
-                WHEN abc.rank_cantidad <= 800 THEN 'C'
-                ELSE 'D'
-            END as clase_abc
+            COALESCE(abc.clase_abc, 'D') as clase_abc
         FROM productos p
         INNER JOIN demanda_regional dr ON p.id = dr.producto_id
         LEFT JOIN stock_cedi_caracas scc ON p.id = scc.producto_id
         LEFT JOIN stock_cedi_origen sco ON p.id = sco.producto_id
         LEFT JOIN stock_tiendas_region str ON p.id = str.producto_id
-        LEFT JOIN abc_ranking abc ON p.id = abc.producto_id
+        LEFT JOIN abc_cache abc ON p.id = abc.producto_id
         WHERE p.activo = true
           AND p.cedi_origen_id = %(cedi_origen)s
     """
@@ -956,7 +947,7 @@ def _calcular_cedi_caracas_worker(
 ) -> Tuple[str, List[Dict]]:
     """Worker para CEDI Caracas: calcula demanda regional en thread separado."""
     _ts = _time.time()
-    with get_db_connection() as thread_conn:
+    with get_db_connection_resilient() as thread_conn:
         loop = asyncio.new_event_loop()
         config = loop.run_until_complete(
             cargar_config_tienda(thread_conn, 'cedi_caracas', set_global=False)
@@ -993,7 +984,7 @@ def _calcular_tienda_worker(
     Cada worker obtiene su propia conexión a BD (thread-safe).
     """
     _ts = _time.time()
-    with get_db_connection() as thread_conn:
+    with get_db_connection_resilient() as thread_conn:
         # Cargar config tienda (sin set global - thread-safe)
         loop = asyncio.new_event_loop()
         config = loop.run_until_complete(

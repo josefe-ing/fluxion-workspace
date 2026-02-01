@@ -1,5 +1,6 @@
 import React from 'react';
 import { getIconoMatriz, formatNumber, formatPercentage } from '../../services/productosService';
+import { useABCModel } from '../../services/abcModelService';
 
 interface MatrizABCXYZProps {
   data: Record<string, {
@@ -12,6 +13,7 @@ interface MatrizABCXYZProps {
 }
 
 const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selectedCell }) => {
+  const { getCorta, nombreModelo } = useABCModel();
   const abc = ['A', 'B', 'C', 'D'];
   const xyz = ['X', 'Y', 'Z'];
 
@@ -44,13 +46,7 @@ const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selected
   };
 
   const getRowDescription = (clase: string) => {
-    const descriptions: Record<string, string> = {
-      'A': 'Top 50',
-      'B': '51-200',
-      'C': '201-800',
-      'D': '801+',
-    };
-    return descriptions[clase] || '';
+    return getCorta(clase);
   };
 
   return (
@@ -117,11 +113,11 @@ const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selected
 
       {/* Leyenda */}
       <div className="mt-6 bg-gray-50 border border-gray-200 rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Guía de Clasificación (Ranking por Cantidad Vendida):</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Guía de Clasificación ({nombreModelo}):</h3>
         <div className="grid grid-cols-4 gap-4 text-xs">
           {/* Columna 1: Alta rotación (A) */}
           <div className="space-y-2">
-            <div className="font-semibold text-green-700 mb-1">A - Top 50</div>
+            <div className="font-semibold text-green-700 mb-1">A - {getCorta('A')}</div>
             <div className="flex items-center gap-2">
               <span className="text-xl">⭐</span>
               <span className="text-gray-700"><strong>AX:</strong> Máxima prioridad</span>
@@ -138,7 +134,7 @@ const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selected
 
           {/* Columna 2: Rotación media (B) */}
           <div className="space-y-2">
-            <div className="font-semibold text-yellow-700 mb-1">B - Ranking 51-200</div>
+            <div className="font-semibold text-yellow-700 mb-1">B - {getCorta('B')}</div>
             <div className="flex items-center gap-2">
               <span className="text-xl">🔷</span>
               <span className="text-gray-700"><strong>BX:</strong> Confiable</span>
@@ -155,7 +151,7 @@ const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selected
 
           {/* Columna 3: Baja rotación (C) */}
           <div className="space-y-2">
-            <div className="font-semibold text-orange-700 mb-1">C - Ranking 201-800</div>
+            <div className="font-semibold text-orange-700 mb-1">C - {getCorta('C')}</div>
             <div className="flex items-center gap-2">
               <span className="text-xl">💤</span>
               <span className="text-gray-700"><strong>CX:</strong> Stock mínimo</span>
@@ -172,7 +168,7 @@ const MatrizABCXYZ: React.FC<MatrizABCXYZProps> = ({ data, onCellClick, selected
 
           {/* Columna 4: Cola larga (D) */}
           <div className="space-y-2">
-            <div className="font-semibold text-purple-700 mb-1">D - Ranking 801+</div>
+            <div className="font-semibold text-purple-700 mb-1">D - {getCorta('D')}</div>
             <div className="flex items-center gap-2">
               <span className="text-xl">🟣</span>
               <span className="text-gray-700"><strong>DX:</strong> Cola larga estable</span>

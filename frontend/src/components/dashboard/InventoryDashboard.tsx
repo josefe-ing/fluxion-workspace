@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import http from '../../services/http';
+import { useABCModel } from '../../services/abcModelService';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 import ProductHistoryModal from './ProductHistoryModal';
 import CediCalculoModal from './CediCalculoModal';
@@ -102,6 +103,7 @@ export default function InventoryDashboard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const almacenParam = searchParams.get('almacen');
+  const { nombreModelo, getCorta } = useABCModel();
 
   const [stockData, setStockData] = useState<StockItem[]>([]);
   const [stats, setStats] = useState<StockStats>({
@@ -822,7 +824,7 @@ export default function InventoryDashboard() {
               </ul>
               ) : (
               <ul className="space-y-1 text-gray-600">
-                <li><span className="inline-block w-20 font-medium">ABC</span> Clasificación por volumen de venta (A=top 50, B=51-200, C=resto)</li>
+                <li><span className="inline-block w-20 font-medium">ABC</span> {nombreModelo} (A={getCorta('A')}, B={getCorta('B')}, C={getCorta('C')})</li>
                 <li><span className="inline-block w-20 font-medium">Top #</span> Ranking por ventas en esta tienda</li>
                 <li><span className="inline-block w-20 font-medium">P75/día</span> Demanda diaria (percentil 75, últimos 20 días)</li>
                 <li><span className="inline-block w-20 font-medium">Días</span> Días de cobertura con stock actual</li>

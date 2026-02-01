@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import http from '../../services/http';
 import type { OrderData, ProductoPedido } from './OrderWizard';
+import { useABCModel } from '../../services/abcModelService';
 import ProductSalesModal from '../sales/ProductSalesModal';
 import ABCComparisonModal from './ABCComparisonModal';
 import StockMinimoModal from './StockMinimoModal';
@@ -47,6 +48,7 @@ interface StockParams {
 }
 
 export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBack }: Props) {
+  const { getCorta } = useABCModel();
   const [loading, setLoading] = useState(false);
   const [productos, setProductos] = useState<ProductoPedido[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -1058,10 +1060,10 @@ export default function OrderStepTwo({ orderData, updateOrderData, onNext, onBac
                 // Etiquetas descriptivas para cada clase
                 const labels: Record<string, string> = {
                   'Todos': 'Todos',
-                  'A': '🏆 A (Top 50)',
-                  'B': 'B (51-200)',
-                  'C': 'C (201-800)',
-                  'D': 'D (801+)'
+                  'A': `🏆 A (${getCorta('A')})`,
+                  'B': `B (${getCorta('B')})`,
+                  'C': `C (${getCorta('C')})`,
+                  'D': `D (${getCorta('D')})`
                 };
                 return (
                   <option key={filtro} value={filtro}>

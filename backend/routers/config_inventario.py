@@ -3,9 +3,13 @@ Router para Configuración de Inventario ABC
 Gestiona parámetros globales, niveles de servicio y configuración por tienda
 
 Endpoints:
-- GET  /api/config-inventario/parametros-abc       - Obtener configuración completa
-- PUT  /api/config-inventario/parametros-abc/globales - Guardar parámetros globales
-- PUT  /api/config-inventario/parametros-abc/niveles  - Guardar niveles de servicio
+- GET  /api/config-inventario/parametros-abc                - Obtener configuración completa
+- PUT  /api/config-inventario/parametros-abc/globales       - Guardar parámetros globales
+- PUT  /api/config-inventario/parametros-abc/niveles        - Guardar niveles de servicio
+- PUT  /api/config-inventario/parametros-abc/umbrales       - Guardar umbrales ranking ABC
+- GET  /api/config-inventario/parametros-abc/modelo-activo  - Obtener modelo ABC activo
+- PUT  /api/config-inventario/parametros-abc/modelo-activo  - Cambiar modelo ABC activo
+- PUT  /api/config-inventario/parametros-abc/umbrales-pareto - Guardar umbrales Pareto
 - PUT  /api/config-inventario/parametros-abc/tienda/{tienda_id} - Configuración por tienda
 """
 
@@ -59,11 +63,35 @@ class ConfigTienda(BaseModel):
     activo: bool = True
 
 
+class UmbralesPareto(BaseModel):
+    umbral_a_pct: float = 80.0
+    umbral_b_pct: float = 95.0
+
+
+class ModeloABCActivo(BaseModel):
+    modelo: str  # ranking_volumen, ranking_valor, pareto_volumen, pareto_valor
+
+
+class DescripcionClaseABC(BaseModel):
+    label: str
+    descripcion: str
+    corto: str
+
+
+class DescripcionesModelo(BaseModel):
+    nombre: str
+    tipo: str  # 'ranking' o 'pareto'
+    clases: dict  # A, B, C, D -> DescripcionClaseABC
+
+
 class ConfiguracionABCCompleta(BaseModel):
     globales: ParametrosGlobales
     niveles_servicio: List[NivelServicioClase]
     config_tiendas: List[ConfigTienda]
     umbrales: UmbralesABC
+    modelo_activo: str = "ranking_volumen"
+    umbrales_pareto: UmbralesPareto = UmbralesPareto()
+    descripciones_modelo: Optional[dict] = None
 
 
 # =====================================================================================
@@ -111,6 +139,72 @@ DEFAULTS_UMBRALES = UmbralesABC(
     umbral_b=200,
     umbral_c=800
 )
+
+
+MODELOS_VALIDOS = ['ranking_volumen', 'ranking_valor', 'pareto_volumen', 'pareto_valor']
+
+
+def generar_descripciones_modelo(
+    modelo: str,
+    umbral_a: int = 50,
+    umbral_b: int = 200,
+    umbral_c: int = 800,
+    pareto_a_pct: float = 80,
+    pareto_b_pct: float = 95,
+) -> dict:
+    """
+    Genera las descripciones dinámicas de cada clase ABC según el modelo activo y sus umbrales.
+    """
+    if modelo == 'ranking_volumen':
+        return {
+            "nombre": "Ranking por Volumen",
+            "tipo": "ranking",
+            "criterio": "cantidad vendida (unidades)",
+            "clases": {
+                "A": {"label": "Clase A", "descripcion": f"Top 1-{umbral_a} (Más vendidos por unidades)", "corto": f"Top {umbral_a}"},
+                "B": {"label": "Clase B", "descripcion": f"Ranking {umbral_a+1}-{umbral_b} (Venta media)", "corto": f"{umbral_a+1}-{umbral_b}"},
+                "C": {"label": "Clase C", "descripcion": f"Ranking {umbral_b+1}-{umbral_c} (Venta baja)", "corto": f"{umbral_b+1}-{umbral_c}"},
+                "D": {"label": "Clase D", "descripcion": f"Ranking {umbral_c+1}+ (Cola larga)", "corto": f"{umbral_c+1}+"},
+            }
+        }
+    elif modelo == 'ranking_valor':
+        return {
+            "nombre": "Ranking por Valor",
+            "tipo": "ranking",
+            "criterio": "venta en Bs (valor monetario)",
+            "clases": {
+                "A": {"label": "Clase A", "descripcion": f"Top 1-{umbral_a} (Mayor facturación)", "corto": f"Top {umbral_a}"},
+                "B": {"label": "Clase B", "descripcion": f"Ranking {umbral_a+1}-{umbral_b} (Facturación media)", "corto": f"{umbral_a+1}-{umbral_b}"},
+                "C": {"label": "Clase C", "descripcion": f"Ranking {umbral_b+1}-{umbral_c} (Facturación baja)", "corto": f"{umbral_b+1}-{umbral_c}"},
+                "D": {"label": "Clase D", "descripcion": f"Ranking {umbral_c+1}+ (Cola larga)", "corto": f"{umbral_c+1}+"},
+            }
+        }
+    elif modelo == 'pareto_volumen':
+        return {
+            "nombre": "Pareto por Volumen",
+            "tipo": "pareto",
+            "criterio": "% acumulado de cantidad vendida",
+            "clases": {
+                "A": {"label": "Clase A", "descripcion": f"{pareto_a_pct:.0f}% del volumen acumulado", "corto": f"{pareto_a_pct:.0f}% vol"},
+                "B": {"label": "Clase B", "descripcion": f"{pareto_a_pct:.0f}-{pareto_b_pct:.0f}% del volumen acumulado", "corto": f"{pareto_a_pct:.0f}-{pareto_b_pct:.0f}%"},
+                "C": {"label": "Clase C", "descripcion": f"{pareto_b_pct:.0f}-100% del volumen", "corto": f"{pareto_b_pct:.0f}-100%"},
+                "D": {"label": "Clase D", "descripcion": "Sin ventas en período", "corto": "Sin ventas"},
+            }
+        }
+    elif modelo == 'pareto_valor':
+        return {
+            "nombre": "Pareto por Valor",
+            "tipo": "pareto",
+            "criterio": "% acumulado de venta en Bs",
+            "clases": {
+                "A": {"label": "Clase A", "descripcion": f"{pareto_a_pct:.0f}% del valor acumulado", "corto": f"{pareto_a_pct:.0f}% valor"},
+                "B": {"label": "Clase B", "descripcion": f"{pareto_a_pct:.0f}-{pareto_b_pct:.0f}% del valor acumulado", "corto": f"{pareto_a_pct:.0f}-{pareto_b_pct:.0f}%"},
+                "C": {"label": "Clase C", "descripcion": f"{pareto_b_pct:.0f}-100% del valor", "corto": f"{pareto_b_pct:.0f}-100%"},
+                "D": {"label": "Clase D", "descripcion": "Sin ventas en período", "corto": "Sin ventas"},
+            }
+        }
+    # Fallback
+    return generar_descripciones_modelo('ranking_volumen', umbral_a, umbral_b, umbral_c, pareto_a_pct, pareto_b_pct)
 
 
 def get_db():
@@ -241,6 +335,43 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
         logger.warning(f"Error cargando umbrales ABC: {e}")
         conn.rollback()
 
+    # 2.6. Obtener modelo ABC activo
+    modelo_activo = "ranking_volumen"
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT valor_texto
+            FROM config_inventario_global
+            WHERE id = 'abc_modelo_activo' AND activo = true
+        """)
+        row = cursor.fetchone()
+        cursor.close()
+        if row and row[0]:
+            modelo_activo = row[0]
+    except Exception as e:
+        logger.warning(f"Error cargando modelo ABC activo: {e}")
+        conn.rollback()
+
+    # 2.7. Obtener umbrales Pareto
+    umbrales_pareto = UmbralesPareto()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT parametro, valor_numerico
+            FROM config_inventario_global
+            WHERE categoria = 'abc_umbrales_pareto' AND activo = true
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        for row in rows:
+            if row[0] == 'umbral_a_pct' and row[1]:
+                umbrales_pareto.umbral_a_pct = float(row[1])
+            elif row[0] == 'umbral_b_pct' and row[1]:
+                umbrales_pareto.umbral_b_pct = float(row[1])
+    except Exception as e:
+        logger.warning(f"Error cargando umbrales Pareto: {e}")
+        conn.rollback()
+
     # 3. Obtener configuración por tienda
     try:
         cursor = conn.cursor()
@@ -275,11 +406,24 @@ async def obtener_configuracion_abc(conn: Any = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error cargando config_parametros_abc_tienda: {e}")
 
+    # Generar descripciones dinámicas del modelo activo
+    descripciones = generar_descripciones_modelo(
+        modelo=modelo_activo,
+        umbral_a=umbrales.umbral_a,
+        umbral_b=umbrales.umbral_b,
+        umbral_c=umbrales.umbral_c,
+        pareto_a_pct=umbrales_pareto.umbral_a_pct,
+        pareto_b_pct=umbrales_pareto.umbral_b_pct,
+    )
+
     return ConfiguracionABCCompleta(
         globales=globales,
         niveles_servicio=niveles_servicio,
         config_tiendas=config_tiendas,
-        umbrales=umbrales
+        umbrales=umbrales,
+        modelo_activo=modelo_activo,
+        umbrales_pareto=umbrales_pareto,
+        descripciones_modelo=descripciones
     )
 
 
@@ -479,6 +623,220 @@ async def guardar_umbrales_abc(
         conn.rollback()
         logger.error(f"Error guardando umbrales ABC: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error guardando umbrales: {str(e)}")
+
+
+# =====================================================================================
+# GET/PUT - Modelo ABC activo
+# =====================================================================================
+
+@router.get("/parametros-abc/modelo-activo")
+async def obtener_modelo_activo(conn: Any = Depends(get_db)):
+    """
+    Obtiene el modelo ABC activo y sus descripciones dinámicas.
+    También retorna la lista de todos los modelos disponibles.
+    """
+    modelo_activo = "ranking_volumen"
+    umbrales = DEFAULTS_UMBRALES.model_copy()
+    pareto = UmbralesPareto()
+
+    try:
+        cursor = conn.cursor()
+
+        # Modelo activo
+        cursor.execute("""
+            SELECT valor_texto
+            FROM config_inventario_global
+            WHERE id = 'abc_modelo_activo' AND activo = true
+        """)
+        row = cursor.fetchone()
+        if row and row[0]:
+            modelo_activo = row[0]
+
+        # Umbrales ranking
+        cursor.execute("""
+            SELECT id, valor_numerico
+            FROM config_inventario_global
+            WHERE categoria = 'abc_umbrales_ranking' AND activo = true
+        """)
+        for row in cursor.fetchall():
+            if row[0] == 'abc_umbral_a' and row[1]:
+                umbrales.umbral_a = int(row[1])
+            elif row[0] == 'abc_umbral_b' and row[1]:
+                umbrales.umbral_b = int(row[1])
+            elif row[0] == 'abc_umbral_c' and row[1]:
+                umbrales.umbral_c = int(row[1])
+
+        # Umbrales Pareto
+        cursor.execute("""
+            SELECT parametro, valor_numerico
+            FROM config_inventario_global
+            WHERE categoria = 'abc_umbrales_pareto' AND activo = true
+        """)
+        for row in cursor.fetchall():
+            if row[0] == 'umbral_a_pct' and row[1]:
+                pareto.umbral_a_pct = float(row[1])
+            elif row[0] == 'umbral_b_pct' and row[1]:
+                pareto.umbral_b_pct = float(row[1])
+
+        cursor.close()
+
+    except Exception as e:
+        logger.warning(f"Error cargando configuración modelo ABC: {e}")
+        conn.rollback()
+
+    descripciones_activo = generar_descripciones_modelo(
+        modelo=modelo_activo,
+        umbral_a=umbrales.umbral_a,
+        umbral_b=umbrales.umbral_b,
+        umbral_c=umbrales.umbral_c,
+        pareto_a_pct=pareto.umbral_a_pct,
+        pareto_b_pct=pareto.umbral_b_pct,
+    )
+
+    # Generar descripciones de todos los modelos para la UI del admin
+    todos_modelos = {}
+    for m in MODELOS_VALIDOS:
+        todos_modelos[m] = generar_descripciones_modelo(
+            modelo=m,
+            umbral_a=umbrales.umbral_a,
+            umbral_b=umbrales.umbral_b,
+            umbral_c=umbrales.umbral_c,
+            pareto_a_pct=pareto.umbral_a_pct,
+            pareto_b_pct=pareto.umbral_b_pct,
+        )
+
+    return {
+        "modelo_activo": modelo_activo,
+        "descripciones_modelo": descripciones_activo,
+        "umbrales_ranking": umbrales.model_dump(),
+        "umbrales_pareto": pareto.model_dump(),
+        "modelos_disponibles": todos_modelos,
+    }
+
+
+@router.put("/parametros-abc/modelo-activo")
+async def cambiar_modelo_activo(
+    request: ModeloABCActivo,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Cambia el modelo ABC activo. Ejecuta un UPDATE instantáneo que copia
+    la columna del modelo seleccionado a clase_abc en ambas tablas cache.
+    No requiere recalcular el ABC.
+    """
+    if request.modelo not in MODELOS_VALIDOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Modelo inválido. Valores válidos: {MODELOS_VALIDOS}"
+        )
+
+    try:
+        cursor = conn.cursor()
+
+        # Llamar a la función SQL que hace el switch instantáneo
+        cursor.execute(
+            "SELECT * FROM cambiar_modelo_abc_activo(%s)",
+            [request.modelo]
+        )
+        result = cursor.fetchone()
+
+        conn.commit()
+        cursor.close()
+
+        filas_global = result[0] if result else 0
+        filas_tienda = result[1] if result else 0
+        tiempo_ms = result[2] if result else 0
+
+        logger.info(
+            f"Modelo ABC cambiado a '{request.modelo}': "
+            f"{filas_global} productos globales, {filas_tienda} productos por tienda, "
+            f"{tiempo_ms}ms"
+        )
+
+        return {
+            "success": True,
+            "mensaje": f"Modelo ABC cambiado a '{request.modelo}'",
+            "modelo": request.modelo,
+            "filas_actualizadas_global": filas_global,
+            "filas_actualizadas_tienda": filas_tienda,
+            "tiempo_ms": tiempo_ms,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error cambiando modelo ABC: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error cambiando modelo: {str(e)}")
+
+
+# =====================================================================================
+# PUT - Guardar umbrales Pareto
+# =====================================================================================
+
+@router.put("/parametros-abc/umbrales-pareto")
+async def guardar_umbrales_pareto(
+    umbrales: UmbralesPareto,
+    conn: Any = Depends(get_db_write)
+):
+    """
+    Guarda los umbrales de Pareto para clasificación ABC:
+    - umbral_a_pct: % acumulado para clase A (default: 80)
+    - umbral_b_pct: % acumulado para clase B (default: 95)
+    """
+    if not (0 < umbrales.umbral_a_pct < umbrales.umbral_b_pct <= 100):
+        raise HTTPException(
+            status_code=400,
+            detail="Los umbrales deben cumplir: 0 < umbral_a_pct < umbral_b_pct <= 100"
+        )
+
+    try:
+        cursor = conn.cursor()
+
+        for param_name, valor in [
+            ('umbral_a_pct', umbrales.umbral_a_pct),
+            ('umbral_b_pct', umbrales.umbral_b_pct),
+        ]:
+            cursor.execute("""
+                UPDATE config_inventario_global
+                SET valor_numerico = %s, fecha_modificacion = CURRENT_TIMESTAMP
+                WHERE categoria = 'abc_umbrales_pareto' AND parametro = %s
+            """, [valor, param_name])
+
+            # Si no existía, insertar
+            if cursor.rowcount == 0:
+                cursor.execute("""
+                    INSERT INTO config_inventario_global
+                    (id, categoria, parametro, valor_numerico, descripcion, unidad, activo, fecha_modificacion)
+                    VALUES (%s, 'abc_umbrales_pareto', %s, %s, %s, 'porcentaje', true, CURRENT_TIMESTAMP)
+                    ON CONFLICT (id) DO UPDATE SET
+                        valor_numerico = EXCLUDED.valor_numerico,
+                        fecha_modificacion = CURRENT_TIMESTAMP
+                """, [
+                    f"pareto_{param_name}",
+                    param_name,
+                    valor,
+                    f"Umbral Pareto {'A' if 'a' in param_name else 'B'}: {valor}%"
+                ])
+
+        conn.commit()
+        cursor.close()
+
+        logger.info(f"Umbrales Pareto guardados: A={umbrales.umbral_a_pct}%, B={umbrales.umbral_b_pct}%")
+
+        return {
+            "success": True,
+            "mensaje": f"Umbrales Pareto guardados: A={umbrales.umbral_a_pct}%, B={umbrales.umbral_b_pct}%",
+            "umbrales": umbrales.model_dump(),
+            "nota": "Los umbrales Pareto se aplicarán en el próximo recálculo del ABC cache."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error guardando umbrales Pareto: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error guardando umbrales Pareto: {str(e)}")
 
 
 # =====================================================================================

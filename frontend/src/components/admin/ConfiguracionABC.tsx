@@ -10,7 +10,8 @@
 
 import { useState, useEffect } from 'react';
 import http from '../../services/http';
-import { Settings, Store, TrendingUp, Shield, Package, Info, Save, RefreshCw, Leaf, Plus, Trash2, Warehouse, Search, Ban } from 'lucide-react';
+import { Settings, Store, TrendingUp, Shield, Package, Info, Save, RefreshCw, Leaf, Plus, Trash2, Warehouse, Search, Ban, Layers } from 'lucide-react';
+import { useABCModel } from '../../services/abcModelService';
 
 // Tipos
 interface ParametrosGlobales {
@@ -94,7 +95,7 @@ interface ProductoExcluido {
   activo: boolean;
 }
 
-type TabType = 'global' | 'umbrales' | 'niveles' | 'tiendas' | 'categorias' | 'capacidad' | 'excluidos';
+type TabType = 'modelo' | 'global' | 'umbrales' | 'niveles' | 'tiendas' | 'categorias' | 'capacidad' | 'excluidos';
 
 // Valores por defecto (los mismos del backend)
 const DEFAULTS = {
@@ -174,11 +175,15 @@ const NIVELES_SERVICIO_OPTIONS = [
 ];
 
 export default function ConfiguracionABC() {
-  const [activeTab, setActiveTab] = useState<TabType>('global');
+  const { data: abcData, getCorta, nombreModelo, modeloActivo, modelosDisponibles, refresh: refreshABCModel } = useABCModel();
+  const [activeTab, setActiveTab] = useState<TabType>('modelo');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [modeloSeleccionado, setModeloSeleccionado] = useState<string>(modeloActivo);
+  const [cambiandoModelo, setCambiandoModelo] = useState(false);
+  const umbralesPareto = abcData.umbrales_pareto;
 
   // Estado de configuración
   const [parametrosGlobales, setParametrosGlobales] = useState<ParametrosGlobales>({
@@ -720,6 +725,7 @@ export default function ConfiguracionABC() {
   ];
 
   const tabs = [
+    { id: 'modelo' as TabType, label: 'Modelo ABC', icon: Layers },
     { id: 'global' as TabType, label: 'Parámetros Globales', icon: Settings },
     { id: 'umbrales' as TabType, label: 'Umbrales ABC', icon: Package },
     { id: 'niveles' as TabType, label: 'Niveles de Servicio', icon: TrendingUp },
@@ -793,6 +799,147 @@ export default function ConfiguracionABC() {
 
       {/* Tab Content */}
       <div className="mt-6">
+        {/* TAB: Modelo ABC */}
+        {activeTab === 'modelo' && (
+          <div className="space-y-6">
+            {/* Info Banner */}
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <Layers className="h-5 w-5 text-indigo-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <h3 className="text-sm font-semibold text-indigo-800">Modelo de Clasificación ABC</h3>
+                  <p className="text-sm text-indigo-700 mt-1">
+                    Seleccione el modelo que determina cómo se clasifican los productos en clases A, B, C y D.
+                    El cambio es instantáneo y no requiere recalcular el ABC.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modelo activo actual */}
+            <div className="bg-white border border-gray-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">Modelo Activo</h3>
+                <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
+                  {nombreModelo}
+                </span>
+              </div>
+
+              {/* 4 Radio Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Object.entries(modelosDisponibles).map(([id, modelo]) => {
+                  const isActive = id === modeloActivo;
+                  const isSelected = id === modeloSeleccionado;
+                  return (
+                    <div
+                      key={id}
+                      onClick={() => setModeloSeleccionado(id)}
+                      className={`
+                        relative border-2 rounded-lg p-4 cursor-pointer transition-all
+                        ${isSelected ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200' : 'border-gray-200 hover:border-gray-300'}
+                        ${isActive ? 'shadow-md' : ''}
+                      `}
+                    >
+                      {isActive && (
+                        <span className="absolute top-2 right-2 px-2 py-0.5 bg-green-500 text-white text-xs rounded-full">
+                          Activo
+                        </span>
+                      )}
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center
+                          ${isSelected ? 'border-indigo-500' : 'border-gray-300'}`}>
+                          {isSelected && <div className="w-2 h-2 rounded-full bg-indigo-500" />}
+                        </div>
+                        <h4 className="font-semibold text-gray-900">{modelo.nombre}</h4>
+                      </div>
+                      <p className="text-sm text-gray-600 ml-7 mb-2">{modelo.criterio}</p>
+                      <div className="ml-7 flex flex-wrap gap-2">
+                        {Object.entries(modelo.clases).map(([clase, desc]) => (
+                          <span key={clase} className="text-xs px-2 py-1 bg-gray-100 rounded text-gray-700">
+                            {clase}: {desc.corto}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Botón cambiar */}
+              {modeloSeleccionado !== modeloActivo && (
+                <div className="mt-4 flex items-center gap-4">
+                  <button
+                    onClick={async () => {
+                      setCambiandoModelo(true);
+                      setError(null);
+                      try {
+                        const response = await http.put('/api/config-inventario/parametros-abc/modelo-activo', {
+                          modelo: modeloSeleccionado
+                        });
+                        const data = response.data as any;
+                        setSuccessMessage(
+                          `Modelo cambiado a "${modeloSeleccionado}". ` +
+                          `${data.filas_actualizadas_global} productos globales y ` +
+                          `${data.filas_actualizadas_tienda} por tienda actualizados en ${data.tiempo_ms}ms.`
+                        );
+                        refreshABCModel();
+                        setTimeout(() => setSuccessMessage(null), 8000);
+                      } catch (e: any) {
+                        setError(e?.message || 'Error cambiando modelo');
+                      } finally {
+                        setCambiandoModelo(false);
+                      }
+                    }}
+                    disabled={cambiandoModelo}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {cambiandoModelo ? (
+                      <><RefreshCw className="h-4 w-4 animate-spin" /> Cambiando...</>
+                    ) : (
+                      <><Save className="h-4 w-4" /> Cambiar Modelo</>
+                    )}
+                  </button>
+                  <p className="text-sm text-gray-500">
+                    El cambio es instantáneo. Todos los filtros y etiquetas se actualizarán automáticamente.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Umbrales Pareto (solo visible si modelo Pareto seleccionado) */}
+            {(modeloSeleccionado.includes('pareto') || modeloActivo.includes('pareto')) && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Distribución Pareto</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Así se distribuyen las clases en el modelo Pareto seleccionado:
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-white rounded-lg p-3 border border-green-200">
+                    <span className="inline-block px-2 py-0.5 bg-green-100 text-green-800 text-xs font-bold rounded mb-1">A</span>
+                    <p className="text-sm font-medium text-gray-900">0 – {umbralesPareto.umbral_a_pct}%</p>
+                    <p className="text-xs text-gray-500">del acumulado</p>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-yellow-200">
+                    <span className="inline-block px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-bold rounded mb-1">B</span>
+                    <p className="text-sm font-medium text-gray-900">{umbralesPareto.umbral_a_pct} – {umbralesPareto.umbral_b_pct}%</p>
+                    <p className="text-xs text-gray-500">del acumulado</p>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-orange-200">
+                    <span className="inline-block px-2 py-0.5 bg-orange-100 text-orange-800 text-xs font-bold rounded mb-1">C</span>
+                    <p className="text-sm font-medium text-gray-900">{umbralesPareto.umbral_b_pct} – 100%</p>
+                    <p className="text-xs text-gray-500">del acumulado</p>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-purple-200">
+                    <span className="inline-block px-2 py-0.5 bg-purple-100 text-purple-800 text-xs font-bold rounded mb-1">D</span>
+                    <p className="text-sm font-medium text-gray-900">Sin ventas</p>
+                    <p className="text-xs text-gray-500">en el período</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* TAB: Parámetros Globales */}
         {activeTab === 'global' && (
           <div className="space-y-6">
@@ -908,23 +1055,23 @@ export default function ConfiguracionABC() {
                 <div className="grid grid-cols-4 gap-4 text-center">
                   <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4">
                     <div className="text-2xl font-bold text-green-700">A</div>
-                    <div className="text-sm text-green-600 mt-1">Top 1 - {umbrales.umbral_a}</div>
-                    <div className="text-xs text-green-500 mt-1">Más vendidos</div>
+                    <div className="text-sm text-green-600 mt-1">{getCorta('A')}</div>
+                    <div className="text-xs text-green-500 mt-1">{nombreModelo}</div>
                   </div>
                   <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
                     <div className="text-2xl font-bold text-yellow-700">B</div>
-                    <div className="text-sm text-yellow-600 mt-1">{umbrales.umbral_a + 1} - {umbrales.umbral_b}</div>
-                    <div className="text-xs text-yellow-500 mt-1">Venta media</div>
+                    <div className="text-sm text-yellow-600 mt-1">{getCorta('B')}</div>
+                    <div className="text-xs text-yellow-500 mt-1">&nbsp;</div>
                   </div>
                   <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
                     <div className="text-2xl font-bold text-orange-700">C</div>
-                    <div className="text-sm text-orange-600 mt-1">{umbrales.umbral_b + 1} - {umbrales.umbral_c}</div>
-                    <div className="text-xs text-orange-500 mt-1">Venta baja</div>
+                    <div className="text-sm text-orange-600 mt-1">{getCorta('C')}</div>
+                    <div className="text-xs text-orange-500 mt-1">&nbsp;</div>
                   </div>
                   <div className="bg-purple-50 border-2 border-purple-300 rounded-lg p-4">
                     <div className="text-2xl font-bold text-purple-700">D</div>
-                    <div className="text-sm text-purple-600 mt-1">{umbrales.umbral_c + 1}+</div>
-                    <div className="text-xs text-purple-500 mt-1">Cola larga</div>
+                    <div className="text-sm text-purple-600 mt-1">{getCorta('D')}</div>
+                    <div className="text-xs text-purple-500 mt-1">&nbsp;</div>
                   </div>
                 </div>
 

@@ -3,15 +3,15 @@ import { Package, RefreshCw, AlertCircle, Filter, Globe, MapPin, Store } from 'l
 import { biService, ABCConsolidatedResponse } from '../../../services/biService';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import http from '../../../services/http';
+import { useABCModel } from '../../../services/abcModelService';
 
-const ABC_CONFIG = {
+const ABC_CONFIG_BASE: Record<string, { label: string; color: string; bgColor: string; textColor: string; borderColor: string }> = {
   A: {
     label: 'Clase A',
     color: '#10b981',
     bgColor: 'bg-green-50',
     textColor: 'text-green-700',
     borderColor: 'border-green-200',
-    description: 'Alto valor de ventas'
   },
   B: {
     label: 'Clase B',
@@ -19,7 +19,6 @@ const ABC_CONFIG = {
     bgColor: 'bg-blue-50',
     textColor: 'text-blue-700',
     borderColor: 'border-blue-200',
-    description: 'Valor medio de ventas'
   },
   C: {
     label: 'Clase C',
@@ -27,7 +26,6 @@ const ABC_CONFIG = {
     bgColor: 'bg-yellow-50',
     textColor: 'text-yellow-700',
     borderColor: 'border-yellow-200',
-    description: 'Valor bajo de ventas'
   },
   D: {
     label: 'Clase D',
@@ -35,7 +33,6 @@ const ABC_CONFIG = {
     bgColor: 'bg-red-50',
     textColor: 'text-red-700',
     borderColor: 'border-red-200',
-    description: 'Muy bajo valor de ventas'
   }
 };
 
@@ -55,6 +52,16 @@ function formatCurrency(value: number): string {
 }
 
 export default function ABCAnalysisView() {
+  const { getDescripcion } = useABCModel();
+
+  // Build ABC_CONFIG with dynamic descriptions from active model
+  const ABC_CONFIG = Object.fromEntries(
+    Object.entries(ABC_CONFIG_BASE).map(([key, val]) => [
+      key,
+      { ...val, description: getDescripcion(key) }
+    ])
+  ) as Record<string, { label: string; color: string; bgColor: string; textColor: string; borderColor: string; description: string }>;
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ABCConsolidatedResponse | null>(null);

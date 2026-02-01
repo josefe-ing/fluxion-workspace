@@ -4,6 +4,7 @@ import App from './App.tsx'
 import './index.css'
 import { initSentry } from './sentry.config'
 import { getTenantId, getTenantConfig } from './utils/tenant'
+import { ABCModelProvider } from './services/abcModelService'
 
 // Inicializar Sentry antes de renderizar la aplicación
 initSentry()
@@ -27,6 +28,8 @@ if (tenantConfig) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <ABCModelProvider>
+      <App />
+    </ABCModelProvider>
   </React.StrictMode>,
 )

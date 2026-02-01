@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import http from '../../services/http';
+import { useABCModel } from '../../services/abcModelService';
 import ProductSalesModal from './ProductSalesModal';
 import SyncVentasModal from './SyncVentasModal';
 import CentroComandoVentasModal from './CentroComandoVentasModal';
@@ -88,6 +89,7 @@ const UBICACION_FRIENDLY_NAMES: Record<string, string> = {
 export default function SalesDashboard() {
   const navigate = useNavigate();
   const { ubicacionId } = useParams();
+  const { filterOptions: abcFilterOptions } = useABCModel();
   const nombreTienda = ubicacionId ? UBICACION_FRIENDLY_NAMES[ubicacionId] || ubicacionId : '';
 
   const [ventasData, setVentasData] = useState<VentasDetail[]>([]);
@@ -645,9 +647,9 @@ export default function SalesDashboard() {
               className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
               <option value="">Todas</option>
-              <option value="A">A - Top 50</option>
-              <option value="B">B - Top 51-200</option>
-              <option value="C">C - Resto</option>
+              {abcFilterOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
             </select>
           </div>
           <div>
