@@ -1138,7 +1138,9 @@ async def calcular_pedidos_multitienda(
 
             total_destinos = len(request.tiendas_destino) + (1 if incluir_cedi_ccs else 0)
             if es_conflicto and total_destinos > 1:
-                # Preparar datos para DPD+U
+                # Preparar datos para DPD+U — solo tiendas que necesitan reposición
+                # Excluir tiendas con cantidad_necesaria = 0 (stock por encima del ROP)
+                # para no asignarles stock que no necesitan, robándolo de tiendas urgentes
                 datos_tiendas = [
                     DatosTiendaProducto(
                         tienda_id=tid,
@@ -1149,7 +1151,13 @@ async def calcular_pedidos_multitienda(
                         cantidad_necesaria=tdata['cantidad_necesaria']
                     )
                     for tid, tdata in tiendas_data.items()
+                    if tdata['cantidad_necesaria'] > 0
                 ]
+
+                # Si después de filtrar no quedan tiendas con necesidad, no hay conflicto real
+                if len(datos_tiendas) <= 1:
+                    productos_sin_conflicto += 1
+                    continue
 
                 # Aplicar DPD+U
                 asignaciones = calcular_distribucion_dpdu(
