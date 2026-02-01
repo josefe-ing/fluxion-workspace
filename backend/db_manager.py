@@ -10,6 +10,7 @@ Supports Read Replica architecture:
 import psycopg2
 import psycopg2.extras
 import os
+import time
 from contextlib import contextmanager
 from fastapi import HTTPException
 from typing import Any, Dict, List, Optional
@@ -20,7 +21,21 @@ from db_config import (
     POSTGRES_DSN_PRIMARY,
 )
 
+# Retry config for read replica conflicts
+REPLICA_CONFLICT_MAX_RETRIES = int(os.getenv('REPLICA_CONFLICT_MAX_RETRIES', '2'))
+REPLICA_CONFLICT_RETRY_DELAY = float(os.getenv('REPLICA_CONFLICT_RETRY_DELAY', '0.5'))
+
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# REPLICA CONFLICT DETECTION
+# =============================================================================
+
+def _is_replica_conflict(error: Exception) -> bool:
+    """Detect PostgreSQL read replica recovery conflicts."""
+    error_str = str(error).lower()
+    return "conflict with recovery" in error_str or "canceling statement due to conflict" in error_str
 
 
 # =============================================================================
@@ -30,7 +45,8 @@ logger = logging.getLogger(__name__)
 @contextmanager
 def get_postgres_connection():
     """
-    Context manager para conexiones PostgreSQL (READ - uses replica in prod)
+    Context manager para conexiones PostgreSQL (READ - uses replica in prod).
+    On replica conflict errors, logs a warning with fallback guidance.
     """
     conn = None
     try:
@@ -38,9 +54,12 @@ def get_postgres_connection():
         conn.autocommit = False
         yield conn
     except psycopg2.Error as e:
-        logger.error(f"PostgreSQL connection error: {e}")
         if conn:
             conn.rollback()
+        if _is_replica_conflict(e):
+            logger.warning(f"⚠️ Read replica conflict detected: {e}. "
+                           f"Consider increasing max_standby_streaming_delay in RDS parameter group.")
+        logger.error(f"PostgreSQL connection error: {e}")
         raise HTTPException(status_code=500, detail=f"Error conectando a PostgreSQL: {str(e)}")
     finally:
         if conn:
@@ -93,6 +112,30 @@ def get_db_connection(read_only: bool = True):
 
 
 @contextmanager
+def get_db_connection_resilient():
+    """
+    Conexión PostgreSQL resiliente para queries de lectura pesadas.
+    Usa PRIMARY directamente cuando hay replica disponible, evitando
+    conflictos de recovery en la réplica.
+
+    Usar para endpoints pesados como calcular pedidos multi-tienda.
+
+    Usage:
+        with get_db_connection_resilient() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM ventas ...")
+    """
+    # For heavy read queries, use primary to avoid replica recovery conflicts
+    if POSTGRES_DSN != POSTGRES_DSN_PRIMARY:
+        logger.debug("Using PRIMARY connection for resilient read query")
+        with get_postgres_connection_primary() as conn:
+            yield conn
+    else:
+        with get_postgres_connection() as conn:
+            yield conn
+
+
+@contextmanager
 def get_db_connection_write():
     """
     Retorna una conexión WRITE a PostgreSQL PRIMARY.
@@ -112,6 +155,41 @@ def get_db_connection_write():
 # =============================================================================
 # QUERY HELPERS
 # =============================================================================
+
+def retry_on_replica_conflict(max_retries: int = REPLICA_CONFLICT_MAX_RETRIES, delay: float = REPLICA_CONFLICT_RETRY_DELAY):
+    """
+    Decorator for async endpoint functions that retries on read replica conflicts.
+    On the final retry, uses PRIMARY connection via get_db_connection_resilient().
+
+    Usage:
+        @retry_on_replica_conflict()
+        async def calcular_pedidos(...):
+            ...
+    """
+    import functools
+    import asyncio
+
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except HTTPException as e:
+                    if _is_replica_conflict(Exception(e.detail)) and attempt < max_retries - 1:
+                        last_error = e
+                        logger.warning(
+                            f"🔄 Replica conflict on attempt {attempt + 1}/{max_retries}, "
+                            f"retrying in {delay}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise
+            raise last_error
+        return wrapper
+    return decorator
+
 
 def execute_query(sql: str, params: Optional[tuple] = None) -> List[tuple]:
     """
@@ -182,8 +260,10 @@ __all__ = [
     'get_db_connection',
     'get_db_connection_read',
     'get_db_connection_write',
+    'get_db_connection_resilient',
     'get_postgres_connection',
     'get_postgres_connection_primary',
+    'retry_on_replica_conflict',
     'execute_query',
     'execute_query_dict',
     'is_postgres_mode',
