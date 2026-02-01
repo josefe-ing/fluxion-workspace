@@ -76,6 +76,7 @@ function mapInterCedi(p: PedidoInterCediResumen): PedidoUnificado {
     origen_nombre: `${p.total_cedis_origen} CEDIs Valencia`,
     total_productos: p.total_productos,
     total_bultos: p.total_bultos,
+    total_peso_kg: p.total_peso_kg,
     estado: p.estado,
   };
 }
@@ -144,8 +145,7 @@ export default function SuggestedOrder() {
 
   const handleVerPedido = (pedido: PedidoUnificado) => {
     if (pedido.tipo === 'inter-cedi') {
-      // Por ahora no hay vista de detalle inter-CEDI, navegar al wizard con el ID
-      navigate(`/pedidos-inter-cedi/nuevo`);
+      navigate(`/pedidos-inter-cedi/${pedido.id}`);
     } else {
       navigate(`/pedidos-sugeridos/${pedido.id}/aprobar`);
     }
@@ -431,7 +431,7 @@ export default function SuggestedOrder() {
                     >
                       Ver
                     </button>
-                    {pedido.estado === ESTADOS_PEDIDO.BORRADOR && (
+                    {(pedido.estado === ESTADOS_PEDIDO.BORRADOR || (pedido.tipo === 'inter-cedi' && pedido.estado === 'confirmado')) && (
                       <button
                         onClick={() => setPedidoAEliminar(pedido)}
                         className="text-gray-400 hover:text-red-500"

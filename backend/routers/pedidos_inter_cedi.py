@@ -120,11 +120,27 @@ async def listar_pedidos_inter_cedi(
         cursor.execute(query, params)
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
+
+        # Calcular peso total por pedido desde la tabla detalle
+        pedido_ids = [dict(zip(columns, row))['id'] for row in rows]
+        peso_por_pedido = {}
+        if pedido_ids:
+            cursor.execute("""
+                SELECT pedido_id,
+                       SUM(COALESCE(cantidad_pedida_bultos, cantidad_sugerida_bultos) * unidades_por_bulto * COALESCE(peso_unitario_kg, 0)) as total_peso_kg
+                FROM pedidos_inter_cedi_detalle
+                WHERE pedido_id = ANY(%s)
+                GROUP BY pedido_id
+            """, [pedido_ids])
+            for peso_row in cursor.fetchall():
+                peso_por_pedido[peso_row[0]] = float(peso_row[1]) if peso_row[1] else None
+
         cursor.close()
 
         pedidos = []
         for row in rows:
             row_dict = dict(zip(columns, row))
+            row_dict['total_peso_kg'] = peso_por_pedido.get(row_dict['id'])
             pedidos.append(PedidoInterCediResumen(**row_dict))
 
         return pedidos
@@ -836,7 +852,7 @@ async def eliminar_pedido_inter_cedi(
     conn: Any = Depends(get_db_write)
 ):
     """
-    Elimina un pedido Inter-CEDI (solo en estado BORRADOR)
+    Elimina un pedido Inter-CEDI (en estado BORRADOR o CONFIRMADO)
     """
     try:
         cursor = conn.cursor()
@@ -850,10 +866,11 @@ async def eliminar_pedido_inter_cedi(
 
         estado, numero_pedido = row
 
-        if estado != EstadoPedidoInterCedi.BORRADOR:
+        estados_eliminables = [EstadoPedidoInterCedi.BORRADOR, EstadoPedidoInterCedi.CONFIRMADO]
+        if estado not in estados_eliminables:
             raise HTTPException(
                 status_code=400,
-                detail=f"Solo se pueden eliminar pedidos en estado BORRADOR. Estado actual: {estado}"
+                detail=f"Solo se pueden eliminar pedidos en estado BORRADOR o CONFIRMADO. Estado actual: {estado}"
             )
 
         # Eliminar (cascade eliminará el detalle)

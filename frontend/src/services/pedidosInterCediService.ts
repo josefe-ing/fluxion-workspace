@@ -134,6 +134,7 @@ export interface PedidoInterCediResumen {
   total_productos: number;
   total_bultos: number;
   total_unidades: number;
+  total_peso_kg?: number;
   usuario_creador?: string;
   dias_desde_creacion?: number;
   productos_cedi_seco: number;

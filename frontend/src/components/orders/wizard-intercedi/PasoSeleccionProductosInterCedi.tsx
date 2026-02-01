@@ -31,6 +31,7 @@ interface Props {
   updateProductos: (productos: ProductoInterCedi[]) => void;
   onNext: () => void;
   onBack: () => void;
+  readOnly?: boolean;
 }
 
 type SortField = 'demanda' | 'stock_cedi' | 'dias_cedi' | 'stock_origen' | 'sugerido' | 'pedido' | 'abc' | 'prioridad';
@@ -86,7 +87,8 @@ export default function PasoSeleccionProductosInterCedi({
   codigosExcluidos = [],
   updateProductos,
   onNext,
-  onBack
+  onBack,
+  readOnly = false
 }: Props) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filtroCediOrigen, setFiltroCediOrigen] = useState<string>('todos');
@@ -486,18 +488,22 @@ export default function PasoSeleccionProductosInterCedi({
             >
               Excel
             </button>
-            <button
-              onClick={handleAceptarTodas}
-              className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100"
-            >
-              Aceptar Sugeridas
-            </button>
-            <button
-              onClick={handleLimpiarTodas}
-              className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
-            >
-              Limpiar Todo
-            </button>
+            {!readOnly && (
+              <>
+                <button
+                  onClick={handleAceptarTodas}
+                  className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100"
+                >
+                  Aceptar Sugeridas
+                </button>
+                <button
+                  onClick={handleLimpiarTodas}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                >
+                  Limpiar Todo
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -801,6 +807,7 @@ export default function PasoSeleccionProductosInterCedi({
                         checked={isIncluido}
                         onChange={(e) => handleIncluirChange(producto.codigo_producto, e.target.checked)}
                         className="h-4 w-4 text-gray-900 border-gray-300 rounded"
+                        disabled={readOnly}
                       />
                     </td>
                     <td className="px-1 py-1 w-12">
@@ -938,7 +945,8 @@ export default function PasoSeleccionProductosInterCedi({
                         min="0"
                         value={cantidadPedida}
                         onChange={(e) => handleCantidadChange(producto.codigo_producto, e.target.value)}
-                        className="w-14 px-1 py-0.5 border border-gray-300 rounded text-center text-xs focus:outline-none focus:ring-2 focus:ring-gray-900"
+                        className={`w-14 px-1 py-0.5 border border-gray-300 rounded text-center text-xs focus:outline-none focus:ring-2 focus:ring-gray-900 ${readOnly ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                        readOnly={readOnly}
                       />
                     </td>
                     {/* Peso */}

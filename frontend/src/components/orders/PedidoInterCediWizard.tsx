@@ -1,16 +1,18 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import PasoCediDestinoConfiguracion, { type InterCediOrderConfig } from './wizard-intercedi/PasoCediDestinoConfiguracion';
 import PasoSeleccionProductosInterCedi from './wizard-intercedi/PasoSeleccionProductosInterCedi';
 import PasoConfirmacionInterCedi from './wizard-intercedi/PasoConfirmacionInterCedi';
 import type { ProductoInterCedi, TotalesPorCedi, CalcularPedidoResponse, GuardarPedidoResponse } from '../../services/pedidosInterCediService';
-import { calcularPedidoInterCedi, guardarPedidoInterCedi, confirmarPedidoInterCedi } from '../../services/pedidosInterCediService';
+import { calcularPedidoInterCedi, guardarPedidoInterCedi, confirmarPedidoInterCedi, obtenerPedidoInterCedi } from '../../services/pedidosInterCediService';
 
 export default function PedidoInterCediWizard() {
   const navigate = useNavigate();
+  const { pedidoId } = useParams<{ pedidoId?: string }>();
   const [currentStep, setCurrentStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modoVisualizacion, setModoVisualizacion] = useState(false);
 
   // Estado del pedido
   const [config, setConfig] = useState<InterCediOrderConfig>({
@@ -41,6 +43,73 @@ export default function PedidoInterCediWizard() {
     { number: 2, name: 'Productos', description: 'Revisar y ajustar' },
     { number: 3, name: 'Confirmación', description: 'Revisar y enviar' },
   ];
+
+  // Cargar pedido existente si hay pedidoId en la URL
+  useEffect(() => {
+    if (pedidoId) {
+      cargarPedidoExistente(pedidoId);
+    }
+  }, [pedidoId]);
+
+  const cargarPedidoExistente = async (id: string) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const pedido = await obtenerPedidoInterCedi(id);
+
+      // Cargar configuración desde el pedido guardado
+      setConfig({
+        cedi_destino_id: pedido.cedi_destino_id,
+        cedi_destino_nombre: pedido.cedi_destino_nombre || 'CEDI Caracas',
+        dias_cobertura_a: pedido.dias_cobertura_a,
+        dias_cobertura_b: pedido.dias_cobertura_b,
+        dias_cobertura_c: pedido.dias_cobertura_c,
+        dias_cobertura_d: pedido.dias_cobertura_d,
+        dias_cobertura_fruver: (pedido as any).dias_cobertura_fruver ?? 1,
+        dias_cobertura_panaderia: (pedido as any).dias_cobertura_panaderia ?? 1,
+        frecuencia_viajes_dias: pedido.frecuencia_viajes_dias || 'Mar,Jue,Sab',
+        lead_time_dias: pedido.lead_time_dias || 2
+      });
+
+      // Cargar productos con cantidad_pedida_bultos desde datos guardados
+      const productosConPedido = pedido.productos.map(p => ({
+        ...p,
+        cantidad_pedida_bultos: p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos,
+        total_unidades: (p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos) * p.unidades_por_bulto,
+        incluido: (p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos) > 0
+      }));
+
+      setProductos(productosConPedido);
+      setRegion(pedido.region || 'CARACAS');
+      setObservaciones(pedido.observaciones || '');
+      setPedidoGuardadoId(id);
+      setModoVisualizacion(pedido.estado !== 'borrador');
+
+      // Calcular totales por CEDI desde los productos
+      const totales: Record<string, TotalesPorCedi> = {};
+      for (const p of productosConPedido) {
+        const cedi = p.cedi_origen_id;
+        if (!totales[cedi]) {
+          totales[cedi] = { productos: 0, bultos: 0, unidades: 0 };
+        }
+        totales[cedi].productos++;
+        const cant = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+        totales[cedi].bultos += cant;
+        totales[cedi].unidades += cant * p.unidades_por_bulto;
+      }
+      setTotalesPorCedi(totales);
+
+      // Ir directo a Step 2 (productos)
+      setCurrentStep(2);
+
+    } catch (err) {
+      console.error('Error cargando pedido:', err);
+      setError(err instanceof Error ? err.message : 'Error al cargar el pedido');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Handlers de navegación
   const handleCancel = () => {
@@ -202,6 +271,16 @@ export default function PedidoInterCediWizard() {
         </div>
       )}
 
+      {/* Loading overlay for initial load */}
+      {isLoading && currentStep === 1 && pedidoId && (
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto"></div>
+            <p className="mt-3 text-sm text-gray-600">Cargando pedido...</p>
+          </div>
+        </div>
+      )}
+
       {/* Breadcrumb / Steps */}
       <nav aria-label="Progress" className="pb-2">
         <ol className="flex items-center justify-center gap-x-8">
@@ -263,7 +342,8 @@ export default function PedidoInterCediWizard() {
             codigosExcluidos={codigosExcluidos}
             updateProductos={setProductos}
             onNext={() => setCurrentStep(3)}
-            onBack={() => setCurrentStep(1)}
+            onBack={pedidoId ? () => navigate('/pedidos-sugeridos') : () => setCurrentStep(1)}
+            readOnly={modoVisualizacion}
           />
         )}
         {currentStep === 3 && (
@@ -276,8 +356,8 @@ export default function PedidoInterCediWizard() {
             observaciones={observaciones}
             onObservacionesChange={setObservaciones}
             onBack={() => setCurrentStep(2)}
-            onGuardarBorrador={handleGuardarBorrador}
-            onConfirmar={handleConfirmarPedido}
+            onGuardarBorrador={modoVisualizacion ? undefined : handleGuardarBorrador}
+            onConfirmar={modoVisualizacion ? undefined : handleConfirmarPedido}
             isLoading={isLoading}
             pedidoGuardadoId={pedidoGuardadoId}
           />

@@ -332,6 +332,7 @@ class PedidoInterCediResumen(BaseModel):
     total_productos: int = 0
     total_bultos: float = 0
     total_unidades: float = 0
+    total_peso_kg: Optional[float] = None
 
     usuario_creador: Optional[str] = None
     dias_desde_creacion: Optional[int] = None

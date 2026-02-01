@@ -135,6 +135,7 @@ function ProtectedRoutes() {
         />
         {/* Pedidos Inter-CEDI */}
         <Route path="pedidos-inter-cedi/nuevo" element={<PedidoInterCediWizard />} />
+        <Route path="pedidos-inter-cedi/:pedidoId" element={<PedidoInterCediWizard />} />
         {/* Emergencias de Inventario */}
         <Route path="emergencias" element={<EmergenciasDashboard />} />
 
