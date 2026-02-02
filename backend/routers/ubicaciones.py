@@ -347,17 +347,73 @@ async def get_ubicaciones_summary_regional():
 
 @router.get("/ubicaciones/{ubicacion_id}/stock-params")
 async def get_stock_params(ubicacion_id: str):
-    """Obtiene los parámetros de stock para una tienda (valores por defecto)"""
-    DEFAULTS = {
-        'a':  {'min': 2.0, 'seg': 1.0, 'max': 5.0},
-        'ab': {'min': 2.0, 'seg': 2.5, 'max': 7.0},
-        'b':  {'min': 3.0, 'seg': 2.0, 'max': 12.0},
-        'bc': {'min': 9.0, 'seg': 3.0, 'max': 17.0},
-        'c':  {'min': 15.0, 'seg': 7.0, 'max': 26.0},
+    """
+    Obtiene los parámetros de stock para una tienda en DÍAS.
+    Usa la configuración real de config_parametros_abc_tienda si existe,
+    sino usa valores por defecto.
+
+    Fórmulas simplificadas (mismas que main.py inventarios):
+      SS  = lead_time
+      ROP = lead_time + dias_cobertura / 2
+      MAX = lead_time + dias_cobertura
+    """
+    # Defaults globales (lead_time=1.5)
+    DEFAULT_LT = 1.5
+    DEFAULT_COB = {'a': 7, 'b': 14, 'c': 21, 'd': 30}
+
+    lt = DEFAULT_LT
+    cob = dict(DEFAULT_COB)
+
+    # Intentar cargar config real de la tienda
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT lead_time_override, dias_cobertura_a, dias_cobertura_b,
+                   dias_cobertura_c, clase_d_dias_cobertura
+            FROM config_parametros_abc_tienda
+            WHERE tienda_id = %s AND activo = true
+        """, [ubicacion_id])
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if row:
+            lt = float(row[0]) if row[0] is not None else DEFAULT_LT
+            cob['a'] = int(row[1]) if row[1] is not None else DEFAULT_COB['a']
+            cob['b'] = int(row[2]) if row[2] is not None else DEFAULT_COB['b']
+            cob['c'] = int(row[3]) if row[3] is not None else DEFAULT_COB['c']
+            cob['d'] = int(row[4]) if row[4] is not None else DEFAULT_COB['d']
+            logger.info(f"📋 stock-params {ubicacion_id}: LT={lt}, A={cob['a']}d, B={cob['b']}d, C={cob['c']}d, D={cob['d']}d")
+    except Exception as e:
+        logger.warning(f"No se pudo cargar config tienda para stock-params: {e}. Usando defaults.")
+
+    def calc_params(dias_cob: int) -> dict:
+        return {
+            'seg': round(lt, 1),
+            'min': round(lt + dias_cob / 2.0, 1),
+            'max': round(lt + dias_cob, 1),
+        }
+
+    params_a = calc_params(cob['a'])
+    params_b = calc_params(cob['b'])
+    params_c = calc_params(cob['c'])
+    # AB = promedio entre A y B, BC = promedio entre B y C
+    cob_ab = (cob['a'] + cob['b']) / 2.0
+    cob_bc = (cob['b'] + cob['c']) / 2.0
+    params_ab = calc_params(cob_ab)
+    params_bc = calc_params(cob_bc)
+
+    params_map = {
+        'a': params_a,
+        'ab': params_ab,
+        'b': params_b,
+        'bc': params_bc,
+        'c': params_c,
     }
 
     result = {"ubicacion_id": ubicacion_id}
-    for abc, vals in DEFAULTS.items():
+    for abc, vals in params_map.items():
         result[f"stock_min_mult_{abc}"] = vals['min']
         result[f"stock_seg_mult_{abc}"] = vals['seg']
         result[f"stock_max_mult_{abc}"] = vals['max']
