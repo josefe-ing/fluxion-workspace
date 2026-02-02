@@ -19,11 +19,22 @@ const TIENDAS_POR_CEDI: Record<string, Array<{ id: string; nombre: string }>> = 
     { id: 'tienda_18', nombre: 'PARAISO' }
   ],
   'cedi_seco': [
-    { id: 'tienda_08', nombre: 'BOSQUE' },
     { id: 'tienda_01', nombre: 'PERIFERICO' },
     { id: 'tienda_02', nombre: 'AV. BOLIVAR' },
     { id: 'tienda_03', nombre: 'MAÑONGO' },
+    { id: 'tienda_04', nombre: 'SAN DIEGO' },
+    { id: 'tienda_05', nombre: 'VIVIENDA' },
+    { id: 'tienda_06', nombre: 'NAGUANAGUA' },
+    { id: 'tienda_07', nombre: 'CENTRO' },
+    { id: 'tienda_08', nombre: 'BOSQUE' },
+    { id: 'tienda_09', nombre: 'GUACARA' },
+    { id: 'tienda_10', nombre: 'FERIAS' },
+    { id: 'tienda_11', nombre: 'FLOR AMARILLO' },
+    { id: 'tienda_12', nombre: 'PARAPARAL' },
+    { id: 'tienda_13', nombre: 'PARAMACAY' },
     { id: 'tienda_15', nombre: 'ISABELICA' },
+    { id: 'tienda_16', nombre: 'TOCUYITO' },
+    { id: 'tienda_19', nombre: 'GUIGUE' },
     { id: 'tienda_20', nombre: 'TAZAJAL' }
   ]
 };
