@@ -108,40 +108,40 @@ class ProductoPedidoSugeridoCalculado(ProductoPedidoSugeridoBase):
     """Producto con cálculos de sistema (response del endpoint de cálculo)"""
     # Cantidades SUGERIDAS (calculadas por el sistema)
     # Acepta tanto 'cantidad_sugerida_unidades' como 'cantidad_sugerida_unid' del frontend
-    cantidad_sugerida_unidades: Decimal = Field(default=0, alias="cantidad_sugerida_unid")
-    cantidad_sugerida_bultos: Decimal = 0
+    cantidad_sugerida_unidades: Decimal = Field(default=Decimal(0), alias="cantidad_sugerida_unid")
+    cantidad_sugerida_bultos: Decimal = Decimal(0)
     cantidad_sugerida_kg: Optional[Decimal] = None
 
     # Métricas de ventas usadas en el cálculo
-    prom_ventas_3dias_unid: Decimal = 0
-    prom_ventas_5dias_unid: Decimal = 0
-    prom_ventas_8sem_unid: Decimal = 0
-    prom_ventas_8sem_bultos: Decimal = 0
-    prom_ventas_20dias_unid: Decimal = 0
-    prom_mismo_dia_unid: Decimal = 0
+    prom_ventas_3dias_unid: Decimal = Decimal(0)
+    prom_ventas_5dias_unid: Decimal = Decimal(0)
+    prom_ventas_8sem_unid: Decimal = Decimal(0)
+    prom_ventas_8sem_bultos: Decimal = Decimal(0)
+    prom_ventas_20dias_unid: Decimal = Decimal(0)
+    prom_mismo_dia_unid: Decimal = Decimal(0)
 
     # Forecast
-    pronostico_3dias_unid: Optional[Decimal] = 0
-    pronostico_3dias_bultos: Optional[Decimal] = 0
-    pronostico_7dias_unid: Optional[Decimal] = 0
+    pronostico_3dias_unid: Optional[Decimal] = Decimal(0)
+    pronostico_3dias_bultos: Optional[Decimal] = Decimal(0)
+    pronostico_7dias_unid: Optional[Decimal] = Decimal(0)
 
     # Stock en diferentes ubicaciones
-    stock_tienda: Decimal = 0
-    stock_en_transito: Decimal = 0
-    stock_total: Decimal = 0
-    stock_total_bultos: Decimal = 0
+    stock_tienda: Decimal = Decimal(0)
+    stock_en_transito: Decimal = Decimal(0)
+    stock_total: Decimal = Decimal(0)
+    stock_total_bultos: Decimal = Decimal(0)
     stock_dias_cobertura: Optional[Decimal] = None
 
-    stock_cedi_origen: Decimal = 0
-    stock_cedi_seco: Decimal = 0
-    stock_cedi_frio: Decimal = 0
-    stock_cedi_verde: Decimal = 0
+    stock_cedi_origen: Decimal = Decimal(0)
+    stock_cedi_seco: Decimal = Decimal(0)
+    stock_cedi_frio: Decimal = Decimal(0)
+    stock_cedi_verde: Decimal = Decimal(0)
 
     # Parámetros de inventario
-    stock_minimo: Decimal = 0
-    stock_maximo: Decimal = 0
-    stock_seguridad: Decimal = 0
-    punto_reorden: Decimal = 0
+    stock_minimo: Decimal = Decimal(0)
+    stock_maximo: Decimal = Decimal(0)
+    stock_seguridad: Decimal = Decimal(0)
+    punto_reorden: Decimal = Decimal(0)
     clasificacion_abc: Optional[str] = None
 
     # Razón del pedido
@@ -175,12 +175,12 @@ class ProductoPedidoSugeridoCalculado(ProductoPedidoSugeridoBase):
 class ProductoPedidoSugeridoAjustado(ProductoPedidoSugeridoCalculado):
     """Producto con ajustes del usuario (para guardar pedido)"""
     # Cantidades PEDIDAS (ajustadas por usuario)
-    cantidad_pedida_unidades: Decimal = 0
-    cantidad_pedida_bultos: Decimal = 0
+    cantidad_pedida_unidades: Decimal = Decimal(0)
+    cantidad_pedida_bultos: Decimal = Decimal(0)
     cantidad_pedida_kg: Optional[Decimal] = None
 
     # Totales calculados (calculado si no viene)
-    total_unidades: Decimal = 0
+    total_unidades: Decimal = Decimal(0)
     total_kg: Optional[Decimal] = None
 
     # Control de inclusión
@@ -449,8 +449,8 @@ class CalcularPedidoResponse(BaseModel):
 
     # Totales de productos a devolver
     total_productos_devolver: int = 0
-    total_bultos_devolver: Decimal = 0
-    total_unidades_devolver: Decimal = 0
+    total_bultos_devolver: Decimal = Decimal(0)
+    total_unidades_devolver: Decimal = Decimal(0)
 
     # Información del pedido
     cedi_origen_id: str
@@ -607,8 +607,8 @@ class PedidoSugeridoCompleto(PedidoSugeridoResumen):
     # Información de devoluciones
     tiene_devoluciones: bool = False
     total_productos_devolucion: int = 0
-    total_bultos_devolucion: Decimal = 0
-    total_unidades_devolucion: Decimal = 0
+    total_bultos_devolucion: Decimal = Decimal(0)
+    total_unidades_devolucion: Decimal = Decimal(0)
 
     # Configuración
     dias_cobertura: int
@@ -668,7 +668,7 @@ class PedidoGuardadoResponse(BaseModel):
     # Totales de devoluciones
     tiene_devoluciones: bool = False
     total_productos_devolucion: int = 0
-    total_bultos_devolucion: Decimal = 0
+    total_bultos_devolucion: Decimal = Decimal(0)
 
     fecha_creacion: datetime
     mensaje: str = "Pedido guardado exitosamente"
@@ -782,12 +782,12 @@ class ProductoLlegadaVerificacion(BaseModel):
     clasificacion_abc: str = "D"
 
     # Llegadas detectadas (expresadas en la unidad del producto)
-    total_llegadas_detectadas: Decimal = 0  # Suma de todos los incrementos positivos
-    cantidad_ya_guardada: Decimal = 0       # Lo que ya estaba en cantidad_recibida_bultos
-    nuevo_incremento: Decimal = 0           # total_llegadas - ya_guardada
+    total_llegadas_detectadas: Decimal = Decimal(0)  # Suma de todos los incrementos positivos
+    cantidad_ya_guardada: Decimal = Decimal(0)       # Lo que ya estaba en cantidad_recibida_bultos
+    nuevo_incremento: Decimal = Decimal(0)           # total_llegadas - ya_guardada
 
     # Porcentaje y estado
-    porcentaje_llegada: Decimal = 0
+    porcentaje_llegada: Decimal = Decimal(0)
     estado_llegada: str = EstadoLlegada.SIN_DATOS
 
     # Metadata
@@ -795,9 +795,9 @@ class ProductoLlegadaVerificacion(BaseModel):
     mensaje: Optional[str] = None
 
     # Stock actual en diferentes ubicaciones
-    stock_tienda: Decimal = 0
-    stock_cedi_caracas: Decimal = 0
-    stock_cedi_verde: Decimal = 0
+    stock_tienda: Decimal = Decimal(0)
+    stock_cedi_caracas: Decimal = Decimal(0)
+    stock_cedi_verde: Decimal = Decimal(0)
 
     # Detalle de snapshots (opcional, para debug)
     snapshot_inicial: Optional[Decimal] = None
@@ -825,7 +825,7 @@ class VerificarLlegadaResponse(BaseModel):
     productos_sin_datos: int = 0
 
     # Porcentaje global
-    porcentaje_cumplimiento_global: Decimal = 0
+    porcentaje_cumplimiento_global: Decimal = Decimal(0)
 
     # Flags
     tiene_datos_suficientes: bool = True

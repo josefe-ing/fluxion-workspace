@@ -366,25 +366,24 @@ async def get_stock_params(ubicacion_id: str):
 
     # Intentar cargar config real de la tienda
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT lead_time_override, dias_cobertura_a, dias_cobertura_b,
-                   dias_cobertura_c, clase_d_dias_cobertura
-            FROM config_parametros_abc_tienda
-            WHERE tienda_id = %s AND activo = true
-        """, [ubicacion_id])
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT lead_time_override, dias_cobertura_a, dias_cobertura_b,
+                       dias_cobertura_c, clase_d_dias_cobertura
+                FROM config_parametros_abc_tienda
+                WHERE tienda_id = %s AND activo = true
+            """, [ubicacion_id])
+            row = cursor.fetchone()
+            cursor.close()
 
-        if row:
-            lt = float(row[0]) if row[0] is not None else DEFAULT_LT
-            cob['a'] = int(row[1]) if row[1] is not None else DEFAULT_COB['a']
-            cob['b'] = int(row[2]) if row[2] is not None else DEFAULT_COB['b']
-            cob['c'] = int(row[3]) if row[3] is not None else DEFAULT_COB['c']
-            cob['d'] = int(row[4]) if row[4] is not None else DEFAULT_COB['d']
-            logger.info(f"📋 stock-params {ubicacion_id}: LT={lt}, A={cob['a']}d, B={cob['b']}d, C={cob['c']}d, D={cob['d']}d")
+            if row:
+                lt = float(row[0]) if row[0] is not None else DEFAULT_LT
+                cob['a'] = int(row[1]) if row[1] is not None else DEFAULT_COB['a']
+                cob['b'] = int(row[2]) if row[2] is not None else DEFAULT_COB['b']
+                cob['c'] = int(row[3]) if row[3] is not None else DEFAULT_COB['c']
+                cob['d'] = int(row[4]) if row[4] is not None else DEFAULT_COB['d']
+                logger.info(f"📋 stock-params {ubicacion_id}: LT={lt}, A={cob['a']}d, B={cob['b']}d, C={cob['c']}d, D={cob['d']}d")
     except Exception as e:
         logger.warning(f"No se pudo cargar config tienda para stock-params: {e}. Usando defaults.")
 
