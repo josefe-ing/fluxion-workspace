@@ -279,7 +279,9 @@ class CalcularPedidoInterCediResponse(ConfiguracionDiasCobertura):
 
     # Totales
     total_cedis_origen: int = 0
-    total_productos: int
+    total_productos: int  # Total de productos analizados (con y sin sugerido)
+    total_productos_con_sugerido: int = Field(default=0, description="Productos con cantidad_sugerida > 0")
+    total_productos_sin_sugerido: int = Field(default=0, description="Productos con cantidad_sugerida = 0 (visibles para análisis)")
     total_bultos: Decimal
     total_unidades: Decimal
 

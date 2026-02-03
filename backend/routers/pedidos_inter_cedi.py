@@ -537,119 +537,131 @@ async def calcular_pedido_inter_cedi(
                 # Redondear a bultos completos (hacia arriba)
                 cantidad_sugerida_bultos = Decimal(str(math.ceil(float(cantidad_sugerida_unid / unidades_por_bulto))))
 
-            # Solo incluir si hay cantidad sugerida > 0
-            if cantidad_sugerida_bultos > 0:
-                # Obtener desglose de P75 por tienda para este producto
-                p75_tiendas = []
-                if producto_id in p75_por_producto:
-                    for p75_data in p75_por_producto[producto_id]:
-                        p75_tiendas.append(P75PorTienda(
-                            tienda_id=p75_data['tienda_id'],
-                            tienda_nombre=p75_data['tienda_nombre'],
-                            p75_unidades=p75_data['p75_unidades']
-                        ))
+            # **INCLUIR TODOS LOS PRODUCTOS** (incluso con cantidad_sugerida = 0)
+            # Esto permite que el frontend muestre todos los productos para análisis
 
-                # Obtener stock por tienda para este producto
-                stock_tiendas = []
-                stock_tiendas_total = Decimal('0')
-                if producto_id in stock_tiendas_por_producto:
-                    for stock_data in stock_tiendas_por_producto[producto_id]:
-                        stock_tiendas.append(StockPorTienda(
-                            tienda_id=stock_data['tienda_id'],
-                            tienda_nombre=stock_data['tienda_nombre'],
-                            stock_unidades=stock_data['stock_unidades']
-                        ))
-                        stock_tiendas_total += stock_data['stock_unidades']
+            # Obtener desglose de P75 por tienda para este producto
+            p75_tiendas = []
+            if producto_id in p75_por_producto:
+                for p75_data in p75_por_producto[producto_id]:
+                    p75_tiendas.append(P75PorTienda(
+                        tienda_id=p75_data['tienda_id'],
+                        tienda_nombre=p75_data['tienda_nombre'],
+                        p75_unidades=p75_data['p75_unidades']
+                    ))
 
-                producto = ProductoInterCediCalculado(
-                    codigo_producto=codigo,
-                    codigo_barras=row_dict['codigo_barras'],
-                    descripcion_producto=row_dict['descripcion'] or codigo,
-                    categoria=row_dict['categoria'],
-                    grupo=row_dict['grupo'],
-                    marca=row_dict['marca'],
-                    presentacion=row_dict['presentacion'],
-                    cuadrante=row_dict.get('cuadrante'),
-                    clasificacion_abc=clase_abc,
+            # Obtener stock por tienda para este producto
+            stock_tiendas = []
+            stock_tiendas_total = Decimal('0')
+            if producto_id in stock_tiendas_por_producto:
+                for stock_data in stock_tiendas_por_producto[producto_id]:
+                    stock_tiendas.append(StockPorTienda(
+                        tienda_id=stock_data['tienda_id'],
+                        tienda_nombre=stock_data['tienda_nombre'],
+                        stock_unidades=stock_data['stock_unidades']
+                    ))
+                    stock_tiendas_total += stock_data['stock_unidades']
 
-                    # CEDI Origen
-                    cedi_origen_id=cedi_origen_id,
-                    cedi_origen_nombre=CediOrigen.nombre(cedi_origen_id),
-                    stock_cedi_origen=stock_cedi_origen,
+            producto = ProductoInterCediCalculado(
+                codigo_producto=codigo,
+                codigo_barras=row_dict['codigo_barras'],
+                descripcion_producto=row_dict['descripcion'] or codigo,
+                categoria=row_dict['categoria'],
+                grupo=row_dict['grupo'],
+                marca=row_dict['marca'],
+                presentacion=row_dict['presentacion'],
+                cuadrante=row_dict.get('cuadrante'),
+                clasificacion_abc=clase_abc,
 
-                    # Cantidades físicas
-                    unidades_por_bulto=unidades_por_bulto,
-                    unidad_pedido=row_dict.get('unidad_pedido', 'Bulto'),
-                    peso_unitario_kg=Decimal(str(row_dict['peso_unitario'] or 0)) if row_dict['peso_unitario'] else None,
+                # CEDI Origen
+                cedi_origen_id=cedi_origen_id,
+                cedi_origen_nombre=CediOrigen.nombre(cedi_origen_id),
+                stock_cedi_origen=stock_cedi_origen,
 
-                    # Demanda regional
-                    demanda_regional_p75=p75_regional,
-                    demanda_regional_promedio=Decimal(str(row_dict['p75_promedio'] or 0)),
-                    num_tiendas_region=int(row_dict['num_tiendas'] or 0),
-                    p75_por_tienda=p75_tiendas,
+                # Cantidades físicas
+                unidades_por_bulto=unidades_por_bulto,
+                unidad_pedido=row_dict.get('unidad_pedido', 'Bulto'),
+                peso_unitario_kg=Decimal(str(row_dict['peso_unitario'] or 0)) if row_dict['peso_unitario'] else None,
 
-                    # Stock en tiendas de la región
-                    stock_tiendas_total=stock_tiendas_total,
-                    stock_por_tienda=stock_tiendas,
+                # Demanda regional
+                demanda_regional_p75=p75_regional,
+                demanda_regional_promedio=Decimal(str(row_dict['p75_promedio'] or 0)),
+                num_tiendas_region=int(row_dict['num_tiendas'] or 0),
+                p75_por_tienda=p75_tiendas,
 
-                    # Stock CEDI destino
-                    stock_actual_cedi=stock_cedi_destino,
-                    stock_en_transito=Decimal('0'),
+                # Stock en tiendas de la región
+                stock_tiendas_total=stock_tiendas_total,
+                stock_por_tienda=stock_tiendas,
 
-                    # Parámetros calculados
-                    stock_minimo_cedi=stock_minimo,
-                    stock_seguridad_cedi=stock_seguridad,
-                    stock_maximo_cedi=stock_maximo,
-                    punto_reorden_cedi=stock_minimo,
+                # Stock CEDI destino
+                stock_actual_cedi=stock_cedi_destino,
+                stock_en_transito=Decimal('0'),
 
-                    # Cantidades sugeridas
-                    cantidad_sugerida_unidades=cantidad_sugerida_unid,
-                    cantidad_sugerida_bultos=cantidad_sugerida_bultos,
-                    cantidad_ideal_unidades=cantidad_ideal_unid,
+                # Parámetros calculados
+                stock_minimo_cedi=stock_minimo,
+                stock_seguridad_cedi=stock_seguridad,
+                stock_maximo_cedi=stock_maximo,
+                punto_reorden_cedi=stock_minimo,
 
-                    # Metadata
-                    dias_cobertura_objetivo=dias_cobertura,
-                    razon_pedido=f"Reposición CEDI - Clase {clase_abc} ({dias_cobertura}d cobertura)"
-                )
+                # Cantidades sugeridas
+                cantidad_sugerida_unidades=cantidad_sugerida_unid,
+                cantidad_sugerida_bultos=cantidad_sugerida_bultos,
+                cantidad_ideal_unidades=cantidad_ideal_unid,
 
-                productos_calculados.append(producto)
-                if cedi_origen_id in productos_por_cedi:
-                    productos_por_cedi[cedi_origen_id].append(producto)
+                # Metadata
+                dias_cobertura_objetivo=dias_cobertura,
+                razon_pedido=f"Reposición CEDI - Clase {clase_abc} ({dias_cobertura}d cobertura)"
+            )
+
+            productos_calculados.append(producto)
+            if cedi_origen_id in productos_por_cedi:
+                productos_por_cedi[cedi_origen_id].append(producto)
 
         # 6. Calcular totales
         total_productos = len(productos_calculados)
-        total_bultos = sum(p.cantidad_sugerida_bultos for p in productos_calculados)
-        total_unidades = sum(p.cantidad_sugerida_unidades for p in productos_calculados)
+
+        # Contar productos con cantidad sugerida > 0 (seleccionados/incluidos)
+        productos_con_sugerido = [p for p in productos_calculados if p.cantidad_sugerida_bultos > 0]
+        productos_sin_sugerido = [p for p in productos_calculados if p.cantidad_sugerida_bultos == 0]
+
+        total_productos_sugeridos = len(productos_con_sugerido)
+        total_productos_sin_sugerido = len(productos_sin_sugerido)
+        total_bultos = sum(p.cantidad_sugerida_bultos for p in productos_con_sugerido)
+        total_unidades = sum(p.cantidad_sugerida_unidades for p in productos_con_sugerido)
         total_cedis_origen = len([k for k, v in productos_por_cedi.items() if len(v) > 0])
 
-        # Totales por CEDI origen
+        # Totales por CEDI origen (solo productos con sugerido > 0)
         totales_por_cedi = {}
         for cedi_id, productos in productos_por_cedi.items():
             if productos:
+                productos_cedi_con_sugerido = [p for p in productos if p.cantidad_sugerida_bultos > 0]
                 totales_por_cedi[cedi_id] = {
                     'productos': len(productos),
-                    'bultos': sum(p.cantidad_sugerida_bultos for p in productos),
-                    'unidades': sum(p.cantidad_sugerida_unidades for p in productos)
+                    'productos_con_sugerido': len(productos_cedi_con_sugerido),
+                    'bultos': sum(p.cantidad_sugerida_bultos for p in productos_cedi_con_sugerido),
+                    'unidades': sum(p.cantidad_sugerida_unidades for p in productos_cedi_con_sugerido)
                 }
 
         # Contar productos con y sin demanda en el resultado
-        productos_con_demanda_result = sum(1 for p in productos_calculados if p.demanda_regional_p75 > 0)
-        productos_sin_demanda_result = total_productos - productos_con_demanda_result
+        productos_con_demanda_result = sum(1 for p in productos_con_sugerido if p.demanda_regional_p75 > 0)
+        productos_sin_demanda_result = total_productos_sugeridos - productos_con_demanda_result
 
         # Mensaje con info de exclusiones
         total_excluidos = len(codigos_excluidos_aplicados)
         if total_excluidos > 0:
-            logger.info(f"✅ Calculados {total_productos} productos ({productos_con_demanda_result} con demanda, {productos_sin_demanda_result} sin ventas), {total_bultos} bultos desde {total_cedis_origen} CEDIs ({total_excluidos} excluidos)")
-            mensaje = f"Pedido Inter-CEDI calculado: {total_productos} productos desde {total_cedis_origen} CEDIs para región {region} ({total_excluidos} productos excluidos)"
+            logger.info(f"✅ Analizados {total_productos} productos: {total_productos_sugeridos} con sugerido ({productos_con_demanda_result} con demanda, {productos_sin_demanda_result} sin ventas), {total_productos_sin_sugerido} sin sugerido | {total_bultos} bultos desde {total_cedis_origen} CEDIs ({total_excluidos} excluidos)")
+            mensaje = f"Pedido Inter-CEDI: {total_productos} productos analizados ({total_productos_sugeridos} con sugerido) desde {total_cedis_origen} CEDIs para región {region}"
         else:
-            logger.info(f"✅ Calculados {total_productos} productos ({productos_con_demanda_result} con demanda, {productos_sin_demanda_result} sin ventas), {total_bultos} bultos desde {total_cedis_origen} CEDIs")
-            mensaje = f"Pedido Inter-CEDI calculado: {total_productos} productos desde {total_cedis_origen} CEDIs para región {region}"
+            logger.info(f"✅ Analizados {total_productos} productos: {total_productos_sugeridos} con sugerido ({productos_con_demanda_result} con demanda, {productos_sin_demanda_result} sin ventas), {total_productos_sin_sugerido} sin sugerido | {total_bultos} bultos desde {total_cedis_origen} CEDIs")
+            mensaje = f"Pedido Inter-CEDI: {total_productos} productos analizados ({total_productos_sugeridos} con sugerido) desde {total_cedis_origen} CEDIs para región {region}"
 
         return CalcularPedidoInterCediResponse(
             productos=productos_calculados,
             productos_por_cedi_origen=productos_por_cedi,
             total_cedis_origen=total_cedis_origen,
             total_productos=total_productos,
+            total_productos_con_sugerido=total_productos_sugeridos,
+            total_productos_sin_sugerido=total_productos_sin_sugerido,
             total_bultos=total_bultos,
             total_unidades=total_unidades,
             cedi_destino_id=request.cedi_destino_id,
