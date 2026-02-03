@@ -244,7 +244,7 @@ async def calcular_pedido_inter_cedi(
                     COUNT(DISTINCT ubicacion_id) as num_tiendas
                 FROM p75_por_tienda
                 GROUP BY producto_id
-                HAVING SUM(COALESCE(p75_tienda, 0)) > 0
+                -- Removido HAVING para incluir productos sin ventas
             ),
             abc_ranking AS (
                 -- Clasificación ABC por ranking de cantidad vendida en la región
@@ -281,7 +281,7 @@ async def calcular_pedido_inter_cedi(
                 -- Demanda regional
                 COALESCE(dr.p75_regional, 0) as p75_regional,
                 COALESCE(dr.p75_promedio_tienda, 0) as p75_promedio,
-                COALESCE(dr.sigma_regional, dr.p75_regional * 0.3) as sigma_regional,
+                COALESCE(dr.sigma_regional, dr.p75_regional * 0.3, 0) as sigma_regional,
                 COALESCE(dr.num_tiendas, 0) as num_tiendas,
                 -- Stock CEDI destino
                 COALESCE(scd.stock_actual, 0) as stock_cedi_destino,
@@ -294,19 +294,21 @@ async def calcular_pedido_inter_cedi(
                 END as clase_abc,
                 abc.rank_cantidad
             FROM productos p
-            INNER JOIN demanda_regional dr ON p.id = dr.producto_id
+            LEFT JOIN demanda_regional dr ON p.id = dr.producto_id
             LEFT JOIN stock_cedi_destino scd ON p.id = scd.producto_id
             LEFT JOIN abc_ranking abc ON p.id = abc.producto_id
             WHERE p.activo = true
               AND p.cedi_origen_id IS NOT NULL
-            ORDER BY dr.p75_regional DESC
+            ORDER BY COALESCE(dr.p75_regional, 0) DESC
         """
 
         cursor.execute(query_demanda, [tiendas_ids, request.cedi_destino_id])
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
 
-        logger.info(f"📊 Encontrados {len(rows)} productos con demanda regional")
+        # Contar cuántos tienen demanda > 0
+        productos_con_demanda = sum(1 for row in rows if dict(zip(columns, row))['p75_regional'] > 0)
+        logger.info(f"📊 Analizando {len(rows)} productos activos ({productos_con_demanda} con demanda regional, {len(rows) - productos_con_demanda} sin ventas)")
 
         # 3.0.1 Cargar productos excluidos para este CEDI destino
         try:
@@ -474,37 +476,66 @@ async def calcular_pedido_inter_cedi(
             # Stock_Max = Stock_Min + (Demanda_Regional × Dias_Cobertura)
             # Cantidad_Sugerida = max(0, Stock_Max - Stock_Actual)
 
-            z_score = Z_SCORES_ABC.get(clase_abc, Decimal('1.28'))
-
-            # Stock de seguridad
-            sqrt_lead_time = Decimal(str(math.sqrt(float(lead_time))))
-            stock_seguridad = z_score * sigma_regional * sqrt_lead_time
-
-            # Para clase D, usar método "Padre Prudente" (mínimo 30% de demanda durante LT)
-            if clase_abc == 'D':
-                demanda_ciclo = p75_regional * lead_time
-                stock_seguridad = max(demanda_ciclo * Decimal('0.3'), stock_seguridad)
-
-            # Demanda durante lead time
-            demanda_ciclo = p75_regional * lead_time
-
-            # Stock mínimo (punto de reorden)
-            stock_minimo = demanda_ciclo + stock_seguridad
-
-            # Stock máximo
-            stock_maximo = stock_minimo + (p75_regional * Decimal(str(dias_cobertura)))
-
-            # Cantidad ideal (sin limitar por stock origen)
-            if stock_cedi_destino <= stock_minimo:
-                cantidad_ideal_unid = max(Decimal('0'), stock_maximo - stock_cedi_destino)
+            # **CASO ESPECIAL: Productos sin ventas (p75_regional = 0)**
+            if p75_regional == 0:
+                # Para productos sin ventas, solo sugerir si NO tienen stock en CEDI destino
+                if stock_cedi_destino > 0:
+                    # Ya hay stock, no sugerir nada
+                    cantidad_sugerida_bultos = Decimal('0')
+                    cantidad_ideal_unid = Decimal('0')
+                    cantidad_sugerida_unid = Decimal('0')
+                    stock_minimo = Decimal('0')
+                    stock_seguridad = Decimal('0')
+                    stock_maximo = Decimal('0')
+                else:
+                    # No hay stock en CEDI destino, sugerir mínimo de seguridad según ABC
+                    # Esto garantiza disponibilidad de catálogo completo
+                    stock_minimo_bultos_map = {
+                        'A': Decimal('10'),  # 10 bultos para clase A
+                        'B': Decimal('5'),   # 5 bultos para clase B
+                        'C': Decimal('3'),   # 3 bultos para clase C
+                        'D': Decimal('2')    # 2 bultos para clase D
+                    }
+                    stock_minimo_bultos = stock_minimo_bultos_map.get(clase_abc, Decimal('2'))
+                    cantidad_sugerida_bultos = min(stock_minimo_bultos, Decimal(str(math.floor(float(stock_cedi_origen / unidades_por_bulto)))))
+                    cantidad_sugerida_unid = cantidad_sugerida_bultos * unidades_por_bulto
+                    cantidad_ideal_unid = stock_minimo_bultos * unidades_por_bulto
+                    stock_minimo = cantidad_ideal_unid
+                    stock_seguridad = Decimal('0')
+                    stock_maximo = stock_minimo
             else:
-                cantidad_ideal_unid = Decimal('0')
+                # **CASO NORMAL: Productos con ventas**
+                z_score = Z_SCORES_ABC.get(clase_abc, Decimal('1.28'))
 
-            # Cantidad sugerida (limitada por stock disponible en origen)
-            cantidad_sugerida_unid = min(cantidad_ideal_unid, stock_cedi_origen)
+                # Stock de seguridad
+                sqrt_lead_time = Decimal(str(math.sqrt(float(lead_time))))
+                stock_seguridad = z_score * sigma_regional * sqrt_lead_time
 
-            # Redondear a bultos completos (hacia arriba)
-            cantidad_sugerida_bultos = Decimal(str(math.ceil(float(cantidad_sugerida_unid / unidades_por_bulto))))
+                # Para clase D, usar método "Padre Prudente" (mínimo 30% de demanda durante LT)
+                if clase_abc == 'D':
+                    demanda_ciclo = p75_regional * lead_time
+                    stock_seguridad = max(demanda_ciclo * Decimal('0.3'), stock_seguridad)
+
+                # Demanda durante lead time
+                demanda_ciclo = p75_regional * lead_time
+
+                # Stock mínimo (punto de reorden)
+                stock_minimo = demanda_ciclo + stock_seguridad
+
+                # Stock máximo
+                stock_maximo = stock_minimo + (p75_regional * Decimal(str(dias_cobertura)))
+
+                # Cantidad ideal (sin limitar por stock origen)
+                if stock_cedi_destino <= stock_minimo:
+                    cantidad_ideal_unid = max(Decimal('0'), stock_maximo - stock_cedi_destino)
+                else:
+                    cantidad_ideal_unid = Decimal('0')
+
+                # Cantidad sugerida (limitada por stock disponible en origen)
+                cantidad_sugerida_unid = min(cantidad_ideal_unid, stock_cedi_origen)
+
+                # Redondear a bultos completos (hacia arriba)
+                cantidad_sugerida_bultos = Decimal(str(math.ceil(float(cantidad_sugerida_unid / unidades_por_bulto))))
 
             # Solo incluir si hay cantidad sugerida > 0
             if cantidad_sugerida_bultos > 0:
@@ -601,13 +632,17 @@ async def calcular_pedido_inter_cedi(
                     'unidades': sum(p.cantidad_sugerida_unidades for p in productos)
                 }
 
+        # Contar productos con y sin demanda en el resultado
+        productos_con_demanda_result = sum(1 for p in productos_calculados if p.demanda_regional_p75 > 0)
+        productos_sin_demanda_result = total_productos - productos_con_demanda_result
+
         # Mensaje con info de exclusiones
         total_excluidos = len(codigos_excluidos_aplicados)
         if total_excluidos > 0:
-            logger.info(f"✅ Calculados {total_productos} productos, {total_bultos} bultos desde {total_cedis_origen} CEDIs ({total_excluidos} excluidos)")
+            logger.info(f"✅ Calculados {total_productos} productos ({productos_con_demanda_result} con demanda, {productos_sin_demanda_result} sin ventas), {total_bultos} bultos desde {total_cedis_origen} CEDIs ({total_excluidos} excluidos)")
             mensaje = f"Pedido Inter-CEDI calculado: {total_productos} productos desde {total_cedis_origen} CEDIs para región {region} ({total_excluidos} productos excluidos)"
         else:
-            logger.info(f"✅ Calculados {total_productos} productos, {total_bultos} bultos desde {total_cedis_origen} CEDIs")
+            logger.info(f"✅ Calculados {total_productos} productos ({productos_con_demanda_result} con demanda, {productos_sin_demanda_result} sin ventas), {total_bultos} bultos desde {total_cedis_origen} CEDIs")
             mensaje = f"Pedido Inter-CEDI calculado: {total_productos} productos desde {total_cedis_origen} CEDIs para región {region}"
 
         return CalcularPedidoInterCediResponse(
