@@ -91,6 +91,7 @@ export default function PasoSeleccionProductosInterCedi({
   readOnly = false
 }: Props) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [filtroVista, setFiltroVista] = useState<string>('seleccionados'); // 'seleccionados' | 'no_seleccionados' | 'todos'
   const [filtroCediOrigen, setFiltroCediOrigen] = useState<string>('todos');
   const [filtroABC, setFiltroABC] = useState<string>('todos');
   const [filtroCuadrante, setFiltroCuadrante] = useState<string>('todos');
@@ -208,9 +209,20 @@ export default function PasoSeleccionProductosInterCedi({
         }
       }
 
+      // Filtro por Vista (seleccionados / no seleccionados / todos)
+      if (filtroVista !== 'todos') {
+        const tieneCanttidad = p.cantidad_sugerida_bultos > 0;
+        if (filtroVista === 'seleccionados' && !tieneCanttidad) {
+          return false;
+        }
+        if (filtroVista === 'no_seleccionados' && tieneCanttidad) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [productos, searchTerm, filtroCediOrigen, filtroABC, filtroCuadrante, filtroStockValencia, filtroStockCaracas]);
+  }, [productos, searchTerm, filtroVista, filtroCediOrigen, filtroABC, filtroCuadrante, filtroStockValencia, filtroStockCaracas]);
 
   // Ordenar productos
   const productosOrdenados = useMemo(() => {
@@ -544,6 +556,26 @@ export default function PasoSeleccionProductosInterCedi({
               placeholder="Buscar por código, nombre, categoría..."
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             />
+          </div>
+
+          {/* Filtro Vista (Seleccionados / No seleccionados / Todos) */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Vista:</span>
+            <select
+              value={filtroVista}
+              onChange={(e) => { setFiltroVista(e.target.value); setPaginaActual(1); }}
+              className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              <option value="seleccionados">
+                ✓ Seleccionados ({productos.filter(p => p.cantidad_sugerida_bultos > 0).length})
+              </option>
+              <option value="no_seleccionados">
+                No seleccionados ({productos.filter(p => p.cantidad_sugerida_bultos === 0).length})
+              </option>
+              <option value="todos">
+                Todos ({productos.length})
+              </option>
+            </select>
           </div>
 
           {/* Filtro CEDI Origen */}
