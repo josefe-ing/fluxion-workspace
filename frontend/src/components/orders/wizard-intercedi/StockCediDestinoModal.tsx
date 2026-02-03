@@ -246,10 +246,33 @@ export default function StockCediDestinoModal({
                               backgroundColor: '#fff',
                               border: '1px solid #e5e7eb',
                               borderRadius: '8px',
-                              fontSize: '11px'
+                              fontSize: '11px',
+                              padding: '8px 12px'
                             }}
-                            formatter={(value: number) => [formatNumber(value, 0) + ' bultos', 'Stock']}
-                            labelFormatter={(label) => `Fecha: ${label}`}
+                            formatter={(value: number, name: string, props: any) => {
+                              const isUltimoSnapshot = props.dataIndex === chartData.length - 1;
+                              return [
+                                <span key="value" className="font-semibold">
+                                  {formatNumber(value, 0)} bultos
+                                  {isUltimoSnapshot && <span className="ml-1 text-xs text-green-600">(actual)</span>}
+                                </span>,
+                                <span key="label" className="text-gray-600">
+                                  {isUltimoSnapshot ? 'Stock Actual' : 'Stock Histórico'}
+                                </span>
+                              ];
+                            }}
+                            labelFormatter={(label, payload) => {
+                              if (payload && payload.length > 0) {
+                                const isUltimoSnapshot = payload[0].dataIndex === chartData.length - 1;
+                                return (
+                                  <div className="font-medium text-gray-900">
+                                    📅 {label}
+                                    {!isUltimoSnapshot && <span className="ml-1 text-xs text-gray-500">(histórico)</span>}
+                                  </div>
+                                );
+                              }
+                              return label;
+                            }}
                           />
                           <ReferenceLine
                             y={stockMinBultos}
@@ -269,6 +292,19 @@ export default function StockCediDestinoModal({
                     ) : (
                       <div className="h-40 flex items-center justify-center text-gray-500 text-sm">
                         No hay datos de historial disponibles
+                      </div>
+                    )}
+
+                    {/* Nota explicativa */}
+                    {chartData.length > 0 && (
+                      <div className="mt-2 flex items-start gap-2 text-xs text-gray-500 bg-blue-50 border border-blue-200 rounded px-3 py-2">
+                        <svg className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>
+                          <strong>Gráfico histórico:</strong> Muestra la evolución del stock en los últimos 30 días.
+                          El <strong>stock actual</strong> ({formatNumber(stockBultos, 0)} bultos) se muestra arriba en el recuadro coloreado.
+                        </span>
                       </div>
                     )}
                   </div>
