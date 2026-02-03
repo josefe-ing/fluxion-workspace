@@ -22,7 +22,7 @@ from config import ETLConfig
 class KLKVentasAPIConfig:
     """Configuración de la API KLK para ventas"""
     base_url: str = "http://190.6.32.3:7002"
-    timeout_seconds: int = 120
+    timeout_seconds: int = 600  # 10 minutos (aumentado de 120s para consultas de múltiples días)
     max_retries: int = 3
     retry_delay_seconds: int = 5
 
