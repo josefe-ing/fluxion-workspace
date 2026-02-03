@@ -249,8 +249,9 @@ export default function StockCediDestinoModal({
                               fontSize: '11px',
                               padding: '8px 12px'
                             }}
-                            formatter={(value: number, name: string, props: any) => {
-                              const isUltimoSnapshot = props.dataIndex === chartData.length - 1;
+                            formatter={(value: number, _name: string, props: any) => {
+                              // Check if this is the last data point by comparing index
+                              const isUltimoSnapshot = chartData.length > 0 && props.payload?.fecha === chartData[chartData.length - 1].fecha;
                               return [
                                 <span key="value" className="font-semibold">
                                   {formatNumber(value, 0)} bultos
@@ -263,7 +264,8 @@ export default function StockCediDestinoModal({
                             }}
                             labelFormatter={(label, payload) => {
                               if (payload && payload.length > 0) {
-                                const isUltimoSnapshot = payload[0].dataIndex === chartData.length - 1;
+                                // Check if this is the last data point by comparing fecha
+                                const isUltimoSnapshot = chartData.length > 0 && payload[0].payload?.fecha === chartData[chartData.length - 1].fecha;
                                 return (
                                   <div className="font-medium text-gray-900">
                                     📅 {label}
