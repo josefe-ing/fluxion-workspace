@@ -192,14 +192,16 @@ async def get_ubicaciones_summary_regional():
                     JOIN ubicaciones u ON ia.ubicacion_id = u.id
                     GROUP BY u.id, u.nombre, u.tipo, u.region, ia.almacen_codigo
                 ),
-                ventas_20d AS (
+                ventas_30d AS (
+                    -- Performance: Consistent with pedidos_sugeridos (30 days for large datasets like Bosque 8.7M rows)
+                    -- Using same window as pedidos_sugeridos for consistency across system
                     SELECT
                         ubicacion_id,
                         producto_id,
                         DATE(fecha_venta) as fecha,
                         SUM(cantidad_vendida) as total_dia
                     FROM ventas
-                    WHERE fecha_venta >= CURRENT_DATE - INTERVAL '20 days'
+                    WHERE fecha_venta >= CURRENT_DATE - INTERVAL '30 days'  -- Consistent with pedidos_sugeridos
                       AND fecha_venta < CURRENT_DATE
                       AND NOT (ubicacion_id = 'tienda_18' AND DATE(fecha_venta) = '2025-12-06')
                     GROUP BY ubicacion_id, producto_id, DATE(fecha_venta)
@@ -209,7 +211,7 @@ async def get_ubicaciones_summary_regional():
                         ubicacion_id,
                         producto_id,
                         PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_dia) as p75
-                    FROM ventas_20d
+                    FROM ventas_30d
                     GROUP BY ubicacion_id, producto_id
                 ),
                 stock_con_demanda AS (
