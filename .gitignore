@@ -2,8 +2,15 @@
 # Fluxion AI - PostgreSQL Architecture
 # ==========================================
 
-# ============ DATABASES ============
-# Local data directory (legacy, kept for local backups)
+# ============ DATA FILES ============
+# NEVER commit data files - they belong in RDS or S3
+*.csv
+*.xlsx
+*.xls
+*.docx
+*.doc
+
+# Local data directory
 data/
 
 # ============ ETL ============
@@ -57,6 +64,7 @@ backups/
 # ============ IDE ============
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
@@ -116,3 +124,26 @@ etl/test_*.sh
 
 # Analysis scripts (temporary)
 analisis_*.py
+diagnostico_*.py
+generar_*.py
+
+# One-off ETL scripts
+etl/cargar_*.py
+etl/cargar_*.sh
+etl/clean_*.py
+etl/sync_*.py
+etl/recarga_*.py
+etl/corregir_*.py
+etl/limpiar_*.py
+etl/monitor_*.py
+etl/analizar_*.py
+
+# Archive folders
+**/archive/
+
+# One-off SQL queries (keep only in etl/core/)
+etl/QUERY_*.sql
+etl/DISCOVERY_*.sql
+
+# ETL reports
+etl/reportes/

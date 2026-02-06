@@ -474,12 +474,15 @@ class VentasETLPostgres:
                 self.tracker.start_phase(ETLPhase.EXTRACT)
 
             # Extraer ventas
+            # IMPORTANTE: Filtrar por almacén específico para evitar consolidación
+            # incorrecta de múltiples almacenes bajo una sola ubicacion_id
             response = self.klk_extractor.extract_ventas_raw(
                 sucursal=codigo_sucursal,
                 fecha_desde=fecha_desde.strftime('%Y-%m-%d'),
                 fecha_hasta=fecha_hasta.strftime('%Y-%m-%d'),
                 hora_desde=fecha_desde.strftime('%H:%M'),
-                hora_hasta=fecha_hasta.strftime('%H:%M')
+                hora_hasta=fecha_hasta.strftime('%H:%M'),
+                almacen=config.codigo_almacen_klk  # Filtrar por almacén específico de la tienda
             )
 
             if not response or 'ventas' not in response:
