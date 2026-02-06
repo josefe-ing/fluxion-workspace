@@ -1057,7 +1057,7 @@ export default function ProductSalesModal({
                     <div className="mb-4 p-4 bg-blue-50 rounded-lg">
                       <h4 className="text-sm font-medium text-gray-700 mb-3">Rango de Tiempo:</h4>
                       <div className="flex gap-2">
-                        {[1, 2, 4, 8].map((numSemanas) => (
+                        {[1, 2, 4, 8, 12, 24].map((numSemanas) => (
                           <button
                             key={numSemanas}
                             onClick={() => setSemanas(numSemanas)}
@@ -1067,7 +1067,10 @@ export default function ProductSalesModal({
                                 : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-300'
                             }`}
                           >
-                            {numSemanas} {numSemanas === 1 ? 'semana' : 'semanas'}
+                            {numSemanas >= 12
+                              ? `${numSemanas / 4} ${numSemanas === 12 ? 'mes' : 'meses'} (${numSemanas}s)`
+                              : `${numSemanas} ${numSemanas === 1 ? 'semana' : 'semanas'}`
+                            }
                           </button>
                         ))}
                       </div>
