@@ -5,11 +5,12 @@
  * Incluye filtros y ordenamiento similar al wizard de una sola tienda.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { X, Package, TrendingDown, Store, Info } from 'lucide-react';
 import ProductHistoryModal from '../../dashboard/ProductHistoryModal';
 import ProductSalesModal from '../../sales/ProductSalesModal';
 import { TransitoModal } from './TransitoModal';
+import { ABCBadge } from '../ABCBadge';
 import type {
   OrderDataMultiTienda,
   CalcularMultiTiendaResponse,
@@ -580,13 +581,6 @@ export default function StepTwoConflictResolution({
                   Producto <SortIcon field="producto" />
                 </th>
                 <th
-                  className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                  onClick={() => handleSort('abc')}
-                  style={{ width: '60px' }}
-                >
-                  ABC <SortIcon field="abc" />
-                </th>
-                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort('stock_cedi')}
                 >
@@ -599,23 +593,44 @@ export default function StepTwoConflictResolution({
                   Necesitan <SortIcon field="necesidad" />
                 </th>
                 {tiendas.map(tienda => (
-                  <th
-                    key={tienda.id}
-                    className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    colSpan={8}
-                  >
-                    <div className="border-b border-gray-300 pb-1 mb-1">{tienda.nombre}</div>
-                    <div className="flex justify-around text-[10px] font-normal normal-case">
-                      <span>P75</span>
-                      <span>Stk</span>
-                      <span className="text-orange-600 font-medium">Trán</span>
-                      <span>TOT</span>
-                      <span>Días</span>
-                      <span>SUG</span>
-                      <span>DPD+U</span>
-                      <span>Final</span>
-                    </div>
-                  </th>
+                  <Fragment key={tienda.id}>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l-2 border-gray-400" style={{ minWidth: '40px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px] font-semibold">{tienda.nombre}</div>
+                      <div className="text-[10px] font-normal normal-case">ABC</div>
+                    </th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ minWidth: '45px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px]">&nbsp;</div>
+                      <div className="text-[10px] font-normal normal-case">P75</div>
+                    </th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ minWidth: '45px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px]">&nbsp;</div>
+                      <div className="text-[10px] font-normal normal-case">Stk</div>
+                    </th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ minWidth: '45px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px]">&nbsp;</div>
+                      <div className="text-[10px] font-normal normal-case text-orange-600 font-medium">Trán</div>
+                    </th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ minWidth: '45px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px]">&nbsp;</div>
+                      <div className="text-[10px] font-normal normal-case">TOT</div>
+                    </th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ minWidth: '40px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px]">&nbsp;</div>
+                      <div className="text-[10px] font-normal normal-case">Días</div>
+                    </th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ minWidth: '45px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px]">&nbsp;</div>
+                      <div className="text-[10px] font-normal normal-case">SUG</div>
+                    </th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ minWidth: '45px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px]">&nbsp;</div>
+                      <div className="text-[10px] font-normal normal-case">DPD+U</div>
+                    </th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ minWidth: '50px' }}>
+                      <div className="border-b border-gray-300 pb-1 mb-1 text-[11px]">&nbsp;</div>
+                      <div className="text-[10px] font-normal normal-case">Final</div>
+                    </th>
+                  </Fragment>
                 ))}
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Total
@@ -668,20 +683,6 @@ export default function StepTwoConflictResolution({
                       </div>
                     </td>
 
-                    {/* ABC */}
-                    <td className="px-3 py-3 text-center">
-                      {conflicto.clasificacion_abc && (
-                        <span className={`px-2 py-1 text-xs font-bold rounded ${
-                          conflicto.clasificacion_abc === 'A' ? 'bg-green-100 text-green-700' :
-                          conflicto.clasificacion_abc === 'B' ? 'bg-yellow-100 text-yellow-700' :
-                          conflicto.clasificacion_abc === 'C' ? 'bg-gray-100 text-gray-600' :
-                          'bg-purple-100 text-purple-700'
-                        }`}>
-                          {conflicto.clasificacion_abc}
-                        </span>
-                      )}
-                    </td>
-
                     {/* Stock CEDI - Clickeable para ver histórico */}
                     <td className="px-4 py-3 text-center">
                       <button
@@ -717,7 +718,13 @@ export default function StepTwoConflictResolution({
                     {/* Por cada tienda: P75 | Stk | Trán | TOT | Días | SUG | DPD+U | Final */}
                     {tiendas.map(tienda => {
                       const asignacion = conflicto.distribucion_dpdu.find(a => a.tienda_id === tienda.id);
-                      if (!asignacion) return <td key={tienda.id} colSpan={8}></td>;
+                      if (!asignacion) {
+                        return (
+                          <Fragment key={tienda.id}>
+                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                          </Fragment>
+                        );
+                      }
 
                       const valorDpdu = asignacion.cantidad_asignada_bultos;
                       const valorFinal = getValorFinal(conflicto.codigo_producto, tienda.id, valorDpdu);
@@ -742,12 +749,17 @@ export default function StepTwoConflictResolution({
                       const sugOriginal = Math.ceil(asignacion.cantidad_necesaria / conflicto.unidades_por_bulto);
 
                       return (
-                        <td key={tienda.id} colSpan={8} className="px-1 py-3">
-                          <div className="flex items-center justify-around gap-1">
-                            {/* P75 - bultos y unidades - Clickeable para ver ventas */}
+                        <Fragment key={tienda.id}>
+                          {/* ABC - Clasificación específica de esta tienda */}
+                          <td className="px-1 py-2 text-center">
+                            <ABCBadge abc={asignacion.abc || 'D'} />
+                          </td>
+
+                          {/* P75 - bultos y unidades - Clickeable para ver ventas */}
+                          <td className="px-1 py-2 text-center">
                             <button
                               onClick={() => handleOpenSalesModal(conflicto, tienda.id)}
-                              className="text-center w-12 hover:bg-purple-50 rounded px-1 py-0.5 transition-colors cursor-pointer"
+                              className="hover:bg-purple-50 rounded px-1 py-0.5 transition-colors cursor-pointer"
                               title="Ver análisis de ventas"
                             >
                               <div className="text-xs font-medium text-purple-600">
@@ -757,11 +769,13 @@ export default function StepTwoConflictResolution({
                                 {asignacion.demanda_p75.toFixed(2).replace('.', ',')}u
                               </div>
                             </button>
+                          </td>
 
-                            {/* Stock tienda - bultos y unidades - Clickeable para ver histórico */}
+                          {/* Stock tienda - bultos y unidades - Clickeable para ver histórico */}
+                          <td className="px-1 py-2 text-center">
                             <button
                               onClick={() => handleOpenStockTiendaModal(conflicto, tienda.id)}
-                              className="text-center w-12 hover:bg-gray-100 rounded px-1 py-0.5 transition-colors cursor-pointer"
+                              className="hover:bg-gray-100 rounded px-1 py-0.5 transition-colors cursor-pointer"
                               title="Ver histórico de inventario"
                             >
                               <div className="text-xs font-medium text-gray-700">
@@ -771,8 +785,10 @@ export default function StepTwoConflictResolution({
                                 {formatNumber(asignacion.stock_actual)}u
                               </div>
                             </button>
+                          </td>
 
-                            {/* Tránsito - Editable, clickeable para ver desglose */}
+                          {/* Tránsito - Editable, clickeable para ver desglose */}
+                          <td className="px-1 py-2 text-center">
                             <div className="relative">
                               <input
                                 type="number"
@@ -791,7 +807,7 @@ export default function StepTwoConflictResolution({
                                     handleOpenTransitoModal(conflicto, asignacion);
                                   }
                                 }}
-                                className={`w-10 px-0.5 py-0 text-xs text-center border rounded focus:outline-none focus:ring-1 focus:ring-orange-400 ${
+                                className={`w-full px-0.5 py-0 text-xs text-center border rounded focus:outline-none focus:ring-1 focus:ring-orange-400 ${
                                   transitoFueModificado
                                     ? 'border-orange-400 bg-orange-50 font-medium'
                                     : tieneTransito
@@ -804,18 +820,20 @@ export default function StepTwoConflictResolution({
                                 <div className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full" title="Tiene desglose" />
                               )}
                             </div>
+                          </td>
 
-                            {/* TOT - Total (Stock + Tránsito) */}
-                            <div className="text-center w-10" title="Stock total efectivo (Stock + Tránsito)">
-                              <div className="text-xs font-medium text-gray-700">
-                                {((asignacion.stock_actual + (transitoEfectivo * conflicto.unidades_por_bulto)) / conflicto.unidades_por_bulto).toFixed(1).replace('.', ',')}
-                              </div>
-                              <div className="text-[10px] text-gray-400">
-                                {formatNumber(asignacion.stock_actual + (transitoEfectivo * conflicto.unidades_por_bulto))}u
-                              </div>
+                          {/* TOT - Total (Stock + Tránsito) */}
+                          <td className="px-1 py-2 text-center" title="Stock total efectivo (Stock + Tránsito)">
+                            <div className="text-xs font-medium text-gray-700">
+                              {((asignacion.stock_actual + (transitoEfectivo * conflicto.unidades_por_bulto)) / conflicto.unidades_por_bulto).toFixed(1).replace('.', ',')}
                             </div>
+                            <div className="text-[10px] text-gray-400">
+                              {formatNumber(asignacion.stock_actual + (transitoEfectivo * conflicto.unidades_por_bulto))}u
+                            </div>
+                          </td>
 
-                            {/* Días stock - Ahora usa días efectivos (stock + tránsito) */}
+                          {/* Días stock - Ahora usa días efectivos (stock + tránsito) */}
+                          <td className="px-1 py-2 text-center">
                             <span
                               className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${getDiasStockColor(diasEfectivos)}`}
                               title={transitoEfectivo > 0
@@ -824,63 +842,63 @@ export default function StepTwoConflictResolution({
                             >
                               {diasEfectivos < 999 ? `${diasEfectivos.toFixed(1)}` : '—'}
                             </span>
+                          </td>
 
-                            {/* SUG - Sugerido (ajustado por tránsito) */}
-                            <div
-                              className="text-center w-10"
-                              title={transitoEfectivo > 0
-                                ? `Sugerido ajustado: ${sugBultos} blt (original: ${sugOriginal} blt)`
-                                : 'Cantidad sugerida para la tienda'}
-                            >
-                              <div className={`text-xs font-medium ${sugBultos < sugOriginal ? 'text-green-600' : 'text-red-600'}`}>
-                                {sugBultos}
-                              </div>
-                              <div className="text-[10px] text-gray-400">
-                                ~{asignacion.demanda_p75 > 0
-                                  ? Math.round((sugBultos * conflicto.unidades_por_bulto) / asignacion.demanda_p75)
-                                  : 0}d
-                              </div>
+                          {/* SUG - Sugerido (ajustado por tránsito) */}
+                          <td
+                            className="px-2 py-3 text-center"
+                            title={transitoEfectivo > 0
+                              ? `Sugerido ajustado: ${sugBultos} blt (original: ${sugOriginal} blt)`
+                              : 'Cantidad sugerida para la tienda'}
+                          >
+                            <div className={`text-xs font-medium ${sugBultos < sugOriginal ? 'text-green-600' : 'text-red-600'}`}>
+                              {sugBultos}
                             </div>
+                            <div className="text-[10px] text-gray-400">
+                              ~{asignacion.demanda_p75 > 0
+                                ? Math.round((sugBultos * conflicto.unidades_por_bulto) / asignacion.demanda_p75)
+                                : 0}d
+                            </div>
+                          </td>
 
-                            {/* DPD+U - Asignado por algoritmo */}
-                            <div className="text-center w-10" title="Asignado por algoritmo DPD+U">
-                              <div className="text-sm text-orange-600 font-medium">
-                                {valorDpdu}
-                              </div>
-                              <div className="text-[10px] text-orange-400">
-                                ~{asignacion.demanda_p75 > 0
-                                  ? Math.round((valorDpdu * conflicto.unidades_por_bulto) / asignacion.demanda_p75)
-                                  : 0}d
-                              </div>
+                          {/* DPD+U - Asignado por algoritmo */}
+                          <td className="px-1 py-2 text-center" title="Asignado por algoritmo DPD+U">
+                            <div className="text-sm text-orange-600 font-medium">
+                              {valorDpdu}
                             </div>
+                            <div className="text-[10px] text-orange-400">
+                              ~{asignacion.demanda_p75 > 0
+                                ? Math.round((valorDpdu * conflicto.unidades_por_bulto) / asignacion.demanda_p75)
+                                : 0}d
+                            </div>
+                          </td>
 
-                            {/* Final - Input con días calculados */}
-                            <div className="text-center w-12">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                max={conflicto.stock_cedi_bultos}
-                                value={valorFinal}
-                                onChange={(e) => handleCambioManual(
-                                  conflicto.codigo_producto,
-                                  tienda.id,
-                                  parseFloat(e.target.value) || 0
-                                )}
-                                className={`w-full px-0.5 py-0.5 text-xs text-center border rounded focus:outline-none focus:ring-1 focus:ring-gray-900 ${
-                                  fueModificado
-                                    ? 'border-blue-400 bg-blue-50 font-medium'
-                                    : 'border-gray-300'
-                                }`}
-                              />
-                              <div className="text-[10px] text-gray-400 mt-0.5">
-                                ~{asignacion.demanda_p75 > 0
-                                  ? Math.round((valorFinal * conflicto.unidades_por_bulto) / asignacion.demanda_p75)
-                                  : 0}d
-                              </div>
+                          {/* Final - Input con días calculados */}
+                          <td className="px-1 py-2 text-center">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              max={conflicto.stock_cedi_bultos}
+                              value={valorFinal}
+                              onChange={(e) => handleCambioManual(
+                                conflicto.codigo_producto,
+                                tienda.id,
+                                parseFloat(e.target.value) || 0
+                              )}
+                              className={`w-full px-0.5 py-0.5 text-xs text-center border rounded focus:outline-none focus:ring-1 focus:ring-gray-900 ${
+                                fueModificado
+                                  ? 'border-blue-400 bg-blue-50 font-medium'
+                                  : 'border-gray-300'
+                              }`}
+                            />
+                            <div className="text-[10px] text-gray-400 mt-0.5">
+                              ~{asignacion.demanda_p75 > 0
+                                ? Math.round((valorFinal * conflicto.unidades_por_bulto) / asignacion.demanda_p75)
+                                : 0}d
                             </div>
-                          </div>
-                        </td>
+                          </td>
+                        </Fragment>
                       );
                     })}
 

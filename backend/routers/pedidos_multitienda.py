@@ -742,9 +742,52 @@ async def obtener_productos_cedi_caracas(
             WHERE ubicacion_id = ANY(%(tiendas_ids)s)
             GROUP BY producto_id
         ),
-        abc_cache AS (
-            SELECT producto_id, clase_abc
-            FROM productos_abc_cache
+        abc_tiendas_ccs AS (
+            -- ABC de cada tienda de Caracas (Artigas + Paraíso)
+            SELECT
+                producto_id,
+                ubicacion_id,
+                clase_abc
+            FROM productos_abc_tienda
+            WHERE ubicacion_id = ANY(%(tiendas_ids)s)
+        ),
+        abc_cedi_ccs AS (
+            -- ABC más crítico para CEDI Caracas (si alguna tienda es A → CEDI es A)
+            SELECT
+                producto_id,
+                -- Tomar el ABC con mayor criticidad (A=1, B=2, C=3, D=4)
+                CASE
+                    WHEN MIN(
+                        CASE clase_abc
+                            WHEN 'A' THEN 1
+                            WHEN 'B' THEN 2
+                            WHEN 'C' THEN 3
+                            WHEN 'D' THEN 4
+                            ELSE 5
+                        END
+                    ) = 1 THEN 'A'
+                    WHEN MIN(
+                        CASE clase_abc
+                            WHEN 'A' THEN 1
+                            WHEN 'B' THEN 2
+                            WHEN 'C' THEN 3
+                            WHEN 'D' THEN 4
+                            ELSE 5
+                        END
+                    ) = 2 THEN 'B'
+                    WHEN MIN(
+                        CASE clase_abc
+                            WHEN 'A' THEN 1
+                            WHEN 'B' THEN 2
+                            WHEN 'C' THEN 3
+                            WHEN 'D' THEN 4
+                            ELSE 5
+                        END
+                    ) = 3 THEN 'C'
+                    ELSE 'D'
+                END as clase_abc_cedi
+            FROM abc_tiendas_ccs
+            GROUP BY producto_id
         )
         SELECT
             p.id as producto_id,
@@ -763,13 +806,13 @@ async def obtener_productos_cedi_caracas(
             p.cedi_origen_id,
             p.codigo_barras,
             p.peso_unitario,
-            COALESCE(abc.clase_abc, 'D') as clase_abc
+            COALESCE(abc_cedi.clase_abc_cedi, 'D') as clase_abc
         FROM productos p
         INNER JOIN demanda_regional dr ON p.id = dr.producto_id
         LEFT JOIN stock_cedi_caracas scc ON p.id = scc.producto_id
         LEFT JOIN stock_cedi_origen sco ON p.id = sco.producto_id
         LEFT JOIN stock_tiendas_region str ON p.id = str.producto_id
-        LEFT JOIN abc_cache abc ON p.id = abc.producto_id
+        LEFT JOIN abc_cedi_ccs abc_cedi ON p.id = abc_cedi.producto_id
         WHERE p.activo = true
           AND p.cedi_origen_id = %(cedi_origen)s
     """
@@ -1105,6 +1148,7 @@ async def calcular_pedidos_multitienda(
                     }
                 todos_productos[codigo]['tiendas'][tienda_id] = {
                     'tienda_nombre': _tienda_nombres.get(tienda_id, tienda_id),
+                    'clasificacion_abc': prod['clasificacion_abc'],  # ABC específico de esta tienda
                     'demanda_p75': prod['prom_p75_unid'],
                     'stock_tienda': prod['stock_tienda'],
                     'dias_stock': prod['dias_stock'],
@@ -1174,6 +1218,7 @@ async def calcular_pedidos_multitienda(
                     distribucion_con_transito.append(AsignacionTiendaResponse(
                         tienda_id=a.tienda_id,
                         tienda_nombre=a.tienda_nombre,
+                        abc=tienda_data.get('clasificacion_abc', 'D'),  # ABC específico de esta tienda
                         demanda_p75=a.demanda_p75,
                         stock_actual=a.stock_actual,
                         dias_stock=a.dias_stock,

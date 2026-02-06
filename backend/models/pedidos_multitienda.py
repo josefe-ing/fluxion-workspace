@@ -65,6 +65,7 @@ class AsignacionTiendaResponse(BaseModel):
     """Asignación de un producto a una tienda según DPD+U."""
     tienda_id: str
     tienda_nombre: str
+    abc: str = Field(default='D', description="Clasificación ABC de este producto en esta tienda")
 
     # Datos de entrada
     demanda_p75: float = Field(..., description="Ventas diarias P75 (unidades)")

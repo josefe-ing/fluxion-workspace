@@ -50,6 +50,7 @@ export interface TransitoDesglose {
 export interface AsignacionTienda {
   tienda_id: string;
   tienda_nombre: string;
+  abc?: string;  // Clasificación ABC de este producto en esta tienda
 
   // Datos de entrada
   demanda_p75: number;
