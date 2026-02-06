@@ -17,12 +17,15 @@ lsof -ti :8001 | xargs kill -9 2>/dev/null || true
 lsof -ti :3000 | xargs kill -9 2>/dev/null || true
 sleep 1
 
-# Verificar BD
-if [ ! -f "data/fluxion_production.db" ]; then
-    echo "❌ Base de datos no encontrada"
-    exit 1
+# Verificar PostgreSQL
+echo "🔍 Verificando PostgreSQL..."
+if ! docker ps | grep -q fluxion-postgres; then
+    echo "❌ PostgreSQL no está corriendo. Iniciando contenedor..."
+    docker-compose up -d postgres
+    echo "⏳ Esperando que PostgreSQL esté listo..."
+    sleep 5
 fi
-echo "✓ Base de datos OK"
+echo "✓ PostgreSQL OK"
 
 # Backend
 echo ""

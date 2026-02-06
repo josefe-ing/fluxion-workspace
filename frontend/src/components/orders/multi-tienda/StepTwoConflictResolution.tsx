@@ -992,6 +992,7 @@ export default function StepTwoConflictResolution({
       {/* Modal de Análisis de Ventas (P75) */}
       {selectedConflicto && (
         <ProductSalesModal
+          key={`sales-${selectedConflicto.codigo_producto}-${selectedTiendaId}`}
           isOpen={salesModalOpen}
           onClose={() => setSalesModalOpen(false)}
           codigoProducto={selectedConflicto.codigo_producto}

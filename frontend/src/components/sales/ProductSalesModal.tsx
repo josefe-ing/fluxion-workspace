@@ -473,6 +473,7 @@ export default function ProductSalesModal({
   }, [codigoProducto]);
 
   const fetchVentasData = useCallback(async () => {
+    const startTime = performance.now();
     setLoading(true);
     try {
       // Calcular fechas basadas en las semanas seleccionadas
@@ -480,9 +481,13 @@ export default function ProductSalesModal({
       const fechaInicio = new Date();
       fechaInicio.setDate(fechaInicio.getDate() - (semanas * 7));
 
-      const response = await http.get(
-        `/api/ventas/producto/diario?codigo_producto=${codigoProducto}&fecha_inicio=${fechaInicio.toISOString().split('T')[0]}&fecha_fin=${fechaFin.toISOString().split('T')[0]}`
-      );
+      const url = `/api/ventas/producto/diario?codigo_producto=${codigoProducto}&fecha_inicio=${fechaInicio.toISOString().split('T')[0]}&fecha_fin=${fechaFin.toISOString().split('T')[0]}`;
+      console.log('🌐 API Call:', url, '| Semanas:', semanas);
+
+      const response = await http.get(url);
+      const ventasTime = ((performance.now() - startTime) / 1000).toFixed(1);
+      console.log(`✅ Sales data loaded in ${ventasTime}s`);
+
       setVentasData(response.data);
 
       // Si currentUbicacionId está disponible, seleccionar solo esa tienda, sino todas
@@ -492,23 +497,41 @@ export default function ProductSalesModal({
         setSelectedTiendas(new Set(response.data.tiendas_disponibles));
       }
 
-      // Cargar forecasts para todas las tiendas disponibles
-      await fetchForecastsData(response.data.tiendas_disponibles);
+      // ⚡ PERFORMANCE FIX: Skip forecast loading on initial load
+      // Forecasts take 2-3 minutes for 16 stores. Load them only on-demand.
+      // await fetchForecastsData(response.data.tiendas_disponibles);
 
       // Cargar datos de 20 días si hay ubicación actual
       if (currentUbicacionId) {
+        const beforeLast20 = performance.now();
         await fetch20DiasData();
+        const last20Time = ((performance.now() - beforeLast20) / 1000).toFixed(1);
+        console.log(`✅ Last 20 days data loaded in ${last20Time}s`);
       }
+
+      const totalTime = ((performance.now() - startTime) / 1000).toFixed(1);
+      console.log(`✅ Total load time: ${totalTime}s`);
 
     } catch (error) {
       console.error('Error fetching sales data:', error);
     } finally {
       setLoading(false);
     }
-  }, [codigoProducto, semanas, currentUbicacionId, fetchForecastsData, fetch20DiasData]);
+  }, [codigoProducto, semanas, currentUbicacionId, fetch20DiasData]);
+
+  // Debug: Log when props change
+  useEffect(() => {
+    console.log('📊 ProductSalesModal Props Changed:', {
+      isOpen,
+      codigoProducto,
+      descripcionProducto,
+      currentUbicacionId
+    });
+  }, [isOpen, codigoProducto, descripcionProducto, currentUbicacionId]);
 
   useEffect(() => {
     if (isOpen && codigoProducto) {
+      console.log('🔄 Fetching sales data for product:', codigoProducto);
       fetchVentasData();
     }
   }, [isOpen, codigoProducto, fetchVentasData]);
