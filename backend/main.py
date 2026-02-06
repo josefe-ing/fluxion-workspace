@@ -5462,6 +5462,7 @@ async def get_agotados_visuales(
                 ),
                 stock_historico AS (
                     -- Stock que había en el momento de la última venta (o el más cercano)
+                    -- Performance: Limit historical inventory scan to last 30 days
                     SELECT DISTINCT ON (vv.producto_id)
                         vv.producto_id,
                         ih.cantidad as stock_en_ultima_venta
@@ -5470,6 +5471,7 @@ async def get_agotados_visuales(
                         ON ih.producto_id = vv.producto_id
                         AND ih.ubicacion_id = %s
                         AND ih.fecha_snapshot <= vv.ultima_venta
+                        AND ih.fecha_snapshot >= %s - INTERVAL '30 days'  -- Performance: limit historical scan
                     ORDER BY vv.producto_id, ih.fecha_snapshot DESC
                 )
                 SELECT
@@ -5536,7 +5538,7 @@ async def get_agotados_visuales(
                     ubicacion_id, region_actual, hace_2_semanas,  # ventas_otras_tiendas
                     ahora, horas_operacion_diarias,  # velocidad_venta: promedio
                     ahora, horas_operacion_diarias,  # velocidad_venta: sin vender
-                    ubicacion_id,  # stock_historico
+                    ubicacion_id, hace_2_semanas,  # stock_historico (added hace_2_semanas for 30-day limit)
                     ubicacion_id, max_horas_entre_ventas, factor_minimo, almacen_codigo  # SELECT principal
                 ]
             else:
@@ -5546,7 +5548,7 @@ async def get_agotados_visuales(
                     ubicacion_id, region_actual, hace_2_semanas,  # ventas_otras_tiendas
                     ahora, horas_operacion_diarias,  # velocidad_venta: promedio
                     ahora, horas_operacion_diarias,  # velocidad_venta: sin vender
-                    ubicacion_id,  # stock_historico
+                    ubicacion_id, hace_2_semanas,  # stock_historico (added hace_2_semanas for 30-day limit)
                     ubicacion_id, max_horas_entre_ventas, factor_minimo  # SELECT principal
                 ]
 
