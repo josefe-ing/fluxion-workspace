@@ -195,6 +195,32 @@ PersistentKeepalive = 25`),
       },
     });
 
+    // Separate parameter group for Read Replica with standby conflict prevention
+    const dbReplicaParameterGroup = new rds.ParameterGroup(this, 'FluxionPostgresReplicaParams', {
+      engine: rds.DatabaseInstanceEngine.postgres({
+        version: rds.PostgresEngineVersion.VER_16_3,
+      }),
+      description: 'PostgreSQL parameters for Fluxion AI Read Replica - standby optimized',
+      parameters: {
+        // Same performance params as primary
+        'work_mem': '65536',
+        'maintenance_work_mem': '131072',
+        'effective_cache_size': '3145728',
+        'random_page_cost': '1.1',
+        'max_parallel_workers_per_gather': '2',
+        'max_parallel_workers': '4',
+        'log_min_duration_statement': '1000',
+
+        // Read replica conflict prevention
+        // Wait up to 15 min before canceling queries due to WAL replay conflicts
+        'max_standby_streaming_delay': '900000',  // 900s (default 30s) - prevents "conflict with recovery" errors
+        'max_standby_archive_delay': '900000',     // 900s - same for archived WAL
+        // Replica sends feedback to primary about active queries, so primary
+        // delays vacuum cleanup of rows the replica still needs
+        'hot_standby_feedback': '1',
+      },
+    });
+
     // PostgreSQL RDS Instance for Fluxion v2.0
     const dbInstance = new rds.DatabaseInstance(this, 'FluxionPostgres', {
       engine: rds.DatabaseInstanceEngine.postgres({
@@ -260,7 +286,7 @@ PersistentKeepalive = 25`),
         ec2.InstanceClass.T3,
         ec2.InstanceSize.MEDIUM  // t3.medium: 2 vCPU, 4GB RAM (same as primary)
       ),
-      parameterGroup: dbParameterGroup,  // Apply same optimized parameters
+      parameterGroup: dbReplicaParameterGroup,  // Replica-specific params with standby conflict prevention
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
@@ -660,7 +686,7 @@ PersistentKeepalive = 25`),
       vpc,
       internetFacing: true,
       loadBalancerName: 'fluxion-alb',
-      idleTimeout: cdk.Duration.seconds(120), // Increased for forecast endpoint
+      idleTimeout: cdk.Duration.seconds(300), // Increased for pedidos_sugeridos with large datasets (5 min)
     });
 
     const listener = alb.addListener('HttpListener', { port: 80 });

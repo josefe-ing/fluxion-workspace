@@ -43,7 +43,7 @@ from models.pedidos_sugeridos import (
     RegistrarLlegadaRequest,
     RegistrarLlegadaResponse,
 )
-from db_manager import get_db_connection, get_db_connection_write
+from db_manager import get_db_connection, get_db_connection_write, get_db_connection_resilient
 from services.calculo_inventario_abc import (
     calcular_inventario_simple,
     set_config_tienda,
@@ -68,8 +68,8 @@ router = APIRouter(prefix="/api/pedidos-sugeridos", tags=["Pedidos Sugeridos - W
 
 
 def get_db():
-    """Get database connection (read-only para consultas)"""
-    with get_db_connection() as conn:
+    """Get database connection (read-only, resilient to replica conflicts)"""
+    with get_db_connection_resilient() as conn:
         yield conn
 
 
@@ -1250,7 +1250,7 @@ async def calcular_productos_sugeridos(
         # NUEVO: Incluye P75 de tiendas de referencia para productos sin ventas locales.
         query = """
             WITH ventas_diarias_disponibles AS (
-                -- Todas las ventas diarias disponibles (sin limite de dias)
+                -- Ventas últimos 30 días (optimizado para tiendas con millones de registros como Bosque)
                 -- IMPORTANTE: Excluir día actual (incompleto) para no sesgar promedios
                 -- NOTA: Para tienda_18 (PARAISO) se excluye 2025-12-06 (inauguración con ventas atípicas)
                 SELECT
@@ -1259,6 +1259,7 @@ async def calcular_productos_sugeridos(
                     SUM(cantidad_vendida) as total_dia
                 FROM ventas
                 WHERE ubicacion_id = %s
+                  AND fecha_venta::date >= CURRENT_DATE - INTERVAL '30 days'  -- Solo últimos 30 días (performance: reduce 8.7M → 260K filas para Bosque)
                   AND fecha_venta::date < CURRENT_DATE  -- Excluir hoy (día incompleto)
                   AND NOT (ubicacion_id = 'tienda_18' AND fecha_venta::date = '2025-12-06')  -- Excluir inauguración Paraíso
                 GROUP BY producto_id, fecha_venta::date
