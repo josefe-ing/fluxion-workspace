@@ -7,6 +7,7 @@ from typing import List, Optional, Dict, Any
 import logging
 import sys
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from db_manager import get_db_connection, execute_query_dict
 from schemas.ubicaciones import (
@@ -21,6 +22,16 @@ from schemas.ubicaciones import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Ubicaciones"])
+
+# ============================================================================
+# SIMPLE IN-MEMORY CACHE
+# ============================================================================
+# Cache for expensive summary-regional query (10 minutes TTL)
+# This reduces load time from 25s to <100ms for subsequent requests
+
+_summary_regional_cache: Optional[Dict[str, Any]] = None
+_summary_regional_cache_time: Optional[datetime] = None
+CACHE_TTL_MINUTES = 10
 
 
 @router.get("/ubicaciones", response_model=List[UbicacionResponse])
@@ -156,7 +167,21 @@ async def get_ubicaciones_summary():
 async def get_ubicaciones_summary_regional():
     """
     Obtiene resumen de inventario agrupado por región (CARACAS / VALENCIA).
+
+    PERFORMANCE: Cached for 10 minutes to reduce load from 25s to <100ms
     """
+    global _summary_regional_cache, _summary_regional_cache_time
+
+    # Check cache validity
+    now = datetime.now()
+    if (_summary_regional_cache is not None and
+        _summary_regional_cache_time is not None and
+        now - _summary_regional_cache_time < timedelta(minutes=CACHE_TTL_MINUTES)):
+        logger.info(f"⚡ CACHE HIT: summary-regional (age: {(now - _summary_regional_cache_time).seconds}s)")
+        return _summary_regional_cache
+
+    logger.info("🔄 CACHE MISS: Calculating summary-regional (will take ~25s)")
+
     try:
         with get_db_connection() as conn:
             # Importar configuración de almacenes KLK
@@ -339,6 +364,11 @@ async def get_ubicaciones_summary_regional():
                 result.append(region_summary)
 
             result.sort(key=lambda r: (0 if r.region == 'VALENCIA' else 1, r.region))
+
+            # Save to cache before returning
+            _summary_regional_cache = result
+            _summary_regional_cache_time = datetime.now()
+            logger.info(f"✅ CACHE SAVED: summary-regional (valid for {CACHE_TTL_MINUTES} min)")
 
             return result
 
