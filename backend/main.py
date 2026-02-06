@@ -8451,12 +8451,15 @@ async def get_ventas_detail(
                 params.append(f"%{search}%")
                 params.append(f"%{search}%")
 
-            # Filtro por categoría (requiere JOIN con productos)
-            categoria_filter = ""
-            if categoria:
-                categoria_filter = f" AND p.categoria = %s"
-
             where_clause = " AND ".join(where_clauses)
+
+            # Filtro por categoría (se aplicará en CTEs para correcta agregación)
+            categoria_join = ""
+            categoria_where = ""
+            if categoria:
+                categoria_join = "INNER JOIN productos p_filter ON ventas.producto_id = p_filter.codigo"
+                categoria_where = "AND p_filter.categoria = %s"
+                params.append(categoria)
 
             # Contar productos únicos
             count_query = f"""
@@ -8481,19 +8484,16 @@ async def get_ventas_detail(
             order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
             order_by = 'cantidad_total' if sort_by in ['cantidad_total', None] else 'cantidad_total'
 
-            # Construir parámetros finales (incluyendo categoría y ubicacion_id para stock)
-            final_params = params.copy()
-            if categoria:
-                final_params.append(categoria)
-
             # Agregar ubicacion_id para el LEFT JOIN de stock actual
+            final_params = params.copy()
             final_params.append(ubicacion_id if ubicacion_id else '')
 
             main_query = f"""
                 WITH ventas_filtradas AS (
-                    SELECT producto_id, cantidad_vendida, venta_total, fecha_venta::date as fecha
+                    SELECT ventas.producto_id, ventas.cantidad_vendida, ventas.venta_total, ventas.fecha_venta::date as fecha
                     FROM ventas
-                    WHERE {where_clause}
+                    {categoria_join}
+                    WHERE {where_clause} {categoria_where}
                 ),
                 producto_stats AS (
                     SELECT
@@ -8641,7 +8641,6 @@ async def get_ventas_detail(
                 LEFT JOIN q15_stats q15 ON ps.producto_id = q15.producto_id
                 LEFT JOIN inventario_actual ia ON ps.producto_id = ia.producto_id
                     AND ia.ubicacion_id = %s
-                WHERE 1=1 {categoria_filter}
                 ORDER BY {order_by} {order_direction}
                 LIMIT %s OFFSET %s
             """
