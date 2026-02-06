@@ -9632,6 +9632,7 @@ async def get_ventas_historico_dia(
                     SELECT DISTINCT fecha_venta::date as fecha
                     FROM ventas
                     WHERE ubicacion_id = %s
+                      AND fecha_venta::date >= CURRENT_DATE - INTERVAL '60 days'  -- Performance: limit scan to recent data (8 weeks guaranteed)
                       AND EXTRACT(DOW FROM fecha_venta) = %s
                     ORDER BY fecha DESC
                     LIMIT 8
@@ -9643,6 +9644,7 @@ async def get_ventas_historico_dia(
                     FROM ventas
                     WHERE ubicacion_id = %s
                       AND producto_id = %s
+                      AND fecha_venta::date >= CURRENT_DATE - INTERVAL '60 days'  -- Performance: limit scan to recent data
                       AND EXTRACT(DOW FROM fecha_venta) = %s
                     GROUP BY fecha_venta::date
                 )
