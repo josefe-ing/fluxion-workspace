@@ -448,7 +448,7 @@ export default function ProductSalesModal({
   }, []);
 
   // Declarar fetchForecastsData primero (antes de usarla en fetchVentasData)
-  const fetchForecastsData = useCallback(async (tiendas: string[]) => {
+  const _fetchForecastsData = useCallback(async (tiendas: string[]) => {
     try {
       const forecasts: { [tiendaId: string]: ForecastResponse } = {};
 
