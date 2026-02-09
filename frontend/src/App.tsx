@@ -1,40 +1,42 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-// import { useState, useEffect } from 'react';  // Deshabilitado temporalmente
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LoginPage } from './components/LoginPage';
 import { LandingPage } from './components/LandingPage';
-// import { MaintenancePage } from './components/MaintenancePage';  // Descomentar el lunes
 import Layout from './components/layout/Layout';
-import InventorySummary from './components/dashboard/InventorySummary';
-import InventoryDashboard from './components/dashboard/InventoryDashboard';
-import SalesSummary from './components/sales/SalesSummary';
-import SalesDashboard from './components/sales/SalesDashboard';
-// Pedidos Sugeridos
-import SuggestedOrder from './components/orders/SuggestedOrder';
-import OrderWizard from './components/orders/OrderWizard';
-import OrderWizardMultiTienda from './components/orders/OrderWizardMultiTienda';
-// import PedidoSugeridoV2Wizard from './components/orders/PedidoSugeridoV2Wizard'; // Modal version, not used as route
-import PedidoInterCediWizard from './components/orders/PedidoInterCediWizard';
-import PedidoApprovalView from './components/orders/PedidoApprovalView';
-import SalesCoverageCalendar from './components/settings/SalesCoverageCalendar';
-import ETLControlCenter from './components/settings/ETLControlCenter';
-import ConfiguracionABC from './components/admin/ConfiguracionABC';
-import GeneradoresTrafico from './components/admin/GeneradoresTrafico';
-import UsuariosAdmin from './components/admin/UsuariosAdmin';
-import ExclusionesInterCedi from './components/admin/ExclusionesInterCedi';
-import ProductosAdmin from './components/admin/ProductosAdmin';
-// DEPRECADOS: Comentados para futura eliminación
-// import ConfiguracionInventario from './components/admin/ConfiguracionInventario';
-// import ConjuntosAdmin from './components/admin/ConjuntosAdmin';
-// import AlertasReclasificacion from './components/admin/AlertasReclasificacion';
 import { getTenantId } from './utils/tenant';
-// import { checkMaintenanceStatus } from './services/maintenanceService';  // Descomentar el lunes
-import ABCXYZAnalysis from './components/productos/ABCXYZAnalysis';
-import ABCXYZFullAnalysis from './components/productos/ABCXYZFullAnalysis';
-import AnalisisMaestro from './components/productos/AnalisisMaestro';
-import ProductosLayout from './components/productos/ProductosLayout';
-import EmergenciasDashboard from './components/emergencias/EmergenciasDashboard';
-import BusinessIntelligence from './components/bi/BusinessIntelligence';
+
+// Route-level lazy loading — each module loads only when navigated to
+const InventorySummary = lazy(() => import('./components/dashboard/InventorySummary'));
+const InventoryDashboard = lazy(() => import('./components/dashboard/InventoryDashboard'));
+const SalesSummary = lazy(() => import('./components/sales/SalesSummary'));
+const SalesDashboard = lazy(() => import('./components/sales/SalesDashboard'));
+const SuggestedOrder = lazy(() => import('./components/orders/SuggestedOrder'));
+const OrderWizard = lazy(() => import('./components/orders/OrderWizard'));
+const OrderWizardMultiTienda = lazy(() => import('./components/orders/OrderWizardMultiTienda'));
+const PedidoInterCediWizard = lazy(() => import('./components/orders/PedidoInterCediWizard'));
+const PedidoApprovalView = lazy(() => import('./components/orders/PedidoApprovalView'));
+const SalesCoverageCalendar = lazy(() => import('./components/settings/SalesCoverageCalendar'));
+const ETLControlCenter = lazy(() => import('./components/settings/ETLControlCenter'));
+const ConfiguracionABC = lazy(() => import('./components/admin/ConfiguracionABC'));
+const GeneradoresTrafico = lazy(() => import('./components/admin/GeneradoresTrafico'));
+const UsuariosAdmin = lazy(() => import('./components/admin/UsuariosAdmin'));
+const ExclusionesInterCedi = lazy(() => import('./components/admin/ExclusionesInterCedi'));
+const ProductosAdmin = lazy(() => import('./components/admin/ProductosAdmin'));
+const ABCXYZAnalysis = lazy(() => import('./components/productos/ABCXYZAnalysis'));
+const ABCXYZFullAnalysis = lazy(() => import('./components/productos/ABCXYZFullAnalysis'));
+const AnalisisMaestro = lazy(() => import('./components/productos/AnalisisMaestro'));
+const ProductosLayout = lazy(() => import('./components/productos/ProductosLayout'));
+const EmergenciasDashboard = lazy(() => import('./components/emergencias/EmergenciasDashboard'));
+const BusinessIntelligence = lazy(() => import('./components/bi/BusinessIntelligence'));
+
+function LazyFallback() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    </div>
+  );
+}
 
 // Role-Based Route Protection Component
 function RoleProtectedRoute({

@@ -1543,6 +1543,30 @@ async def calcular_productos_sugeridos(
 
         logger.info(f"📅 Día actual: {NOMBRES_DIA[dow_actual]} (DOW={dow_actual}), productos con DOW data: {len(promedios_dow_dict)}")
 
+        # ====================================================================
+        # PRE-CÁLCULO: Mediana de P75 por categoría (para envío prueba)
+        # ====================================================================
+        # Para productos sin ventas en NINGUNA tienda, usamos la demanda
+        # típica de su categoría como proxy. Esto permite sugerir una
+        # cantidad proporcional al tipo de producto en vez de un fijo de 1 bulto.
+        from collections import defaultdict
+        import statistics as stats_module
+        p75_por_categoria: dict = defaultdict(list)
+        for row in rows:
+            categoria = (row[3] or '').strip().upper()
+            p75_local = safe_float(row[19])
+            if p75_local > 0 and categoria:
+                p75_por_categoria[categoria].append(p75_local)
+
+        p75_mediana_categoria = {
+            cat: stats_module.median(vals) for cat, vals in p75_por_categoria.items() if vals
+        }
+        # Fallback global: mediana de todos los P75 > 0
+        all_p75 = [v for vals in p75_por_categoria.values() for v in vals]
+        p75_fallback_global = stats_module.median(all_p75) if all_p75 else 1.0
+
+        logger.info(f"📊 P75 mediana por categoría: {len(p75_mediana_categoria)} categorías, fallback global: {p75_fallback_global:.1f}")
+
         productos = []
         productos_sin_venta_con_ref = 0  # Contador para log
         productos_excluidos_count = 0  # Contador de productos excluidos
@@ -1619,6 +1643,16 @@ async def calcular_productos_sugeridos(
                 p75_usado = p75_referencia  # Usar referencia para el cálculo base
                 clasificacion = 'D'  # Conservador (clase D para productos nuevos/prueba)
                 productos_sin_venta_con_ref += 1
+
+            # Caso 1b: SIN ventas en NINGUNA tienda pero con stock en CEDI -> ENVÍO PRUEBA
+            # Regla: "Todo producto que tengamos en el CEDI debería estar en cada tienda"
+            # Usa la mediana de P75 de la categoría como proxy de demanda
+            elif sin_ventas_locales and p75_referencia == 0 and stock_cedi > 0:
+                es_envio_prueba = True
+                p75_usado = p75_mediana_categoria.get(categoria_producto, p75_fallback_global)
+                clasificacion = 'D'
+                productos_sin_venta_con_ref += 1
+                logger.debug(f"📦 {codigo}: Envío prueba sin ref, P75 categoría '{categoria_producto}' = {p75_usado:.1f}")
 
             # Caso 2: POCAS ventas locales pero P75 regional mucho mayor -> REFERENCIA REGIONAL
             # (usar P75 de referencia para calcular, sin forzar mínimos)

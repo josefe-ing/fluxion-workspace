@@ -469,6 +469,21 @@ async def obtener_productos_tienda(
         cursor_ep.close()
         logger.info(f"📦 Envío prueba batch: {len(candidatos_envio_prueba)} candidatos, {len(p75_referencia_batch)} con P75 referencia ({tienda_destino})")
 
+    # Pre-calcular mediana de P75 por categoría (para envío prueba sin referencia)
+    from collections import defaultdict
+    import statistics as stats_module
+    p75_por_cat: dict = defaultdict(list)
+    for row in rows:
+        cat = (row[3] or '').strip().upper()
+        p75_val = float(row[7])
+        if p75_val > 0 and cat:
+            p75_por_cat[cat].append(p75_val)
+    p75_mediana_cat = {
+        cat: stats_module.median(vals) for cat, vals in p75_por_cat.items() if vals
+    }
+    all_p75_vals = [v for vals in p75_por_cat.values() for v in vals]
+    p75_fallback = stats_module.median(all_p75_vals) if all_p75_vals else 1.0
+
     productos = []
     for row in rows:
         producto_id = row[0]
@@ -507,6 +522,13 @@ async def obtener_productos_tienda(
             if p75_ref and p75_ref > 0:
                 p75_usado = p75_ref
                 clase_abc_usada = 'D'  # Conservador para productos nuevos
+                es_envio_prueba = True
+            else:
+                # Sin ventas en ninguna tienda pero con stock en CEDI -> envío prueba
+                # Usar mediana de P75 de la categoría como proxy de demanda
+                cat_norm = (categoria or '').strip().upper()
+                p75_usado = p75_mediana_cat.get(cat_norm, p75_fallback)
+                clase_abc_usada = 'D'
                 es_envio_prueba = True
 
         # Determinar override de días de cobertura por categoría (perecederos)
@@ -568,9 +590,14 @@ async def obtener_productos_tienda(
         )
 
         # Si no necesita reposición, forzar cantidades a 0
+        # Excepción: envío prueba garantiza mínimo 1 bulto
         if not necesita_reposicion:
-            cantidad_sugerida_unid = 0
-            cantidad_sugerida_bultos = 0
+            if es_envio_prueba and not tiene_sobrestock and stock_cedi > 0:
+                cantidad_sugerida_bultos = 1
+                cantidad_sugerida_unid = float(unidades_por_bulto)
+            else:
+                cantidad_sugerida_unid = 0
+                cantidad_sugerida_bultos = 0
 
         # Aplicar límites de inventario (igual que single-store)
         # Orden: 1) Mínimo exhibición, 2) Capacidad máxima

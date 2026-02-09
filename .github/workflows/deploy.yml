@@ -190,22 +190,16 @@ jobs:
             --stack-name FluxionStackV2 \
             --query 'Stacks[0].Outputs[?OutputKey==`BackendURL`].OutputValue' \
             --output text)
-          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name FluxionStackV2 \
-            --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucket`].OutputValue' \
-            --output text)
           CLOUDFRONT_ID=$(aws cloudformation describe-stacks \
             --stack-name FluxionStackV2 \
             --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
             --output text)
 
           echo "backend-url=$BACKEND_URL" >> $GITHUB_OUTPUT
-          echo "frontend-bucket=$FRONTEND_BUCKET" >> $GITHUB_OUTPUT
           echo "cloudfront-id=$CLOUDFRONT_ID" >> $GITHUB_OUTPUT
 
     outputs:
       backend-url: ${{ steps.stack-outputs.outputs.backend-url }}
-      frontend-bucket: ${{ steps.stack-outputs.outputs.frontend-bucket }}
       cloudfront-id: ${{ steps.stack-outputs.outputs.cloudfront-id }}
 
   # Job 5: Build Documentation Site

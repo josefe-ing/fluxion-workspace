@@ -10,7 +10,7 @@
  * Si solo se selecciona 1 tienda → redirige al flujo normal (OrderWizard)
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import StepOneMultiSelect from './multi-tienda/StepOneMultiSelect';
 import StepTwoConflictResolution from './multi-tienda/StepTwoConflictResolution';
@@ -230,9 +230,9 @@ export default function OrderWizardMultiTienda() {
     }
   };
 
-  const updateOrderData = (data: Partial<OrderDataMultiTienda>) => {
+  const updateOrderData = useCallback((data: Partial<OrderDataMultiTienda>) => {
     setOrderData(prev => ({ ...prev, ...data }));
-  };
+  }, []);
 
   // Renderizar indicador de paso
   const renderStepIndicator = (step: WizardStepInfo, index: number) => {

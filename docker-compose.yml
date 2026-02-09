@@ -9,7 +9,7 @@ services:
     container_name: fluxion-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_DB: fluxion_production
       POSTGRES_USER: fluxion
