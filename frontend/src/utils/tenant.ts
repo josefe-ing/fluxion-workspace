@@ -10,7 +10,7 @@ export interface TenantConfig {
   primaryColor: string;
   secondaryColor: string;
   features: string[];
-  customSettings?: Record<string, any>;
+  customSettings?: Record<string, unknown>;
 }
 
 /**

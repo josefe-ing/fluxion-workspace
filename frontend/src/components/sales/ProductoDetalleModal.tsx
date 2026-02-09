@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 import {
@@ -129,12 +129,6 @@ export default function ProductoDetalleModal({
   const [refAreaRight, setRefAreaRight] = useState<string>('');
   const [isSelecting, setIsSelecting] = useState(false);
 
-  useEffect(() => {
-    if (isOpen && codigoProducto && ubicacionId) {
-      loadData();
-    }
-  }, [isOpen, codigoProducto, ubicacionId, granularidad, dias]);
-
   // Reset zoom cuando cambian los datos
   useEffect(() => {
     setZoomLeft(null);
@@ -143,7 +137,7 @@ export default function ProductoDetalleModal({
     setRefAreaRight('');
   }, [data, granularidad, dias]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -167,16 +161,22 @@ export default function ProductoDetalleModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [codigoProducto, ubicacionId, dias, granularidad]);
+
+  useEffect(() => {
+    if (isOpen && codigoProducto && ubicacionId) {
+      loadData();
+    }
+  }, [isOpen, codigoProducto, ubicacionId, granularidad, dias, loadData]);
 
   // Preparar datos para el gráfico
-  const chartData = data?.datos.map((d) => ({
+  const chartData = useMemo(() => data?.datos.map((d) => ({
     fecha: d.fecha,
     fechaLabel: formatFechaCorta(d.fecha),
     ventas: d.ventas,
     inventario: d.inventario,
     timestamp: d.timestamp
-  })) || [];
+  })) || [], [data]);
 
   // Datos filtrados por zoom
   const chartDataZoomed = useCallback(() => {

@@ -184,8 +184,8 @@ export function ABCModelProvider({ children }: { children: React.ReactNode }) {
       invalidateCache();
       const result = await getOrFetch();
       setData(result);
-    } catch (err: any) {
-      setError(err?.message || 'Error cargando modelo ABC');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error cargando modelo ABC');
     } finally {
       setLoading(false);
     }

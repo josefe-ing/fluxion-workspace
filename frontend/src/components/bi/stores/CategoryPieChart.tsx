@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { RefreshCw } from 'lucide-react';
 import { biService, StoreCategoriesResponse } from '../../../services/biService';
@@ -33,11 +33,7 @@ export default function CategoryPieChart({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [ubicacionId, fechaInicio, fechaFin, top]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -55,7 +51,11 @@ export default function CategoryPieChart({
     } finally {
       setLoading(false);
     }
-  };
+  }, [ubicacionId, fechaInicio, fechaFin, top]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   if (loading) {
     return (

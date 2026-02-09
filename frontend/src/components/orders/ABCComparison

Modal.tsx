@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getClasificacionProducto, ClasificacionABCv2, getIconoDiscrepancia } from '../../services/abcV2Service';
 
 interface ABCComparisonModalProps {
@@ -18,24 +18,25 @@ export default function ABCComparisonModal({ isOpen, onClose, producto }: ABCCom
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen && producto) {
-      cargarClasificacionV2();
-    }
-  }, [isOpen, producto]);
-
-  const cargarClasificacionV2 = async () => {
+  const cargarClasificacionV2 = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const data = await getClasificacionProducto(producto.codigo_producto);
       setClasificacionV2(data);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al cargar clasificación ABC v2');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error al cargar clasificación ABC v2');
     } finally {
       setLoading(false);
     }
-  };
+  }, [producto.codigo_producto]);
+
+  useEffect(() => {
+    if (isOpen && producto) {
+      cargarClasificacionV2();
+    }
+  }, [isOpen, producto, cargarClasificacionV2]);
 
   if (!isOpen) return null;
 

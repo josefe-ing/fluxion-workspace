@@ -27,7 +27,7 @@ export default function ABCDistributionChart({ resumenABC }: ABCDistributionChar
     [resumenABC]
   );
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: { name: string; value: number; porcentaje_productos: number; porcentaje_valor: number } }> }) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       const pctProductos = typeof data.porcentaje_productos === 'number' ? data.porcentaje_productos.toFixed(1) : '0.0';
@@ -55,7 +55,7 @@ export default function ABCDistributionChart({ resumenABC }: ABCDistributionChar
     return null;
   };
 
-  const renderCustomLabel = useCallback((entry: any) => {
+  const renderCustomLabel = useCallback((entry: { name: string; value: number }) => {
     return `${entry.name} (${entry.value})`;
   }, []);
 

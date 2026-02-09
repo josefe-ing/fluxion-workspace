@@ -8,7 +8,7 @@
  * - Ver pronóstico jerárquico
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   listConjuntos,
   createConjunto,
@@ -44,20 +44,16 @@ const ConjuntosAdmin: React.FC = () => {
   // EFECTOS
   // =====================================================================================
 
-  useEffect(() => {
-    loadConjuntos();
-  }, [filtroCategoria, filtroActivo]);
-
   // =====================================================================================
   // FUNCIONES DE CARGA
   // =====================================================================================
 
-  const loadConjuntos = async () => {
+  const loadConjuntos = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const params: any = {};
+      const params: { activo?: boolean; categoria?: string } = {};
       if (filtroActivo !== undefined) params.activo = filtroActivo;
       if (filtroCategoria) params.categoria = filtroCategoria;
 
@@ -69,7 +65,11 @@ const ConjuntosAdmin: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filtroCategoria, filtroActivo]);
+
+  useEffect(() => {
+    loadConjuntos();
+  }, [loadConjuntos]);
 
   const loadDetalleConjunto = async (conjuntoId: string) => {
     try {

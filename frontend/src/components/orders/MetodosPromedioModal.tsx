@@ -1,5 +1,5 @@
 import { X, BarChart3, CheckCircle2, Info } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 
 interface MetodosPromedioModalProps {
@@ -26,13 +26,7 @@ export default function MetodosPromedioModal({ isOpen, onClose, producto, ubicac
   const [ventas20Dias, setVentas20Dias] = useState<VentaDiaria[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (isOpen && ubicacionId) {
-      fetchVentas20Dias();
-    }
-  }, [isOpen, ubicacionId, producto.codigo_producto]);
-
-  const fetchVentas20Dias = async () => {
+  const fetchVentas20Dias = useCallback(async () => {
     if (!ubicacionId) return;
 
     try {
@@ -48,7 +42,13 @@ export default function MetodosPromedioModal({ isOpen, onClose, producto, ubicac
     } finally {
       setLoading(false);
     }
-  };
+  }, [ubicacionId, producto.codigo_producto]);
+
+  useEffect(() => {
+    if (isOpen && ubicacionId) {
+      fetchVentas20Dias();
+    }
+  }, [isOpen, ubicacionId, producto.codigo_producto, fetchVentas20Dias]);
 
   if (!isOpen) return null;
 

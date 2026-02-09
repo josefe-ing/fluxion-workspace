@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 import { formatInteger, formatNumber } from '../../utils/formatNumber';
 
@@ -88,29 +88,7 @@ export default function CentroComandoCorreccionModal({
   // EFECTOS
   // ============================================================================
 
-  useEffect(() => {
-    if (isOpen && ubicacionId) {
-      loadAnomalias();
-    }
-  }, [isOpen, ubicacionId, almacenCodigo]);
-
-  // Reset state when modal closes
-  useEffect(() => {
-    if (!isOpen) {
-      setAjustes({});
-      setResultados(null);
-      setShowResultados(false);
-      setError(null);
-      setShowEvidenciaModal(false);
-      setSelectedItemEvidencia(null);
-    }
-  }, [isOpen]);
-
-  // ============================================================================
-  // FUNCIONES
-  // ============================================================================
-
-  const loadAnomalias = async () => {
+  const loadAnomalias = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -137,7 +115,29 @@ export default function CentroComandoCorreccionModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [almacenCodigo, ubicacionId]);
+
+  useEffect(() => {
+    if (isOpen && ubicacionId) {
+      loadAnomalias();
+    }
+  }, [isOpen, ubicacionId, almacenCodigo, loadAnomalias]);
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setAjustes({});
+      setResultados(null);
+      setShowResultados(false);
+      setError(null);
+      setShowEvidenciaModal(false);
+      setSelectedItemEvidencia(null);
+    }
+  }, [isOpen]);
+
+  // ============================================================================
+  // FUNCIONES
+  // ============================================================================
 
   const handleConteoChange = (productoId: string, value: string) => {
     const numValue = value === '' ? '' : parseFloat(value);

@@ -143,8 +143,8 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
           const testData = await testResponse.json();
 
           if (testData.success) {
-            const exitosas = testData.tiendas.filter((t: any) => t.success);
-            const fallidas = testData.tiendas.filter((t: any) => !t.success);
+            const exitosas = testData.tiendas.filter((t: { success: boolean }) => t.success);
+            const fallidas = testData.tiendas.filter((t: { success: boolean }) => !t.success);
 
             setLogs(prev => [...prev, {
               timestamp: new Date().toISOString(),
@@ -153,7 +153,7 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
             }]);
 
             // Inicializar status de tiendas
-            const initialStatus: TiendaStatus[] = testData.tiendas.map((t: any) => ({
+            const initialStatus: TiendaStatus[] = testData.tiendas.map((t: { tienda?: string; success: boolean }) => ({
               id: t.tienda || 'unknown',
               nombre: t.tienda || 'Desconocida',
               status: t.success ? 'pending' : 'skipped',
@@ -168,7 +168,7 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
                 message: `⚠️ ${fallidas.length} tienda(s) sin conectividad (serán omitidas)`
               }]);
 
-              fallidas.forEach((t: any) => {
+              fallidas.forEach((t: { tienda?: string; message?: string }) => {
                 setLogs(prev => [...prev, {
                   timestamp: new Date().toISOString(),
                   level: 'warning',
@@ -206,7 +206,7 @@ export default function SyncLogsModal({ isOpen, onClose, ubicacionId }: SyncLogs
           const testData = await testResponse.json();
 
           if (testData.success && testData.tiendas) {
-            const tiendaTest = testData.tiendas.find((t: any) => t.id === ubicacionId);
+            const tiendaTest = testData.tiendas.find((t: { id: string }) => t.id === ubicacionId);
 
             if (tiendaTest) {
               if (tiendaTest.conectado) {

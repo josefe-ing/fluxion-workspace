@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Package, RefreshCw, AlertCircle, Filter, Globe, MapPin, Store } from 'lucide-react';
 import { biService, ABCConsolidatedResponse } from '../../../services/biService';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -77,8 +77,8 @@ export default function ABCAnalysisView() {
       try {
         const response = await http.get('/api/ubicaciones');
         const storesList = response.data
-          .filter((u: any) => u.tipo === 'tienda' && !u.id.startsWith('cedi_'))
-          .map((u: any) => ({
+          .filter((u: { tipo: string; id: string }) => u.tipo === 'tienda' && !u.id.startsWith('cedi_'))
+          .map((u: { id: string; nombre: string; region?: string }) => ({
             id: u.id,
             nombre: u.nombre,
             region: u.region || 'SIN REGIÓN',
@@ -91,7 +91,7 @@ export default function ABCAnalysisView() {
     loadStores();
   }, []);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -110,11 +110,11 @@ export default function ABCAnalysisView() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedRegion, selectedStore]);
 
   useEffect(() => {
     loadData();
-  }, [selectedRegion, selectedStore]);
+  }, [loadData]);
 
   // Get unique regions
   const regions = Array.from(new Set(stores.map((s) => s.region))).sort();
@@ -161,7 +161,7 @@ export default function ABCAnalysisView() {
   }));
 
   // Group categories by ABC class
-  const categoriasPorClase: Record<string, any[]> = {};
+  const categoriasPorClase: Record<string, ABCConsolidatedResponse['categorias_abc']> = {};
   data.categorias_abc.forEach((cat) => {
     if (!categoriasPorClase[cat.clase]) {
       categoriasPorClase[cat.clase] = [];
@@ -323,8 +323,8 @@ export default function ABCAnalysisView() {
                 ))}
               </Pie>
               <Tooltip
-                formatter={(value: any, name: string, entry: any) => [
-                  `${value.toFixed(1)}% (${formatCurrency(entry.payload.ventas)})`,
+                formatter={(value: number | string, name: string, entry: { payload?: { ventas?: number } }) => [
+                  `${Number(value).toFixed(1)}% (${formatCurrency(entry.payload?.ventas ?? 0)})`,
                   name
                 ]}
               />
@@ -354,8 +354,8 @@ export default function ABCAnalysisView() {
                 ))}
               </Pie>
               <Tooltip
-                formatter={(value: any, name: string, entry: any) => [
-                  `${value.toFixed(1)}% (${entry.payload.cantidad} productos)`,
+                formatter={(value: number | string, name: string, entry: { payload?: { cantidad?: number } }) => [
+                  `${Number(value).toFixed(1)}% (${entry.payload?.cantidad ?? 0} productos)`,
                   name
                 ]}
               />

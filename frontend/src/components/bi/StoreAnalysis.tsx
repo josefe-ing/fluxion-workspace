@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Store,
   TrendingUp,
@@ -8,7 +8,7 @@ import {
   ChevronRight,
   BarChart2,
 } from 'lucide-react';
-import { biService, StoreRanking, StoreKPIs, StoreABCAnalysis } from '../../services/biService';
+import { biService, StoreRanking, StoreRankingResponse, StoreKPIs, StoreABCAnalysis } from '../../services/biService';
 
 type MetricType = 'gmroi' | 'ventas' | 'rotacion' | 'stock';
 
@@ -44,7 +44,7 @@ export default function StoreAnalysis() {
   const [abcAnalysis, setAbcAnalysis] = useState<StoreABCAnalysis | null>(null);
   const [loadingKPIs, setLoadingKPIs] = useState(false);
 
-  const loadRanking = async () => {
+  const loadRanking = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -53,8 +53,8 @@ export default function StoreAnalysis() {
       // Extraemos solo el array de tiendas
       if (data && Array.isArray(data)) {
         setRanking(data);
-      } else if (data && (data as any).tiendas) {
-        setRanking((data as any).tiendas);
+      } else if (data && (data as StoreRankingResponse).tiendas) {
+        setRanking((data as unknown as StoreRankingResponse).tiendas);
       } else {
         setRanking([]);
       }
@@ -63,7 +63,7 @@ export default function StoreAnalysis() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedMetric]);
 
   const loadStoreKPIs = async (ubicacionId: string) => {
     try {
@@ -83,7 +83,7 @@ export default function StoreAnalysis() {
 
   useEffect(() => {
     loadRanking();
-  }, [selectedMetric]);
+  }, [loadRanking]);
 
   useEffect(() => {
     if (selectedStore) {

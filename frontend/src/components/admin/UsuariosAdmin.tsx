@@ -108,8 +108,9 @@ export default function UsuariosAdmin() {
         tiendas_asignadas: []
       });
       await loadUsuarios();
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error creando usuario');
+    } catch (err) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error creando usuario');
     } finally {
       setSaving(false);
     }
@@ -127,8 +128,9 @@ export default function UsuariosAdmin() {
       setShowPasswordModal(false);
       setNewPassword('');
       setSelectedUser(null);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error cambiando contraseña');
+    } catch (err) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error cambiando contraseña');
     } finally {
       setSaving(false);
     }
@@ -149,8 +151,9 @@ export default function UsuariosAdmin() {
       setEditRolId('');
       setEditTiendasAsignadas([]);
       await loadUsuarios();
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error actualizando rol');
+    } catch (err) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error actualizando rol');
     } finally {
       setSaving(false);
     }
@@ -166,8 +169,9 @@ export default function UsuariosAdmin() {
       setShowDeleteModal(false);
       setSelectedUser(null);
       await loadUsuarios();
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error eliminando usuario');
+    } catch (err) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error eliminando usuario');
     } finally {
       setSaving(false);
     }

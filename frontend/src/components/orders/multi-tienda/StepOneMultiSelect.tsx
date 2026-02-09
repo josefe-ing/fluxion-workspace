@@ -8,7 +8,7 @@
  * Las tiendas se cargan dinámicamente según el CEDI seleccionado.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type {
   TiendaSeleccionada,
   CediDisponible,
@@ -36,19 +36,7 @@ export default function StepOneMultiSelect({
   const [loadingTiendas, setLoadingTiendas] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Cargar CEDIs al montar
-  useEffect(() => {
-    cargarCedis();
-  }, []);
-
-  // Cargar tiendas cuando cambia el CEDI
-  useEffect(() => {
-    if (orderData.cedi_origen) {
-      cargarTiendasPorCedi(orderData.cedi_origen);
-    }
-  }, [orderData.cedi_origen]);
-
-  const cargarCedis = async () => {
+  const cargarCedis = useCallback(async () => {
     try {
       setLoading(true);
       const response = await fetch(`${API_URL}/api/ubicaciones/cedis`);
@@ -71,9 +59,9 @@ export default function StepOneMultiSelect({
     } finally {
       setLoading(false);
     }
-  };
+  }, [orderData.cedi_origen, updateOrderData]);
 
-  const cargarTiendasPorCedi = async (cediId: string) => {
+  const cargarTiendasPorCedi = useCallback(async (cediId: string) => {
     try {
       setLoadingTiendas(true);
       const response = await fetch(
@@ -100,7 +88,19 @@ export default function StepOneMultiSelect({
     } finally {
       setLoadingTiendas(false);
     }
-  };
+  }, [updateOrderData]);
+
+  // Cargar CEDIs al montar
+  useEffect(() => {
+    cargarCedis();
+  }, [cargarCedis]);
+
+  // Cargar tiendas cuando cambia el CEDI
+  useEffect(() => {
+    if (orderData.cedi_origen) {
+      cargarTiendasPorCedi(orderData.cedi_origen);
+    }
+  }, [orderData.cedi_origen, cargarTiendasPorCedi]);
 
   const handleCediChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const cediId = e.target.value;

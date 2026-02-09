@@ -679,9 +679,10 @@ export default function ConfiguracionABC() {
 
       // Recargar lista
       await cargarProductosExcluidos(excluidosTiendaSeleccionada);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error creando exclusión:', err);
-      setError(err.response?.data?.detail || 'Error al agregar exclusión');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error al agregar exclusión');
     } finally {
       setSaving(false);
     }
@@ -876,7 +877,7 @@ export default function ConfiguracionABC() {
                         const response = await http.put('/api/config-inventario/parametros-abc/modelo-activo', {
                           modelo: modeloSeleccionado
                         });
-                        const data = response.data as any;
+                        const data = response.data as { filas_actualizadas_global: number; filas_actualizadas_tienda: number; tiempo_ms: number };
                         setSuccessMessage(
                           `Modelo cambiado a "${modeloSeleccionado}". ` +
                           `${data.filas_actualizadas_global} productos globales y ` +
@@ -884,8 +885,8 @@ export default function ConfiguracionABC() {
                         );
                         refreshABCModel();
                         setTimeout(() => setSuccessMessage(null), 8000);
-                      } catch (e: any) {
-                        setError(e?.message || 'Error cambiando modelo');
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : 'Error cambiando modelo');
                       } finally {
                         setCambiandoModelo(false);
                       }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 
 interface ConfigTienda {
@@ -32,20 +32,14 @@ export default function ConfiguracionTienda() {
     loadTiendas();
   }, []);
 
-  useEffect(() => {
-    if (selectedTienda) {
-      loadConfigs();
-    }
-  }, [selectedTienda, selectedCategoria]);
-
   const loadTiendas = async () => {
     try {
       const response = await http.get('/api/ubicaciones');
       const tiendasFiltradas = response.data.filter(
-        (u: any) => u.tipo === 'tienda' && !u.id.startsWith('cedi_')
+        (u: { tipo: string; id: string }) => u.tipo === 'tienda' && !u.id.startsWith('cedi_')
       );
       // Mapear a la estructura esperada
-      const tiendasMapeadas = tiendasFiltradas.map((t: any) => ({
+      const tiendasMapeadas = tiendasFiltradas.map((t: { id: string; nombre: string }) => ({
         ubicacion_id: t.id,
         ubicacion_nombre: t.nombre
       }));
@@ -58,7 +52,7 @@ export default function ConfiguracionTienda() {
     }
   };
 
-  const loadConfigs = async () => {
+  const loadConfigs = useCallback(async () => {
     try {
       setLoading(true);
       const response = await http.get('/api/config-inventario/tienda', {
@@ -73,7 +67,13 @@ export default function ConfiguracionTienda() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedTienda, selectedCategoria]);
+
+  useEffect(() => {
+    if (selectedTienda) {
+      loadConfigs();
+    }
+  }, [selectedTienda, selectedCategoria, loadConfigs]);
 
   const handleEdit = (config: ConfigTienda) => {
     setEditingId(config.id);

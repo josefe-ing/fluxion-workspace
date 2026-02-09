@@ -36,7 +36,7 @@ export default function StoreDetailView() {
     fetch('http://localhost:8001/ubicaciones?tipo=tienda')
       .then((res) => res.json())
       .then((data) => {
-        const tiendasList = data.map((t: any) => ({
+        const tiendasList = data.map((t: { id: string; nombre: string; region?: string }) => ({
           id: t.id,
           nombre: t.nombre,
           region: t.region || '',

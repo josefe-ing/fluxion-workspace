@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 import { formatNumber } from '../../utils/formatNumber';
 
@@ -35,13 +35,7 @@ export default function ExpansionCatalogoModal({ isOpen, onClose, region }: Prop
   const [coberturaMax, setCoberturaMax] = useState(50);
   const [minVentaSemanal, setMinVentaSemanal] = useState(5);
 
-  useEffect(() => {
-    if (isOpen) {
-      loadData();
-    }
-  }, [isOpen, coberturaMax, minVentaSemanal, region]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -58,7 +52,13 @@ export default function ExpansionCatalogoModal({ isOpen, onClose, region }: Prop
     } finally {
       setLoading(false);
     }
-  };
+  }, [coberturaMax, minVentaSemanal, region]);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadData();
+    }
+  }, [isOpen, loadData]);
 
   if (!isOpen) return null;
 

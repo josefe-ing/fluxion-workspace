@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 import ETLExecutionDetailModal from './ETLExecutionDetailModal';
 
@@ -44,9 +44,28 @@ export default function ETLHistoryTable() {
   // Auto-refresh para ejecuciones en progreso
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  const loadHistory = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (filters.etl_name) params.append('etl_name', filters.etl_name);
+      if (filters.status) params.append('status', filters.status);
+      if (filters.triggered_by) params.append('triggered_by', filters.triggered_by);
+      if (filters.fecha_desde) params.append('fecha_desde', filters.fecha_desde);
+      if (filters.fecha_hasta) params.append('fecha_hasta', filters.fecha_hasta);
+
+      const response = await http.get(`/api/etl/history?${params.toString()}`);
+      setExecutions(response.data);
+    } catch (error) {
+      console.error('Error loading ETL history:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
+
   useEffect(() => {
     loadHistory();
-  }, [filters]);
+  }, [loadHistory]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -59,26 +78,7 @@ export default function ETLHistoryTable() {
     }, 10000); // 10 segundos
 
     return () => clearInterval(interval);
-  }, [autoRefresh, executions]);
-
-  const loadHistory = async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (filters.etl_name) params.append('etl_name', filters.etl_name);
-      if (filters.status) params.append('status', filters.status);
-      if (filters.triggered_by) params.append('triggered_by', filters.triggered_by);
-      if (filters.fecha_desde) params.append('fecha_desde', filters.fecha_desde);
-      if (filters.fecha_hasta) params.append('fecha_hasta', filters.fecha_hasta);
-
-      const response = await http.get(`/api/etl/history?${params.toString()}`);
-      setExecutions(response.data);
-    } catch (error: any) {
-      console.error('Error loading ETL history:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [autoRefresh, executions, loadHistory]);
 
   const getStatusBadge = (status: string) => {
     const styles = {

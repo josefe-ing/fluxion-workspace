@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 import { formatNumber } from '../../utils/formatNumber';
 
@@ -45,13 +45,7 @@ export default function OportunidadesCediModal({ isOpen, onClose, region }: Prop
   const [minStockCedi, setMinStockCedi] = useState(10);
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
-  useEffect(() => {
-    if (isOpen) {
-      loadData();
-    }
-  }, [isOpen, umbralStock, minStockCedi, region]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -68,7 +62,13 @@ export default function OportunidadesCediModal({ isOpen, onClose, region }: Prop
     } finally {
       setLoading(false);
     }
-  };
+  }, [umbralStock, minStockCedi, region]);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadData();
+    }
+  }, [isOpen, loadData]);
 
   // Función para obtener color de stock basado en P75
   const getStockColor = (stock: number, p75: number, umbral: number): string => {

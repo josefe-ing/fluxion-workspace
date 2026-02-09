@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Search, Filter, Eye } from 'lucide-react';
 import MatrizABCXYZBadge from '../../shared/MatrizABCXYZBadge';
 import NivelObjetivoDetalleModal from '../NivelObjetivoDetalleModal';
@@ -57,15 +57,7 @@ export default function PasoSeleccionProductosV2Extended({
     loading: false
   });
 
-  useEffect(() => {
-    cargarProductos();
-  }, [datosOrigenDestino.tiendaDestinoId]);
-
-  useEffect(() => {
-    aplicarFiltros();
-  }, [productos, busqueda, soloDeficit, filtroABC, filtroXYZ, filtroCuadrante]);
-
-  const cargarProductos = async () => {
+  const cargarProductos = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -89,7 +81,7 @@ export default function PasoSeleccionProductosV2Extended({
     } finally {
       setLoading(false);
     }
-  };
+  }, [datosOrigenDestino.tiendaDestinoId]);
 
   // Calcular Top50: los primeros 50 productos de clase A ordenados por demanda
   const top50Ids = useMemo(() => {
@@ -102,7 +94,7 @@ export default function PasoSeleccionProductosV2Extended({
 
   const esTop50 = (productoId: string) => top50Ids.has(productoId);
 
-  const aplicarFiltros = () => {
+  const aplicarFiltros = useCallback(() => {
     let filtrados = [...productos];
 
     if (busqueda.trim()) {
@@ -137,7 +129,15 @@ export default function PasoSeleccionProductosV2Extended({
     }
 
     setProductosFiltrados(filtrados);
-  };
+  }, [productos, busqueda, soloDeficit, filtroABC, filtroXYZ, filtroCuadrante, top50Ids]);
+
+  useEffect(() => {
+    cargarProductos();
+  }, [cargarProductos]);
+
+  useEffect(() => {
+    aplicarFiltros();
+  }, [aplicarFiltros]);
 
   const toggleSeleccion = (productoId: string) => {
     const nuevaSeleccion = new Set(productosSeleccionados);

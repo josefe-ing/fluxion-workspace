@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   listarPedidos,
@@ -93,22 +93,7 @@ export default function SuggestedOrder() {
   const [pedidoAEliminar, setPedidoAEliminar] = useState<PedidoUnificado | null>(null);
   const [eliminando, setEliminando] = useState(false);
 
-  useEffect(() => {
-    cargarPedidos();
-  }, [filtroEstado]);
-
-  useEffect(() => {
-    let filtrados = pedidos;
-    if (filtroTipo) {
-      filtrados = filtrados.filter(p => p.tipo === filtroTipo);
-    }
-    if (filtroTienda) {
-      filtrados = filtrados.filter(p => p.destino_nombre === filtroTienda);
-    }
-    setPedidosFiltrados(filtrados);
-  }, [pedidos, filtroTipo, filtroTienda]);
-
-  const cargarPedidos = async () => {
+  const cargarPedidos = useCallback(async () => {
     try {
       setLoading(true);
       const filtroParam = filtroEstado ? { estado: filtroEstado } : undefined;
@@ -128,7 +113,22 @@ export default function SuggestedOrder() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filtroEstado]);
+
+  useEffect(() => {
+    cargarPedidos();
+  }, [cargarPedidos]);
+
+  useEffect(() => {
+    let filtrados = pedidos;
+    if (filtroTipo) {
+      filtrados = filtrados.filter(p => p.tipo === filtroTipo);
+    }
+    if (filtroTienda) {
+      filtrados = filtrados.filter(p => p.destino_nombre === filtroTienda);
+    }
+    setPedidosFiltrados(filtrados);
+  }, [pedidos, filtroTipo, filtroTienda]);
 
   // Obtener lista única de destinos
   const destinosUnicos = Array.from(new Set(pedidos.map(p => p.destino_nombre))).sort();
@@ -185,9 +185,10 @@ export default function SuggestedOrder() {
       }
       setPedidoAEliminar(null);
       cargarPedidos();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error eliminando pedido:', error);
-      alert(error.response?.data?.detail || 'Error al eliminar el pedido');
+      const axiosErr = error as { response?: { data?: { detail?: string } } };
+      alert(axiosErr.response?.data?.detail || 'Error al eliminar el pedido');
     } finally {
       setEliminando(false);
     }

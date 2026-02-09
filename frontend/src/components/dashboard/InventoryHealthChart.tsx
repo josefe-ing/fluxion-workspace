@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import http from '../../services/http';
 
@@ -55,13 +55,7 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
   const [excludeSinDemanda, setExcludeSinDemanda] = useState(true); // Por defecto excluir sin demanda
   const [stockCediFilter, setStockCediFilter] = useState<'all' | 'CON_STOCK' | 'SIN_STOCK'>('CON_STOCK'); // Por defecto solo con stock en CEDI
 
-  useEffect(() => {
-    if (ubicacionId) {
-      loadHealthData();
-    }
-  }, [ubicacionId, stockCediFilter]);
-
-  const loadHealthData = async () => {
+  const loadHealthData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -77,7 +71,13 @@ export default function InventoryHealthChart({ ubicacionId }: InventoryHealthCha
     } finally {
       setLoading(false);
     }
-  };
+  }, [ubicacionId, stockCediFilter]);
+
+  useEffect(() => {
+    if (ubicacionId) {
+      loadHealthData();
+    }
+  }, [ubicacionId, stockCediFilter, loadHealthData]);
 
   if (loading) {
     return (

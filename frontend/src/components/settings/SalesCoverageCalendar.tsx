@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import http from '../../services/http';
 
@@ -48,7 +48,7 @@ const SalesCoverageCalendar: React.FC = () => {
   const [viewMode, setViewMode] = useState<'recent' | 'all'>('all');
   const [selectedUbicacion, setSelectedUbicacion] = useState<string | null>(null);
 
-  const fetchCoverageData = async (mode: 'recent' | 'all') => {
+  const fetchCoverageData = useCallback(async (mode: 'recent' | 'all') => {
     try {
       setLoading(true);
       setError(null);
@@ -72,17 +72,18 @@ const SalesCoverageCalendar: React.FC = () => {
       if (response.data.ubicaciones.length > 0 && !selectedUbicacion) {
         setSelectedUbicacion(response.data.ubicaciones[0].id);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error fetching coverage data:', err);
-      setError(err.response?.data?.detail || 'Error cargando datos de cobertura');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error cargando datos de cobertura');
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedUbicacion]);
 
   useEffect(() => {
     fetchCoverageData(viewMode);
-  }, [viewMode]);
+  }, [fetchCoverageData, viewMode]);
 
   const getCellColor = (data: CoverageData | null): string => {
     if (!data) return 'bg-red-500'; // Sin datos

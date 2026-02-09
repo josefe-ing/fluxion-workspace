@@ -73,7 +73,7 @@ export async function listarPedidos(filtros?: {
 /**
  * Obtiene un pedido específico con todos sus detalles
  */
-export async function obtenerPedido(pedidoId: string): Promise<any> {
+export async function obtenerPedido(pedidoId: string) {
   const response = await http.get(`/api/pedidos-sugeridos/${pedidoId}`);
   return response.data;
 }

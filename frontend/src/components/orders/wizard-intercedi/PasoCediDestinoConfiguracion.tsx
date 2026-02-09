@@ -46,7 +46,7 @@ export default function PasoCediDestinoConfiguracion({
         cedi_destino_nombre: CEDI_DESTINO.nombre,
       });
     }
-  }, []);
+  }, [config.cedi_destino_id, updateConfig]);
 
   const handleDiasCoberturaChange = (clase: 'a' | 'b' | 'c' | 'd' | 'fruver' | 'panaderia', value: string) => {
     const numValue = parseInt(value) || 0;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, TrendingUp } from 'lucide-react';
 import { biService, HourlyHeatmapResponse, HeatmapCell } from '../../../services/biService';
 
@@ -12,11 +12,7 @@ export default function HourlyHeatmapChart({ ubicacionId, dias = 30 }: HourlyHea
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [ubicacionId, dias]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -32,7 +28,11 @@ export default function HourlyHeatmapChart({ ubicacionId, dias = 30 }: HourlyHea
     } finally {
       setLoading(false);
     }
-  };
+  }, [ubicacionId, dias]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   if (loading) {
     return (

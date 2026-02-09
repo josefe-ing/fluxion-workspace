@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowRight, TrendingUp, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { biService, CompareStoresResponse } from '../../services/biService';
+import { biService, CompareStoresResponse, ProductoUnico, ProductoComun, ProductoParcial, VentaPorTienda } from '../../services/biService';
 import { formatNumber } from '../../utils/formatNumber';
 
 export default function CompararTiendas() {
@@ -10,7 +10,7 @@ export default function CompararTiendas() {
   const [data, setData] = useState<CompareStoresResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'unicos' | 'comunes' | 'parciales'>('unicos');
   const [sortBy, setSortBy] = useState<'tienda' | 'unidades'>('tienda');
-  const [modalProducto, setModalProducto] = useState<any>(null);
+  const [modalProducto, setModalProducto] = useState<ProductoUnico | ProductoComun | ProductoParcial | null>(null);
 
   useEffect(() => {
     cargarTiendasDisponibles();
@@ -37,10 +37,11 @@ export default function CompararTiendas() {
       const result = await biService.compareStores(tiendas);
       console.log('Resultado:', result);
       setData(result);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error comparando tiendas:', error);
-      console.error('Error response:', error.response);
-      alert(error.response?.data?.detail || error.message || 'Error al comparar tiendas');
+      const axiosErr = error as { response?: { data?: { detail?: string } }; message?: string };
+      console.error('Error response:', axiosErr.response);
+      alert(axiosErr.response?.data?.detail || axiosErr.message || 'Error al comparar tiendas');
     } finally {
       setLoading(false);
     }
@@ -468,7 +469,7 @@ export default function CompararTiendas() {
 
             <div className="p-6">
               {/* Producto Único */}
-              {modalProducto.tienda_id && (
+              {'tienda_id' in modalProducto && modalProducto.tienda_id && (
                 <div className="space-y-4">
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <p className="text-sm font-medium text-blue-900">Producto Exclusivo</p>
@@ -517,7 +518,7 @@ export default function CompararTiendas() {
               )}
 
               {/* Producto Común */}
-              {modalProducto.ventas_por_tienda && (
+              {'ventas_por_tienda' in modalProducto && modalProducto.ventas_por_tienda && (
                 <div className="space-y-4">
                   <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                     <p className="text-sm font-medium text-green-900">Producto Común</p>
@@ -548,7 +549,7 @@ export default function CompararTiendas() {
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
-                        {modalProducto.ventas_por_tienda.map((venta: any) => (
+                        {('ventas_por_tienda' in modalProducto ? modalProducto.ventas_por_tienda : []).map((venta: VentaPorTienda) => (
                           <tr key={venta.tienda_id}>
                             <td className="px-4 py-3 text-sm">
                               <span className={`px-2 py-1 text-xs font-medium rounded-full ${getTiendaColor(venta.tienda_nombre)}`}>
@@ -591,7 +592,7 @@ export default function CompararTiendas() {
               )}
 
               {/* Producto Parcial */}
-              {modalProducto.tiendas_con_venta && modalProducto.tiendas_sin_venta && (
+              {'tiendas_con_venta' in modalProducto && modalProducto.tiendas_con_venta && 'tiendas_sin_venta' in modalProducto && modalProducto.tiendas_sin_venta && (
                 <div className="space-y-4">
                   <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                     <p className="text-sm font-medium text-yellow-900">Distribución Parcial</p>

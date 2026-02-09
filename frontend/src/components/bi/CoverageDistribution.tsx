@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   MapPin,
   Package,
@@ -38,7 +38,7 @@ export default function CoverageDistribution() {
   const [trappedStock, setTrappedStock] = useState<TrappedStock[]>([]);
   const [storeGaps, setStoreGaps] = useState<StoreGap[]>([]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -57,11 +57,11 @@ export default function CoverageDistribution() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedRegion]);
 
   useEffect(() => {
     loadData();
-  }, [selectedRegion]);
+  }, [loadData]);
 
   if (loading) {
     return (

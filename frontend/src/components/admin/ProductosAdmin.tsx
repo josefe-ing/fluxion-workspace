@@ -70,14 +70,6 @@ export default function ProductosAdmin() {
     loadOpciones();
   }, []);
 
-  // Cargar productos cuando cambian filtros
-  useEffect(() => {
-    const debounce = setTimeout(() => {
-      loadProductos();
-    }, 300);
-    return () => clearTimeout(debounce);
-  }, [page, searchTerm, categoriaFilter, cuadranteFilter, marcaFilter, soloSinPeso, soloSinCuadrante]);
-
   // Limpiar mensajes después de 5 segundos
   useEffect(() => {
     if (success || error) {
@@ -128,6 +120,13 @@ export default function ProductosAdmin() {
       setLoading(false);
     }
   }, [page, pageSize, searchTerm, categoriaFilter, cuadranteFilter, marcaFilter, soloSinPeso, soloSinCuadrante]);
+
+  useEffect(() => {
+    const debounce = setTimeout(() => {
+      loadProductos();
+    }, 300);
+    return () => clearTimeout(debounce);
+  }, [page, searchTerm, categoriaFilter, cuadranteFilter, marcaFilter, soloSinPeso, soloSinCuadrante, loadProductos]);
 
   const handleEdit = (producto: Producto) => {
     setSelectedProducto(producto);
@@ -185,8 +184,9 @@ export default function ProductosAdmin() {
       setShowEditModal(false);
       setSelectedProducto(null);
       await loadProductos();
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error actualizando producto');
+    } catch (err) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error actualizando producto');
     } finally {
       setSaving(false);
     }

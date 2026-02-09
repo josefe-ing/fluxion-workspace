@@ -15,7 +15,7 @@ export default function StoresRadarChart({ data }: StoresRadarChartProps) {
   };
 
   const getMetricRange = (metricKey: string) => {
-    const values = data.stores.map((s) => (s.metrics as any)[metricKey]);
+    const values = data.stores.map((s) => (s.metrics as unknown as Record<string, number>)[metricKey]);
     return {
       min: Math.min(...values),
       max: Math.max(...values),
@@ -33,10 +33,10 @@ export default function StoresRadarChart({ data }: StoresRadarChartProps) {
 
   const radarData = metrics.map((metric) => {
     const range = getMetricRange(metric.key);
-    const dataPoint: any = { metric: metric.label };
+    const dataPoint: Record<string, string | number> = { metric: metric.label };
 
     data.stores.forEach((store) => {
-      const value = (store.metrics as any)[metric.key];
+      const value = (store.metrics as unknown as Record<string, number>)[metric.key];
       dataPoint[store.nombre] = normalizeValue(value, range.min, range.max);
     });
 

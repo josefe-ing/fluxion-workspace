@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
 import { obtenerHistorialVentasRegional } from '../../services/pedidosInterCediService';
@@ -35,13 +35,7 @@ export default function CediCalculoModal({
   const [historial, setHistorial] = useState<VentaDiariaRegional[]>([]);
   const [estadisticas, setEstadisticas] = useState<{ promedio: number; max: number; min: number } | null>(null);
 
-  useEffect(() => {
-    if (isOpen && codigoProducto) {
-      cargarDatos();
-    }
-  }, [isOpen, codigoProducto]);
-
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     try {
       setLoading(true);
       const data = await obtenerHistorialVentasRegional(codigoProducto, cediId, 30);
@@ -63,7 +57,13 @@ export default function CediCalculoModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [codigoProducto, cediId]);
+
+  useEffect(() => {
+    if (isOpen && codigoProducto) {
+      cargarDatos();
+    }
+  }, [isOpen, codigoProducto, cargarDatos]);
 
   const tiendaColores: Record<string, string> = {
     'tienda_17': '#3b82f6',

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Star,
   Trash2,
@@ -58,7 +58,7 @@ export default function ProductAnalysis() {
   const [selectedCuadrante, setSelectedCuadrante] = useState<CuadranteType>('ALL');
   const [selectedCategoria, setSelectedCategoria] = useState<string>('');
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -75,11 +75,11 @@ export default function ProductAnalysis() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedCategoria]);
 
   useEffect(() => {
     loadData();
-  }, [selectedCategoria]);
+  }, [loadData]);
 
   const filteredProducts =
     matrixData?.productos.filter(

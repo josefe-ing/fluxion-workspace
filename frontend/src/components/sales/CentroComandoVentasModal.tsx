@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 
@@ -170,14 +170,7 @@ export default function CentroComandoVentasModal({
   const [sortField, setSortField] = useState<SortField>('sin_vender');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
-  // Cargar datos al abrir el modal
-  useEffect(() => {
-    if (isOpen && ubicacionId) {
-      loadData();
-    }
-  }, [isOpen, ubicacionId, almacenCodigo]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -195,7 +188,14 @@ export default function CentroComandoVentasModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [ubicacionId, almacenCodigo]);
+
+  // Cargar datos al abrir el modal
+  useEffect(() => {
+    if (isOpen && ubicacionId) {
+      loadData();
+    }
+  }, [isOpen, ubicacionId, almacenCodigo, loadData]);
 
   // Función para manejar sorting
   const handleSort = (field: SortField) => {
@@ -257,8 +257,8 @@ export default function CentroComandoVentasModal({
 
     // Ordenar
     items.sort((a, b) => {
-      let aVal: any;
-      let bVal: any;
+      let aVal: string | number;
+      let bVal: string | number;
 
       switch (sortField) {
         case 'codigo':

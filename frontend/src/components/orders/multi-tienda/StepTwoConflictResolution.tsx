@@ -5,7 +5,7 @@
  * Incluye filtros y ordenamiento similar al wizard de una sola tienda.
  */
 
-import { useState, useMemo, Fragment } from 'react';
+import { useState, useMemo, useCallback, Fragment } from 'react';
 import { X, Package, TrendingDown, Store, Info } from 'lucide-react';
 import ProductHistoryModal from '../../dashboard/ProductHistoryModal';
 import ProductSalesModal from '../../sales/ProductSalesModal';
@@ -36,7 +36,7 @@ export default function StepTwoConflictResolution({
   onNext,
   onBack,
 }: Props) {
-  const conflictos = calculationResult.conflictos || [];
+  const conflictos = useMemo(() => calculationResult.conflictos || [], [calculationResult.conflictos]);
   const configDpdu = calculationResult.config_dpdu;
   const tiendas = calculationResult.pedidos_por_tienda?.map(p => ({
     id: p.tienda_id,
@@ -223,9 +223,9 @@ export default function StepTwoConflictResolution({
   };
 
   // Obtener valor final (manual o DPD+U)
-  const getValorFinal = (codigoProducto: string, tiendaId: string, valorDpdu: number): number => {
+  const getValorFinal = useCallback((codigoProducto: string, tiendaId: string, valorDpdu: number): number => {
     return ajustesManuales[codigoProducto]?.[tiendaId] ?? valorDpdu;
-  };
+  }, [ajustesManuales]);
 
   // Manejar cambio manual
   const handleCambioManual = (codigoProducto: string, tiendaId: string, valor: number) => {
@@ -239,18 +239,18 @@ export default function StepTwoConflictResolution({
   };
 
   // Calcular totales por producto
-  const getTotalAsignado = (conflicto: ConflictoProducto): number => {
+  const getTotalAsignado = useCallback((conflicto: ConflictoProducto): number => {
     return conflicto.distribucion_dpdu.reduce((sum, asig) => {
       const valor = getValorFinal(conflicto.codigo_producto, asig.tienda_id, asig.cantidad_asignada_bultos);
       return sum + valor;
     }, 0);
-  };
+  }, [getValorFinal]);
 
   // Verificar si excede stock
-  const excedeStock = (conflicto: ConflictoProducto): boolean => {
+  const excedeStock = useCallback((conflicto: ConflictoProducto): boolean => {
     const totalAsignado = getTotalAsignado(conflicto);
     return totalAsignado > conflicto.stock_cedi_bultos;
-  };
+  }, [getTotalAsignado]);
 
   // Color por días de stock
   const getDiasStockColor = (dias: number): string => {
@@ -284,7 +284,7 @@ export default function StepTwoConflictResolution({
     });
 
     return { productosModificados, erroresExceso };
-  }, [conflictos, ajustesManuales]);
+  }, [conflictos, ajustesManuales, excedeStock]);
 
   // Icono de ordenamiento
   const SortIcon = ({ field }: { field: SortField }) => {

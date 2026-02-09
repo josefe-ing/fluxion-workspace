@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { RefreshCw } from 'lucide-react';
 import { biService, TicketDistributionResponse } from '../../../services/biService';
@@ -18,11 +18,7 @@ export default function TicketDistributionChart({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [ubicacionId, fechaInicio, fechaFin]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -39,7 +35,11 @@ export default function TicketDistributionChart({
     } finally {
       setLoading(false);
     }
-  };
+  }, [ubicacionId, fechaInicio, fechaFin]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   if (loading) {
     return (

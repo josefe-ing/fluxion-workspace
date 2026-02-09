@@ -6,7 +6,7 @@
  * @date 2025-11-24
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import etlTrackingService, { Gap } from '../../services/etlTrackingService';
 
 interface KLKGapRecoveryPanelProps {
@@ -25,7 +25,7 @@ export default function KLKGapRecoveryPanel({
   const [error, setError] = useState<string | null>(null);
   const [recovering, setRecovering] = useState<string | null>(null); // gap ID being recovered
 
-  const loadGaps = async () => {
+  const loadGaps = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -34,12 +34,12 @@ export default function KLKGapRecoveryPanel({
         max_horas: 168 // 7 días
       });
       setGaps(data);
-    } catch (err: any) {
-      setError(err.message || 'Error cargando gaps');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error cargando gaps');
     } finally {
       setLoading(false);
     }
-  };
+  }, [etl_tipo]);
 
   useEffect(() => {
     loadGaps();
@@ -48,7 +48,7 @@ export default function KLKGapRecoveryPanel({
       const interval = setInterval(loadGaps, refreshInterval * 1000);
       return () => clearInterval(interval);
     }
-  }, [etl_tipo, autoRefresh, refreshInterval]);
+  }, [loadGaps, autoRefresh, refreshInterval]);
 
   const handleRecuperarGap = async (gap: Gap) => {
     const gapKey = `${gap.ubicacion_id}-${gap.fecha_desde}-${gap.hora_desde || ''}`;
@@ -78,8 +78,8 @@ export default function KLKGapRecoveryPanel({
 
       // Reload gaps after short delay
       setTimeout(loadGaps, 2000);
-    } catch (err: any) {
-      alert(`❌ Error recuperando gap: ${err.message}`);
+    } catch (err) {
+      alert(`❌ Error recuperando gap: ${err instanceof Error ? err.message : 'Error desconocido'}`);
     } finally {
       setRecovering(null);
     }

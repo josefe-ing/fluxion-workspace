@@ -165,9 +165,10 @@ export default function VentasETLPanel() {
       );
 
       await loadSchedulerStatus();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error triggering scheduler:', error);
-      alert(error.response?.data?.detail || 'Error al ejecutar ETL automático');
+      const axiosErr = error as { response?: { data?: { detail?: string } } };
+      alert(axiosErr.response?.data?.detail || 'Error al ejecutar ETL automático');
     }
   };
 
@@ -200,12 +201,13 @@ export default function VentasETLPanel() {
         message: response.data.message || 'ETL de ventas iniciado'
       }]);
 
-    } catch (error: any) {
+    } catch (error) {
       setIsRunning(false);
+      const axiosErr = error as { response?: { data?: { detail?: string } }; message?: string };
       setLogs([{
         timestamp: new Date().toISOString(),
         level: 'error',
-        message: error.response?.data?.detail || error.message || 'Error iniciando ETL de ventas'
+        message: axiosErr.response?.data?.detail || axiosErr.message || 'Error iniciando ETL de ventas'
       }]);
     }
   };

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 
 interface TiendaDetail {
@@ -53,23 +53,24 @@ export default function ETLExecutionDetailModal({ executionId, onClose }: Props)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadDetail();
-  }, [executionId]);
-
-  const loadDetail = async () => {
+  const loadDetail = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const response = await http.get(`/api/etl/history/${executionId}`);
       setDetail(response.data);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error loading detail:', err);
-      setError(err.response?.data?.detail || 'Error cargando detalle de ejecución');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error cargando detalle de ejecución');
     } finally {
       setLoading(false);
     }
-  };
+  }, [executionId]);
+
+  useEffect(() => {
+    loadDetail();
+  }, [loadDetail]);
 
   const formatDuration = (seconds: number | null) => {
     if (!seconds) return '-';

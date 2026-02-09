@@ -43,11 +43,11 @@ export default function ComparisonTable({ data }: ComparisonTableProps) {
   ];
 
   const getMaxValue = (metricKey: string) => {
-    return Math.max(...data.stores.map((s) => (s.metrics as any)[metricKey]));
+    return Math.max(...data.stores.map((s) => (s.metrics as unknown as Record<string, number>)[metricKey]));
   };
 
   const getMinValue = (metricKey: string) => {
-    return Math.min(...data.stores.map((s) => (s.metrics as any)[metricKey]));
+    return Math.min(...data.stores.map((s) => (s.metrics as unknown as Record<string, number>)[metricKey]));
   };
 
   const getCellStyle = (storeId: string, metricKey: string, value: number) => {
@@ -109,7 +109,7 @@ export default function ComparisonTable({ data }: ComparisonTableProps) {
                   </div>
                 </td>
                 {data.stores.map((store) => {
-                  const value = (store.metrics as any)[metric.key];
+                  const value = (store.metrics as unknown as Record<string, number>)[metric.key];
                   const cellStyle = getCellStyle(store.ubicacion_id, metric.key, value);
 
                   return (

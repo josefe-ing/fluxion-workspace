@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   TrendingUp,
   RefreshCw,
@@ -19,13 +19,6 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
-function formatPercent(value: number): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
-}
-
-// Export to avoid unused warning - will be used in future iterations
-export { formatPercent };
-
 export default function Profitability() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +27,7 @@ export default function Profitability() {
   const [topProducts, setTopProducts] = useState<TopProfitProduct[]>([]);
   const [selectedRegion, setSelectedRegion] = useState<string>('');
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -49,11 +42,11 @@ export default function Profitability() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedRegion]);
 
   useEffect(() => {
     loadData();
-  }, [selectedRegion]);
+  }, [loadData]);
 
   if (loading) {
     return (

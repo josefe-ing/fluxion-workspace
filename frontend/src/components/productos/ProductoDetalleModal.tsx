@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   getProductoDetalleCompleto,
   getVentasPorTienda,
@@ -24,20 +24,7 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
   const [, setLoadingVentasSemanales] = useState(true);
   const [periodoSeleccionado, setPeriodoSeleccionado] = useState("2m");
 
-  useEffect(() => {
-    if (isOpen && codigo) {
-      loadData();
-      loadVentasSemanales();
-    }
-  }, [isOpen, codigo]);
-
-  useEffect(() => {
-    if (isOpen && codigo) {
-      loadVentasPorTienda();
-    }
-  }, [isOpen, codigo, periodoSeleccionado]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const detalleData = await getProductoDetalleCompleto(codigo);
@@ -47,9 +34,9 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
     } finally {
       setLoading(false);
     }
-  };
+  }, [codigo]);
 
-  const loadVentasPorTienda = async () => {
+  const loadVentasPorTienda = useCallback(async () => {
     setLoadingVentasPorTienda(true);
     try {
       const data = await getVentasPorTienda(codigo, periodoSeleccionado);
@@ -59,9 +46,9 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
     } finally {
       setLoadingVentasPorTienda(false);
     }
-  };
+  }, [codigo, periodoSeleccionado]);
 
-  const loadVentasSemanales = async () => {
+  const loadVentasSemanales = useCallback(async () => {
     setLoadingVentasSemanales(true);
     try {
       const data = await getVentasSemanales(codigo);
@@ -71,7 +58,20 @@ const ProductoDetalleModal: React.FC<ProductoDetalleModalProps> = ({ isOpen, onC
     } finally {
       setLoadingVentasSemanales(false);
     }
-  };
+  }, [codigo]);
+
+  useEffect(() => {
+    if (isOpen && codigo) {
+      loadData();
+      loadVentasSemanales();
+    }
+  }, [isOpen, codigo, loadData, loadVentasSemanales]);
+
+  useEffect(() => {
+    if (isOpen && codigo) {
+      loadVentasPorTienda();
+    }
+  }, [isOpen, codigo, periodoSeleccionado, loadVentasPorTienda]);
 
   // Calcular CV y clasificacion XYZ de los datos semanales
   const cvData = useMemo(() => {

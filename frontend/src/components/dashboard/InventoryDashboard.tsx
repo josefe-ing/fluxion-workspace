@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import http from '../../services/http';
 import { useABCModel } from '../../services/abcModelService';
@@ -191,20 +191,6 @@ export default function InventoryDashboard() {
   }, []);
 
   useEffect(() => {
-    if (selectedUbicacion && selectedUbicacion !== 'all') {
-      loadAnomaliasCount();
-    } else {
-      setAnomaliasCount(0);
-    }
-  }, [selectedUbicacion, selectedAlmacen]);
-
-  useEffect(() => {
-    loadStock();
-  }, [selectedUbicacion, selectedAlmacen, selectedCategoria, selectedMarca, currentPage, debouncedSearchTerm,
-      sortBy, sortOrder, selectedEstadoCriticidad, selectedClasificacionProducto,
-      selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter, selectedStockFilter]);
-
-  useEffect(() => {
     setCurrentPage(1);
   }, [selectedUbicacion, selectedCategoria, selectedMarca, debouncedSearchTerm, selectedEstadoCriticidad,
       selectedClasificacionProducto, selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter, selectedStockFilter]);
@@ -236,7 +222,7 @@ export default function InventoryDashboard() {
     }
   };
 
-  const loadAnomaliasCount = async () => {
+  const loadAnomaliasCount = useCallback(async () => {
     try {
       const params: Record<string, string> = {};
       if (selectedAlmacen) params.almacen_codigo = selectedAlmacen;
@@ -246,7 +232,7 @@ export default function InventoryDashboard() {
       console.error('Error cargando conteo de anomalías:', error);
       setAnomaliasCount(0);
     }
-  };
+  }, [selectedUbicacion, selectedAlmacen]);
 
   const handleSort = (field: string) => {
     if (sortBy === field) {
@@ -258,7 +244,7 @@ export default function InventoryDashboard() {
     setCurrentPage(1);
   };
 
-  const loadStock = async () => {
+  const loadStock = useCallback(async () => {
     setLoading(true);
     try {
       const params: Record<string, string | number> = {
@@ -302,7 +288,21 @@ export default function InventoryDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedUbicacion, selectedAlmacen, selectedCategoria, selectedMarca, currentPage, debouncedSearchTerm,
+      sortBy, sortOrder, selectedEstadoCriticidad, selectedClasificacionProducto,
+      selectedClaseABC, selectedTopVentas, selectedVelocidadVenta, selectedStockCediFilter, selectedStockFilter, itemsPerPage]);
+
+  useEffect(() => {
+    if (selectedUbicacion && selectedUbicacion !== 'all') {
+      loadAnomaliasCount();
+    } else {
+      setAnomaliasCount(0);
+    }
+  }, [selectedUbicacion, selectedAlmacen, loadAnomaliasCount]);
+
+  useEffect(() => {
+    loadStock();
+  }, [loadStock]);
 
   const getUltimaActualizacion = (): string => {
     if (stockData.length === 0) return 'No disponible';

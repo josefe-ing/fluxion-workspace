@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 import { formatNumber, formatInteger } from '../../utils/formatNumber';
 import { CSVLink } from 'react-csv';
@@ -178,12 +178,6 @@ export default function VentasPerdidasModal({
     }
   }, [isOpen]);
 
-  useEffect(() => {
-    if (isOpen && ubicacionId && fechaInicio && fechaFin) {
-      loadData();
-    }
-  }, [isOpen, ubicacionId, fechaInicio, fechaFin]);
-
   // Manejar cambio de preset
   const handlePresetChange = (preset: PeriodoPreset) => {
     setPeriodoPreset(preset);
@@ -194,7 +188,7 @@ export default function VentasPerdidasModal({
     }
   };
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -216,7 +210,13 @@ export default function VentasPerdidasModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [ubicacionId, fechaInicio, fechaFin, almacenCodigo]);
+
+  useEffect(() => {
+    if (isOpen && ubicacionId && fechaInicio && fechaFin) {
+      loadData();
+    }
+  }, [isOpen, ubicacionId, fechaInicio, fechaFin, loadData]);
 
   // Filtrar items
   const filteredItems = data?.items.filter((item: VentaPerdidaItemV3) => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   LineChart,
   Line,
@@ -27,11 +27,7 @@ export default function StoreEvolutionChart({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [ubicacionId, fechaInicio, fechaFin]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -48,7 +44,11 @@ export default function StoreEvolutionChart({
     } finally {
       setLoading(false);
     }
-  };
+  }, [ubicacionId, fechaInicio, fechaFin]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   if (loading) {
     return (

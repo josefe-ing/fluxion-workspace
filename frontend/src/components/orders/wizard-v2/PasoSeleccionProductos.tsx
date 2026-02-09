@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, Eye, CheckSquare, Square } from 'lucide-react';
 import MatrizABCXYZBadge from '../../shared/MatrizABCXYZBadge';
 import { useABCModel } from '../../../services/abcModelService';
@@ -44,15 +44,7 @@ export default function PasoSeleccionProductos({
   // Modal
   const [productoDetalleModal, setProductoDetalleModal] = useState<ProductoNivelObjetivo | null>(null);
 
-  useEffect(() => {
-    cargarProductos();
-  }, [datosOrigenDestino.tiendaDestinoId]);
-
-  useEffect(() => {
-    aplicarFiltros();
-  }, [productos, busqueda, soloDeficit, filtroABC, filtroXYZ, filtroMatriz]);
-
-  const cargarProductos = async () => {
+  const cargarProductos = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -79,9 +71,9 @@ export default function PasoSeleccionProductos({
     } finally {
       setLoading(false);
     }
-  };
+  }, [datosOrigenDestino.tiendaDestinoId]);
 
-  const aplicarFiltros = () => {
+  const aplicarFiltros = useCallback(() => {
     let filtrados = [...productos];
 
     // Filtro de búsqueda
@@ -114,7 +106,15 @@ export default function PasoSeleccionProductos({
     }
 
     setProductosFiltrados(filtrados);
-  };
+  }, [productos, busqueda, soloDeficit, filtroABC, filtroXYZ, filtroMatriz]);
+
+  useEffect(() => {
+    cargarProductos();
+  }, [cargarProductos]);
+
+  useEffect(() => {
+    aplicarFiltros();
+  }, [aplicarFiltros]);
 
   const toggleSeleccion = (productoId: string) => {
     const nuevaSeleccion = new Set(productosSeleccionados);

@@ -52,7 +52,23 @@ export interface AnalisisXYZ {
 export function generarAnalisisXYZDummy(
   producto: ProductoPedido,
   clasificacionABC: string,
-  stockParams: any
+  stockParams: {
+    stock_min_mult_a: number;
+    stock_min_mult_ab: number;
+    stock_min_mult_b: number;
+    stock_min_mult_bc: number;
+    stock_min_mult_c: number;
+    stock_seg_mult_a: number;
+    stock_seg_mult_ab: number;
+    stock_seg_mult_b: number;
+    stock_seg_mult_bc: number;
+    stock_seg_mult_c: number;
+    stock_max_mult_a: number;
+    stock_max_mult_ab: number;
+    stock_max_mult_b: number;
+    stock_max_mult_bc: number;
+    stock_max_mult_c: number;
+  }
 ): AnalisisXYZ {
   const ventaDiariaBultos = producto.prom_ventas_20dias_unid / producto.cantidad_bultos;
   const ventaDiaria5d = producto.prom_ventas_5dias_unid / producto.cantidad_bultos;

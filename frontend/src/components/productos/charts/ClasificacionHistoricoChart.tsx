@@ -25,7 +25,7 @@ export default function ClasificacionHistoricoChart({ historico }: Clasificacion
     }));
   }, [historico]);
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: { mes: string; abc: string; xyz: string; matriz: string; ranking: number; cv: number } }> }) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (

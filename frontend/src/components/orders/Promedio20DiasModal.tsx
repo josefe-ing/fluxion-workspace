@@ -1,5 +1,5 @@
 import { X, TrendingUp, Calendar, BarChart3 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 
 interface Promedio20DiasModalProps {
@@ -24,13 +24,7 @@ export default function Promedio20DiasModal({ isOpen, onClose, producto, ubicaci
   const [ventasDetalle, setVentasDetalle] = useState<VentaDiaria[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (isOpen) {
-      cargarVentasDetalle();
-    }
-  }, [isOpen]);
-
-  const cargarVentasDetalle = async () => {
+  const cargarVentasDetalle = useCallback(async () => {
     try {
       setLoading(true);
       const response = await http.get(
@@ -44,7 +38,13 @@ export default function Promedio20DiasModal({ isOpen, onClose, producto, ubicaci
     } finally {
       setLoading(false);
     }
-  };
+  }, [producto.codigo_producto, ubicacionId]);
+
+  useEffect(() => {
+    if (isOpen) {
+      cargarVentasDetalle();
+    }
+  }, [isOpen, cargarVentasDetalle]);
 
   if (!isOpen) return null;
 

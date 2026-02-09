@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import http from '../../services/http';
@@ -86,6 +86,17 @@ const UBICACION_FRIENDLY_NAMES: Record<string, string> = {
   'tienda_20': 'TAZAJAL',
 };
 
+// Mapeo de nombre de día a número de día de semana (DOW)
+const diaToNumber: Record<string, number> = {
+  'Domingo': 0,
+  'Lunes': 1,
+  'Martes': 2,
+  'Miércoles': 3,
+  'Jueves': 4,
+  'Viernes': 5,
+  'Sábado': 6,
+};
+
 export default function SalesDashboard() {
   const navigate = useNavigate();
   const { ubicacionId } = useParams();
@@ -171,16 +182,7 @@ export default function SalesDashboard() {
     };
   }, [searchTerm]);
 
-  // Mapeo de nombre de día a número de día de semana (DOW)
-  const diaToNumber: Record<string, number> = {
-    'Domingo': 0,
-    'Lunes': 1,
-    'Martes': 2,
-    'Miércoles': 3,
-    'Jueves': 4,
-    'Viernes': 5,
-    'Sábado': 6,
-  };
+  // diaToNumber moved to module scope to avoid being a dependency
 
   // Cargar histórico cuando se abre el modal de día
   useEffect(() => {
@@ -324,15 +326,7 @@ export default function SalesDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubicacionId, selectedCategoria, fechaInicio, fechaFin, currentPage, debouncedSearchTerm]);
 
-  useEffect(() => {
-    if (ubicacionId) {
-      loadAgotadosVisualesCount();
-    } else {
-      setAgotadosVisualesCount(0);
-    }
-  }, [ubicacionId]);
-
-  const loadAgotadosVisualesCount = async () => {
+  const loadAgotadosVisualesCount = useCallback(async () => {
     if (!ubicacionId) return;
     try {
       const response = await http.get(`/api/ventas/agotados-visuales/${ubicacionId}/count`);
@@ -341,7 +335,15 @@ export default function SalesDashboard() {
       console.error('Error cargando conteo de agotados visuales:', error);
       setAgotadosVisualesCount(0);
     }
-  };
+  }, [ubicacionId]);
+
+  useEffect(() => {
+    if (ubicacionId) {
+      loadAgotadosVisualesCount();
+    } else {
+      setAgotadosVisualesCount(0);
+    }
+  }, [ubicacionId, loadAgotadosVisualesCount]);
 
   const currentItems = ventasData;
   const totalPages = pagination?.total_pages || 1;

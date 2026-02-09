@@ -550,6 +550,7 @@ export default function ProductSalesModal({
     // Combinar todas las fechas
     const allFechas = [...fechasHistoricas, ...fechasFuturas];
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const datasets: any[] = [];
 
     // Datasets de ventas históricas
@@ -725,7 +726,7 @@ export default function ProductSalesModal({
               return val < 0 ? '#dc2626' : '#16a34a'; // Rojo si negativo, verde si positivo
             });
 
-            const segmentColors = (ctx: any) => {
+            const segmentColors = (ctx: { p1DataIndex?: number }) => {
               if (ctx.p1DataIndex === undefined) return colorBase;
               const val = dataInventarioProyectado[ctx.p1DataIndex];
               if (val === null) return colorBase;
@@ -746,7 +747,7 @@ export default function ProductSalesModal({
               pointBorderColor: '#ffffff',
               pointBorderWidth: 2,
               segment: {
-                borderColor: (ctx: any) => {
+                borderColor: (ctx: { p1DataIndex: number }) => {
                   const val = dataInventarioProyectado[ctx.p1DataIndex];
                   return val !== null && val < 0 ? '#dc2626' : '#16a34a';
                 },

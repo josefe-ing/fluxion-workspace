@@ -8,7 +8,7 @@
  * - Aprobar o rechazar el pedido completo
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   obtenerPedido,
@@ -98,13 +98,7 @@ export default function PedidoApprovalView() {
     ubicacionId: ''
   });
 
-  useEffect(() => {
-    if (pedidoId) {
-      cargarPedido();
-    }
-  }, [pedidoId]);
-
-  const cargarPedido = async () => {
+  const cargarPedido = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -119,13 +113,20 @@ export default function PedidoApprovalView() {
         }
       });
       setComentarios(comentariosIniciales);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error cargando pedido:', err);
-      setError(err.response?.data?.detail || 'Error cargando el pedido');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error cargando el pedido');
     } finally {
       setLoading(false);
     }
-  };
+  }, [pedidoId]);
+
+  useEffect(() => {
+    if (pedidoId) {
+      cargarPedido();
+    }
+  }, [pedidoId, cargarPedido]);
 
   const handleComentarioChange = (codigoProducto: string, comentario: string) => {
     setComentarios(prev => ({
@@ -141,9 +142,10 @@ export default function PedidoApprovalView() {
     try {
       await agregarComentarioProducto(pedidoId!, codigoProducto, comentario);
       alert('Comentario guardado exitosamente');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error guardando comentario:', err);
-      alert(err.response?.data?.detail || 'Error guardando comentario');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      alert(axiosErr.response?.data?.detail || 'Error guardando comentario');
     }
   };
 
@@ -165,9 +167,10 @@ export default function PedidoApprovalView() {
 
       alert(`${result.message}`);
       navigate('/pedidos-sugeridos');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error aprobando pedido:', err);
-      alert(err.response?.data?.detail || 'Error aprobando el pedido');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      alert(axiosErr.response?.data?.detail || 'Error aprobando el pedido');
     } finally {
       setSubmitting(false);
     }
@@ -185,9 +188,10 @@ export default function PedidoApprovalView() {
 
       alert(`${result.message}`);
       navigate('/pedidos-sugeridos');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error rechazando pedido:', err);
-      alert(err.response?.data?.detail || 'Error rechazando el pedido');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      alert(axiosErr.response?.data?.detail || 'Error rechazando el pedido');
     } finally {
       setSubmitting(false);
       setShowRechazarModal(false);
@@ -204,9 +208,10 @@ export default function PedidoApprovalView() {
       const data = await verificarLlegada(pedidoId!);
       setVerificacionData(data);
       setShowVerificacion(true);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error verificando llegada:', err);
-      alert(err.response?.data?.detail || 'Error verificando llegada');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      alert(axiosErr.response?.data?.detail || 'Error verificando llegada');
     } finally {
       setLoadingVerificacion(false);
     }
@@ -270,9 +275,10 @@ export default function PedidoApprovalView() {
 
       // Recargar verificación para actualizar cantidades
       await handleVerificarLlegada();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error guardando llegada:', err);
-      alert(err.response?.data?.detail || 'Error guardando llegada');
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      alert(axiosErr.response?.data?.detail || 'Error guardando llegada');
     } finally {
       setGuardandoLlegada(false);
     }

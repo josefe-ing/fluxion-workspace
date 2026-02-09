@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import type { ProductoInterCedi, SnapshotInventario } from '../../../services/pedidosInterCediService';
@@ -76,14 +76,7 @@ export default function StockCediDestinoModal({
   const stockSegUnid = producto.stock_seguridad_cedi;
   const stockSegBultos = stockSegUnid / unidadesPorBulto;
 
-  // Cargar historial
-  useEffect(() => {
-    if (isOpen && producto.codigo_producto) {
-      cargarHistorial();
-    }
-  }, [isOpen, producto.codigo_producto]);
-
-  const cargarHistorial = async () => {
+  const cargarHistorial = useCallback(async () => {
     try {
       setLoading(true);
       const data = await obtenerHistorialInventarioCedi(producto.codigo_producto, 'cedi_caracas', 30);
@@ -98,7 +91,14 @@ export default function StockCediDestinoModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [producto.codigo_producto]);
+
+  // Cargar historial
+  useEffect(() => {
+    if (isOpen && producto.codigo_producto) {
+      cargarHistorial();
+    }
+  }, [isOpen, producto.codigo_producto, cargarHistorial]);
 
   // Preparar datos para el gráfico (invertir para mostrar más antiguo primero)
   const chartData = historial.slice().reverse().map((snap) => ({
@@ -249,7 +249,7 @@ export default function StockCediDestinoModal({
                               fontSize: '11px',
                               padding: '8px 12px'
                             }}
-                            formatter={(value: number, _name: string, props: any) => {
+                            formatter={(value: number, _name: string, props: { payload?: { fecha?: string } }) => {
                               // Check if this is the last data point by comparing index
                               const isUltimoSnapshot = chartData.length > 0 && props.payload?.fecha === chartData[chartData.length - 1].fecha;
                               return [

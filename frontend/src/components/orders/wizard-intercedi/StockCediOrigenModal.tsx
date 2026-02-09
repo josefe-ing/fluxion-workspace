@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import type { ProductoInterCedi, SnapshotInventario } from '../../../services/pedidosInterCediService';
@@ -109,14 +109,7 @@ export default function StockCediOrigenModal({
   const cantidadPosibleUnid = Math.min(stockUnidades, cantidadSugeridaUnid);
   const cantidadPosibleBultos = Math.ceil(cantidadPosibleUnid / unidadesPorBulto);
 
-  // Cargar historial
-  useEffect(() => {
-    if (isOpen && producto.codigo_producto && cediOrigenId) {
-      cargarHistorial();
-    }
-  }, [isOpen, producto.codigo_producto, cediOrigenId]);
-
-  const cargarHistorial = async () => {
+  const cargarHistorial = useCallback(async () => {
     try {
       setLoading(true);
       const data = await obtenerHistorialInventarioCedi(producto.codigo_producto, cediOrigenId, 30);
@@ -131,7 +124,14 @@ export default function StockCediOrigenModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [producto.codigo_producto, cediOrigenId]);
+
+  // Cargar historial
+  useEffect(() => {
+    if (isOpen && producto.codigo_producto && cediOrigenId) {
+      cargarHistorial();
+    }
+  }, [isOpen, producto.codigo_producto, cediOrigenId, cargarHistorial]);
 
   // Preparar datos para el gráfico (invertir para mostrar más antiguo primero)
   const chartData = historial.slice().reverse().map((snap) => ({

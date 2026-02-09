@@ -152,7 +152,7 @@ export async function calcularCantidadSugerida(
   tiendaId: string,
   stockActual?: number
 ): Promise<CalcularCantidadSugeridaResponse> {
-  const payload: any = {
+  const payload: { producto_id: string; tienda_id: string; stock_actual?: number } = {
     producto_id: productoId,
     tienda_id: tiendaId
   };

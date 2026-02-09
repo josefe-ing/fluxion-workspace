@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import PasoCediDestinoConfiguracion, { type InterCediOrderConfig } from './wizard-intercedi/PasoCediDestinoConfiguracion';
 import PasoSeleccionProductosInterCedi from './wizard-intercedi/PasoSeleccionProductosInterCedi';
@@ -44,14 +44,7 @@ export default function PedidoInterCediWizard() {
     { number: 3, name: 'Confirmación', description: 'Revisar y enviar' },
   ];
 
-  // Cargar pedido existente si hay pedidoId en la URL
-  useEffect(() => {
-    if (pedidoId) {
-      cargarPedidoExistente(pedidoId);
-    }
-  }, [pedidoId]);
-
-  const cargarPedidoExistente = async (id: string) => {
+  const cargarPedidoExistente = useCallback(async (id: string) => {
     setIsLoading(true);
     setError(null);
 
@@ -66,8 +59,8 @@ export default function PedidoInterCediWizard() {
         dias_cobertura_b: pedido.dias_cobertura_b,
         dias_cobertura_c: pedido.dias_cobertura_c,
         dias_cobertura_d: pedido.dias_cobertura_d,
-        dias_cobertura_fruver: (pedido as any).dias_cobertura_fruver ?? 1,
-        dias_cobertura_panaderia: (pedido as any).dias_cobertura_panaderia ?? 1,
+        dias_cobertura_fruver: pedido.dias_cobertura_fruver ?? 1,
+        dias_cobertura_panaderia: pedido.dias_cobertura_panaderia ?? 1,
         frecuencia_viajes_dias: pedido.frecuencia_viajes_dias || 'Mar,Jue,Sab',
         lead_time_dias: pedido.lead_time_dias || 2
       });
@@ -109,7 +102,14 @@ export default function PedidoInterCediWizard() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  // Cargar pedido existente si hay pedidoId en la URL
+  useEffect(() => {
+    if (pedidoId) {
+      cargarPedidoExistente(pedidoId);
+    }
+  }, [pedidoId, cargarPedidoExistente]);
 
   // Handlers de navegación
   const handleCancel = () => {

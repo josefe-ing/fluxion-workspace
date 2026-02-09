@@ -148,9 +148,12 @@ export default function StepThreeReviewTabs({
 
   // Usar orderData.pedidos_por_tienda si tiene datos (viene del paso 2 con ajustes),
   // de lo contrario usar calculationResult.pedidos_por_tienda (datos originales)
-  const pedidos = (orderData.pedidos_por_tienda && orderData.pedidos_por_tienda.length > 0)
-    ? orderData.pedidos_por_tienda
-    : calculationResult.pedidos_por_tienda || [];
+  const pedidos = useMemo(() =>
+    (orderData.pedidos_por_tienda && orderData.pedidos_por_tienda.length > 0)
+      ? orderData.pedidos_por_tienda
+      : calculationResult.pedidos_por_tienda || [],
+    [orderData.pedidos_por_tienda, calculationResult.pedidos_por_tienda]
+  );
   const activePedido = activeTab >= 0 ? pedidos[activeTab] : null;
 
   // Obtener filtros de la tienda activa (o usar defaults)
@@ -276,7 +279,7 @@ export default function StepThreeReviewTabs({
   };
 
   // Calcular SS, ROP, MAX estimados en días (simplificado)
-  const getStockParamsDias = (producto: ProductoPedidoSimplificado) => {
+  const getStockParamsDias = useCallback((producto: ProductoPedidoSimplificado) => {
     const abc = producto.clasificacion_abc || 'C';
 
     // Días de cobertura por ABC (simplificados)
@@ -286,10 +289,10 @@ export default function StepThreeReviewTabs({
                        { ss: 3, rop: 6, max: 12 };
 
     return diasConfig;
-  };
+  }, []);
 
   // Calcular SS, ROP, MAX en bultos
-  const getStockParams = (producto: ProductoPedidoSimplificado) => {
+  const getStockParams = useCallback((producto: ProductoPedidoSimplificado) => {
     const p75 = producto.prom_p75_unid;
     const upb = producto.unidades_por_bulto;
     const diasConfig = getStockParamsDias(producto);
@@ -299,11 +302,11 @@ export default function StepThreeReviewTabs({
     const max = Math.ceil((p75 * diasConfig.max) / upb);
 
     return { ss, rop, max, diasSS: diasConfig.ss, diasROP: diasConfig.rop, diasMAX: diasConfig.max };
-  };
+  }, [getStockParamsDias]);
 
   // Calcular criticidad basada en días de stock vs SS, ROP, MAX
   // Niveles: CRÍTICO (stock ≤ SS), URGENTE (SS < stock ≤ ROP), ÓPTIMO (ROP < stock ≤ MAX), EXCESO (stock > MAX)
-  const getCriticidad = (producto: ProductoPedidoSimplificado): {
+  const getCriticidad = useCallback((producto: ProductoPedidoSimplificado): {
     nivel: number;
     nivelNombre: 'critico' | 'urgente' | 'optimo' | 'exceso';
     icon: string;
@@ -356,13 +359,13 @@ export default function StepThreeReviewTabs({
         descripcion: 'EXCESO'
       };
     }
-  };
+  }, [getStockParams]);
 
   // Obtener cantidad a pedir (editada o sugerida)
-  const getCantidadPedir = (tiendaId: string, producto: ProductoPedidoSimplificado): number => {
+  const getCantidadPedir = useCallback((tiendaId: string, producto: ProductoPedidoSimplificado): number => {
     const key = `${tiendaId}_${producto.codigo_producto}`;
     return ediciones[key]?.cantidad_pedida_bultos ?? producto.cantidad_sugerida_bultos;
-  };
+  }, [ediciones]);
 
   // Obtener categorías únicas del pedido activo
   const categorias = useMemo(() => {
@@ -379,7 +382,7 @@ export default function StepThreeReviewTabs({
   }, [activePedido]);
 
   // Filtrar y ordenar productos (usa filtros específicos de la tienda)
-  const getFilteredProducts = (productos: ProductoPedidoSimplificado[], tiendaId: string) => {
+  const getFilteredProducts = useCallback((productos: ProductoPedidoSimplificado[], tiendaId: string) => {
     const filtros = getFiltrosTienda(tiendaId);
 
     let result = productos.filter((p) => {
@@ -487,7 +490,7 @@ export default function StepThreeReviewTabs({
     });
 
     return result;
-  };
+  }, [getFiltrosTienda, getCriticidad, getSeleccionesTienda, getCantidadPedir]);
 
   // Toggle sort (usa filtros de la tienda activa)
   const handleSort = (field: SortField) => {
@@ -530,7 +533,7 @@ export default function StepThreeReviewTabs({
       totalUnidades,
       productosAjustados,
     };
-  }, [pedidos, filtrosPorTienda, ediciones, seleccionesPorTienda]);
+  }, [pedidos, getCantidadPedir, getFilteredProducts]);
 
   // Resumen de la tienda activa (usando productos filtrados)
   const resumenTiendaActivaFiltrada = useMemo(() => {
@@ -554,7 +557,7 @@ export default function StepThreeReviewTabs({
       unidades,
       ajustados,
     };
-  }, [activePedido, filtrosPorTienda, ediciones, seleccionesPorTienda]);
+  }, [activePedido, getCantidadPedir, getFilteredProducts]);
 
   // Datos agregados para tab Resumen
   const resumenData = useMemo(() => {
@@ -662,7 +665,7 @@ export default function StepThreeReviewTabs({
       criticidadBreakdown,
       tiendaSummaries,
     };
-  }, [pedidos, ediciones, seleccionesPorTienda]);
+  }, [pedidos, getCantidadPedir, getCriticidad, getSeleccionesTienda]);
 
   // Color para días de stock
   const getDiasStockColor = (dias: number): string => {
@@ -749,7 +752,7 @@ export default function StepThreeReviewTabs({
     // Usar setPendingNavigation en lugar de onNext() directo para asegurar
     // que el estado se actualice ANTES de navegar al siguiente paso
     setPendingNavigation(true);
-  }, [orderData.pedidos_por_tienda, ediciones, seleccionesPorTienda, filtrosPorTienda, updateOrderData]);
+  }, [orderData.pedidos_por_tienda, ediciones, updateOrderData, getFilteredProducts, getSeleccionesTienda]);
 
   // Handlers para modales
   const handleOpenSalesModal = (producto: ProductoPedidoSimplificado, tiendaId: string) => {

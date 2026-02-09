@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import http from '../../services/http';
 
 interface ConfigProducto {
@@ -34,20 +34,14 @@ export default function ConfiguracionProductos() {
     loadTiendas();
   }, []);
 
-  useEffect(() => {
-    if (selectedTienda) {
-      loadConfigs();
-    }
-  }, [selectedTienda, selectedCategoria]);
-
   const loadTiendas = async () => {
     try {
       const response = await http.get('/api/ubicaciones');
       const tiendasFiltradas = response.data.filter(
-        (u: any) => u.tipo === 'tienda' && !u.id.startsWith('cedi_')
+        (u: { tipo: string; id: string }) => u.tipo === 'tienda' && !u.id.startsWith('cedi_')
       );
       // Mapear a la estructura esperada
-      const tiendasMapeadas = tiendasFiltradas.map((t: any) => ({
+      const tiendasMapeadas = tiendasFiltradas.map((t: { id: string; nombre: string }) => ({
         ubicacion_id: t.id,
         ubicacion_nombre: t.nombre
       }));
@@ -60,7 +54,7 @@ export default function ConfiguracionProductos() {
     }
   };
 
-  const loadConfigs = async () => {
+  const loadConfigs = useCallback(async () => {
     try {
       setLoading(true);
       const response = await http.get('/api/config-inventario/productos', {
@@ -75,7 +69,13 @@ export default function ConfiguracionProductos() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedTienda, selectedCategoria]);
+
+  useEffect(() => {
+    if (selectedTienda) {
+      loadConfigs();
+    }
+  }, [selectedTienda, selectedCategoria, loadConfigs]);
 
   const handleDelete = async (id: string) => {
     if (!confirm('¿Estás seguro de eliminar esta configuración? El producto usará la configuración por tienda.')) {

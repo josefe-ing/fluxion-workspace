@@ -169,7 +169,7 @@ const etlTrackingService = {
   /**
    * Recupera un gap específico ejecutando el ETL
    */
-  async recuperarGap(request: RecuperarGapRequest): Promise<any> {
+  async recuperarGap(request: RecuperarGapRequest): Promise<{ mensaje: string; execution_id?: string }> {
     const response = await http.post('/api/etl/tracking/recuperar-gap', request);
     return response.data;
   },

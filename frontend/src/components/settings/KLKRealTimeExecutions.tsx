@@ -6,8 +6,8 @@
  * @date 2025-11-24
  */
 
-import { useState, useEffect } from 'react';
-import etlTrackingService, { Ejecucion } from '../../services/etlTrackingService';
+import { useState, useEffect, useCallback } from 'react';
+import etlTrackingService, { Ejecucion, GetEjecucionesParams } from '../../services/etlTrackingService';
 
 interface KLKRealTimeExecutionsProps {
   etl_tipo: 'inventario' | 'ventas';
@@ -27,24 +27,24 @@ export default function KLKRealTimeExecutions({
   const [filtroEstado, setFiltroEstado] = useState<string>('');
   const [filtroModo, setFiltroModo] = useState<string>('');
 
-  const loadEjecuciones = async () => {
+  const loadEjecuciones = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const data = await etlTrackingService.getEjecuciones({
         etl_tipo,
         ubicacion_id: filtroTienda || undefined,
-        estado: filtroEstado as any || undefined,
-        modo: filtroModo as any || undefined,
+        estado: (filtroEstado || undefined) as GetEjecucionesParams['estado'],
+        modo: (filtroModo || undefined) as GetEjecucionesParams['modo'],
         limite: 20
       });
       setEjecuciones(data);
-    } catch (err: any) {
-      setError(err.message || 'Error cargando ejecuciones');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error cargando ejecuciones');
     } finally {
       setLoading(false);
     }
-  };
+  }, [etl_tipo, filtroTienda, filtroEstado, filtroModo]);
 
   useEffect(() => {
     loadEjecuciones();
@@ -53,7 +53,7 @@ export default function KLKRealTimeExecutions({
       const interval = setInterval(loadEjecuciones, refreshInterval * 1000);
       return () => clearInterval(interval);
     }
-  }, [etl_tipo, filtroTienda, filtroEstado, filtroModo, autoRefresh, refreshInterval]);
+  }, [loadEjecuciones, autoRefresh, refreshInterval]);
 
   // Extract unique tiendas for filter
   const tiendasNombres = Array.from(new Set(ejecuciones.map(e => ({

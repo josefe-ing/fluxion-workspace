@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
 import type { ProductoInterCedi, VentaDiariaRegional } from '../../../services/pedidosInterCediService';
@@ -45,14 +45,7 @@ export default function DetalleProductoInterCediModal({
   // Desglose de P75 por tienda
   const p75PorTienda = producto.p75_por_tienda || [];
 
-  // Cargar historial cuando se abre el modal
-  useEffect(() => {
-    if (isOpen && producto.codigo_producto) {
-      cargarHistorial();
-    }
-  }, [isOpen, producto.codigo_producto]);
-
-  const cargarHistorial = async () => {
+  const cargarHistorial = useCallback(async () => {
     try {
       setLoading(true);
       const data = await obtenerHistorialVentasRegional(producto.codigo_producto, 'cedi_caracas', 30);
@@ -63,7 +56,14 @@ export default function DetalleProductoInterCediModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [producto.codigo_producto]);
+
+  // Cargar historial cuando se abre el modal
+  useEffect(() => {
+    if (isOpen && producto.codigo_producto) {
+      cargarHistorial();
+    }
+  }, [isOpen, producto.codigo_producto, cargarHistorial]);
 
   // Colores para cada tienda (para recharts)
   const tiendaColoresChart: Record<string, string> = {

@@ -97,12 +97,13 @@ export default function InventarioETLPanel() {
         message: response.data.message
       }]);
 
-    } catch (error: any) {
+    } catch (error) {
       setIsRunning(false);
+      const axiosErr = error as { response?: { data?: { detail?: string } }; message?: string };
       setLogs([{
         timestamp: new Date().toISOString(),
         level: 'error',
-        message: error.response?.data?.detail || error.message || 'Error iniciando ETL'
+        message: axiosErr.response?.data?.detail || axiosErr.message || 'Error iniciando ETL'
       }]);
     }
   };

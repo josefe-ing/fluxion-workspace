@@ -57,7 +57,7 @@ export default function OrderStepOne({ orderData, updateOrderData, onNext, onCan
         });
       }
     }
-  }, []);
+  }, [cediSeleccionado, orderData.cedi_origen, updateOrderData]);
 
   const handleCediChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const nuevoCedi = e.target.value;

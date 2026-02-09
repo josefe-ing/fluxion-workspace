@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   LineChart,
   Line,
@@ -103,12 +103,7 @@ export default function EmergenciasDashboard() {
   const [selectedTipo, setSelectedTipo] = useState<TipoEmergencia | 'ALL'>('ALL');
   const [selectedEmergencia, setSelectedEmergencia] = useState<EmergenciaDetectada | null>(null);
 
-  // Load config on mount
-  useEffect(() => {
-    loadConfig();
-  }, []);
-
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
     try {
       setIsLoadingConfig(true);
       const config = await getConfigTiendas();
@@ -119,7 +114,12 @@ export default function EmergenciasDashboard() {
     } finally {
       setIsLoadingConfig(false);
     }
-  };
+  }, []);
+
+  // Load config on mount
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
 
   const handleScan = async () => {
     try {
@@ -887,7 +887,7 @@ function EmergenciaDetalleModal({
   const chartData = prepararDatosGrafico();
 
   // Custom tooltip para el grafico
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ payload?: { esProyeccion?: boolean }; color?: string; name?: string; value?: number }>; label?: string }) => {
     if (active && payload && payload.length) {
       const esProyeccion = payload[0]?.payload?.esProyeccion;
       return (
@@ -895,9 +895,9 @@ function EmergenciaDetalleModal({
           <p className="font-medium text-gray-900 mb-2">
             {label} {esProyeccion && <span className="text-xs text-orange-500">(proyectado)</span>}
           </p>
-          {payload.map((entry: any, idx: number) => (
+          {payload.map((entry: { color?: string; name?: string; value?: number }, idx: number) => (
             <p key={idx} className="text-sm" style={{ color: entry.color }}>
-              {entry.name}: {formatNumber(entry.value, 1)} uds
+              {entry.name}: {formatNumber(entry.value ?? 0, 1)} uds
             </p>
           ))}
         </div>

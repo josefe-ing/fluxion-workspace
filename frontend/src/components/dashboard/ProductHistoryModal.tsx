@@ -78,16 +78,7 @@ export default function ProductHistoryModal({
   const [refAreaRight, setRefAreaRight] = useState<string>('');
   const [isSelecting, setIsSelecting] = useState(false);
 
-  useEffect(() => {
-    if (isOpen && codigoProducto) {
-      loadHistory();
-      if (ubicacionId) {
-        loadReconciliacion();
-      }
-    }
-  }, [isOpen, codigoProducto, ubicacionId, almacenCodigo, dias]);
-
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     try {
       setLoading(true);
       const params: Record<string, string> = { dias: dias.toString() };
@@ -101,9 +92,9 @@ export default function ProductHistoryModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [dias, ubicacionId, almacenCodigo, codigoProducto]);
 
-  const loadReconciliacion = async () => {
+  const loadReconciliacion = useCallback(async () => {
     if (!ubicacionId) return;
 
     try {
@@ -123,7 +114,16 @@ export default function ProductHistoryModal({
     } finally {
       setLoadingReconciliacion(false);
     }
-  };
+  }, [ubicacionId, dias, almacenCodigo, codigoProducto]);
+
+  useEffect(() => {
+    if (isOpen && codigoProducto) {
+      loadHistory();
+      if (ubicacionId) {
+        loadReconciliacion();
+      }
+    }
+  }, [isOpen, codigoProducto, ubicacionId, almacenCodigo, dias, loadHistory, loadReconciliacion]);
 
   const formatFecha = (fechaISO: string): string => {
     const fecha = new Date(fechaISO);

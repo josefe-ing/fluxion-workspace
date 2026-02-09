@@ -34,8 +34,8 @@ export default function StoreMultiSelector({
       const response = await http.get('/api/ubicaciones');
       // Filter only stores (tipo = 'tienda'), excluding CEDIs
       const storesList = response.data
-        .filter((u: any) => u.tipo === 'tienda' && !u.id.startsWith('cedi_'))
-        .map((u: any) => ({
+        .filter((u: { tipo: string; id: string }) => u.tipo === 'tienda' && !u.id.startsWith('cedi_'))
+        .map((u: { id: string; nombre: string; region?: string }) => ({
           id: u.id,
           nombre: u.nombre,
           region: u.region || 'SIN REGIÓN',
