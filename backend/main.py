@@ -35,7 +35,6 @@ try:
     BOTO3_AVAILABLE = True
 except ImportError:
     BOTO3_AVAILABLE = False
-    logger.warning("boto3 not available - ETL sync in production will not work")
 
 # Importar módulo de autenticación
 from auth import (
@@ -101,8 +100,6 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     """Execute startup tasks"""
-    global ventas_scheduler
-
     logger.info("🚀 Starting Fluxion AI Backend...")
 
     # Inicializar Sentry
@@ -7567,22 +7564,9 @@ async def check_connectivity():
         }
 
     try:
-        # Get ubicaciones from database
-        ubicaciones_response = await get_ubicaciones()
-        ubicaciones = ubicaciones_response if isinstance(ubicaciones_response, list) else []
-
-        # Test connectivity for each ubicacion
+        # Test connectivity for each ubicacion using hardcoded config
         tiendas_status = []
-        for ubicacion in ubicaciones:
-            # Get ubicacion data (could be dict or object)
-            ub_id = ubicacion.id if hasattr(ubicacion, 'id') else ubicacion.get('id')
-            ub_nombre = ubicacion.nombre if hasattr(ubicacion, 'nombre') else ubicacion.get('nombre')
-
-            # Get network info from hardcoded config
-            network_info = TIENDAS_NETWORK.get(ub_id)
-            if not network_info:
-                continue
-
+        for ub_id, network_info in TIENDAS_NETWORK.items():
             ub_server_ip = network_info['ip']
             ub_port = network_info['port']
 
@@ -7595,7 +7579,7 @@ async def check_connectivity():
 
             tiendas_status.append({
                 "ubicacion_id": ub_id,
-                "nombre": ub_nombre,
+                "nombre": ub_id.replace("_", " ").title(),
                 "accesible": accesible,
                 "tiempo_respuesta": tiempo,
                 "error": error_msg
@@ -10619,210 +10603,6 @@ async def get_historico_abc_xyz_completo(
         status_code=501,
         detail="Endpoint deprecado. Usaba tablas DuckDB que ya no existen."
     )
-
-
-# ============================================================================
-# ENDPOINTS: NIVEL OBJETIVO
-# ============================================================================
-
-# from services.nivel_objetivo_service import NivelObjetivoService  # COMENTADO: Router ya maneja esto
-
-class CalcularNivelObjetivoRequest(BaseModel):
-    producto_id: str
-    tienda_id: str
-
-class CalcularNivelObjetivoResponse(BaseModel):
-    success: bool
-    producto_id: str
-    tienda_id: str
-    nivel_objetivo: int
-    stock_seguridad: int
-    demanda_ciclo: float
-    matriz_abc_xyz: str
-    parametros_usados: Dict[str, Any]
-    metricas_base: Dict[str, Any]
-    calculos_intermedios: Dict[str, Any]
-    alertas: List[str]
-    fecha_calculo: str
-
-class CalcularCantidadSugeridaRequest(BaseModel):
-    producto_id: str
-    tienda_id: str
-    stock_actual: Optional[float] = None
-
-class CalcularCantidadSugeridaResponse(BaseModel):
-    success: bool
-    producto_id: str
-    tienda_id: str
-    cantidad_sugerida: int
-    nivel_objetivo: int
-    stock_actual: float
-    inventario_en_transito: float
-    disponible_total: float
-    deficit: float
-    requiere_reposicion: bool
-    matriz_abc_xyz: str
-
-
-# @app.post("/api/niveles-inventario/calcular", response_model=CalcularNivelObjetivoResponse)  # DESHABILITADO: Usar router
-async def calcular_nivel_objetivo_endpoint_DISABLED(request: CalcularNivelObjetivoRequest):
-    """
-    Calcula el nivel objetivo de inventario para un producto en una tienda.
-
-    Este endpoint calcula:
-    - Nivel objetivo basado en demanda y variabilidad
-    - Stock de seguridad según matriz ABC-XYZ
-    - Demanda esperada durante ciclo de reposición
-
-    Returns:
-        CalcularNivelObjetivoResponse con todos los detalles del cálculo
-    """
-    try:
-        db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
-
-        with NivelObjetivoService(str(db_path)) as service:
-            resultado = service.calcular_nivel_objetivo(
-                request.producto_id,
-                request.tienda_id
-            )
-
-        return CalcularNivelObjetivoResponse(
-            success=True,
-            producto_id=request.producto_id,
-            tienda_id=request.tienda_id,
-            **resultado
-        )
-
-    except ValueError as e:
-        logger.error(f"Error de validación al calcular nivel objetivo: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error al calcular nivel objetivo: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# @app.post("/api/niveles-inventario/cantidad-sugerida", response_model=CalcularCantidadSugeridaResponse)  # DESHABILITADO: Usar router
-async def calcular_cantidad_sugerida_endpoint_DISABLED(request: CalcularCantidadSugeridaRequest):
-    """
-    Calcula la cantidad sugerida a pedir para un producto.
-
-    Considera:
-    - Nivel objetivo calculado
-    - Stock actual en tienda
-    - Inventario en tránsito (pedidos aprobados no recibidos)
-
-    Returns:
-        CalcularCantidadSugeridaResponse con cantidad sugerida y detalles
-    """
-    try:
-        db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
-
-        with NivelObjetivoService(str(db_path)) as service:
-            resultado = service.calcular_cantidad_sugerida(
-                request.producto_id,
-                request.tienda_id,
-                request.stock_actual
-            )
-
-        return CalcularCantidadSugeridaResponse(
-            success=True,
-            producto_id=request.producto_id,
-            tienda_id=request.tienda_id,
-            cantidad_sugerida=resultado['cantidad_sugerida'],
-            nivel_objetivo=resultado['nivel_objetivo'],
-            stock_actual=resultado['stock_actual'],
-            inventario_en_transito=resultado['inventario_en_transito'],
-            disponible_total=resultado['disponible_total'],
-            deficit=resultado['deficit'],
-            requiere_reposicion=resultado['requiere_reposicion'],
-            matriz_abc_xyz=resultado['matriz_abc_xyz']
-        )
-
-    except ValueError as e:
-        logger.error(f"Error de validación al calcular cantidad sugerida: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error al calcular cantidad sugerida: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# @app.get("/api/niveles-inventario/tienda/{tienda_id}")  # DESHABILITADO: Usar router
-async def calcular_niveles_tienda_DISABLED(
-    tienda_id: str,
-    limite: Optional[int] = 100,
-    solo_con_deficit: bool = False
-):
-    """
-    Calcula niveles objetivo para múltiples productos de una tienda.
-
-    Args:
-        tienda_id: ID de la tienda
-        limite: Máximo de productos a calcular (default: 100)
-        solo_con_deficit: Si true, solo muestra productos con deficit > 0
-
-    Returns:
-        Lista de productos con sus niveles objetivo y cantidades sugeridas
-    """
-    try:
-        db_path = Path(__file__).parent.parent / "data" / "fluxion_production.db"
-
-        with NivelObjetivoService(str(db_path)) as service:
-            # Obtener productos activos con clasificación ABC-XYZ en esta tienda
-            conn = service.conn
-            query = """
-            SELECT DISTINCT
-                abc.codigo_producto,
-                p.descripcion as nombre_producto,
-                abc.matriz_abc_xyz,
-                abc.clasificacion_abc_valor,
-                s.cantidad as stock_actual
-            FROM productos_abc_v2 abc
-            JOIN productos p ON abc.codigo_producto = p.codigo
-            LEFT JOIN stock_actual s ON abc.codigo_producto = s.producto_id
-                                     AND abc.ubicacion_id = s.ubicacion_id
-            WHERE abc.ubicacion_id = ?
-              AND abc.matriz_abc_xyz IS NOT NULL
-            ORDER BY abc.clasificacion_abc_valor, abc.matriz_abc_xyz
-            LIMIT ?
-            """
-
-            productos = conn.execute(query, [tienda_id, limite]).fetchall()
-
-            resultados = []
-            for producto_id, nombre, matriz, clase_abc, stock_actual in productos:
-                try:
-                    resultado = service.calcular_cantidad_sugerida(
-                        producto_id,
-                        tienda_id,
-                        float(stock_actual) if stock_actual else None
-                    )
-
-                    # Filtrar si solo_con_deficit
-                    if solo_con_deficit and resultado['cantidad_sugerida'] <= 0:
-                        continue
-
-                    resultados.append({
-                        'producto_id': producto_id,
-                        'nombre_producto': nombre,
-                        'matriz_abc_xyz': matriz,
-                        'clasificacion_abc': clase_abc,
-                        **resultado
-                    })
-
-                except Exception as e:
-                    logger.warning(f"Error al calcular producto {producto_id}: {str(e)}")
-                    continue
-
-        return {
-            'success': True,
-            'tienda_id': tienda_id,
-            'total_productos': len(resultados),
-            'productos': resultados
-        }
-
-    except Exception as e:
-        logger.error(f"Error al calcular niveles para tienda: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

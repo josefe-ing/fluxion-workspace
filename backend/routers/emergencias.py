@@ -130,8 +130,6 @@ async def listar_emergencias(
 
     Si no se ha ejecutado ningún scan, retorna lista vacía.
     """
-    global _ultimo_scan
-
     if _ultimo_scan is None:
         return EmergenciasListResponse(
             fecha_consulta=datetime.now(),
