@@ -252,6 +252,8 @@ export default function ProductSalesModal({
   const [ventasData, setVentasData] = useState<VentasResponse | null>(null);
   const [selectedTiendas, setSelectedTiendas] = useState<Set<string>>(new Set());
   const [semanas, setSemanas] = useState<number>(2); // Default: 2 semanas
+  // @ts-expect-error setForecastData unused until forecast loading is re-enabled
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [forecastData, setForecastData] = useState<{ [tiendaId: string]: ForecastResponse }>({});
   const [ventas20Dias, setVentas20Dias] = useState<VentaDiaria20D[]>([]);
   const [loading20D, setLoading20D] = useState(false);
@@ -446,31 +448,6 @@ export default function ProductSalesModal({
     setShowHourlyView(false);
     setVentasHorarias(null);
   }, []);
-
-  // Declarar fetchForecastsData primero (antes de usarla en fetchVentasData)
-  const _fetchForecastsData = useCallback(async (tiendas: string[]) => {
-    try {
-      const forecasts: { [tiendaId: string]: ForecastResponse } = {};
-
-      // Fetch forecast para cada tienda en paralelo
-      await Promise.all(
-        tiendas.map(async (tiendaId) => {
-          try {
-            const response = await http.get(
-              `/api/ventas/producto/forecast?ubicacion_id=${tiendaId}&codigo_producto=${codigoProducto}&dias_adelante=7`
-            );
-            forecasts[tiendaId] = response.data;
-          } catch (error) {
-            console.error(`Error fetching forecast for ${tiendaId}:`, error);
-          }
-        })
-      );
-
-      setForecastData(forecasts);
-    } catch (error) {
-      console.error('Error fetching forecasts:', error);
-    }
-  }, [codigoProducto]);
 
   const fetchVentasData = useCallback(async () => {
     const startTime = performance.now();
