@@ -109,9 +109,8 @@ class PostgreSQLVentasLoader:
                     %s, %s, %s, %s,
                     %s, %s, %s
                 )
-                ON CONFLICT (numero_factura) DO UPDATE SET
+                ON CONFLICT (numero_factura, ubicacion_id) DO UPDATE SET
                     fecha_venta = EXCLUDED.fecha_venta,
-                    ubicacion_id = EXCLUDED.ubicacion_id,
                     almacen_codigo = EXCLUDED.almacen_codigo,
                     almacen_nombre = EXCLUDED.almacen_nombre,
                     producto_id = EXCLUDED.producto_id,

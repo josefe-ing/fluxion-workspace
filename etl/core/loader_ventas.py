@@ -169,7 +169,7 @@ class VentasLoader:
                                 utilidad_bruta,
                                 margen_bruto_pct
                             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (numero_factura) DO NOTHING
+                            ON CONFLICT (numero_factura, ubicacion_id) DO NOTHING
                         """, (
                             row.get('numero_factura'),
                             row.get('fecha_venta'),
