@@ -1019,8 +1019,6 @@ def main():
 
     if chunk_days > 0 and fecha_desde and fecha_hasta:
         # Modo chunking: dividir el rango en chunks de N días
-        from datetime import timedelta
-
         print(f"\n{'='*70}")
         print(f"MODO CHUNKING: Dividiendo rango en chunks de {chunk_days} días")
         print(f"Rango total: {fecha_desde.strftime('%Y-%m-%d')} -> {fecha_hasta.strftime('%Y-%m-%d')}")
