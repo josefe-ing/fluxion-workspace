@@ -93,6 +93,7 @@ function ProtectedRoutes() {
   }
 
   return (
+    <Suspense fallback={<LazyFallback />}>
     <Routes>
       <Route path="/" element={<Layout />}>
         {/* Default route: Pedidos Sugeridos (faster load) */}
@@ -228,6 +229,7 @@ function ProtectedRoutes() {
         </Route>
       </Route>
     </Routes>
+    </Suspense>
   );
 }
 
