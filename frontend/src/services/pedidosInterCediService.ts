@@ -141,6 +141,7 @@ export interface PedidoInterCediResumen {
 }
 
 export interface PedidoInterCediCompleto extends PedidoInterCediResumen, ConfiguracionDiasCobertura {
+  cedi_origen_id?: string;
   frecuencia_viajes_dias: string;
   lead_time_dias: number;
   observaciones?: string;

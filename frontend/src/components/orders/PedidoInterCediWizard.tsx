@@ -54,7 +54,7 @@ export default function PedidoInterCediWizard() {
 
       // Cargar configuración desde el pedido guardado
       // Inferir cedi_origen_id del primer producto si no está en el header
-      const cediOrigenId = (pedido as any).cedi_origen_id ||
+      const cediOrigenId = pedido.cedi_origen_id ||
         pedido.productos?.[0]?.cedi_origen_id || '';
       const cediOrigenNombre = cediOrigenId === 'cedi_frio' ? 'CEDI Frío'
         : cediOrigenId === 'cedi_verde' ? 'CEDI Verde'
