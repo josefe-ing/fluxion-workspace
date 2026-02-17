@@ -84,9 +84,8 @@ class ConfiguracionDiasCobertura(BaseModel):
     dias_cobertura_b: int = Field(default=15, ge=1, le=90, description="Días cobertura clase B")
     dias_cobertura_c: int = Field(default=18, ge=1, le=120, description="Días cobertura clase C")
     dias_cobertura_d: int = Field(default=18, ge=1, le=180, description="Días cobertura clase D")
-    # Productos perecederos (ignoran clase ABC)
-    dias_cobertura_fruver: int = Field(default=1, ge=1, le=7, description="Días cobertura FRUVER")
-    dias_cobertura_panaderia: int = Field(default=1, ge=1, le=5, description="Días cobertura Panadería")
+    # Productos congelados/refrigerados (ignoran clase ABC)
+    dias_cobertura_congelados: int = Field(default=7, ge=1, le=30, description="Días cobertura Congelados/Refrigerados")
 
 
 class ConfiguracionRutaInterCedi(BaseModel):
@@ -221,6 +220,7 @@ class ProductoInterCediAjustado(ProductoInterCediCalculado):
 class CalcularPedidoInterCediRequest(ConfiguracionDiasCobertura):
     """Request para calcular pedido Inter-CEDI"""
     cedi_destino_id: str = Field(description="CEDI destino (ej: cedi_caracas)")
+    cedi_origen_id: str = Field(description="CEDI origen: cedi_seco | cedi_frio | cedi_verde")
     frecuencia_viajes_dias: str = Field(default="Mar,Jue,Sab")
     lead_time_dias: Decimal = Field(default=Decimal("2.0"))
 

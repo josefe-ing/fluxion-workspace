@@ -9,9 +9,47 @@ const CEDI_DESTINO = {
   tiendas: ['Artigas', 'Paraíso']
 };
 
+const CEDIS_ORIGEN = [
+  {
+    id: 'cedi_seco',
+    nombre: 'CEDI Seco',
+    descripcion: 'Víveres, limpieza, cuidado personal',
+    dotColor: 'bg-amber-500',
+    borderActive: 'border-amber-500 bg-amber-50',
+    borderInactive: 'border-gray-200 hover:border-amber-300 hover:bg-amber-50/50',
+    textColor: 'text-amber-800',
+    checkColor: 'text-amber-600',
+    disabled: false,
+  },
+  {
+    id: 'cedi_frio',
+    nombre: 'CEDI Frío',
+    descripcion: 'Carnes, charcutería, lácteos, congelados',
+    dotColor: 'bg-sky-500',
+    borderActive: 'border-sky-500 bg-sky-50',
+    borderInactive: 'border-gray-200 hover:border-sky-300 hover:bg-sky-50/50',
+    textColor: 'text-sky-800',
+    checkColor: 'text-sky-600',
+    disabled: false,
+  },
+  {
+    id: 'cedi_verde',
+    nombre: 'CEDI Verde',
+    descripcion: 'FRUVER — próximamente',
+    dotColor: 'bg-emerald-500',
+    borderActive: 'border-emerald-500 bg-emerald-50',
+    borderInactive: 'border-gray-200',
+    textColor: 'text-emerald-800',
+    checkColor: 'text-emerald-600',
+    disabled: true,
+  },
+];
+
 export interface InterCediOrderConfig extends ConfiguracionDiasCobertura {
   cedi_destino_id: string;
   cedi_destino_nombre: string;
+  cedi_origen_id: string;
+  cedi_origen_nombre: string;
   frecuencia_viajes_dias: string;
   lead_time_dias: number;
 }
@@ -48,7 +86,14 @@ export default function PasoCediDestinoConfiguracion({
     }
   }, [config.cedi_destino_id, updateConfig]);
 
-  const handleDiasCoberturaChange = (clase: 'a' | 'b' | 'c' | 'd' | 'fruver' | 'panaderia', value: string) => {
+  const handleCediOrigenSelect = (cedi: typeof CEDIS_ORIGEN[0]) => {
+    if (cedi.disabled || isCalculating) return;
+    const updates = { cedi_origen_id: cedi.id, cedi_origen_nombre: cedi.nombre };
+    setLocalConfig(prev => ({ ...prev, ...updates }));
+    updateConfig(updates);
+  };
+
+  const handleDiasCoberturaChange = (clase: 'a' | 'b' | 'c' | 'd' | 'congelados', value: string) => {
     const numValue = parseInt(value) || 0;
     const key = `dias_cobertura_${clase}` as keyof ConfiguracionDiasCobertura;
     const newConfig = { ...localConfig, [key]: numValue };
@@ -67,7 +112,10 @@ export default function PasoCediDestinoConfiguracion({
     updateConfig({ lead_time_dias: numValue });
   };
 
+  const esCediFrio = localConfig.cedi_origen_id === 'cedi_frio';
+
   const canProceed = localConfig.cedi_destino_id &&
+    !!localConfig.cedi_origen_id &&
     localConfig.dias_cobertura_a > 0 &&
     localConfig.dias_cobertura_b > 0 &&
     localConfig.dias_cobertura_c > 0 &&
@@ -83,6 +131,52 @@ export default function PasoCediDestinoConfiguracion({
             <p className="mt-2 text-sm text-gray-500">
               Configure los parámetros de reposición desde CEDIs Valencia hacia CEDI Caracas.
             </p>
+          </div>
+
+          {/* Selector CEDI Origen */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              CEDI Origen <span className="text-red-500">*</span>
+            </label>
+            <p className="text-xs text-gray-500 mb-3">
+              Selecciona el CEDI desde donde salen los productos. Cada pedido corresponde a un único CEDI origen.
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              {CEDIS_ORIGEN.map((cedi) => {
+                const isSelected = localConfig.cedi_origen_id === cedi.id;
+                return (
+                  <button
+                    key={cedi.id}
+                    type="button"
+                    onClick={() => handleCediOrigenSelect(cedi)}
+                    disabled={cedi.disabled || isCalculating}
+                    className={[
+                      'relative flex flex-col items-start gap-1 rounded-lg border-2 px-4 py-3 text-left transition-all',
+                      isSelected
+                        ? cedi.borderActive
+                        : cedi.disabled
+                        ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
+                        : cedi.borderInactive + ' cursor-pointer',
+                    ].join(' ')}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded-full ${cedi.dotColor} ${cedi.disabled ? 'opacity-40' : ''}`}></div>
+                        <span className={`text-sm font-semibold ${isSelected ? cedi.textColor : 'text-gray-700'}`}>
+                          {cedi.nombre}
+                        </span>
+                      </div>
+                      {isSelected && (
+                        <svg className={`w-4 h-4 ${cedi.checkColor}`} fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </div>
+                    <span className="text-xs text-gray-500 pl-5">{cedi.descripcion}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Info CEDI Destino */}
@@ -194,55 +288,37 @@ export default function PasoCediDestinoConfiguracion({
             </div>
           </div>
 
-          {/* Días de Cobertura Perecederos */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Días de Cobertura - Productos Perecederos
-            </label>
-            <p className="text-xs text-gray-500 mb-4">
-              Los productos perecederos tienen vida útil corta. Se ignora la clasificación ABC y se usa este valor fijo.
-            </p>
+          {/* Días de Cobertura Congelados — solo visible para CEDI Frío */}
+          {esCediFrio && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Días de Cobertura — Congelados / Refrigerados
+              </label>
+              <p className="text-xs text-gray-500 mb-4">
+                Todos los productos del CEDI Frío usan este valor fijo (ignoran la clasificación ABC).
+              </p>
 
-            <div className="grid grid-cols-2 gap-4">
-              {/* FRUVER */}
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">
-                    🥬 FRUVER
-                  </span>
-                  <span className="text-xs text-emerald-600">Frutas y Verduras</span>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-sky-50 border border-sky-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-sky-100 text-sky-800">
+                      🧊 Congelados
+                    </span>
+                    <span className="text-xs text-sky-600">CEDI Frío</span>
+                  </div>
+                  <input
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={localConfig.dias_cobertura_congelados}
+                    onChange={(e) => handleDiasCoberturaChange('congelados', e.target.value)}
+                    className="w-full px-3 py-2 border border-sky-300 rounded-md text-center text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                  <p className="text-xs text-center text-sky-600 mt-1">días (máx 30)</p>
                 </div>
-                <input
-                  type="number"
-                  min="1"
-                  max="7"
-                  value={localConfig.dias_cobertura_fruver}
-                  onChange={(e) => handleDiasCoberturaChange('fruver', e.target.value)}
-                  className="w-full px-3 py-2 border border-emerald-300 rounded-md text-center text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-                <p className="text-xs text-center text-emerald-600 mt-1">días (máx 7)</p>
-              </div>
-
-              {/* Panadería */}
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800">
-                    🥖 Panadería
-                  </span>
-                  <span className="text-xs text-amber-600">Pan y Repostería</span>
-                </div>
-                <input
-                  type="number"
-                  min="1"
-                  max="5"
-                  value={localConfig.dias_cobertura_panaderia}
-                  onChange={(e) => handleDiasCoberturaChange('panaderia', e.target.value)}
-                  className="w-full px-3 py-2 border border-amber-300 rounded-md text-center text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-                <p className="text-xs text-center text-amber-600 mt-1">días (máx 5)</p>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Parámetros Logísticos */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -284,28 +360,6 @@ export default function PasoCediDestinoConfiguracion({
                 Tiempo desde que sale de Valencia hasta llegar a Caracas
               </p>
             </div>
-          </div>
-
-          {/* Info CEDIs Origen */}
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">CEDIs Origen (Valencia)</h3>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                <div className="w-3 h-3 rounded-full bg-amber-500"></div>
-                <span className="text-sm text-amber-800">CEDI Seco</span>
-              </div>
-              <div className="flex items-center gap-2 bg-sky-50 border border-sky-200 rounded px-3 py-2">
-                <div className="w-3 h-3 rounded-full bg-sky-500"></div>
-                <span className="text-sm text-sky-800">CEDI Frío</span>
-              </div>
-              <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">
-                <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
-                <span className="text-sm text-emerald-800">CEDI Verde</span>
-              </div>
-            </div>
-            <p className="text-xs text-gray-500 mt-3">
-              Los productos se asignarán automáticamente al CEDI origen correspondiente según su categoría.
-            </p>
           </div>
         </div>
 

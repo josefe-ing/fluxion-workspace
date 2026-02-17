@@ -18,12 +18,13 @@ export default function PedidoInterCediWizard() {
   const [config, setConfig] = useState<InterCediOrderConfig>({
     cedi_destino_id: 'cedi_caracas',
     cedi_destino_nombre: 'CEDI Caracas',
+    cedi_origen_id: '',
+    cedi_origen_nombre: '',
     dias_cobertura_a: 12,
     dias_cobertura_b: 15,
     dias_cobertura_c: 18,
     dias_cobertura_d: 18,
-    dias_cobertura_fruver: 1,
-    dias_cobertura_panaderia: 1,
+    dias_cobertura_congelados: 7,
     frecuencia_viajes_dias: 'Mar,Jue,Sab',
     lead_time_dias: 2
   });
@@ -52,15 +53,22 @@ export default function PedidoInterCediWizard() {
       const pedido = await obtenerPedidoInterCedi(id);
 
       // Cargar configuración desde el pedido guardado
+      // Inferir cedi_origen_id del primer producto si no está en el header
+      const cediOrigenId = (pedido as any).cedi_origen_id ||
+        pedido.productos?.[0]?.cedi_origen_id || '';
+      const cediOrigenNombre = cediOrigenId === 'cedi_frio' ? 'CEDI Frío'
+        : cediOrigenId === 'cedi_verde' ? 'CEDI Verde'
+        : cediOrigenId === 'cedi_seco' ? 'CEDI Seco' : '';
       setConfig({
         cedi_destino_id: pedido.cedi_destino_id,
         cedi_destino_nombre: pedido.cedi_destino_nombre || 'CEDI Caracas',
+        cedi_origen_id: cediOrigenId,
+        cedi_origen_nombre: cediOrigenNombre,
         dias_cobertura_a: pedido.dias_cobertura_a,
         dias_cobertura_b: pedido.dias_cobertura_b,
         dias_cobertura_c: pedido.dias_cobertura_c,
         dias_cobertura_d: pedido.dias_cobertura_d,
-        dias_cobertura_fruver: pedido.dias_cobertura_fruver ?? 1,
-        dias_cobertura_panaderia: pedido.dias_cobertura_panaderia ?? 1,
+        dias_cobertura_congelados: pedido.dias_cobertura_congelados ?? 7,
         frecuencia_viajes_dias: pedido.frecuencia_viajes_dias || 'Mar,Jue,Sab',
         lead_time_dias: pedido.lead_time_dias || 2
       });
@@ -126,12 +134,12 @@ export default function PedidoInterCediWizard() {
     try {
       const response: CalcularPedidoResponse = await calcularPedidoInterCedi({
         cedi_destino_id: config.cedi_destino_id,
+        cedi_origen_id: config.cedi_origen_id,
         dias_cobertura_a: config.dias_cobertura_a,
         dias_cobertura_b: config.dias_cobertura_b,
         dias_cobertura_c: config.dias_cobertura_c,
         dias_cobertura_d: config.dias_cobertura_d,
-        dias_cobertura_fruver: config.dias_cobertura_fruver,
-        dias_cobertura_panaderia: config.dias_cobertura_panaderia,
+        dias_cobertura_congelados: config.dias_cobertura_congelados,
         frecuencia_viajes_dias: config.frecuencia_viajes_dias,
         lead_time_dias: config.lead_time_dias
       });
@@ -178,8 +186,7 @@ export default function PedidoInterCediWizard() {
         dias_cobertura_b: config.dias_cobertura_b,
         dias_cobertura_c: config.dias_cobertura_c,
         dias_cobertura_d: config.dias_cobertura_d,
-        dias_cobertura_fruver: config.dias_cobertura_fruver,
-        dias_cobertura_panaderia: config.dias_cobertura_panaderia,
+        dias_cobertura_congelados: config.dias_cobertura_congelados,
         frecuencia_viajes_dias: config.frecuencia_viajes_dias,
         lead_time_dias: config.lead_time_dias,
         observaciones,
@@ -218,8 +225,7 @@ export default function PedidoInterCediWizard() {
           dias_cobertura_b: config.dias_cobertura_b,
           dias_cobertura_c: config.dias_cobertura_c,
           dias_cobertura_d: config.dias_cobertura_d,
-          dias_cobertura_fruver: config.dias_cobertura_fruver,
-          dias_cobertura_panaderia: config.dias_cobertura_panaderia,
+          dias_cobertura_congelados: config.dias_cobertura_congelados,
           frecuencia_viajes_dias: config.frecuencia_viajes_dias,
           lead_time_dias: config.lead_time_dias,
           observaciones,
@@ -340,6 +346,7 @@ export default function PedidoInterCediWizard() {
             config={config}
             totalExcluidos={totalExcluidos}
             codigosExcluidos={codigosExcluidos}
+            cediOrigenId={config.cedi_origen_id}
             updateProductos={setProductos}
             onNext={() => setCurrentStep(3)}
             onBack={pedidoId ? () => navigate('/pedidos-sugeridos') : () => setCurrentStep(1)}

@@ -299,10 +299,18 @@ async def calcular_pedido_inter_cedi(
             LEFT JOIN abc_ranking abc ON p.id = abc.producto_id
             WHERE p.activo = true
               AND p.cedi_origen_id IS NOT NULL
+              AND (
+                (%s = 'cedi_frio'  AND p.cuadrante = 'CUADRANTE VI') OR
+                (%s = 'cedi_seco'  AND (p.cuadrante IS NULL OR p.cuadrante != 'CUADRANTE VI')) OR
+                (%s = 'cedi_verde' AND p.cuadrante = 'FRUVER')
+              )
             ORDER BY COALESCE(dr.p75_regional, 0) DESC
         """
 
-        cursor.execute(query_demanda, [tiendas_ids, request.cedi_destino_id])
+        cursor.execute(query_demanda, [
+            tiendas_ids, request.cedi_destino_id,
+            request.cedi_origen_id, request.cedi_origen_id, request.cedi_origen_id
+        ])
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
 
@@ -453,14 +461,12 @@ async def calcular_pedido_inter_cedi(
             categoria = (row_dict['categoria'] or '').upper()
 
             # Determinar días de cobertura según tipo de producto
-            # Perecederos usan días fijos (ignoran ABC)
-            es_fruver = cedi_origen_id == 'cedi_verde' or 'FRUVER' in categoria or 'FRUT' in categoria or 'VERDUR' in categoria
-            es_panaderia = 'PANAD' in categoria or 'PAN ' in categoria or categoria.startswith('PAN')
+            # Frío usa días fijos (cuadrante VI = frío, ignoran ABC)
+            cuadrante = (row_dict.get('cuadrante') or '').upper()
+            es_congelados = cuadrante == 'CUADRANTE VI' or 'CONGEL' in categoria or 'HELAD' in categoria or 'REFRIG' in categoria
 
-            if es_fruver:
-                dias_cobertura = request.dias_cobertura_fruver
-            elif es_panaderia:
-                dias_cobertura = request.dias_cobertura_panaderia
+            if es_congelados:
+                dias_cobertura = request.dias_cobertura_congelados
             else:
                 # Productos normales usan días según ABC
                 dias_cobertura = {

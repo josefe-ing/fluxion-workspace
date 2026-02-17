@@ -10,15 +10,13 @@ import http from './http';
 // =====================================================================================
 
 export interface ConfiguracionDiasCobertura {
-  // Productos normales (Seco/Frío)
+  // Productos normales (Seco/Verde)
   dias_cobertura_a: number;
   dias_cobertura_b: number;
   dias_cobertura_c: number;
   dias_cobertura_d: number;
-  // Productos FRUVER (perecederos corta vida)
-  dias_cobertura_fruver: number;
-  // Productos Panadería (muy perecederos)
-  dias_cobertura_panaderia: number;
+  // Productos Congelados/Refrigerados (CEDI Frío, ignoran clase ABC)
+  dias_cobertura_congelados: number;
 }
 
 export interface P75PorTienda {
@@ -280,23 +278,23 @@ export async function listarPedidosInterCedi(filtros?: {
  */
 export async function calcularPedidoInterCedi(config: {
   cedi_destino_id: string;
+  cedi_origen_id: string;
   dias_cobertura_a?: number;
   dias_cobertura_b?: number;
   dias_cobertura_c?: number;
   dias_cobertura_d?: number;
-  dias_cobertura_fruver?: number;
-  dias_cobertura_panaderia?: number;
+  dias_cobertura_congelados?: number;
   frecuencia_viajes_dias?: string;
   lead_time_dias?: number;
 }): Promise<CalcularPedidoResponse> {
   const response = await http.post(`${API_PREFIX}/calcular`, {
     cedi_destino_id: config.cedi_destino_id,
+    cedi_origen_id: config.cedi_origen_id,
     dias_cobertura_a: config.dias_cobertura_a ?? 12,
     dias_cobertura_b: config.dias_cobertura_b ?? 15,
     dias_cobertura_c: config.dias_cobertura_c ?? 18,
     dias_cobertura_d: config.dias_cobertura_d ?? 18,
-    dias_cobertura_fruver: config.dias_cobertura_fruver ?? 1,
-    dias_cobertura_panaderia: config.dias_cobertura_panaderia ?? 1,
+    dias_cobertura_congelados: config.dias_cobertura_congelados ?? 7,
     frecuencia_viajes_dias: config.frecuencia_viajes_dias ?? 'Mar,Jue,Sab',
     lead_time_dias: config.lead_time_dias ?? 2.0
   });
@@ -508,7 +506,7 @@ export async function obtenerHistorialInventarioCedi(
 export function formatNumber(value: number | string | undefined, decimals = 0): string {
   if (value === undefined || value === null) return '0';
   const num = typeof value === 'string' ? parseFloat(value) : value;
-  if (isNaN(num)) return '0';
+  if (isNaN(num) || !isFinite(num)) return '0';
   return num.toLocaleString('es-VE', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals
@@ -538,6 +536,15 @@ export function agruparPorCediOrigen(
 }
 
 /**
+ * Devuelve la cantidad pedida (o sugerida) de un producto, saneada como entero finito.
+ */
+function getCantidadSana(p: ProductoInterCedi): number {
+  const raw = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+  const val = typeof raw === 'string' ? parseFloat(raw as unknown as string) : Number(raw);
+  return isFinite(val) && val >= 0 ? Math.round(val) : 0;
+}
+
+/**
  * Calcula totales de productos
  */
 export function calcularTotales(productos: ProductoInterCedi[]): {
@@ -546,17 +553,17 @@ export function calcularTotales(productos: ProductoInterCedi[]): {
   totalUnidades: number;
 } {
   const productosIncluidos = productos.filter(
-    p => p.incluido !== false && (p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos) > 0
+    p => p.incluido !== false && getCantidadSana(p) > 0
   );
 
   return {
     totalProductos: productosIncluidos.length,
     totalBultos: productosIncluidos.reduce(
-      (sum, p) => sum + (p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos),
+      (sum, p) => sum + getCantidadSana(p),
       0
     ),
     totalUnidades: productosIncluidos.reduce(
-      (sum, p) => sum + (p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos) * p.unidades_por_bulto,
+      (sum, p) => sum + getCantidadSana(p) * (p.unidades_por_bulto || 1),
       0
     )
   };

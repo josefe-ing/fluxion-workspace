@@ -28,6 +28,8 @@ interface Props {
   // Exclusiones Inter-CEDI aplicadas
   totalExcluidos?: number;
   codigosExcluidos?: string[];
+  // Si se pasa, oculta el filtro de CEDI (orden de un solo CEDI)
+  cediOrigenId?: string;
   updateProductos: (productos: ProductoInterCedi[]) => void;
   onNext: () => void;
   onBack: () => void;
@@ -85,6 +87,7 @@ export default function PasoSeleccionProductosInterCedi({
   config,
   totalExcluidos = 0,
   codigosExcluidos = [],
+  cediOrigenId,
   updateProductos,
   onNext,
   onBack,
@@ -211,11 +214,12 @@ export default function PasoSeleccionProductosInterCedi({
 
       // Filtro por Vista (seleccionados / no seleccionados / todos)
       if (filtroVista !== 'todos') {
-        const tieneCanttidad = p.cantidad_sugerida_bultos > 0;
-        if (filtroVista === 'seleccionados' && !tieneCanttidad) {
+        const cantidadPedida = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+        const isSeleccionado = p.incluido !== false && cantidadPedida > 0;
+        if (filtroVista === 'seleccionados' && !isSeleccionado) {
           return false;
         }
-        if (filtroVista === 'no_seleccionados' && tieneCanttidad) {
+        if (filtroVista === 'no_seleccionados' && isSeleccionado) {
           return false;
         }
       }
@@ -312,7 +316,8 @@ export default function PasoSeleccionProductosInterCedi({
         return {
           ...p,
           cantidad_pedida_bultos: cantidad,
-          total_unidades: cantidad * p.unidades_por_bulto
+          total_unidades: cantidad * p.unidades_por_bulto,
+          incluido: cantidad > 0
         };
       }
       return p;
@@ -323,7 +328,12 @@ export default function PasoSeleccionProductosInterCedi({
   const handleIncluirChange = (codigoProducto: string, incluido: boolean) => {
     const nuevosProductos = productos.map(p => {
       if (p.codigo_producto === codigoProducto) {
-        return { ...p, incluido };
+        if (incluido) {
+          const cantidadActual = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+          const nuevaCantidad = cantidadActual > 0 ? cantidadActual : 1;
+          return { ...p, incluido: true, cantidad_pedida_bultos: nuevaCantidad, total_unidades: nuevaCantidad * p.unidades_por_bulto };
+        }
+        return { ...p, incluido: false, cantidad_pedida_bultos: 0, total_unidades: 0 };
       }
       return p;
     });
@@ -567,10 +577,16 @@ export default function PasoSeleccionProductosInterCedi({
               className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-gray-900"
             >
               <option value="seleccionados">
-                ✓ Seleccionados ({productos.filter(p => p.cantidad_sugerida_bultos > 0).length})
+                ✓ Seleccionados ({productos.filter(p => {
+                  const cantidad = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+                  return p.incluido !== false && cantidad > 0;
+                }).length})
               </option>
               <option value="no_seleccionados">
-                No seleccionados ({productos.filter(p => p.cantidad_sugerida_bultos === 0).length})
+                No seleccionados ({productos.filter(p => {
+                  const cantidad = p.cantidad_pedida_bultos ?? p.cantidad_sugerida_bultos;
+                  return !(p.incluido !== false && cantidad > 0);
+                }).length})
               </option>
               <option value="todos">
                 Todos ({productos.length})
@@ -578,20 +594,22 @@ export default function PasoSeleccionProductosInterCedi({
             </select>
           </div>
 
-          {/* Filtro CEDI Origen */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">CEDI:</span>
-            <select
-              value={filtroCediOrigen}
-              onChange={(e) => { setFiltroCediOrigen(e.target.value); setPaginaActual(1); }}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-            >
-              <option value="todos">Todos los CEDIs</option>
-              <option value="cedi_seco">CEDI Seco ({productosAgrupados.cedi_seco.length})</option>
-              <option value="cedi_frio">CEDI Frío ({productosAgrupados.cedi_frio.length})</option>
-              <option value="cedi_verde">CEDI Verde ({productosAgrupados.cedi_verde.length})</option>
-            </select>
-          </div>
+          {/* Filtro CEDI Origen — oculto cuando el pedido ya es de un solo CEDI */}
+          {!cediOrigenId && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">CEDI:</span>
+              <select
+                value={filtroCediOrigen}
+                onChange={(e) => { setFiltroCediOrigen(e.target.value); setPaginaActual(1); }}
+                className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              >
+                <option value="todos">Todos los CEDIs</option>
+                <option value="cedi_seco">CEDI Seco ({productosAgrupados.cedi_seco.length})</option>
+                <option value="cedi_frio">CEDI Frío ({productosAgrupados.cedi_frio.length})</option>
+                <option value="cedi_verde">CEDI Verde ({productosAgrupados.cedi_verde.length})</option>
+              </select>
+            </div>
+          )}
 
           {/* Filtro ABC */}
           <div className="flex items-center gap-2">
